@@ -1,0 +1,278 @@
+###############################################
+# Python / ML / Quant Trading Gitignore
+###############################################
+
+###############
+# Byte-compiled
+###############
+__pycache__/
+*.py[cod]
+*$py.class
+
+###############
+# C extensions
+###############
+*.so
+
+############################
+# Distribution / Packaging
+############################
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+###################
+# PyInstaller
+###################
+*.manifest
+*.spec
+
+###################
+# Installer logs
+###################
+pip-log.txt
+pip-delete-this-directory.txt
+
+########################################
+# Unit test / Coverage reports
+########################################
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py.cover
+.hypothesis/
+.pytest_cache/
+cover/
+
+###################
+# Translations
+###################
+*.mo
+*.pot
+
+###############
+# Django stuff:
+###############
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+
+###############
+# Flask stuff:
+###############
+instance/
+.webassets-cache
+
+###############
+# Scrapy stuff:
+###############
+.scrapy
+
+############################
+# Sphinx documentation
+############################
+docs/_build/
+
+############################
+# PyBuilder
+############################
+.pybuilder/
+target/
+
+############################
+# Jupyter Notebook
+############################
+.ipynb_checkpoints/
+*.nbconvert/
+notebooks/exploratory/**
+!notebooks/exploratory/
+!notebooks/exploratory/README.md
+notebooks/**/.ipynb_checkpoints/
+notebooks/**/outputs/
+notebooks/**/*.html
+notebooks/**/*.png
+
+############################
+# IPython
+############################
+profile_default/
+ipython_config.py
+
+############################
+# pyenv
+############################
+# .python-version
+
+############################
+# pipenv / Poetry / pdm / pixi
+############################
+#Pipfile.lock
+#uv.lock
+#poetry.lock
+#poetry.toml
+#pdm.lock
+#pdm.toml
+.pdm-python
+.pdm-build/
+.pixi
+
+############################
+# PEP 582
+############################
+__pypackages__/
+
+############################
+# Celery stuff
+############################
+celerybeat-schedule
+celerybeat.pid
+
+############################
+# SageMath parsed files
+############################
+*.sage.py
+
+############################
+# Virtual Environments
+############################
+.env
+.env.*
+!.env.example
+!.env.*.example
+.envrc
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+tmp
+tmp/*
+
+############################
+# Spyder / Rope
+############################
+.spyderproject
+.spyproject
+.ropeproject
+
+############################
+# mkdocs
+############################
+/site
+
+############################
+# mypy / Pyre / pytype
+############################
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
+
+############################
+# Cython debug symbols
+############################
+cython_debug/
+
+############################
+# JetBrains IDE
+############################
+# .idea/
+
+############################
+# Cursor editor
+############################
+.cursorignore
+.cursorindexingignore
+
+############################
+# Marimo
+############################
+marimo/_static/
+marimo/_lsp/
+__marimo__/
+
+#########################################################
+# --------- Quant / ML Project Custom Additions --------
+#########################################################
+
+
+
+####################################
+# Model artifacts
+####################################
+#models/
+*.pkl
+*.pickle
+*.joblib
+*.bin
+*.model
+*.ckpt
+*.onnx
+*.tflite
+
+####################################
+# Logs
+####################################
+logs/
+*.log
+
+####################################
+# Large dataset formats
+####################################
+*.csv
+*.tsv
+*.jsonl
+*.feather
+*.parquet
+*.h5
+*.hdf5
+*.npz
+*.zip
+*.gz
+*.7z
+
+####################################
+# Compiled / cache / build artifacts
+####################################
+*.o
+*.out
+*.a
+
+####################################
+# Editor / OS files
+####################################
+.DS_Store
+Thumbs.db
+.vscode/
+*.swp
+
+####################################
+# Project-specific scripts
+####################################
+# (脚本保留在 git 中，但不希望生成临时备份)
+*.sh~
+/test.ipynb
