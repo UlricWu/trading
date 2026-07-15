@@ -1,0 +1,73 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - master
+
+concurrency:
+  group: production-release
+  cancel-in-progress: false
+
+jobs:
+  run-ci:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ci.yaml
+
+  semantic-release:
+    needs: run-ci
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22
+
+      - name: Enforce semantic-release baseline tag
+        run: |
+          git fetch --force --tags origin
+          existing_tags="$(git tag --list | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' || true)"
+
+          if [ -z "$existing_tags" ]; then
+            root_commit="$(git rev-list --max-parents=0 HEAD | tail -n 1)"
+            echo "No formal semver tags found. Bootstrapping 0.0.0 at ${root_commit}."
+            git tag 0.0.0 "$root_commit"
+            git push origin 0.0.0
+            exit 0
+          fi
+
+          if git show-ref --verify --quiet refs/tags/0.0.0; then
+            echo "Baseline tag 0.0.0 already present; continuing."
+            exit 0
+          fi
+
+          echo "Formal semver tags exist but baseline tag 0.0.0 is missing." >&2
+          echo "Run the semver baseline migration first." >&2
+          printf '%s\n' "$existing_tags" >&2
+          exit 1
+
+      - name: Install semantic-release and plugins
+        run: |
+          npm install --global \
+            semantic-release \
+            @semantic-release/commit-analyzer \
+            @semantic-release/release-notes-generator \
+            @semantic-release/changelog \
+            @semantic-release/git \
+            @semantic-release/github
+
+      - name: Run semantic-release
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: semantic-release

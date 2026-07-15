@@ -53,7 +53,7 @@ def test_import_does_not_create_log_directories(tmp_path: Path) -> None:
             "-c",
             (
                 "from src import logs; "
-                'logs.info("public logger import works; value={}", 1)'
+                'value = 1; logs.info(f"public logger import works; value={value}")'
             ),
         ],
         cwd=tmp_path,
@@ -73,10 +73,12 @@ def test_api_and_system_configuration_route_public_logs_without_cross_writes(
     settings = LoggingSettings(log_root=tmp_path)
 
     with configure_api_logging(settings):
-        logs.info("api event; request_id={}", "request-1")
+        request_id = "request-1"
+        logs.info(f"api event; request_id={request_id}")
 
     with configure_system_logging(settings):
-        logs.info("system event; check_id={}", "check-1")
+        check_id = "check-1"
+        logs.info(f"system event; check_id={check_id}")
 
     api_text = (tmp_path / "api" / "api.current.log").read_text(encoding="utf-8")
     system_text = (tmp_path / "system.log").read_text(encoding="utf-8")
@@ -97,7 +99,7 @@ def test_job_configuration_writes_public_logs_only_to_validated_partition(
     )
 
     with configure_job_logging(settings, context):
-        logs.info("job event; job_id={}", context.job_id)
+        logs.info(f"job event; job_id={context.job_id}")
 
     expected_log = tmp_path / "jobs" / "2026-07-15" / "job-20260715_01.log"
     assert expected_log.is_file()

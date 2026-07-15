@@ -7,16 +7,13 @@
 
     from src import logs
 
-    logs.debug("[FS] directory created; path={}", directory)
-    logs.info(
-        "[HTTP] method={} path={}",
-        request.method,
-        request.path,
-    )
+    logs.debug(f"[FS] directory created; path={directory}")
+    logs.info(f"[HTTP] method={request.method} path={request.path}")
 
-日志调用使用 Loguru ``{}`` 占位符进行延迟格式化。``LoggingSettings``、
-``JobLogContext`` 和 ``configure_*_logging`` 只供 API、system 或 job 进程的
-composition root 统一调用；普通业务模块不得自行配置或关闭 sinks。
+日志调用使用 f-string 生成包含稳定 ``key=value`` 上下文的消息。
+``LoggingSettings``、``JobLogContext`` 和 ``configure_*_logging`` 只供
+API、system 或 job 进程的 composition root 统一调用；普通业务模块不得
+自行配置或关闭 sinks。
 """
 
 from __future__ import annotations
@@ -86,17 +83,17 @@ class JobLogContext:
 
 
 class ProcessLogger(Protocol):
-    """Parameterized logging contract implemented by public ``src.logs``."""
+    """F-string logging contract implemented by public ``src.logs``."""
 
-    def debug(self, message: str, *args: object) -> None: ...
+    def debug(self, message: str) -> None: ...
 
-    def info(self, message: str, *args: object) -> None: ...
+    def info(self, message: str) -> None: ...
 
-    def warning(self, message: str, *args: object) -> None: ...
+    def warning(self, message: str) -> None: ...
 
-    def error(self, message: str, *args: object) -> None: ...
+    def error(self, message: str) -> None: ...
 
-    def exception(self, message: str, *args: object) -> None:
+    def exception(self, message: str) -> None:
         """Record one traceback only at a recovery or termination boundary."""
         ...
 
