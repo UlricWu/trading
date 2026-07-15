@@ -1,0 +1,87 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - dev
+      - master
+  workflow_call:
+    inputs:
+      python-version:
+        required: false
+        type: string
+        default: "3.13"
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: ./
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    env:
+      CI_PYTHON_VERSION: ${{ inputs['python-version'] || '3.13' }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python ${{ env.CI_PYTHON_VERSION }}
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: ${{ env.CI_PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Upgrade pip
+        run: python -m pip install --upgrade pip
+
+      - name: Install dependencies
+        run: python -m pip install -e ".[test]"
+
+      - name: Enforce breaking change commit message format
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+          CURRENT_SHA: ${{ github.sha }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            commit_range="$PR_BASE_SHA..$PR_HEAD_SHA"
+          elif [ -n "$BEFORE_SHA" ] && [ "$BEFORE_SHA" != "0000000000000000000000000000000000000000" ]; then
+            commit_range="$BEFORE_SHA..$CURRENT_SHA"
+          elif git rev-parse "$CURRENT_SHA^" >/dev/null 2>&1; then
+            commit_range="$CURRENT_SHA^..$CURRENT_SHA"
+          else
+            commit_range="$CURRENT_SHA"
+          fi
+
+          if git log --format=%s "$commit_range" | grep -En '^[A-Za-z][A-Za-z0-9-]*(\([^()]+\))?!:'; then
+            echo "type!: commit headers are not allowed."
+            echo "Use BREAKING CHANGE: or BREAKING CHANGES: in the commit body or footer."
+            exit 1
+          fi
+
+      - name: Run non-contract tests
+        run: pytest -m "not contract" -q --disable-warnings --maxfail=1
+
+      - name: Run contract tests
+        run: |
+          set +e
+          pytest -m contract -q
+          contract_exit_code=$?
+          set -e
+
+          if [ "$contract_exit_code" -ne 0 ] && [ "$contract_exit_code" -ne 5 ]; then
+            exit "$contract_exit_code"
+          fi
+
+          if [ "$contract_exit_code" -eq 5 ]; then
+            echo "No contract tests collected; skipping."
+          fi

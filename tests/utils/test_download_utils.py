@@ -1,58 +1,34 @@
 # filepath: tests/utils/test_download_utils.py
 from __future__ import annotations
 
-from dataclasses import dataclass
-from types import TracebackType
-from typing import Self
-
 import pytest
 
 from src.utils.download_utils import DownloadProgress
 
 
-@dataclass(frozen=True, slots=True)
-class RecordedLogCall:
-    message: str
-    args: tuple[object, ...]
-
-
 class RecordingLogger:
-    """Record parameterized logger calls made by DownloadProgress."""
+    """Record f-string logger calls made by DownloadProgress."""
 
     def __init__(self) -> None:
-        self.messages: list[RecordedLogCall] = []
+        self.messages: list[str] = []
 
-    def debug(self, message: str, *args: object) -> None:
-        self._record(message, *args)
+    def debug(self, message: str) -> None:
+        self._record(message)
 
-    def info(self, message: str, *args: object) -> None:
-        self._record(message, *args)
+    def info(self, message: str) -> None:
+        self._record(message)
 
-    def warning(self, message: str, *args: object) -> None:
-        self._record(message, *args)
+    def warning(self, message: str) -> None:
+        self._record(message)
 
-    def error(self, message: str, *args: object) -> None:
-        self._record(message, *args)
+    def error(self, message: str) -> None:
+        self._record(message)
 
-    def exception(self, message: str, *args: object) -> None:
-        self._record(message, *args)
+    def exception(self, message: str) -> None:
+        self._record(message)
 
-    def close(self) -> None:
-        return
-
-    def __enter__(self) -> Self:
-        return self
-
-    def __exit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc: BaseException | None,
-        traceback: TracebackType | None,
-    ) -> None:
-        self.close()
-
-    def _record(self, message: str, *args: object) -> None:
-        self.messages.append(RecordedLogCall(message=message, args=args))
+    def _record(self, message: str) -> None:
+        self.messages.append(message)
 
 
 def test_download_progress_update_before_interval_is_quiet() -> None:
@@ -72,7 +48,7 @@ def test_download_progress_update_before_interval_is_quiet() -> None:
     assert logger.messages == []
 
 
-def test_download_progress_update_uses_parameterized_operational_fields() -> None:
+def test_download_progress_update_uses_f_string_operational_fields() -> None:
     logger = RecordingLogger()
     times = iter([100.0, 101.5])
     progress = DownloadProgress(
@@ -86,13 +62,8 @@ def test_download_progress_update_uses_parameterized_operational_fields() -> Non
     progress.update(50)
 
     assert logger.messages == [
-        RecordedLogCall(
-            message="download progress; filename={} status={}",
-            args=(
-                "payload.csv.7z",
-                "percent=50.00% speed=33.33 B/s eta=00:01",
-            ),
-        )
+        "download progress; filename=payload.csv.7z "
+        "status=percent=50.00% speed=33.33 B/s eta=00:01"
     ]
 
 
@@ -111,13 +82,8 @@ def test_download_progress_finish_distinguishes_unknown_total() -> None:
     progress.finish()
 
     assert logger.messages == [
-        RecordedLogCall(
-            message="download complete; filename={} status={}",
-            args=(
-                "payload.csv.7z",
-                "downloaded=2.00 KB speed=1.00 KB/s eta=unknown",
-            ),
-        )
+        "download complete; filename=payload.csv.7z "
+        "status=downloaded=2.00 KB speed=1.00 KB/s eta=unknown"
     ]
 
 
@@ -134,13 +100,8 @@ def test_download_progress_zero_total_is_a_known_empty_download() -> None:
     progress.finish()
 
     assert logger.messages == [
-        RecordedLogCall(
-            message="download complete; filename={} status={}",
-            args=(
-                "empty.csv",
-                "percent=100.00% speed=0.00 B/s eta=00:00",
-            ),
-        )
+        "download complete; filename=empty.csv "
+        "status=percent=100.00% speed=0.00 B/s eta=00:00"
     ]
 
 
