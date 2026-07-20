@@ -38,9 +38,8 @@ def _calculate_qfq_price_scale(
     owned_frame: pd.DataFrame,
     adjustment_factor: pd.Series,
     *,
-    asof_date: str,
+    validated_asof_date: str,
 ) -> pd.Series:
-    validated_asof_date = DateTimeUtils.require_trade_date(asof_date)
     missing_qfq_columns = [
         column
         for column in ("symbol", "trade_date")
@@ -59,6 +58,35 @@ def _calculate_qfq_price_scale(
         or not owned_frame["symbol"].str.len().gt(0).all()
     ):
         raise TypeError("column 'symbol' must contain non-empty strings for qfq")
+
+    trade_dates = owned_frame["trade_date"]
+    if trade_dates.isna().any():
+        raise ValueError("column 'trade_date' must not contain null values for qfq")
+    if not owned_frame.empty:
+        if pd.api.types.infer_dtype(trade_dates, skipna=False) != "string":
+            raise TypeError(
+                "column 'trade_date' must contain YYYY-MM-DD strings for qfq"
+            )
+        valid_trade_date_format = trade_dates.str.fullmatch(
+            r"\d{4}-\d{2}-\d{2}",
+            na=False,
+        )
+        parsed_trade_dates = pd.to_datetime(
+            trade_dates,
+            format="%Y-%m-%d",
+            errors="coerce",
+        )
+        canonical_trade_dates = parsed_trade_dates.dt.strftime("%Y-%m-%d").eq(
+            trade_dates
+        )
+        if not (
+            valid_trade_date_format
+            & parsed_trade_dates.notna()
+            & canonical_trade_dates
+        ).all():
+            raise ValueError(
+                "column 'trade_date' must contain valid YYYY-MM-DD values for qfq"
+            )
 
     asof_factors = owned_frame.loc[
         owned_frame["trade_date"] == validated_asof_date,
@@ -110,6 +138,7 @@ def apply_asof_price_adjustment(
         raise ValueError(f"field 'adjustment' has unsupported value: {adjustment}")
     if not isinstance(output_prefix, str):
         raise TypeError("field 'output_prefix' must be a string")
+    validated_asof_date = DateTimeUtils.require_trade_date(asof_date)
     owned_price_columns = _validate_price_columns(frame, price_columns)
 
     owned_frame = frame.copy()
@@ -132,7 +161,7 @@ def apply_asof_price_adjustment(
         price_scale = _calculate_qfq_price_scale(
             owned_frame,
             adjustment_factor,
-            asof_date=asof_date,
+            validated_asof_date=validated_asof_date,
         )
 
     valid_scale = pd.to_numeric(price_scale, errors="coerce").gt(0)

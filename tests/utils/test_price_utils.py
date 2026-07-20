@@ -83,6 +83,34 @@ def test_apply_asof_price_adjustment_requires_requested_price_columns() -> None:
         )
 
 
+def test_apply_asof_price_adjustment_validates_asof_date_for_every_mode() -> None:
+    frame = pd.DataFrame({"close": [10.0]})
+
+    with pytest.raises(ValueError, match="trade_date"):
+        apply_asof_price_adjustment(
+            frame,
+            adjustment="raw",
+            asof_date="2026-02-30",
+            price_columns=("close",),
+        )
+
+
+def test_apply_asof_price_adjustment_accepts_empty_qfq_frame() -> None:
+    frame = pd.DataFrame(
+        columns=["symbol", "trade_date", "close", "adj_factor"]
+    )
+
+    adjusted = apply_asof_price_adjustment(
+        frame,
+        adjustment="qfq",
+        asof_date="2026-01-02",
+        price_columns=("close",),
+    )
+
+    assert adjusted.empty
+    assert adjusted.columns.tolist() == frame.columns.tolist()
+
+
 def test_apply_asof_price_adjustment_requires_every_qfq_anchor() -> None:
     frame = pd.DataFrame(
         {
@@ -94,6 +122,37 @@ def test_apply_asof_price_adjustment_requires_every_qfq_anchor() -> None:
     )
 
     with pytest.raises(ValueError, match=r"missing symbols.*000002"):
+        apply_asof_price_adjustment(
+            frame,
+            adjustment="qfq",
+            asof_date="2026-01-02",
+            price_columns=("close",),
+        )
+
+
+@pytest.mark.parametrize(
+    ("trade_date", "error_type"),
+    [
+        (20260102, TypeError),
+        (None, ValueError),
+        ("2026-01-02 ", ValueError),
+        ("2026-02-30", ValueError),
+    ],
+)
+def test_apply_asof_price_adjustment_validates_qfq_trade_date_column(
+    trade_date: object,
+    error_type: type[Exception],
+) -> None:
+    frame = pd.DataFrame(
+        {
+            "symbol": ["000001"],
+            "trade_date": [trade_date],
+            "close": [10.0],
+            "adj_factor": [2.0],
+        }
+    )
+
+    with pytest.raises(error_type, match="column 'trade_date'"):
         apply_asof_price_adjustment(
             frame,
             adjustment="qfq",

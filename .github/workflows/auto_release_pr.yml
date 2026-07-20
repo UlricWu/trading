@@ -1,0 +1,140 @@
+name: Auto Release PR
+
+on:
+  push:
+    branches:
+      - dev
+
+concurrency:
+  group: auto-release
+  cancel-in-progress: true
+
+jobs:
+  check-unreleased-changes:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      has_changes: ${{ steps.compare.outputs.has_changes }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          fetch-depth: 0
+
+      - name: Compare dev with master
+        id: compare
+        env:
+          CURRENT_SHA: ${{ github.sha }}
+        run: |
+          git fetch origin master dev
+
+          if git diff --quiet origin/master "$CURRENT_SHA" --; then
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+            echo "dev contains no unreleased file changes; skipping auto release."
+          else
+            diff_exit_code=$?
+
+            if [ "$diff_exit_code" -ne 1 ]; then
+              exit "$diff_exit_code"
+            fi
+
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+            echo "dev contains unreleased file changes."
+          fi
+
+  run-ci:
+    needs: check-unreleased-changes
+    if: needs.check-unreleased-changes.outputs.has_changes == 'true'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ci.yaml
+
+  sync-release-branch:
+    needs:
+      - check-unreleased-changes
+      - run-ci
+    if: needs.check-unreleased-changes.outputs.has_changes == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          fetch-depth: 0
+
+      - name: Refresh remote branches
+        run: git fetch origin '+refs/heads/*:refs/remotes/origin/*' --prune
+
+      - name: Verify this run still targets the latest dev commit
+        env:
+          CURRENT_SHA: ${{ github.sha }}
+        run: |
+          latest_dev_sha="$(git rev-parse origin/dev)"
+
+          if [ "$latest_dev_sha" != "$CURRENT_SHA" ]; then
+            echo "dev advanced to $latest_dev_sha; refusing to publish stale commit $CURRENT_SHA."
+            exit 1
+          fi
+
+      - name: Mirror dev to release/auto-release
+        env:
+          CURRENT_SHA: ${{ github.sha }}
+        run: |
+          git push \
+            origin \
+            "$CURRENT_SHA:refs/heads/release/auto-release" \
+            --force-with-lease
+
+      - name: Generate release PR body
+        env:
+          CURRENT_SHA: ${{ github.sha }}
+        run: |
+          {
+            echo "### Final Release Notes Before Publishing"
+            echo
+            echo "#### Commits Included in This Release"
+            git log origin/master.."$CURRENT_SHA" --pretty=format:'- %s' --reverse
+            echo
+            echo
+            echo "---"
+            echo
+            cat .github/pull_request_template.md
+          } > pr_body.txt
+
+      - name: Create or update release PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh label create release \
+            --color "0E8A16" \
+            --description "Changes awaiting production release" \
+            --force
+
+          pr_number="$(
+            gh pr list \
+              --head release/auto-release \
+              --base master \
+              --state open \
+              --json number \
+              --jq '.[0].number // empty'
+          )"
+
+          if [ -n "$pr_number" ]; then
+            gh pr edit "$pr_number" \
+              --title "chore(release): release/auto-release → master" \
+              --body-file pr_body.txt \
+              --add-label release
+          else
+            gh pr create \
+              --head release/auto-release \
+              --base master \
+              --title "chore(release): release/auto-release → master" \
+              --body-file pr_body.txt \
+              --label release
+          fi

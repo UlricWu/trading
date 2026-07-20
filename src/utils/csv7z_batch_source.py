@@ -6,7 +6,7 @@ from __future__ import annotations
 import csv as standard_csv
 import io
 import subprocess
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from pathlib import Path
 
 import pyarrow as pa
@@ -36,10 +36,46 @@ class _Csv7zReader:
     def __iter__(self) -> Iterator[pa.RecordBatch]:
         return iter(self._reader)
 
-    def close(self, *, verify_process_exit: bool) -> None:
-        """Release resources and optionally translate a decompressor failure."""
-        if self._is_closed:
+    def finish(self) -> None:
+        """Close a fully consumed stream and translate decompressor failure."""
+        initial_cleanup_errors = self._begin_close()
+        if initial_cleanup_errors is None:
             return
+
+        cleanup_errors = list(initial_cleanup_errors)
+        try:
+            return_code = self._process.wait()
+            if return_code != 0:
+                cleanup_errors.append(
+                    RuntimeError(
+                        "7z extraction failed; "
+                        f"archive_path={self._archive_path} "
+                        f"return_code={return_code}"
+                    )
+                )
+        except (OSError, subprocess.SubprocessError) as exc:
+            cleanup_errors.append(exc)
+
+        self._complete_close(cleanup_errors)
+
+    def abort(self) -> None:
+        """Close a partially consumed stream and terminate its decompressor."""
+        initial_cleanup_errors = self._begin_close()
+        if initial_cleanup_errors is None:
+            return
+
+        cleanup_errors = list(initial_cleanup_errors)
+        try:
+            _terminate_process(self._process)
+        except (OSError, subprocess.SubprocessError) as exc:
+            cleanup_errors.append(exc)
+
+        self._complete_close(cleanup_errors)
+
+    def _begin_close(self) -> tuple[Exception, ...] | None:
+        """Mark this owner closed and release reader-side stream resources."""
+        if self._is_closed:
+            return None
         self._is_closed = True
 
         cleanup_errors: list[Exception] = []
@@ -55,43 +91,19 @@ class _Csv7zReader:
             except OSError as exc:
                 cleanup_errors.append(exc)
 
-        try:
-            if verify_process_exit:
-                return_code = self._process.wait()
-                if return_code != 0:
-                    cleanup_errors.append(
-                        RuntimeError(
-                            "7z extraction failed; "
-                            f"archive_path={self._archive_path} "
-                            f"return_code={return_code}"
-                        )
-                    )
-            else:
-                self._terminate_process()
-        except (OSError, subprocess.SubprocessError) as exc:
-            cleanup_errors.append(exc)
+        return tuple(cleanup_errors)
 
+    def _complete_close(self, cleanup_errors: Sequence[Exception]) -> None:
+        """Close the remaining process stream and report all cleanup failures."""
+        owned_cleanup_errors = list(cleanup_errors)
         stderr = self._process.stderr
         if stderr is not None:
             try:
                 stderr.close()
             except OSError as exc:
-                cleanup_errors.append(exc)
+                owned_cleanup_errors.append(exc)
 
-        if len(cleanup_errors) == 1:
-            raise cleanup_errors[0]
-        if cleanup_errors:
-            raise ExceptionGroup("CSV 7z reader cleanup failed", cleanup_errors)
-
-    def _terminate_process(self) -> None:
-        if self._process.poll() is not None:
-            return
-        self._process.terminate()
-        try:
-            self._process.wait(timeout=_PROCESS_TERMINATION_TIMEOUT_SECONDS)
-        except subprocess.TimeoutExpired:
-            self._process.kill()
-            self._process.wait()
+        _raise_cleanup_errors(owned_cleanup_errors)
 
 
 class Csv7zBatchSource:
@@ -116,12 +128,12 @@ class Csv7zBatchSource:
             yield from owned_reader
         except BaseException as exc:
             try:
-                owned_reader.close(verify_process_exit=False)
+                owned_reader.abort()
             except Exception as cleanup_error:
                 exc.add_note(f"CSV 7z cleanup also failed: {cleanup_error!r}")
             raise
         else:
-            owned_reader.close(verify_process_exit=True)
+            owned_reader.finish()
 
     def _open_reader(self) -> _Csv7zReader:
         process = open_extract_stdout(self._archive_path)
@@ -195,19 +207,46 @@ class Csv7zBatchSource:
 
     @staticmethod
     def _terminate_failed_open(process: subprocess.Popen[bytes]) -> None:
+        cleanup_errors: list[Exception] = []
         stdout = process.stdout
         if stdout is not None:
-            stdout.close()
-        if process.poll() is None:
-            process.terminate()
             try:
-                process.wait(timeout=_PROCESS_TERMINATION_TIMEOUT_SECONDS)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait()
+                stdout.close()
+            except OSError as exc:
+                cleanup_errors.append(exc)
+
+        try:
+            _terminate_process(process)
+        except (OSError, subprocess.SubprocessError) as exc:
+            cleanup_errors.append(exc)
+
         stderr = process.stderr
         if stderr is not None:
-            stderr.close()
+            try:
+                stderr.close()
+            except OSError as exc:
+                cleanup_errors.append(exc)
+
+        _raise_cleanup_errors(cleanup_errors)
+
+
+def _terminate_process(process: subprocess.Popen[bytes]) -> None:
+    """Terminate one running process and wait until it is reaped."""
+    if process.poll() is not None:
+        return
+    process.terminate()
+    try:
+        process.wait(timeout=_PROCESS_TERMINATION_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait()
+
+
+def _raise_cleanup_errors(cleanup_errors: Sequence[Exception]) -> None:
+    if len(cleanup_errors) == 1:
+        raise cleanup_errors[0]
+    if cleanup_errors:
+        raise ExceptionGroup("CSV 7z reader cleanup failed", list(cleanup_errors))
 
 
 __all__ = ["Csv7zBatchSource"]
