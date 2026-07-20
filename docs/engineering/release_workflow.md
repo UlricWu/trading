@@ -29,7 +29,9 @@
    不得更新 `release/auto-release`。如果同步期间已有新功能进入 `dev`，其文件树仍然
    不同，此时继续生成下一轮待发布内容是预期行为。
 
-## Release PR 合并约束
+## PR 合并约束
+
+### Release PR
 
 semantic-release 必须能够分析 `dev` 中的原始 Conventional Commit 类型。release PR
 不得 squash 成固定的 `chore(release):` 标题；必须使用 merge commit 或 rebase merge
@@ -42,6 +44,14 @@ semantic-release 必须能够分析 `dev` 中的原始 Conventional Commit 类�
 - `fix:`、`perf:`：patch。
 - `docs:`、`test:`、`refactor:`、`chore:`、`build:`、`ci:`、`style:`：不发布。
 - `type!:` header 不作为 breaking release 依据，并由 CI 拒绝。
+
+### Change 终态 commit 可达性
+
+采用 open change 且拟议目标树会删除对应 change 时，feature PR 必须使用 merge commit
+或 rebase merge，使写入 `Status: adopted` 的终态 commit 在目标分支保持可达，不得 squash。
+如果必须 squash，则最终树必须保留含终态 README 的必要 archive，不得同时删除 change。
+Change 状态的生效与关闭语义由根目录 `AGENTS.md` 拥有；本文只拥有保持 Git commit
+可达性的 PR 合并方式。
 
 ## 部署边界
 
@@ -147,24 +157,6 @@ SHA。生产环境必须部署确定的 master commit 或 semantic-release tag�
 - 必需依赖与可降级依赖的判断边界。
 - 健康检查失败后停止、回滚、二次检查和报警的顺序。
 - 回滚后的健康检查仍失败时由谁接管。
-
-### 候选基线方案（尚未选定）
-
-若后续没有容器或集群平台约束，可优先评估以下简单基线：
-
-```text
-GitHub Environment secrets
-  -> SSH（固定 host key、独立低权限部署用户）
-  -> releases/<commit-or-tag> 独立目录
-  -> 独立 Python virtualenv
-  -> current/previous 原子软链接
-  -> systemd service
-  -> HTTP readiness 检查
-  -> 失败时切回 previous 并重新检查
-```
-
-该方案只是待评估候选，不授权 workflow 创建服务器账号、目录、systemd unit 或 secrets，
-也不代表已选择 SSH 而排除 wheel、Docker、Kubernetes、webhook 或 self-hosted runner。
 
 ### 开始实现部署前的准入条件
 

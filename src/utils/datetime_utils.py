@@ -10,7 +10,6 @@ from zoneinfo import ZoneInfo
 EpochUnit = Literal["s", "ms", "us", "ns"]
 _COMPACT_DATE_LENGTH = 8
 _SYSTEM_DATE_LENGTH = 10
-_TICK_PART_COUNT = 4
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,6 +26,24 @@ class TradingSession:
             raise ValueError("trading session boundaries must be naive local times")
         if self.opens_at > self.closes_at:
             raise ValueError("trading session opens_at must not be after closes_at")
+
+
+@dataclass(frozen=True, slots=True)
+class TickTimeParts:
+    """Validated local tick time with microsecond precision."""
+
+    hour: int
+    minute: int
+    second: int
+    microsecond: int
+
+    def __post_init__(self) -> None:
+        if any(
+            type(part) is not int
+            for part in (self.hour, self.minute, self.second, self.microsecond)
+        ):
+            raise TypeError("tick time parts must be integers")
+        time(self.hour, self.minute, self.second, self.microsecond)
 
 
 class DateTimeUtils:
@@ -242,9 +259,9 @@ class DateTimeUtils:
             ) from exc
         raise ValueError(f"cannot extract date from trade_time: {trade_time}")
 
-    @classmethod
-    def parse_tick_time(cls, tick_time: int | str) -> tuple[int, int, int, int]:
-        """Parse ``HMMSSmmm`` or ``HHMMSSmmm`` into time parts and microseconds."""
+    @staticmethod
+    def parse_tick_time(tick_time: int | str) -> TickTimeParts:
+        """Parse ``HMMSSmmm`` or ``HHMMSSmmm`` into named local-time parts."""
         if isinstance(tick_time, bool) or not isinstance(tick_time, (int, str)):
             raise TypeError("tick_time must be an int or str")
         source_text = str(tick_time).strip()
@@ -256,12 +273,16 @@ class DateTimeUtils:
         second = int(normalized_text[4:6])
         microsecond = int(normalized_text[6:9]) * 1_000
         try:
-            time(hour, minute, second, microsecond)
+            return TickTimeParts(
+                hour=hour,
+                minute=minute,
+                second=second,
+                microsecond=microsecond,
+            )
         except ValueError as exc:
             raise ValueError(
                 f"tick_time contains an invalid time: {tick_time}"
             ) from exc
-        return hour, minute, second, microsecond
 
     @classmethod
     def local_time_to_utc_ts(
@@ -308,23 +329,23 @@ class DateTimeUtils:
     def combine_date_tick(
         cls,
         trade_date: date,
-        tick_parts: tuple[int, int, int, int],
+        tick_parts: TickTimeParts,
         timezone_info: ZoneInfo | None = None,
     ) -> datetime:
         """Combine a date and validated tick parts into a local aware datetime."""
         if not isinstance(trade_date, date) or isinstance(trade_date, datetime):
             raise TypeError("trade_date must be a datetime.date")
-        if (
-            not isinstance(tick_parts, tuple)
-            or len(tick_parts) != _TICK_PART_COUNT
-            or any(type(part) is not int for part in tick_parts)
-        ):
-            raise TypeError("tick_parts must be a four-integer tuple")
+        if not isinstance(tick_parts, TickTimeParts):
+            raise TypeError("tick_parts must be a TickTimeParts value")
         if timezone_info is not None and not isinstance(timezone_info, ZoneInfo):
             raise TypeError("timezone_info must be zoneinfo.ZoneInfo or None")
 
-        hour, minute, second, microsecond = tick_parts
-        validated_time = time(hour, minute, second, microsecond)
+        validated_time = time(
+            tick_parts.hour,
+            tick_parts.minute,
+            tick_parts.second,
+            tick_parts.microsecond,
+        )
         resolved_timezone = timezone_info or ZoneInfo(cls.SHANGHAI_TIMEZONE_NAME)
         return datetime.combine(
             trade_date,
@@ -429,4 +450,4 @@ class DateTimeUtils:
         return date_values
 
 
-__all__ = ["DateTimeUtils", "TradingSession"]
+__all__ = ["DateTimeUtils", "TickTimeParts", "TradingSession"]
