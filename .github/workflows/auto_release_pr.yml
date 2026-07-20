@@ -111,11 +111,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if ! gh label view release >/dev/null 2>&1; then
-            gh label create release \
-              --color "0E8A16" \
-              --description "Changes awaiting production release"
-          fi
+          gh label create release \
+            --color "0E8A16" \
+            --description "Changes awaiting production release" \
+            --force
 
           pr_number="$(
             gh pr list \
