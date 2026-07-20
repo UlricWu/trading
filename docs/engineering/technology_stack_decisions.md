@@ -49,6 +49,27 @@ Level-2 source-native payload 是 `.csv.7z`。Arrow `CompressedInputStream` 不�
 不得为了套用 Arrow gzip 示例而先把 `.csv.7z` 解压为中间 CSV，再由 Level-2
 normalize 读取。
 
+### Source-native CSV 解析契约
+
+7z stdout 中的 CSV header 必须使用 UTF-8（允许 UTF-8 BOM），必须恰好包含一行
+非空、无首尾空格且互不重复的列名。header 超过 1 MiB、缺失、编码无效或结构无效时
+读取必须失败。
+
+source-native reader 必须保留所有列，并在该边界统一解析为 Arrow string。CSV quoting
+按标准 CSV 语义处理。以下 token 精确表示 null，quoted token 也使用同一规则：
+
+```text
+<empty string>
+<one ASCII space>
+NULL
+N/A
+nan
+```
+
+除上述精确 token 外，不得在该低层 reader 中自行 trim、大小写折叠、数值转换或新增
+其他 null 别名。业务字段类型、范围和跨字段约束必须由下游 source adapter 的正式
+schema owner 校验；低层 reader 不得根据样本内容推断业务类型。
+
 ## 选择 `7zz` 作为主链路 CLI 的依据
 
 当前 Level-2 大文件流式解压实测结果如下，单位为秒：
