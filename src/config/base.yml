@@ -1,0 +1,131 @@
+# ==================================================
+# Data System (SOURCE / BROKER DECLARATION)
+# ==================================================
+data:
+  # ----------------------------------
+  # Broker capability (SYSTEM CAPABILITY)
+  # - 声明系统“能用什么”
+  # - 声明即默认可用，不承担本次运行的启停选择
+  # ----------------------------------
+  brokers:
+    tushare:
+      normalize_profile: "v1"
+    level2_ftp:
+      normalize_profile: "v1"
+      remote_root: "level2"
+      ftp_backend: "ftplib"
+
+
+  # ----------------------------------
+  # Sources (RAW OBJECT / OUTPUT DECLARATION)
+  # - use_broker_sources 表示从 broker 支持集展开普通 source
+  # - 普通 source 的 raw_object 是 broker 能识别的源端对象名
+  # - 普通 source 的 outputs 是系统内部 processed dataset 名；[] 表示 raw-only
+  # ----------------------------------
+  sources:
+    tushare:
+      enabled: true
+      broker: "tushare"
+      group: "offline_standard"
+      use_broker_sources: true
+
+    sh_stock_ordertrade: # source_name
+      enabled: true
+      broker: "level2_ftp"
+      group: "offline_level2"
+      raw_object: "SH_Stock_OrderTrade"
+      outputs:
+        - "sh_trade"
+
+    sz_order:
+      enabled: true
+      broker: "level2_ftp"
+      group: "offline_level2"
+      raw_object: "SZ_Order"
+      outputs: []
+
+    sz_trade:
+      enabled: true
+      broker: "level2_ftp"
+      group: "offline_level2"
+      raw_object: "SZ_Trade"
+      outputs:
+        - "sz_trade"
+
+  feature_sets:
+    tushare_daily_basic:
+      enabled: true
+      version: "v1"
+      group: "offline_standard"
+
+  label_sets:
+    daily_t1_net_excess_rank:
+      enabled: true
+      version: "v1"
+      group: "offline_standard"
+
+    daily_forward_excess_rank:
+      enabled: true
+      version: "v1"
+      group: "offline_standard"
+
+# ==================================================
+# Backtest System
+# - Runtime backtest_mode, model experiment and strategy are required by backtest.
+# - static config must not provide a default model.
+# - base strategy keeps AppConfig valid; backtest replaces the complete object.
+# - Universe policy is explicit; symbols are resolved from Access per signal date.
+# ==================================================
+backtest:
+  name: "rf_alpha_v1"
+  backtest_mode: "full_backtest"
+
+  dates:
+    - "2025-11-17"
+    - "2025-11-18"
+
+  strategy:
+    type: "threshold"
+    params:
+      threshold: 0.5
+      target_quantity: 100
+
+  init_cash: 200000
+  min_list_calendar_days: 120
+  exclude_st_sessions: 20
+  exclude_suspended: true
+# ==================================================
+# Model / Training System
+# - Runtime range and experiment identity are CLI inputs.
+# ==================================================
+model:
+  model_params:
+    alpha: 0.0005
+    l1_ratio: 0.0
+  train_window_days: 30
+  preprocessing:
+    missing:
+      method: "constant"
+      fill_value: 0.0
+  dataset:
+    feature_set: "tushare_daily_basic"
+    feature_version: "v1"
+    feature_columns:
+      - "f_d_return"
+      - "f_d_gap"
+      - "f_d_log_amount"
+      - "f_d_max_drawdown_20d_asof_tminus1"
+      - "f_d_volatility_60d_asof_tminus1"
+      - "f_d_ret_5d_asof_tminus1"
+      - "f_d_turnover_mean_20d_asof_tminus1"
+
+    label_set: "daily_t1_net_excess_rank"
+    label_version: "v1"
+    label_column: "y_rank_net_excess_return"
+
+    drop_na: true
+
+    adjustment:
+      method: "raw"
+      dataset_name: 'adj_factor'
+      version: 'v1'
