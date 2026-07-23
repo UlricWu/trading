@@ -13,7 +13,7 @@
 | `release/auto-release` | 当前待发布内容的机器镜像，也是测试环境的唯一部署源。 | auto-release workflow 从 `dev` 强制镜像；不得人工提交。 |
 | `master` | 已批准的正式版本，也是正式环境的唯一部署源。 | `release/auto-release` 通过 release PR 合入。 |
 
-远端必须同时存在 `dev` 和 `master`。仓库默认分支为 `dev`。
+远端必须同时存在 `dev` 和 `master`。仓库默认分支为 `master`，默认开发分支为 `dev`。
 
 ## 状态流转
 

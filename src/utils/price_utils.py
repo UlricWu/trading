@@ -80,9 +80,7 @@ def _calculate_qfq_price_scale(
             trade_dates
         )
         if not (
-            valid_trade_date_format
-            & parsed_trade_dates.notna()
-            & canonical_trade_dates
+            valid_trade_date_format & parsed_trade_dates.notna() & canonical_trade_dates
         ).all():
             raise ValueError(
                 "column 'trade_date' must contain valid YYYY-MM-DD values for qfq"
@@ -138,7 +136,10 @@ def apply_asof_price_adjustment(
         raise ValueError(f"field 'adjustment' has unsupported value: {adjustment}")
     if not isinstance(output_prefix, str):
         raise TypeError("field 'output_prefix' must be a string")
-    validated_asof_date = DateTimeUtils.require_trade_date(asof_date)
+    validated_asof_date = DateTimeUtils.require_system_date(
+        asof_date,
+        field_name="asof_date",
+    )
     owned_price_columns = _validate_price_columns(frame, price_columns)
 
     owned_frame = frame.copy()

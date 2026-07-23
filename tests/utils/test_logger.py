@@ -28,7 +28,7 @@ def restore_project_logger() -> Iterator[None]:
 
 
 def test_logger_module_exports_current_public_contract() -> None:
-    assert logger_module.__all__ == ["configure_system_logging", "logs"]
+    assert logger_module.__all__ == ['ProcessLogger', 'configure_system_logging', 'logs']
     assert logs is loguru_logger
     assert logger_module.logs is logs
 

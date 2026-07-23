@@ -86,7 +86,7 @@ def test_apply_asof_price_adjustment_requires_requested_price_columns() -> None:
 def test_apply_asof_price_adjustment_validates_asof_date_for_every_mode() -> None:
     frame = pd.DataFrame({"close": [10.0]})
 
-    with pytest.raises(ValueError, match="trade_date"):
+    with pytest.raises(ValueError, match="asof_date"):
         apply_asof_price_adjustment(
             frame,
             adjustment="raw",
@@ -96,9 +96,7 @@ def test_apply_asof_price_adjustment_validates_asof_date_for_every_mode() -> Non
 
 
 def test_apply_asof_price_adjustment_accepts_empty_qfq_frame() -> None:
-    frame = pd.DataFrame(
-        columns=["symbol", "trade_date", "close", "adj_factor"]
-    )
+    frame = pd.DataFrame(columns=["symbol", "trade_date", "close", "adj_factor"])
 
     adjusted = apply_asof_price_adjustment(
         frame,

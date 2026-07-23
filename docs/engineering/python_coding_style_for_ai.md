@@ -682,7 +682,7 @@ self._write_table(output_path, output.table)
 
 @staticmethod
 def _write_table(path: Path, table: pa.Table) -> None:
-    write_arrow_table_parquet(output_file=path, table=table)
+    write_parquet_atomic(output_file=path, table=table)
 ```
 
 ### 正例
@@ -690,7 +690,7 @@ def _write_table(path: Path, table: pa.Table) -> None:
 无新增语义时直接调用：
 
 ```python
-write_arrow_table_parquet(
+write_parquet_atomic(
     output_file=output_path,
     table=output.table,
 )
@@ -706,7 +706,7 @@ def _publish_snapshot_atomically(
     lineage: LineageRecord,
 ) -> None:
     temporary_path = output_path.with_suffix(".tmp.parquet")
-    write_arrow_table_parquet(output_file=temporary_path, table=table)
+    write_parquet_atomic(output_file=temporary_path, table=table)
     write_lineage_record(temporary_path, lineage)
     temporary_path.replace(output_path)
 ```
@@ -2265,11 +2265,11 @@ legacy_name = payload.get("feature_name")
 
 ---
 
-## PY-026 行为变化和缺陷修复必须有可重复测试
+## PY-026 测试必须可重复且镜像源码布局
 
 ### 触发条件
 
-新增功能、修改行为、修复缺陷、调整边界条件、改变异常、重构共享逻辑或删除兼容路径时触发。
+新增、修改、移动、重命名或删除 pytest 测试文件，或新增功能、修改行为、修复缺陷、调整边界条件、改变异常、重构共享逻辑或删除兼容路径时触发。
 
 ### 必须判断的语义
 
@@ -2279,6 +2279,7 @@ legacy_name = payload.get("feature_name")
 - 缺陷的最小复现输入是什么；
 - 应验证返回值、状态、异常、持久化结果还是副作用；
 - 测试是否依赖当前时间、环境、网络、执行顺序或 private helper 名称。
+- 每个测试文件唯一对应哪个 `src/` 源码模块。
 
 ### 必须执行
 
@@ -2286,12 +2287,31 @@ legacy_name = payload.get("feature_name")
 - 每个缺陷修复必须先有能失败的回归场景，再由修复使其通过。
 - 测试必须断言 public 契约或稳定边界，不得把 private helper 的存在当成行为。
 - 时间、随机、环境和外部依赖必须固定或替换为 test double。
+- `tests/` 中直接验证源码模块的 pytest 文件必须镜像该模块在 `src/` 下的相对目录，并使用 `test_<module>.py` 命名。规范映射为：
+
+  ```text
+  src/<relative-directory>/<module>.py
+  tests/<relative-directory>/test_<module>.py
+  ```
+
+  `<relative-directory>` 为空时，测试文件位于 `tests/` 根目录。例如：
+
+  ```text
+  src/api/app.py                         -> tests/api/test_app.py
+  src/data_system/steps/fact_ingest_step.py
+                                         -> tests/data_system/steps/test_fact_ingest_step.py
+  src/cli.py                             -> tests/test_cli.py
+  ```
+
+- 一个 pytest 文件必须具有唯一源码模块 owner。断言分属多个源码模块 public 行为的聚合测试必须按 owner 拆分；共享 fixture 不改变测试文件的源码归属。
+- 跨模块行为若由既有 composition root 或工作流模块拥有，测试必须镜像该 owner 模块；不得仅为归集测试而虚构源码 owner 或无对应源码的聚合测试名。
 
 ### 必须删除或改写
 
 - 只断言 private helper 被调用的测试必须改为断言行为，除非该调用本身是明确外部协议。
 - 依赖真实网络、真实当前时间、真实用户目录或随机顺序的单元测试必须改写。
 - 修复代码但没有复现原问题的测试不得视为完成。
+- 未镜像源码目录、文件名无法映射到唯一源码模块，或混合多个源码 owner 的 pytest 文件必须移动、重命名或拆分。
 
 ### 允许保留
 
@@ -2351,6 +2371,7 @@ def test_rebalance_starts_at_configured_cutoff() -> None:
 - 对缺陷修复确认测试在旧实现上确实失败。
 - 检查测试是否固定时间、seed、配置和输入顺序。
 - 检查断言是否面向 public 行为，而不是 private 实现细节。
+- 将每个新增、修改、移动或重命名的 pytest 文件映射到唯一源码模块，并确认目录与文件名符合镜像规则。
 
 ---
 
@@ -2376,13 +2397,14 @@ def test_rebalance_starts_at_configured_cutoff() -> None:
 
 1. 获取变更文件清单。
 2. 检查所有适用 Python 文件的 filepath 标识。
-3. 检查新增或修改的 private helper，尤其是单调用点转发层。
-4. 检查类型、`None`、容器所有权、稳定数据模型和返回契约。
-5. 检查异常、日志、资源、时间、环境、随机数和全局状态。
-6. 检查继承、God Object、回测/实盘重复、Repository 越界和数值热路径。
-7. 检查无用代码和过期注释。
-8. 运行仓库配置的 formatter、linter、type checker 和 tests。
-9. 在完成汇报中准确列出已运行、未运行和保留例外。
+3. 检查 pytest 文件是否镜像唯一源码模块的目录与文件名。
+4. 检查新增或修改的 private helper，尤其是单调用点转发层。
+5. 检查类型、`None`、容器所有权、稳定数据模型和返回契约。
+6. 检查异常、日志、资源、时间、环境、随机数和全局状态。
+7. 检查继承、God Object、回测/实盘重复、Repository 越界和数值热路径。
+8. 检查无用代码和过期注释。
+9. 运行仓库配置的 formatter、linter、type checker 和 tests。
+10. 在完成汇报中准确列出已运行、未运行和保留例外。
 
 不得把“代码看起来正确”当作复核。
 
@@ -2482,7 +2504,7 @@ rg -n 'def _write_table|_write_table\(' src tests
 [ ] [PY-023] 数值热路径批量化；保留循环具有真实顺序依赖。
 [ ] [PY-024] DataFrame ownership 和赋值明确。
 [ ] [PY-025] 注释解释契约、原因或不变量；无注释掉的旧代码。
-[ ] [PY-026] 行为变化和缺陷修复有可重复测试。
+[ ] [PY-026] 测试可重复，且 pytest 文件镜像唯一源码模块的目录与文件名。
 [ ] [PY-027] 已运行并准确报告 formatter、linter、type checker 和 tests。
 ```
 

@@ -38,12 +38,12 @@ if ! find_seven_zip >/dev/null; then
 fi
 
 printf -v launch_command \
-    'cd %q && exec conda run -n %q python -m src.api.app' \
+    'cd %q && exec conda run -n %q python -m src.jobs.api' \
     "$REPO_ROOT" \
     "$CONDA_ENV"
 tmux new-session -d -s "$SESSION" "$launch_command"
 
 echo "API process launched in tmux session: $SESSION"
 echo "Health endpoint: ${API_URL}/health"
-echo "Operational log: ${REPO_ROOT}/logs/api/api.current.log"
+echo "Operational logs: ${REPO_ROOT}/logs/system/"
 echo "A launched process is not proof of readiness; verify the health endpoint."

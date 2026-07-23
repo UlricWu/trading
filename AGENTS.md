@@ -60,10 +60,11 @@ Open change README 可以只对 `Affected Owners or Contracts` 中明确列出�
 
 | 仓库相对路径 | 触发条件 |
 | --- | --- |
-| `python_coding_style_for_ai.md` | 新增、修改、移动、重命名或删除仓库自有 Python；只读审查时依据适用规则审查。 |
-| `utils_catalog.md` | 修改 `src/utils`、改变 public utility，或存在合理的公共工具等价可能。 |
-| `technology_stack_decisions.md` | 触及其拥有的日志、Level-2 `.csv.7z` 或其他技术栈边界。 |
-| `release_workflow.md` | 触及 branch、PR、版本、release、部署源或部署状态。 |
+| `docs/engineering/python_coding_style_for_ai.md` | 新增、修改、移动、重命名或删除仓库自有 Python；只读审查时依据适用规则审查。 |
+| `docs/engineering/utils_catalog.md` | 修改 `src/utils`、改变 public utility，或存在合理的公共工具等价可能。 |
+| `docs/engineering/technology_stack_decisions.md` | 触及其拥有的日志、Level-2 `.csv.7z` 或其他技术栈边界。 |
+| `docs/engineering/cli_contract.md` | 修改 `src/cli.py` 的命令、参数、可用状态、输出、退出码或副作用边界。 |
+| `docs/engineering/release_workflow.md` | 触及 branch、PR、版本、release、部署源或部署状态。 |
 | `changes/README.md` | 修改或验收候选机制、目录、隔离、关闭或本文件。 |
 
 表中路径是唯一规范路径；移动文件时必须在同一修改中更新本表，路径缺失或出现两个候选 owner 时不得按文件名猜测。Python 修改必须按 Python owner 完成适用规则和 PY-027；只读审查不因无法运行完整工具链而阻塞，但必须说明实际检查范围。公共工具只有完整语义等价时才复用；不稳定候选领域逻辑不得提前进入 `src/utils`。
