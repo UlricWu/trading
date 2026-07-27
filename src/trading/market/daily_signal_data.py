@@ -7,8 +7,7 @@ from collections.abc import Sequence
 import pandas as pd
 import pyarrow.parquet as pq
 
-from src.access import meta
-from src.access.access import Slice
+from src.access import Access, meta
 from src.trading.market.daily_view import SYMBOL_COL
 from src.utils.path import PathManager
 
@@ -55,12 +54,13 @@ def read_raw_close(
     symbols: Sequence[str] | None = None,
 ) -> pd.DataFrame:
     """Read `symbol, close` raw executable prices from daily_bar."""
+    access = Access(pm=pm, processed_version="v1")
     if symbols is None:
-        daily = Slice(pm=pm, trade_date=trade_date, version="v1").daily("daily_bar")
+        daily = access.daily_bars(trade_date=trade_date)
     else:
         ordered_symbols = [str(symbol) for symbol in symbols]
-        daily = Slice(pm=pm, trade_date=trade_date, version="v1").daily(
-            "daily_bar",
+        daily = access.daily_bars(
+            trade_date=trade_date,
             symbols=ordered_symbols,
         )
 
@@ -98,21 +98,15 @@ def _read_feature_rows(
         version=feature_version,
         trade_date=trade_date,
     )
-    loaded = meta.load(
+    loaded = meta.require(
+        pm=pm,
         meta_path=pm.feature_meta(
             feature_set=feature_set,
             version=feature_version,
             trade_date=trade_date,
         ),
-        storage_root=pm.storage_root,
         expected_payload_path=path,
     )
-    if loaded is None:
-        raise FileNotFoundError(
-            "formal feature object is unavailable: "
-            f"feature_set={feature_set}, version={feature_version}, "
-            f"trade_date={trade_date}"
-        )
     features = pq.ParquetFile(loaded.payload_path).read().to_pandas()
 
     _require_columns(features, [SYMBOL_COL, *names], "feature")

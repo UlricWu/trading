@@ -72,7 +72,8 @@ labels/<label_set>/<version>/trade_date=<date>/meta.json
 
 PathManager 只返回完整路径，不读取 Parquet、不检查列、不判断数据质量，也不创建业务
 分区。正式对象由 payload 和同目录有效 `meta.json` 共同构成；正式消费者必须先通过
-Meta 取得已校验的 payload，不得因规范位置单独存在 `data.parquet` 而直接消费。
+Meta `require()` 取得已校验的 payload，不得因规范位置单独存在 `data.parquet` 而直接
+消费。
 processed 市场数据由 Access 集中执行该读取；feature 和 label 消费者直接使用同一个
 Meta API，不建立第二套对象校验。
 
@@ -118,11 +119,14 @@ payload 字节数、直接 upstream 或 symbol slice 无效时必须失败，不
 producer 必须先发布 payload，再原子写入 `meta.json`；该顺序不构成多文件事务，也不
 定义并发写协调。
 
-`src/access/meta.py` 只公开 `MetaRecord`、`load()` 和 `write()`。`MetaRecord` 表示一个
-完整的 object-side Meta 记录，不另建表示加载阶段的结果类型。`load()` 在
-`meta.json` 不存在时返回 `None`；存在时校验上述契约。返回记录包含 resolved payload
-path、已记录字节数、可选直接 upstream 和可选 symbol slices。调用方要求对象必须存在
-时，由该消费边界把 `None` 提升为 `FileNotFoundError`。Meta 不记录日志。
+`src/access/meta.py` 只公开 `MetaRecord`、`find()`、`require()` 和 `commit()`。
+`MetaRecord` 表示一个完整的 object-side Meta 记录，不另建表示加载阶段的结果类型。
+`find()` 只供 producer 探测可选输出：`meta.json` 不存在时返回 `None`，存在时校验上述
+契约。`require()` 供 consumer 取得必要对象：Meta 不存在时直接以
+`FileNotFoundError` 失败。两者返回的记录包含 resolved payload path、已记录字节数、
+可选直接 upstream 和可选 symbol slices。`commit()` 在 payload 已完成后原子发布同目录
+`meta.json`。三个操作都接收已经绑定正式 storage root 的 `PathManager`，不建立第二个
+root 身份。Meta 不记录日志。
 
 ## Experiments
 

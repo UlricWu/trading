@@ -6,7 +6,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Protocol
 
-from src.access.access import Slice
+from src.access import Access
 from src.config.backtest_config import BacktestConfig
 from src.observability.instrumentation import Instrumentation
 from src.pipeline.step import PipelineStep
@@ -76,11 +76,13 @@ def build_backtest_schedule(
     """Resolve one daily_alpha date range into pipeline timing rows."""
     open_dates: Sequence[str]
     if calendar_fn is None:
-        open_dates = Slice(
+        open_dates = Access(
             pm=path_manager,
-            trade_date=end_date,
-            version="v1",
-        ).trade_dates(start_date=start_date)
+            processed_version="v1",
+        ).trade_dates(
+            start_date=start_date,
+            end_date=end_date,
+        )
     else:
         open_dates = calendar_fn(
             pm=path_manager,

@@ -6,6 +6,10 @@ CONDA_ENV="${MINQUANT_CONDA_ENV:-dev}"
 SESSION="${MINQUANT_API_SESSION:-minquant_api}"
 API_URL="http://127.0.0.1:5050"
 
+# -------- 2. Env --------
+export PYTHONPATH=$(pwd)
+export ZERO_STORAGE_ROOT="${HOME}/data"
+
 require_command() {
     local command_name="$1"
     if ! command -v "$command_name" >/dev/null 2>&1; then

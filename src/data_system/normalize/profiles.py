@@ -108,25 +108,6 @@ def normalize_tushare(
             )
         )
 
-    if target_name == "daily_basic":
-        if "limit_status" not in out.columns:
-            raise ValueError("daily_basic missing required column 'limit_status'")
-        if pd.api.types.is_bool_dtype(out["limit_status"].dtype):
-            raise ValueError(
-                "daily_basic.limit_status must contain integers in 0..6"
-            )
-        try:
-            limit_status = out["limit_status"].astype("Int64")
-        except (TypeError, ValueError) as exc:
-            raise ValueError(
-                "daily_basic.limit_status must contain integers in 0..6"
-            ) from exc
-        if limit_status.isna().any() or not limit_status.isin(range(7)).all():
-            raise ValueError(
-                "daily_basic.limit_status must contain integers in 0..6"
-            )
-        out["limit_status"] = limit_status
-
     table = _tushare_table_from_pandas(out, target_name=target_name)
     return NormalizeOutput(
         table=table,

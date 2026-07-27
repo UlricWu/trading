@@ -67,10 +67,10 @@ class FactNormalizeStep(PipelineStep[DataContext]):
                 version=normalize_profile,
                 trade_date=ctx.trade_date,
             )
-            loaded_output = meta.load(
+            loaded_output = meta.find(
+                pm=ctx.pm,
                 meta_path=processed_meta,
                 expected_payload_path=output_file,
-                storage_root=ctx.pm.storage_root,
             )
             if (
                 output in LEVEL2_TRADE_OUTPUTS
@@ -102,16 +102,10 @@ class FactNormalizeStep(PipelineStep[DataContext]):
                 source_name=source_name,
                 trade_date=ctx.trade_date,
             )
-            loaded_input = meta.load(
+            loaded_input = meta.require(
+                pm=ctx.pm,
                 meta_path=raw_meta_path,
-                storage_root=ctx.pm.storage_root,
             )
-            if loaded_input is None:
-                raise FileNotFoundError(
-                    "required raw object unavailable; "
-                    f"broker={source_cfg.broker} source_name={source_name} "
-                    f"trade_date={ctx.trade_date} meta_path={raw_meta_path}"
-                )
 
             staging_candidate = ctx.pm.staging_payload(
                 broker=source_cfg.broker,
@@ -146,9 +140,9 @@ class FactNormalizeStep(PipelineStep[DataContext]):
                 table=target.table,
             )
 
-            meta.write(
+            meta.commit(
+                pm=ctx.pm,
                 payload_path=output_file,
-                storage_root=ctx.pm.storage_root,
                 upstream_meta_path=raw_meta_path,
                 symbol_slices=target.symbol_slices,
             )

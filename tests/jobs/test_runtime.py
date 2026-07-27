@@ -7,6 +7,7 @@ import signal
 import threading
 import time
 from pathlib import Path
+from typing import BinaryIO, cast
 
 import pytest
 
@@ -46,6 +47,7 @@ class _ProcessFactory:
         stderr: int,
         start_new_session: bool,
     ) -> _ControlledProcess:
+        cast(BinaryIO, stdout).write(b"child output\n")
         process = _ControlledProcess()
         self.processes.append(process)
         return process
@@ -99,6 +101,12 @@ def test_ten_jobs_are_accepted_with_two_running_and_fifo_dispatch(
     ]
     assert all(job.status is JobStatus.PENDING for job in jobs[2:])
     assert len(process_factory.processes) == 2
+    for job in jobs[:2]:
+        job_log = next(tmp_path.rglob(f"{job.job_id}.log"))
+        assert job_log.read_text(encoding="utf-8") == (
+            f"log_file={job.job_id}.log\n"
+            "child output\n"
+        )
 
     process_factory.processes[0].finish(0)
     _wait_for_status(runtime, jobs[2].job_id, JobStatus.RUNNING)

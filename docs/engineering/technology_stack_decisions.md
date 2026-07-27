@@ -20,14 +20,16 @@ Loguru 是项目明确选定的日志技术栈。项目自有日志实现必须�
 存在时必须失败，不得追加。API 请求日志属于 system log，不得另建 API file sink。
 System log 不得记录请求 payload、strategy、子进程 argv 或子进程 traceback。
 
-每个 job 的日志是该 job 子进程的完整 stdout/stderr 输出。每次 job 启动时，
-`JobRuntime` 必须只读取一次 `Asia/Shanghai` 时间，该时间同时确定 `job.started_at` 和
-`logs/jobs/YYYY-MM-DD/<job_id>.log`。`JobRuntime` 必须以独占创建模式打开该路径，并
-拥有文件关闭、子进程重定向和 wait/reap 的完整生命周期；该文件不是 Loguru file
-sink。子进程沿用 Loguru stderr 输出，由 `JobRuntime` 捕获到 job 文件；不得再让 LOG
-模块或 job 子进程打开同一个 job 文件。Job 业务 traceback 只进入 job 文件，system log
-只记录带 `job_id` 的生命周期摘要；runtime 自身的文件、进程或线程启动失败属于 system
-log。尚未启动即取消的 Job 不得创建 job log。历史 job log 不自动清理。
+每个 job 的日志包含文件身份首行及该 job 子进程的完整 stdout/stderr 输出。每次 job
+启动时，`JobRuntime` 必须只读取一次 `Asia/Shanghai` 时间，该时间同时确定
+`job.started_at` 和 `logs/jobs/YYYY-MM-DD/<job_id>.log`。`JobRuntime` 必须以独占创建
+模式打开该路径，并在启动子进程前以 UTF-8 写入 `log_file=<job_id>.log` 作为独占第一
+行，随后从第二行起写入该子进程的完整 stdout/stderr 输出。`JobRuntime` 拥有文件关闭、
+子进程重定向和 wait/reap 的完整生命周期；该文件不是 Loguru file sink。子进程沿用
+Loguru stderr 输出，由 `JobRuntime` 捕获到 job 文件；不得再让 LOG 模块或 job 子进程
+打开同一个 job 文件。Job 业务 traceback 只进入 job 文件，system log 只记录带
+`job_id` 的生命周期摘要；runtime 自身的文件、进程或线程启动失败属于 system log。
+尚未启动即取消的 Job 不得创建 job log。历史 job log 不自动清理或回写。
 
 CLI 不拥有 start/done 日志；offline workflow/pipeline 拥有业务运行日志。API 不提供
 job log endpoint，不得扫描日志目录，也不得把内部文件路径、异常 repr 或 traceback

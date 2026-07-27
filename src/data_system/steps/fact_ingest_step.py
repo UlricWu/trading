@@ -68,9 +68,9 @@ class FactIngestStep(PipelineStep[DataContext]):
                 source_name=plan.source_name,
             )
             if (
-                meta.load(
+                meta.find(
+                    pm=ctx.pm,
                     meta_path=meta_path,
-                    storage_root=ctx.pm.storage_root,
                 )
                 is not None
             ):
@@ -105,9 +105,9 @@ class FactIngestStep(PipelineStep[DataContext]):
                 source_name=fetched.source_name,
                 payload_file=fetched.payload_file,
             )
-            meta.write(
+            meta.commit(
+                pm=ctx.pm,
                 payload_path=output_file,
-                storage_root=ctx.pm.storage_root,
             )
             available_payload = True
 

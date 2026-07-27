@@ -48,10 +48,10 @@ class FeatureBuildStep(PipelineStep[DataContext]):
                 trade_date=ctx.trade_date,
             )
             if (
-                meta.load(
+                meta.find(
+                    pm=ctx.pm,
                     meta_path=output_meta,
                     expected_payload_path=output_path,
-                    storage_root=ctx.pm.storage_root,
                 )
                 is not None
             ):
@@ -67,9 +67,9 @@ class FeatureBuildStep(PipelineStep[DataContext]):
             )
             features = builder.build_partition(table)
             write_parquet_atomic(output_file=output_path, table=features)
-            meta.write(
+            meta.commit(
+                pm=ctx.pm,
                 payload_path=output_path,
-                storage_root=ctx.pm.storage_root,
             )
 
         return ctx

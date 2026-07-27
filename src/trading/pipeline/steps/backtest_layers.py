@@ -6,7 +6,7 @@ import math
 
 import numpy as np
 
-from src.access.access import Slice
+from src.access import Access
 from src.pipeline.phase import TRADING
 from src.pipeline.step import PipelineStep
 from src.trading.core.events import SignalEvent, TargetEvent
@@ -67,14 +67,12 @@ class SignalStep(PipelineStep[TradingContext]):
         current_raw_prices = {
             str(row.symbol): float(row.close) for row in prices.itertuples(index=False)
         }
-        signal_symbols = Slice(
+        signal_symbols = Access(
             pm=ctx.pm,
+            processed_version="v1",
+        ).universe(
             trade_date=trade_date,
-            version="v1",
-        ).stock_universe(
-            min_list_calendar_days=ctx.cfg.min_list_calendar_days,
-            exclude_st_sessions=ctx.cfg.exclude_st_sessions,
-            exclude_suspended=ctx.cfg.exclude_suspended,
+            min_listing_calendar_days=ctx.cfg.min_listing_calendar_days,
         )
         view_data = read_daily_raw_signal_view_data(
             pm=ctx.pm,

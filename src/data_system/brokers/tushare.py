@@ -49,7 +49,8 @@ class TushareBroker:
             "margin": "margin",
             "margin_detail": "margin_detail",
             "moneyflow": "moneyflow",
-            "moneyflow_hsgt": "moneyflow_hsgt",
+            # "moneyflow_hsgt": "moneyflow_hsgt",
+            # todo 2026-07-01 是香港特别行政区成立纪念日，港股和南北向互联互通均休市，因此该空结果符合当日市场安排
             "top_list": "top_list",
         }
     )

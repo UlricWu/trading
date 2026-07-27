@@ -5,8 +5,7 @@ import pandas as pd
 import pyarrow.parquet as pq
 
 from src import logs
-from src.access import meta
-from src.access.access import Slice
+from src.access import Access, meta
 from src.config.model_config import FeatureLabelConfig
 from src.pipeline.step import PipelineStep
 from src.training.context import TrainingContext
@@ -55,11 +54,13 @@ class DatasetBuildStep(PipelineStep[TrainingContext]):
                 "[DatasetBuild] train_start_date / train_end_date not set"
             )
 
-        train_days = Slice(
+        train_days = Access(
             pm=ctx.pm,
-            trade_date=ctx.train_end_date,
-            version="v1",
-        ).trade_dates(start_date=ctx.train_start_date)
+            processed_version="v1",
+        ).trade_dates(
+            start_date=ctx.train_start_date,
+            end_date=ctx.train_end_date,
+        )
         if not train_days:
             raise RuntimeError(
                 "[DatasetBuild] no tradable train dates "
@@ -107,51 +108,51 @@ class DatasetBuildStep(PipelineStep[TrainingContext]):
             version=dataset_cfg.feature_version,
             trade_date=day,
         )
-        loaded_feature = meta.load(
+        loaded_feature = meta.require(
+            pm=ctx.pm,
             meta_path=ctx.pm.feature_meta(
                 feature_set=dataset_cfg.feature_set,
                 version=dataset_cfg.feature_version,
                 trade_date=day,
             ),
-            storage_root=ctx.pm.storage_root,
             expected_payload_path=feature_path,
         )
-        if loaded_feature is None:
-            raise FileNotFoundError(
-                "formal feature object is unavailable: "
-                f"feature_set={dataset_cfg.feature_set}, "
-                f"version={dataset_cfg.feature_version}, trade_date={day}"
-            )
         feat_df = pq.ParquetFile(loaded_feature.payload_path).read().to_pandas()
         label_path = ctx.pm.label_data(
             label_set=dataset_cfg.label_set,
             version=dataset_cfg.label_version,
             trade_date=day,
         )
-        loaded_label = meta.load(
+        loaded_label = meta.require(
+            pm=ctx.pm,
             meta_path=ctx.pm.label_meta(
                 label_set=dataset_cfg.label_set,
                 version=dataset_cfg.label_version,
                 trade_date=day,
             ),
-            storage_root=ctx.pm.storage_root,
             expected_payload_path=label_path,
         )
-        if loaded_label is None:
-            raise FileNotFoundError(
-                "formal label object is unavailable: "
-                f"label_set={dataset_cfg.label_set}, "
-                f"version={dataset_cfg.label_version}, trade_date={day}"
-            )
         lab_df = pq.ParquetFile(loaded_label.payload_path).read().to_pandas()
 
         adj_df = None
         if dataset_cfg.adjustment.method != "raw":
-            adj_df = Slice(
-                pm=ctx.pm,
-                trade_date=day,
+            adjustment_path = ctx.pm.processed_data(
+                dataset_name=dataset_cfg.adjustment.dataset_name,
                 version=dataset_cfg.adjustment.version,
-            ).daily(dataset_cfg.adjustment.dataset_name)
+                trade_date=day,
+            )
+            loaded_adjustment = meta.require(
+                pm=ctx.pm,
+                meta_path=ctx.pm.processed_meta(
+                    dataset_name=dataset_cfg.adjustment.dataset_name,
+                    version=dataset_cfg.adjustment.version,
+                    trade_date=day,
+                ),
+                expected_payload_path=adjustment_path,
+            )
+            adj_df = (
+                pq.ParquetFile(loaded_adjustment.payload_path).read().to_pandas()
+            )
 
         X, y = self.engine.build_one_day(
             feature_frame=feat_df,

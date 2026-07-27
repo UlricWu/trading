@@ -74,7 +74,7 @@ data:
 # - Runtime backtest_mode, model experiment and strategy are required by backtest.
 # - static config must not provide a default model.
 # - base strategy keeps AppConfig valid; backtest replaces the complete object.
-# - Universe policy is explicit; symbols are resolved from Access per signal date.
+# - Minimum listing age is explicit; Access always excludes current ST and suspension.
 # ==================================================
 backtest:
   name: "rf_alpha_v1"
@@ -91,9 +91,7 @@ backtest:
       target_quantity: 100
 
   init_cash: 200000
-  min_list_calendar_days: 120
-  exclude_st_sessions: 20
-  exclude_suspended: true
+  min_listing_calendar_days: 120
 # ==================================================
 # Model / Training System
 # - Runtime range and experiment identity are CLI inputs.

@@ -8,12 +8,13 @@ from types import MappingProxyType
 
 import pandas as pd
 import pyarrow as pa
+import pyarrow.parquet as pq
 
-from src.access.access import Slice
+from src.access import Access, meta
 from src.data_system.arrow.ops import require_columns
 from src.data_system.builders.base import InputSpec
-from src.utils.path import PathManager
 from src.utils.datetime_utils import DateTimeUtils
+from src.utils.path import PathManager
 
 
 _HORIZONS = (1, 3, 5)
@@ -229,21 +230,31 @@ def _read_window(
     lookahead: int,
 ) -> pa.Table:
     window = _window_dates(pm=pm, trade_date=trade_date, lookahead=lookahead)
+    access = Access(pm=pm, processed_version="v1")
     daily_tables = []
     adj_tables = []
     for date in window:
         daily_tables.append(
             pa.Table.from_pandas(
-                Slice(pm=pm, trade_date=date, version="v1").daily("daily_bar"),
+                access.daily_bars(trade_date=date),
                 preserve_index=False,
             )
         )
-        adj_tables.append(
-            pa.Table.from_pandas(
-                Slice(pm=pm, trade_date=date, version="v1").daily("adj_factor"),
-                preserve_index=False,
-            )
+        adjustment_path = pm.processed_data(
+            dataset_name="adj_factor",
+            version="v1",
+            trade_date=date,
         )
+        loaded_adjustment = meta.require(
+            pm=pm,
+            meta_path=pm.processed_meta(
+                dataset_name="adj_factor",
+                version="v1",
+                trade_date=date,
+            ),
+            expected_payload_path=adjustment_path,
+        )
+        adj_tables.append(pq.ParquetFile(loaded_adjustment.payload_path).read())
 
     daily = pa.concat_tables(daily_tables)
     adj = pa.concat_tables(adj_tables)

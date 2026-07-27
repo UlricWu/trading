@@ -39,7 +39,7 @@ def test_normalize_uses_staging_only_when_size_matches_raw(
     )
     raw_path.parent.mkdir(parents=True)
     raw_path.write_bytes(b"same-size")
-    meta.write(payload_path=raw_path, storage_root=pm.storage_root)
+    meta.commit(pm=pm, payload_path=raw_path)
 
     staging_path = pm.staging_payload(
         broker="broker",

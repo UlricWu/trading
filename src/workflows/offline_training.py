@@ -4,7 +4,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Protocol
 
-from src.access.access import Slice
+from src.access import Access
 from src.config.model_config import ModelConfig
 from src.data_system.builders.registry import get_label_builder
 from src.observability.instrumentation import Instrumentation
@@ -151,11 +151,13 @@ def build_training_schedule(
 
     raw_open_dates: Sequence[str]
     if calendar_fn is None:
-        raw_open_dates = Slice(
+        raw_open_dates = Access(
             pm=path_manager,
-            trade_date=end_date,
-            version="v1",
-        ).trade_dates(start_date=start_date)
+            processed_version="v1",
+        ).trade_dates(
+            start_date=start_date,
+            end_date=end_date,
+        )
     else:
         raw_open_dates = calendar_fn(
             start_date=start_date,

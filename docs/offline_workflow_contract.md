@@ -71,11 +71,10 @@ Workflow 直接接收 `BacktestConfig`。`backtest_mode`、model reference 和 s
 生成 timing：当前日是 signal date 与 feature date，下一日是 forward date；无 timing
 必须失败。
 
-`BacktestConfig` 还必须显式提供 `min_list_calendar_days`、`exclude_st_sessions` 和
-`exclude_suspended`。Signal step 把这三个值原样传给
-`docs/engineering/access.md` 定义的 `stock_universe()`，不得在 timing、step 或 Access
-中设置另一套隐藏默认。当前 base config 明确使用 `120` 个自然日、最近 `20` 个可回放
-交易日和剔除当日停牌。
+`BacktestConfig` 还必须显式提供 `min_listing_calendar_days`。Signal step 把该值原样
+传给 `docs/engineering/access.md` 定义的 `universe()`；当日 ST 与停牌由该正式
+universe 固定剔除，timing 和 step 不得实现另一套筛选。当前 base config 明确使用
+`120` 个自然日。
 
 `BacktestConfig` 不接受静态 `symbols` universe；每个 signal date 的股票集合只能由上述
 Access 查询产生。

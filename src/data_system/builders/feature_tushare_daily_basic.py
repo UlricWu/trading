@@ -3,12 +3,14 @@
 
 from __future__ import annotations
 
+from types import MappingProxyType
+
 import numpy as np
 import pandas as pd
 import pyarrow as pa
-from types import MappingProxyType
+import pyarrow.parquet as pq
 
-from src.access.access import Slice
+from src.access import Access, meta
 from src.data_system.arrow.ops import require_columns
 from src.pipeline.phase import TRADING
 from src.utils.path import PathManager
@@ -294,11 +296,13 @@ def _read_history(
     lookback: int,
     daily_basic_lookback: int | None = None,
 ) -> pa.Table:
-    dates = Slice(
+    dates = Access(
         pm=pm,
-        trade_date=trade_date,
-        version="v1",
-    ).recent_trade_dates(sessions=lookback + 1)
+        processed_version="v1",
+    ).recent_trade_dates(
+        end_date=trade_date,
+        sessions=lookback + 1,
+    )
 
     daily_tables = []
     adj_tables = []
@@ -357,14 +361,20 @@ def _read_processed_columns(
     trade_date: str,
     columns: tuple[str, ...],
 ) -> pa.Table:
-    frame = Slice(
-        pm=pm,
-        trade_date=trade_date,
+    path = pm.processed_data(
+        dataset_name=dataset_name,
         version=version,
-    ).daily(dataset_name)
-    table = pa.Table.from_pandas(
-        frame,
-        preserve_index=False,
+        trade_date=trade_date,
     )
+    loaded = meta.require(
+        pm=pm,
+        meta_path=pm.processed_meta(
+            dataset_name=dataset_name,
+            version=version,
+            trade_date=trade_date,
+        ),
+        expected_payload_path=path,
+    )
+    table = pq.ParquetFile(loaded.payload_path).read()
     require_columns(table, columns)
     return table.select(columns)

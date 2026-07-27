@@ -249,6 +249,10 @@ class JobRuntime:
             log_path.parent.mkdir(parents=True, exist_ok=True)
             with log_path.open("xb") as log_file:
                 log_created = True
+                log_file.write(
+                    f"log_file={log_path.name}\n".encode("utf-8")
+                )
+                log_file.flush()
                 process = subprocess.Popen(
                     command,
                     stdout=log_file,

@@ -48,10 +48,10 @@ class LabelBuildStep(PipelineStep[DataContext]):
                 trade_date=ctx.trade_date,
             )
             if (
-                meta.load(
+                meta.find(
+                    pm=ctx.pm,
                     meta_path=output_meta,
                     expected_payload_path=output_path,
-                    storage_root=ctx.pm.storage_root,
                 )
                 is not None
             ):
@@ -72,9 +72,9 @@ class LabelBuildStep(PipelineStep[DataContext]):
                     f"trade_date={ctx.trade_date}"
                 )
             write_parquet_atomic(output_file=output_path, table=labels)
-            meta.write(
+            meta.commit(
+                pm=ctx.pm,
                 payload_path=output_path,
-                storage_root=ctx.pm.storage_root,
             )
 
         return ctx

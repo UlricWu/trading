@@ -87,7 +87,7 @@ class BacktestConfig(BaseModel):
 
     `backtest_mode` selects a named backtest component profile. Workflow steps
     do not read this value; it is interpreted only by the component builder.
-    Universe policy is explicit and is forwarded unchanged to Access.
+    The minimum listing age is explicit and is forwarded unchanged to Access.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -100,6 +100,4 @@ class BacktestConfig(BaseModel):
     model: BacktestModelRef | None = None
     init_cash: int
     backtest_mode: BacktestMode
-    min_list_calendar_days: int = Field(ge=0, strict=True)
-    exclude_st_sessions: int = Field(ge=0, strict=True)
-    exclude_suspended: bool = Field(strict=True)
+    min_listing_calendar_days: int = Field(ge=0, strict=True)
