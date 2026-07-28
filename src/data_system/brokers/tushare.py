@@ -56,15 +56,15 @@ class TushareBroker:
     )
 
     def __init__(self, *, app_cfg: AppConfig) -> None:
-        """Initialize the Tushare pro client from configured credentials."""
-        self._cfg = app_cfg
-        token = self._cfg.secret.tushare_token
-        if not token:
-            raise RuntimeError("tushare_token not configured")
+        """Initialize the Tushare client from validated AppConfig settings.
 
-        ts.set_token(token)
+        Example:
+            broker = TushareBroker(app_cfg=AppConfig.load())
+        """
+        ts.set_token(app_cfg.secret.tushare_token)
         self._pro: _TushareClient = ts.pro_api()
-        self._pro._DataApi__http_url = app_cfg.secret.tushare_gateway
+        if app_cfg.secret.tushare_gateway is not None:
+            self._pro._DataApi__http_url = app_cfg.secret.tushare_gateway
 
     @classmethod
     def supported_source_names(cls) -> tuple[str, ...]:

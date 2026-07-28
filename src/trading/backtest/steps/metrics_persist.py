@@ -1,9 +1,10 @@
-# filepath: src/trading/pipeline/steps/metrics_persist.py
+# filepath: src/trading/backtest/steps/metrics_persist.py
 from __future__ import annotations
 
 import json
 
-from src.pipeline.step import PipelineStep
+from src import logs
+from src.trading.backtest.context import TradingContext
 from src.trading.engines.backtest_eval import (
     summarize_execution_quality_frames,
     summarize_full_backtest_frames,
@@ -11,18 +12,24 @@ from src.trading.engines.backtest_eval import (
     summarize_signal_eval_frames,
     summarize_tradable_alpha_frames,
 )
-from src.trading.pipeline.context import TradingContext
 from src.trading.reporting.metrics import build_backtest_metrics
 from src.utils.filesystem import FileSystem
-from src import logs
 
 
-class MetricsPersistStep(PipelineStep[TradingContext]):
-    """Persist accumulated replay metrics as backtest artifacts."""
+class MetricsPersistStep:
+    """Persist accumulated replay metrics as backtest artifacts.
 
-    stage = "metrics_persist"
+    Example:
+        step = MetricsPersistStep()
+        step(context)
+    """
 
-    def run(self, ctx: TradingContext) -> TradingContext:
+    def __call__(self, ctx: TradingContext) -> None:
+        """Write the final backtest metrics artifact.
+
+        Example:
+            step(context)
+        """
         state = ctx.portfolio_state
         ledger = ctx.execution_ledger
         equity = ctx.equity_curve
@@ -70,4 +77,3 @@ class MetricsPersistStep(PipelineStep[TradingContext]):
             f"dates={len(ctx.trade_dates)} bars={ctx.bar_count} "
             f"signals={ctx.signal_count}"
         )
-        return ctx

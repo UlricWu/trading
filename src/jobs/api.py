@@ -58,6 +58,10 @@ def create_app(job_runtime: JobRuntime) -> Flask:
     - ``GET /jobs/<job_id>`` accepts the Job ID as a path value.
     - ``POST /jobs/<job_id>/cancel`` accepts the Job ID as a path value.
     - ``GET /health`` accepts no input.
+
+    Example:
+        with JobRuntime(Path("logs/jobs")) as job_runtime:
+            flask_app = create_app(job_runtime)
     """
     flask_app = Flask(__name__, static_folder=None)
 
@@ -190,7 +194,11 @@ def _error_response(
 
 
 def main() -> None:
-    """Run one single-process Flask service and own its runtime shutdown."""
+    """Run one single-process Flask service and own its runtime shutdown.
+
+    Example:
+        main()
+    """
     started_at = DateTimeUtils.now()
     system_log_file = Path("logs") / "system" / f"{started_at:%Y-%m-%d-%H-%M-%S.%f}.log"
     configure_system_logging(system_log_file)
@@ -207,6 +215,9 @@ def main() -> None:
                 use_reloader=False,
                 threaded=True,
             )
+    except Exception:
+        logs.exception(f"[SYSTEM] api.failed pid={pid}")
+        raise
     finally:
         logs.info(f"[SYSTEM] api.stop pid={pid}")
         logs.complete()

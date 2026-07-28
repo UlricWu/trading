@@ -1,14 +1,14 @@
-# filepath: src/trading/pipeline/steps/backtest_layers.py
+# filepath: src/trading/backtest/steps/backtest_layers.py
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
 import math
+from collections.abc import Mapping, Sequence
 
 import numpy as np
 
+from src import logs
 from src.access import Access
-from src.pipeline.phase import TRADING
-from src.pipeline.step import PipelineStep
+from src.trading.backtest.context import TradingContext
 from src.trading.core.events import SignalEvent, TargetEvent
 from src.trading.engines.backtest_eval import (
     execution_quality_frame,
@@ -27,20 +27,26 @@ from src.trading.market.daily_signal_data import (
 )
 from src.trading.market.daily_view import DailyView
 from src.trading.market.data_view import MarketDataView
-from src.trading.pipeline.context import TradingContext
 from src.trading.portfolio.constructors.base import PortfolioConstructor
 from src.trading.risk.base import RiskContext
 from src.trading.risk.engine import NoOpRiskManager, RiskManager
 from src.trading.signal.base import SignalProvider
 from src.trading.sim.kernel import BacktestKernel
 from src.trading.sim.session import ReplaySession
-from src import logs
 
 
-class SignalStep(PipelineStep[TradingContext]):
-    """Produce score facts for the current daily_alpha timing."""
+class SignalStep:
+    """Produce score facts for the current daily_alpha timing.
 
-    stage = "signal"
+    Example:
+        step = SignalStep(
+            signal=signal,
+            feature_set="daily",
+            feature_version="v1",
+            feature_names=("momentum",),
+        )
+        step(context)
+    """
 
     def __init__(
         self,
@@ -50,13 +56,27 @@ class SignalStep(PipelineStep[TradingContext]):
         feature_version: str,
         feature_names: Sequence[str],
     ) -> None:
-        super().__init__()
+        """Create the step for one signal and feature identity.
+
+        Example:
+            step = SignalStep(
+                signal=signal,
+                feature_set="daily",
+                feature_version="v1",
+                feature_names=("momentum",),
+            )
+        """
         self.signal = signal
         self.feature_set = feature_set
         self.feature_version = feature_version
         self.feature_names = list(feature_names)
 
-    def run(self, ctx: TradingContext) -> TradingContext:
+    def __call__(self, ctx: TradingContext) -> None:
+        """Produce signal scores for the active backtest timing.
+
+        Example:
+            step(context)
+        """
         timing = ctx.backtest_timing
         trade_date = timing.signal_date
         prices = read_raw_close(
@@ -78,7 +98,7 @@ class SignalStep(PipelineStep[TradingContext]):
             pm=ctx.pm,
             symbols=signal_symbols,
             price_date=trade_date,
-            feature_date=timing.feature_date,
+            feature_date=timing.signal_date,
             feature_set=self.feature_set,
             feature_version=self.feature_version,
             feature_names=self.feature_names,
@@ -114,7 +134,6 @@ class SignalStep(PipelineStep[TradingContext]):
         ctx.current_bar = bar
         ctx.current_bars_count = len(bars)
         ctx.current_raw_prices = current_raw_prices
-        ctx.current_signal_symbols = signal_symbols
         ctx.current_scores = scores
         ctx.signal_tape.append(
             SignalEvent(
@@ -125,16 +144,23 @@ class SignalStep(PipelineStep[TradingContext]):
         )
         ctx.bar_count += len(bars)
         ctx.signal_count += len(scores)
-        return ctx
 
 
-class SignalEvalStep(PipelineStep[TradingContext]):
-    """Evaluate signal scores against the T+1 raw-close label."""
+class SignalEvalStep:
+    """Evaluate signal scores against the T+1 raw-close label.
 
-    stage = "signal_eval"
+    Example:
+        step = SignalEvalStep()
+        step(context)
+    """
 
-    def run(self, ctx: TradingContext) -> TradingContext:
-        bar = ctx.require_current_bar()
+    def __call__(self, ctx: TradingContext) -> None:
+        """Append signal evaluation for the active timing.
+
+        Example:
+            step(context)
+        """
+        bar = ctx.current_bar
         forward_prices = read_raw_close(
             pm=ctx.pm,
             trade_date=ctx.backtest_timing.forward_date,
@@ -157,16 +183,23 @@ class SignalEvalStep(PipelineStep[TradingContext]):
             }
         )
         ctx.signal_eval_frames.append(frame)
-        return ctx
 
 
-class TradableAlphaEvalStep(PipelineStep[TradingContext]):
-    """Build T+1 tradable-alpha label facts without creating orders."""
+class TradableAlphaEvalStep:
+    """Build T+1 tradable-alpha label facts without creating orders.
 
-    stage = "tradable_alpha_eval"
+    Example:
+        step = TradableAlphaEvalStep()
+        step(context)
+    """
 
-    def run(self, ctx: TradingContext) -> TradingContext:
-        bar = ctx.require_current_bar()
+    def __call__(self, ctx: TradingContext) -> None:
+        """Append tradable-alpha evaluation for the active timing.
+
+        Example:
+            step(context)
+        """
+        bar = ctx.current_bar
         frame = tradable_alpha_frame(
             scores=ctx.current_scores,
             entry_prices=ctx.current_raw_prices,
@@ -180,13 +213,18 @@ class TradableAlphaEvalStep(PipelineStep[TradingContext]):
             }
         )
         ctx.tradable_alpha_frames.append(frame)
-        return ctx
 
 
-class PortfolioStep(PipelineStep[TradingContext]):
-    """Transform score facts into target position facts."""
+class PortfolioStep:
+    """Transform score facts into target position facts.
 
-    stage = "portfolio"
+    Example:
+        step = PortfolioStep(
+            constructor=constructor,
+            target_capacity=None,
+        )
+        step(context)
+    """
 
     def __init__(
         self,
@@ -194,12 +232,24 @@ class PortfolioStep(PipelineStep[TradingContext]):
         constructor: PortfolioConstructor,
         target_capacity: int | None,
     ) -> None:
-        super().__init__()
+        """Create the step for one portfolio constructor.
+
+        Example:
+            step = PortfolioStep(
+                constructor=constructor,
+                target_capacity=None,
+            )
+        """
         self.constructor = constructor
         self.target_capacity = target_capacity
 
-    def run(self, ctx: TradingContext) -> TradingContext:
-        bar = ctx.require_current_bar()
+    def __call__(self, ctx: TradingContext) -> None:
+        """Build executable targets for the active timing.
+
+        Example:
+            step(context)
+        """
+        bar = ctx.current_bar
         targets = self.constructor.targets(
             ts_us=bar.ts_us,
             scores=ctx.current_scores,
@@ -213,20 +263,31 @@ class PortfolioStep(PipelineStep[TradingContext]):
         )
         ctx.current_raw_targets = dict(int_targets)
         ctx.current_targets = int_targets
-        return ctx
 
 
-class RiskEvalStep(PipelineStep[TradingContext]):
-    """Apply risk to targets and keep decisions as side facts."""
+class RiskEvalStep:
+    """Apply risk to targets and keep decisions as side facts.
 
-    stage = "risk_eval"
+    Example:
+        step = RiskEvalStep(risk=risk_manager)
+        step(context)
+    """
 
     def __init__(self, *, risk: RiskManager | NoOpRiskManager) -> None:
-        super().__init__()
+        """Create the step for one risk implementation.
+
+        Example:
+            step = RiskEvalStep(risk=risk_manager)
+        """
         self.risk = risk
 
-    def run(self, ctx: TradingContext) -> TradingContext:
-        bar = ctx.require_current_bar()
+    def __call__(self, ctx: TradingContext) -> None:
+        """Apply risk and append its evaluation facts.
+
+        Example:
+            step(context)
+        """
+        bar = ctx.current_bar
         latest = ctx.equity_curve.latest
         equity = (
             float(latest.equity)
@@ -271,24 +332,35 @@ class RiskEvalStep(PipelineStep[TradingContext]):
                 "ts_us": int(bar.ts_us),
             }
         )
-        return ctx
 
 
-class ExecutionEvalStep(PipelineStep[TradingContext]):
-    """Execute target facts; execution does not consume risk decisions."""
+class ExecutionEvalStep:
+    """Execute target facts; execution does not consume risk decisions.
 
-    stage = "execution_eval"
+    Example:
+        step = ExecutionEvalStep(execution=execution)
+        step(context)
+    """
 
     def __init__(
         self,
         *,
         execution: IdealExecution | ExecutionOrchestrator,
     ) -> None:
-        super().__init__()
+        """Create the step for one execution implementation.
+
+        Example:
+            step = ExecutionEvalStep(execution=execution)
+        """
         self.execution = execution
 
-    def run(self, ctx: TradingContext) -> TradingContext:
-        bar = ctx.require_current_bar()
+    def __call__(self, ctx: TradingContext) -> None:
+        """Execute targets and append execution evaluation facts.
+
+        Example:
+            step(context)
+        """
+        bar = ctx.current_bar
         execution_view = _RawCloseExecutionView(
             base=bar.data_view,
             prices=ctx.current_raw_prices,
@@ -303,7 +375,6 @@ class ExecutionEvalStep(PipelineStep[TradingContext]):
             state=ctx.portfolio_state,
             ledger=ctx.execution_ledger,
         )
-        ctx.current_fills = fills
         new_records = ctx.execution_ledger.records[before_records:]
         ctx.execution_eval_frames.append(
             {
@@ -321,16 +392,23 @@ class ExecutionEvalStep(PipelineStep[TradingContext]):
                 ),
             }
         )
-        return ctx
 
 
-class AccountingStep(PipelineStep[TradingContext]):
-    """Update account valuation facts after execution."""
+class AccountingStep:
+    """Update account valuation facts after execution.
 
-    stage = "accounting"
+    Example:
+        step = AccountingStep()
+        step(context)
+    """
 
-    def run(self, ctx: TradingContext) -> TradingContext:
-        bar = ctx.require_current_bar()
+    def __call__(self, ctx: TradingContext) -> None:
+        """Mark positions and append the active timing equity point.
+
+        Example:
+            step(context)
+        """
+        bar = ctx.current_bar
         market_value, ctx.last_mark_prices = mark_to_market(
             positions=ctx.portfolio_state.positions,
             current_raw_prices=ctx.current_raw_prices,
@@ -342,16 +420,23 @@ class AccountingStep(PipelineStep[TradingContext]):
             market_value=float(market_value),
         )
         ctx.trade_dates.append(bar.trade_date)
-        return ctx
 
 
-class FullBacktestStep(PipelineStep[TradingContext]):
-    """Record full-backtest per-timing facts for final aggregation."""
+class FullBacktestStep:
+    """Record full-backtest per-timing facts for final aggregation.
 
-    stage = "full_backtest"
+    Example:
+        step = FullBacktestStep()
+        step(context)
+    """
 
-    def run(self, ctx: TradingContext) -> TradingContext:
-        bar = ctx.require_current_bar()
+    def __call__(self, ctx: TradingContext) -> None:
+        """Append full-backtest facts for the active timing.
+
+        Example:
+            step(context)
+        """
+        bar = ctx.current_bar
         ctx.full_backtest_frames.append(
             {
                 **full_backtest_frame(
@@ -368,7 +453,6 @@ class FullBacktestStep(PipelineStep[TradingContext]):
             f"positions={len(ctx.portfolio_state.positions)} "
             f"ledger_records={len(ctx.execution_ledger.records)}"
         )
-        return ctx
 
 
 class _RawCloseExecutionView(MarketDataView):
@@ -393,15 +477,6 @@ class _RawCloseExecutionView(MarketDataView):
 
     def bar_timestamps_us(self) -> list[int]:
         return self._base.bar_timestamps_us()
-
-    def get_phase(self, symbol: str) -> int | None:
-        self._require_active()
-        if str(symbol) in self._prices:
-            return TRADING
-        try:
-            return self._base.get_phase(symbol)
-        except KeyError:
-            return None
 
     def get_price(self, symbol: str) -> float | None:
         self._require_active()

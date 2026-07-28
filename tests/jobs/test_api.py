@@ -211,3 +211,31 @@ def test_missing_job_response_does_not_echo_requested_identifier() -> None:
         }
     }
     assert identifier not in response.get_data(as_text=True)
+
+
+def test_job_runtime_failure_does_not_change_health_response() -> None:
+    class ClosedRuntime(_StubRuntime):
+        def submit(
+            self,
+            submissions: Sequence[JobSubmission],
+        ) -> list[JobSnapshot]:
+            raise RuntimeError("job runtime is closed")
+
+    app = create_app(cast(JobRuntime, ClosedRuntime()))
+    client = app.test_client()
+
+    failed_submission = client.post(
+        "/jobs",
+        json={"kind": "data-standard", "date": "2026-07-20"},
+    )
+    health = client.get("/health")
+
+    assert failed_submission.status_code == 500
+    assert failed_submission.get_json() == {
+        "error": {
+            "code": "internal_error",
+            "message": "internal server error",
+        }
+    }
+    assert health.status_code == 200
+    assert health.get_json() == {"ok": True}

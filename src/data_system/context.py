@@ -8,7 +8,14 @@ from src.utils.path import PathManager
 
 @dataclass(frozen=True, slots=True)
 class DataContext:
-    """Immutable execution identity for one trade-date data pipeline."""
+    """Carry the immutable identity of one trade-date data workflow.
+
+    Example:
+        context = DataContext(
+            trade_date="2026-07-20",
+            pm=path_manager,
+        )
+    """
 
     trade_date: str
     pm: PathManager

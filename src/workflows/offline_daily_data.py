@@ -3,7 +3,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
+from enum import StrEnum
 from typing import Protocol
 
 from src import logs
@@ -11,13 +12,12 @@ from src.config.app_config import AppConfig
 from src.config.data_config import DataConfig, SourceConfig
 from src.data_system.brokers.bootstrap import build_broker_registry
 from src.data_system.context import DataContext
-from src.data_system.pipeline import DataPipeline, DataRunStatus
 from src.data_system.steps.fact_ingest_step import FactIngestStep
 from src.data_system.steps.fact_normalize_step import FactNormalizeStep
 from src.data_system.steps.feature_build_step import FeatureBuildStep
 from src.data_system.steps.label_build_step import LabelBuildStep
 from src.observability.instrumentation import Instrumentation
-from src.pipeline.step import PipelineStep
+from src.pipeline import run_steps
 from src.utils.path import PathManager
 
 
@@ -32,11 +32,30 @@ OFFLINE_STANDARD_LABEL_SETS = frozenset(
 )
 
 
+class DataRunStatus(StrEnum):
+    """Describe the public outcome of one offline data workflow.
+
+    Example:
+        status = DataRunStatus.SKIPPED
+    """
+
+    SUCCESS = "success"
+    SKIPPED = "skipped"
+
+
 class SourceNameRegistry(Protocol):
-    """Expose broker-native source names used during config expansion."""
+    """Expose broker-native source names used during config expansion.
+
+    Example:
+        names = broker_registry.supported_source_names("level2")
+    """
 
     def supported_source_names(self, name: str) -> tuple[str, ...]:
-        """Return the source names supported by one broker."""
+        """Return the source names supported by one broker.
+
+        Example:
+            names = broker_registry.supported_source_names("level2")
+        """
         ...
 
 
@@ -46,7 +65,15 @@ def select_offline_data_config(
     group: str,
     broker_registry: SourceNameRegistry,
 ) -> AppConfig:
-    """Return the selected config for one fixed offline data workflow."""
+    """Return the selected config for one fixed offline data workflow.
+
+    Example:
+        selected = select_offline_data_config(
+            app_config=app_config,
+            group=OFFLINE_STANDARD,
+            broker_registry=broker_registry,
+        )
+    """
     if group not in {OFFLINE_STANDARD, OFFLINE_LEVEL2}:
         raise ValueError(f"unsupported offline data group: {group}")
 
@@ -115,37 +142,53 @@ def run_offline_standard_data(
     path_manager: PathManager,
     trade_date: str,
 ) -> DataRunStatus:
-    """Run the fixed standard ingest, normalize, feature, and label flow."""
+    """Run the fixed standard ingest, normalize, feature, and label flow.
+
+    Example:
+        status = run_offline_standard_data(
+            app_config=app_config,
+            path_manager=path_manager,
+            trade_date="2026-07-20",
+        )
+    """
     broker_registry = build_broker_registry()
     selected_config = select_offline_data_config(
         app_config=app_config,
         group=OFFLINE_STANDARD,
         broker_registry=broker_registry,
     )
-    instrumentation = Instrumentation()
-    steps: list[PipelineStep[DataContext]] = [
-        FactIngestStep(
-            app_cfg=selected_config,
-            inst=instrumentation,
-            broker_registry=broker_registry,
-        ),
-        FactNormalizeStep(app_cfg=selected_config, inst=instrumentation),
+    context = DataContext(
+        trade_date=trade_date,
+        pm=path_manager,
+    )
+    ingest_step = FactIngestStep(
+        app_cfg=selected_config,
+        broker_registry=broker_registry,
+    )
+    remaining_steps: tuple[Callable[[DataContext], None], ...] = (
+        FactNormalizeStep(app_cfg=selected_config),
         FeatureBuildStep(
             app_cfg=selected_config,
-            inst=instrumentation,
             allowed_sets=OFFLINE_STANDARD_FEATURE_SETS,
         ),
         LabelBuildStep(
             app_cfg=selected_config,
-            inst=instrumentation,
             allowed_sets=OFFLINE_STANDARD_LABEL_SETS,
         ),
-    ]
-    return DataPipeline(
-        steps=steps,
-        pm=path_manager,
-        inst=instrumentation,
-    ).run(trade_date)
+    )
+
+    logs.info(f"[OfflineData] started trade_date={trade_date}")
+    with Instrumentation(trade_date) as instrumentation:
+        if not instrumentation.call(ingest_step, context):
+            logs.warning(
+                f"[OfflineData] skipped trade_date={trade_date} "
+                f"reason=no_source_payload"
+            )
+            return DataRunStatus.SKIPPED
+        run_steps(context, remaining_steps, instrumentation)
+
+    logs.info(f"[OfflineData] finished trade_date={trade_date}")
+    return DataRunStatus.SUCCESS
 
 
 def run_offline_level2_data(
@@ -154,24 +197,42 @@ def run_offline_level2_data(
     path_manager: PathManager,
     trade_date: str,
 ) -> DataRunStatus:
-    """Run the fixed Level-2 ingest and normalize flow."""
+    """Run the fixed Level-2 ingest and normalize flow.
+
+    Example:
+        status = run_offline_level2_data(
+            app_config=app_config,
+            path_manager=path_manager,
+            trade_date="2026-07-20",
+        )
+    """
     broker_registry = build_broker_registry()
     selected_config = select_offline_data_config(
         app_config=app_config,
         group=OFFLINE_LEVEL2,
         broker_registry=broker_registry,
     )
-    instrumentation = Instrumentation()
-    steps: list[PipelineStep[DataContext]] = [
-        FactIngestStep(
-            app_cfg=selected_config,
-            inst=instrumentation,
-            broker_registry=broker_registry,
-        ),
-        FactNormalizeStep(app_cfg=selected_config, inst=instrumentation),
-    ]
-    return DataPipeline(
-        steps=steps,
+    context = DataContext(
+        trade_date=trade_date,
         pm=path_manager,
-        inst=instrumentation,
-    ).run(trade_date)
+    )
+    ingest_step = FactIngestStep(
+        app_cfg=selected_config,
+        broker_registry=broker_registry,
+    )
+    remaining_steps: tuple[Callable[[DataContext], None], ...] = (
+        FactNormalizeStep(app_cfg=selected_config),
+    )
+
+    logs.info(f"[OfflineData] started trade_date={trade_date}")
+    with Instrumentation(trade_date) as instrumentation:
+        if not instrumentation.call(ingest_step, context):
+            logs.warning(
+                f"[OfflineData] skipped trade_date={trade_date} "
+                f"reason=no_source_payload"
+            )
+            return DataRunStatus.SKIPPED
+        run_steps(context, remaining_steps, instrumentation)
+
+    logs.info(f"[OfflineData] finished trade_date={trade_date}")
+    return DataRunStatus.SUCCESS

@@ -12,7 +12,6 @@ import pyarrow.parquet as pq
 
 from src.access import Access, meta
 from src.data_system.arrow.ops import require_columns
-from src.pipeline.phase import TRADING
 from src.utils.path import PathManager
 from src.utils.price_utils import apply_asof_price_adjustment
 
@@ -47,7 +46,6 @@ _DAILY_BASIC_INPUT_COLUMNS = ("symbol", "trade_date", "turnover_rate")
 
 _FEATURE_LOOKBACKS = MappingProxyType(
     {
-        "phase": 0,
         "f_d_return": 1,
         "f_d_gap": 1,
         "f_d_intraday_return": 0,
@@ -70,7 +68,12 @@ _OUTPUT_COLUMNS = tuple(_FEATURE_LOOKBACKS)
 
 
 class TushareDailyBasicV1Builder:
-    """Build the v1 daily Tushare feature partition."""
+    """Build the v1 daily Tushare feature partition.
+
+    Example:
+        builder = TushareDailyBasicV1Builder()
+        features = builder.build_partition(table)
+    """
 
     key_columns = (
         "symbol",
@@ -91,6 +94,11 @@ class TushareDailyBasicV1Builder:
         )
 
     def build_partition(self, table: pa.Table) -> pa.Table:
+        """Return the daily feature partition without an intraday phase.
+
+        Example:
+            features = TushareDailyBasicV1Builder().build_partition(table)
+        """
         return _build_partition(
             table=table,
             required_columns=_REQUIRED_COLUMNS,
@@ -131,7 +139,6 @@ def _build_partition(
     current_qfq_low = _numeric(current["qfq_low"])
     mapped_previous_close = symbols.map(previous_close)
 
-    features["phase"] = int(TRADING)
     features["f_d_return"] = _positive_ratio_minus_one(
         current_qfq_close,
         mapped_previous_close,

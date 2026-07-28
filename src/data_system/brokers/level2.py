@@ -51,14 +51,17 @@ class Level2Broker:
     name = "level2_ftp"
 
     def __init__(self, *, app_cfg: AppConfig) -> None:
-        """Load FTP connection settings and backend selection from AppConfig."""
-        self._cfg = app_cfg
-        broker_cfg = self._cfg.data.brokers[self.name]
+        """Load validated FTP settings and backend selection from AppConfig.
+
+        Example:
+            broker = Level2Broker(app_cfg=AppConfig.load())
+        """
+        broker_cfg = app_cfg.data.brokers[self.name]
         self._endpoint = FtpEndpoint(
-            host=self._cfg.secret.ftp_host,
-            port=self._cfg.secret.ftp_port or 21,
-            user=self._cfg.secret.ftp_user,
-            password=self._cfg.secret.ftp_password,
+            host=app_cfg.secret.ftp_host,
+            port=app_cfg.secret.ftp_port,
+            user=app_cfg.secret.ftp_user,
+            password=app_cfg.secret.ftp_password,
             remote_root=cast(str, broker_cfg.remote_root),
         )
         self._backend = cast(DownloadBackend, broker_cfg.ftp_backend)

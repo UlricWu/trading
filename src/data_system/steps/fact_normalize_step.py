@@ -8,15 +8,13 @@ from src.access import meta
 from src.config.app_config import AppConfig
 from src.data_system.context import DataContext
 from src.data_system.normalize.profiles import NORMALIZE_PROFILES
-from src.observability.instrumentation import Instrumentation
-from src.pipeline.step import PipelineStep
 from src.utils.parquet_writer import write_parquet_atomic
 
 
 LEVEL2_TRADE_OUTPUTS = frozenset({"sh_trade", "sz_trade"})
 
 
-class FactNormalizeStep(PipelineStep[DataContext]):
+class FactNormalizeStep:
     """
     Normalize persisted raw sources into processed datasets.
 
@@ -24,20 +22,30 @@ class FactNormalizeStep(PipelineStep[DataContext]):
     normalize profile, writes processed parquet outputs, and records upstream
     lineage. Its workflow position is owned by
     ``docs/offline_workflow_contract.md``.
+
+    Example:
+        step = FactNormalizeStep(app_cfg=selected_config)
+        step(context)
     """
 
     def __init__(
         self,
         *,
         app_cfg: AppConfig,
-        inst: Instrumentation | None,
     ) -> None:
-        """Store selected data config and instrumentation capability."""
-        super().__init__(inst=inst)
+        """Store the selected data configuration.
+
+        Example:
+            step = FactNormalizeStep(app_cfg=selected_config)
+        """
         self._cfg = app_cfg
 
-    def run(self, ctx: DataContext) -> DataContext:
-        """Normalize all selected sources for one `DataContext.trade_date`."""
+    def __call__(self, ctx: DataContext) -> None:
+        """Normalize all selected sources for one trade date.
+
+        Example:
+            step(context)
+        """
         logs.info(f"[FactNormalize] start DATE={ctx.trade_date}")
         plans = [
             [source_name, source_cfg, output]
@@ -148,4 +156,3 @@ class FactNormalizeStep(PipelineStep[DataContext]):
             )
 
         logs.info(f"[FactNormalize] finished trade_date={ctx.trade_date}")
-        return ctx

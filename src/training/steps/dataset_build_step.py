@@ -7,53 +7,58 @@ import pyarrow.parquet as pq
 from src import logs
 from src.access import Access, meta
 from src.config.model_config import FeatureLabelConfig
-from src.pipeline.step import PipelineStep
 from src.training.context import TrainingContext
 from src.training.engines.dataset_build_engine import DatasetBuildEngine
 
 
-class DatasetBuildStep(PipelineStep[TrainingContext]):
+class DatasetBuildStep:
     """
     Load selected formal training inputs for the current train/eval dates.
 
     The selected `feature_set` / `label_set` identities come from
     `ModelConfig.dataset`. This step keeps IO and context mutation at the
-    pipeline edge and delegates in-memory sample construction to
+    workflow edge and delegates in-memory sample construction to
     DatasetBuildEngine.
+
+    Example:
+        step = DatasetBuildStep(model_config.dataset)
+        step(context)
     """
 
     def __init__(self, dataset_cfg: FeatureLabelConfig) -> None:
-        super().__init__()
+        """Create the step for one configured feature/label selection.
+
+        Example:
+            step = DatasetBuildStep(model_config.dataset)
+        """
         self.dataset_cfg = dataset_cfg
         self.engine = DatasetBuildEngine()
 
-    # ==============================================================
-    # Entry
-    # ==============================================================
-    def run(self, ctx: TrainingContext) -> TrainingContext:
+    def __call__(self, ctx: TrainingContext) -> None:
+        """Load the current training window and evaluation date.
+
+        Example:
+            step(context)
+        """
         ctx.train_X, ctx.train_y = self._build_train_window(ctx=ctx)
-        if ctx.eval_date:
-            ctx.eval_X, ctx.eval_y = self._build_one_day(ctx=ctx, day=ctx.eval_date)
+        ctx.eval_X, ctx.eval_y = self._build_one_day(
+            ctx=ctx,
+            day=ctx.eval_date,
+        )
 
         logs.info(
             f"[DatasetBuild] train_start_date={ctx.train_start_date} "
             f"train_end_date={ctx.train_end_date} "
             f"train_shape={ctx.train_X.shape} "
             f"eval_date={ctx.eval_date} "
-            f"eval_shape={0 if ctx.eval_date == '' else ctx.eval_X.shape}"
+            f"eval_shape={ctx.eval_X.shape}"
         )
-        return ctx
 
     def _build_train_window(
         self,
         *,
         ctx: TrainingContext,
     ) -> tuple[pd.DataFrame, pd.Series]:
-        if not ctx.train_start_date or not ctx.train_end_date:
-            raise RuntimeError(
-                "[DatasetBuild] train_start_date / train_end_date not set"
-            )
-
         train_days = Access(
             pm=ctx.pm,
             processed_version="v1",

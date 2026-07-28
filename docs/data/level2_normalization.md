@@ -3,6 +3,7 @@
 - **状态**：强制执行
 - **适用范围**：Level-2 trade source 路由、`TradeTime` 解析、`ts_utc` 时间字段和
   processed symbol slice index。
+- **Phase owner**：[`docs/data/market_phase.md`](market_phase.md)
 
 ## Source 路由
 

@@ -9,11 +9,9 @@ from src.config.app_config import AppConfig
 from src.data_system.brokers.base import BrokerAdapter, DownloadPlan
 from src.data_system.brokers.registry import BrokerRegistry
 from src.data_system.context import DataContext
-from src.observability.instrumentation import Instrumentation
-from src.pipeline.step import PipelineStep
 
 
-class FactIngestStep(PipelineStep[DataContext]):
+class FactIngestStep:
     """
     Ingest configured sources as source-native raw objects.
 
@@ -21,23 +19,38 @@ class FactIngestStep(PipelineStep[DataContext]):
     vendor payload, and commits object-side ``meta.json`` only when a payload
     exists. Its workflow position is owned by
     ``docs/offline_workflow_contract.md``.
+
+    Example:
+        step = FactIngestStep(
+            app_cfg=selected_config,
+            broker_registry=broker_registry,
+        )
+        all_sources_available = step(context)
     """
 
     def __init__(
         self,
         *,
         app_cfg: AppConfig,
-        inst: Instrumentation | None,
         broker_registry: BrokerRegistry,
     ) -> None:
-        """Store pipeline configuration and instrumentation capability."""
-        super().__init__(inst=inst)
+        """Store the selected source configuration and broker registry.
+
+        Example:
+            step = FactIngestStep(
+                app_cfg=selected_config,
+                broker_registry=broker_registry,
+            )
+        """
         self._cfg = app_cfg
         self._broker_registry = broker_registry
 
-    # ==================================================
-    def run(self, ctx: DataContext) -> DataContext | None:
-        """Run raw ingest for the configured `data.sources` selection."""
+    def __call__(self, ctx: DataContext) -> bool:
+        """Return whether every configured source payload is available.
+
+        Example:
+            all_sources_available = step(context)
+        """
         logs.info(f"[FactIngest] start DATE={ctx.trade_date}")
         sources = self._cfg.data.sources
         if not sources:
@@ -113,7 +126,7 @@ class FactIngestStep(PipelineStep[DataContext]):
 
         logs.info(f"[FactIngest] finished trade_date={ctx.trade_date}")
         if not available_payload:
-            return None
+            return False
         if missing_payloads:
             raise RuntimeError("source payloads are only partially available")
-        return ctx
+        return True

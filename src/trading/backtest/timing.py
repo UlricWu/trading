@@ -11,14 +11,20 @@ __all__ = ("BacktestTiming", "resolve_backtest_timing")
 
 @dataclass(frozen=True, slots=True)
 class BacktestTiming:
-    """Resolved pipeline dates for one runnable daily_alpha timing."""
+    """Identify one signal date and its forward evaluation date.
+
+    Example:
+        timing = BacktestTiming(
+            signal_date="2026-07-20",
+            forward_date="2026-07-21",
+        )
+    """
 
     signal_date: str
-    feature_date: str
     forward_date: str
 
     def __post_init__(self) -> None:
-        for field_name in ("signal_date", "feature_date", "forward_date"):
+        for field_name in ("signal_date", "forward_date"):
             DateTimeUtils.require_system_date(
                 getattr(self, field_name),
                 field_name=field_name,
@@ -29,7 +35,13 @@ def resolve_backtest_timing(
     *,
     open_dates: Sequence[str],
 ) -> list[BacktestTiming]:
-    """Resolve ordered open dates into daily-alpha timing rows."""
+    """Resolve ordered open dates into daily-alpha timing rows.
+
+    Example:
+        timings = resolve_backtest_timing(
+            open_dates=("2026-07-20", "2026-07-21"),
+        )
+    """
     dates = [
         DateTimeUtils.require_system_date(open_date, field_name="open_date")
         for open_date in open_dates
@@ -39,7 +51,6 @@ def resolve_backtest_timing(
     return [
         BacktestTiming(
             signal_date=dates[i],
-            feature_date=dates[i],
             forward_date=dates[i + 1],
         )
         for i in range(max(0, len(dates) - 1))

@@ -7,7 +7,6 @@ from typing import Sequence
 import numpy as np
 import pandas as pd
 
-from src.pipeline.phase import TRADING
 from src.trading.market.data_view import MarketDataView
 from src.utils.datetime_utils import DateTimeUtils
 
@@ -17,7 +16,16 @@ PRICE_COL = "adjusted_close"
 
 
 class DailyView(MarketDataView):
-    """Minimal single-day daily-bar view."""
+    """Expose one observable daily bar without inventing an intraday phase.
+
+    Example:
+        view = DailyView(
+            pd.DataFrame({"symbol": ["600000"], "adjusted_close": [10.0]}),
+            trade_date="2026-07-27",
+        )
+        view.on_time(view.bar_timestamps_us()[0])
+        price = view.get_price("600000")
+    """
 
     def __init__(
         self,
@@ -69,11 +77,6 @@ class DailyView(MarketDataView):
 
     def bar_timestamps_us(self) -> list[int]:
         return [self._ts_us]
-
-    def get_phase(self, symbol: str) -> int:
-        self._require_active()
-        self._index_for_symbol(symbol)
-        return TRADING
 
     def get_feature_matrix(self, symbols: Sequence[str]) -> np.ndarray:
         self._require_active()

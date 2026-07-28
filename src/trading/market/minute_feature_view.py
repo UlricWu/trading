@@ -8,7 +8,6 @@ import numpy as np
 import pyarrow as pa
 
 from src.trading.market.data_view import MarketDataView
-from src.pipeline.phase import TRADING
 from src.utils.datetime_utils import DateTimeUtils
 
 AdjustmentType = Literal["raw", "adjusted"]
@@ -19,19 +18,27 @@ class TableResolver(Protocol):
 
 
 class MinuteFeatureDataView(MarketDataView):
-    """
-    MinuteFeatureDataView (TIME-MAJOR / UNION AXIS VERSION)
+    """MinuteFeatureDataView (TIME-MAJOR / UNION AXIS VERSION).
 
     Architecture:
         - Global union time axis
         - feature_cube: (n_bars, n_symbols, n_features)
         - price_mat:   (n_bars, n_symbols)
-        - phase_mat:   (n_bars, n_symbols)
 
     Runtime:
         - on_time() updates single bar_idx
         - get_feature_matrix() is O(1) slice
         - No per-symbol pointer
+
+    Example:
+        view = MinuteFeatureDataView(
+            resolver=resolver,
+            adj_resolver=None,
+            symbols=("600000",),
+            feature_names=("f_m_return",),
+        )
+        view.on_time(view.bar_timestamps_us()[0])
+        features = view.get_feature_matrix(("600000",))
     """
 
     # ============================================================
@@ -117,11 +124,6 @@ class MinuteFeatureDataView(MarketDataView):
             dtype=np.float64,
         )
 
-        self._phase_mat = np.zeros(
-            (n_bars, n_syms),
-            dtype=np.int32,
-        )
-
         td_vec = np.full(n_bars, "", dtype=object)
 
         # ----------------------------------------------------------
@@ -151,9 +153,6 @@ class MinuteFeatureDataView(MarketDataView):
 
             # price
             self._price_mat[idx, j] = tbl[self._price_col].to_numpy()
-
-            # phase
-            self._phase_mat[idx, j] = tbl["phase"].to_numpy()
 
             # features
             cols = [
@@ -193,7 +192,6 @@ class MinuteFeatureDataView(MarketDataView):
         self._trade_date_vec = td_vec
 
         self._current_ts: int | None = None
-        self._last_trading_ts_us: int | None = None
 
         self._min_ts_us = int(self._bar_ts[0])
         self._max_ts_us = int(self._bar_ts[-1])
@@ -203,6 +201,11 @@ class MinuteFeatureDataView(MarketDataView):
     # ============================================================
 
     def on_time(self, ts_us: int) -> None:
+        """Advance the view to the latest observable minute bar.
+
+        Example:
+            view.on_time(view.bar_timestamps_us()[0])
+        """
         ts_us = int(ts_us)
         if ts_us < self._min_ts_us:
             raise RuntimeError(
@@ -215,9 +218,6 @@ class MinuteFeatureDataView(MarketDataView):
 
         self._bar_idx = i
         self._current_ts = ts_us
-        phase = self.get_phase(self._symbols[0])
-        if phase == TRADING:
-            self._last_trading_ts_us = ts_us
 
     # ============================================================
     # MATRIX ACCESS (FAST PATH)
@@ -261,11 +261,6 @@ class MinuteFeatureDataView(MarketDataView):
 
         return float(px) if adj is None else float(px) * float(adj)
 
-    def get_phase(self, symbol: str) -> int | None:
-        self._require_active()
-        j = self._sym2idx[symbol]
-        return int(self._phase_mat[self._bar_idx, j])
-
     # ============================================================
     # META
     # ============================================================
@@ -275,11 +270,6 @@ class MinuteFeatureDataView(MarketDataView):
 
     def time_bounds_us(self) -> tuple[int, int]:
         return self._min_ts_us, self._max_ts_us
-
-    def last_trading_ts(self) -> int:
-        if self._last_trading_ts_us is None:
-            raise RuntimeError("no trading observed")
-        return self._last_trading_ts_us
 
     @property
     def trade_date(self) -> str:

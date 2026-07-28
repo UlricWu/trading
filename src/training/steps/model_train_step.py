@@ -3,19 +3,22 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from src.pipeline.step import PipelineStep
 from src.training.context import TrainingContext
 from src.training.engines.model.sgd_regressor_train_engine import (
     SklearnSGDRegressorTrainEngine,
 )
 
 
-class ModelTrainStep(PipelineStep[TrainingContext]):
+class ModelTrainStep:
     """
     Train a fresh model from the current in-memory train partition.
 
     The step consumes `ctx.train_X` and `ctx.train_y`; it overwrites any prior
     `ctx.model_state` and never reads feature/label files directly.
+
+    Example:
+        step = ModelTrainStep(group="sgd_regression")
+        step(context)
     """
 
     def __init__(
@@ -24,8 +27,11 @@ class ModelTrainStep(PipelineStep[TrainingContext]):
         group: str,
         model_params: Mapping[str, object] | None = None,
     ) -> None:
-        """Create the step with the workflow-injected model parameter fragment."""
-        super().__init__()
+        """Create the step with workflow-injected model parameters.
+
+        Example:
+            step = ModelTrainStep(group="sgd_regression")
+        """
         self.group = group
         self.model_params = dict(model_params or {})
 
@@ -34,11 +40,13 @@ class ModelTrainStep(PipelineStep[TrainingContext]):
         else:
             raise ValueError(f"unsupported model train group: {group}")
 
-    def run(self, ctx: TrainingContext) -> TrainingContext:
-        """Train the in-memory model state for the current schedule entry."""
+    def __call__(self, ctx: TrainingContext) -> None:
+        """Train the in-memory model for the current schedule entry.
 
-        if ctx.train_X is None or ctx.train_y is None:
-            raise RuntimeError("[ModelTrainStep] train_X / train_y not set")
+        Example:
+            step(context)
+        """
+
         if ctx.train_X.empty:
             raise RuntimeError("[ModelTrainStep] train_X is empty")
         if len(ctx.train_X) != len(ctx.train_y):
@@ -51,4 +59,3 @@ class ModelTrainStep(PipelineStep[TrainingContext]):
             y=ctx.train_y,
             asof_day=ctx.train_end_date,
         )
-        return ctx

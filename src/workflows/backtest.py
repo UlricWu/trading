@@ -3,20 +3,15 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Protocol
 
 from src.access import Access
 from src.config.backtest_config import BacktestConfig
 from src.observability.instrumentation import Instrumentation
-from src.pipeline.step import PipelineStep
-from src.trading.backtest.timing import BacktestTiming, resolve_backtest_timing
-from src.trading.core.equity import EquityCurve
-from src.trading.core.ledger import ExecutionLedger
-from src.trading.core.tape import SignalTape, TargetTape
-from src.trading.pipeline.context import TradingContext
-from src.trading.pipeline.pipeline import TradingPipeline
-from src.trading.pipeline.steps.backtest_layers import (
+from src.pipeline import run_steps
+from src.trading.backtest.context import TradingContext
+from src.trading.backtest.steps.backtest_layers import (
     AccountingStep,
     ExecutionEvalStep,
     FullBacktestStep,
@@ -26,15 +21,27 @@ from src.trading.pipeline.steps.backtest_layers import (
     SignalStep,
     TradableAlphaEvalStep,
 )
-from src.trading.pipeline.steps.metrics_persist import MetricsPersistStep
-from src.trading.pipeline.steps.report import ReportStep
+from src.trading.backtest.steps.metrics_persist import MetricsPersistStep
+from src.trading.backtest.steps.report import ReportStep
+from src.trading.backtest.timing import BacktestTiming, resolve_backtest_timing
+from src.trading.core.equity import EquityCurve
+from src.trading.core.ledger import ExecutionLedger
+from src.trading.core.tape import SignalTape, TargetTape
 from src.trading.portfolio.state import PortfolioState
 from src.trading.sim import components as sim_components
 from src.utils.path import PathManager
 
 
 class TradeCalendar(Protocol):
-    """Provide available backtest dates for one requested range."""
+    """Provide available backtest dates for one requested range.
+
+    Example:
+        dates = calendar(
+            pm=path_manager,
+            start_date="2026-07-01",
+            end_date="2026-07-20",
+        )
+    """
 
     def __call__(
         self,
@@ -42,17 +49,41 @@ class TradeCalendar(Protocol):
         pm: PathManager,
         start_date: str,
         end_date: str,
-    ) -> Sequence[str]: ...
+    ) -> Sequence[str]:
+        """Return ordered open dates in the requested range.
+
+        Example:
+            dates = calendar(
+                pm=path_manager,
+                start_date="2026-07-01",
+                end_date="2026-07-20",
+            )
+        """
+        ...
 
 
 class TimingResolver(Protocol):
-    """Resolve ordered open dates into backtest timing rows."""
+    """Resolve ordered open dates into backtest timing rows.
+
+    Example:
+        timings = timing_resolver(
+            open_dates=("2026-07-20", "2026-07-21"),
+        )
+    """
 
     def __call__(
         self,
         *,
         open_dates: Sequence[str],
-    ) -> list[BacktestTiming]: ...
+    ) -> list[BacktestTiming]:
+        """Return timing rows for ordered open dates.
+
+        Example:
+            timings = timing_resolver(
+                open_dates=("2026-07-20", "2026-07-21"),
+            )
+        """
+        ...
 
 
 def build_backtest_experiment_name(
@@ -61,7 +92,15 @@ def build_backtest_experiment_name(
     end_date: str,
     experiment_id: str,
 ) -> str:
-    """Return the `/jobs backtest` artifact namespace for one accepted range."""
+    """Return the `/jobs backtest` artifact namespace for one accepted range.
+
+    Example:
+        name = build_backtest_experiment_name(
+            start_date="2026-07-01",
+            end_date="2026-07-20",
+            experiment_id="run-1",
+        )
+    """
     return f"backtest_{start_date}_{end_date}_{experiment_id}"
 
 
@@ -73,7 +112,15 @@ def build_backtest_schedule(
     calendar_fn: TradeCalendar | None = None,
     timing_fn: TimingResolver = resolve_backtest_timing,
 ) -> list[BacktestTiming]:
-    """Resolve one daily_alpha date range into pipeline timing rows."""
+    """Resolve one daily-alpha date range into runnable timing rows.
+
+    Example:
+        timings = build_backtest_schedule(
+            path_manager=path_manager,
+            start_date="2026-07-01",
+            end_date="2026-07-20",
+        )
+    """
     open_dates: Sequence[str]
     if calendar_fn is None:
         open_dates = Access(
@@ -89,7 +136,10 @@ def build_backtest_schedule(
             start_date=start_date,
             end_date=end_date,
         )
-    return timing_fn(open_dates=open_dates)
+    timings = timing_fn(open_dates=open_dates)
+    if not timings:
+        raise RuntimeError("[BacktestWorkflow] backtest_timings is required")
+    return timings
 
 
 def run_daily_alpha_backtest(
@@ -99,15 +149,22 @@ def run_daily_alpha_backtest(
     experiment_id: str,
     start_date: str,
     end_date: str,
-) -> TradingContext:
-    """
-    Run one `/jobs backtest` daily_alpha range through the configured mode.
+) -> None:
+    """Run one `/jobs backtest` daily-alpha range.
 
     The CLI has already written its overrides into ``backtest_config``. The
     workflow therefore reads one authoritative config and derives the
     experiment namespace from the accepted job identity.
+
+    Example:
+        run_daily_alpha_backtest(
+            backtest_config=backtest_config,
+            path_manager=path_manager,
+            experiment_id="run-1",
+            start_date="2026-07-01",
+            end_date="2026-07-20",
+        )
     """
-    instrumentation = Instrumentation()
     experiment_name = build_backtest_experiment_name(
         start_date=start_date,
         end_date=end_date,
@@ -143,7 +200,7 @@ def run_daily_alpha_backtest(
         target_tape=TargetTape(),
     )
 
-    per_timing_steps: list[PipelineStep[TradingContext]] = [
+    per_timing_steps: tuple[Callable[[TradingContext], None], ...] = (
         SignalStep(
             signal=backtest_components.signal,
             feature_set=backtest_components.feature_set,
@@ -160,15 +217,14 @@ def run_daily_alpha_backtest(
         ExecutionEvalStep(execution=backtest_components.execution),
         AccountingStep(),
         FullBacktestStep(),
-    ]
-    final_steps: list[PipelineStep[TradingContext]] = [
+    )
+    final_steps: tuple[Callable[[TradingContext], None], ...] = (
         MetricsPersistStep(),
         ReportStep(),
-    ]
+    )
 
-    return TradingPipeline(
-        backtest_timings=backtest_timings,
-        per_timing_steps=per_timing_steps,
-        final_steps=final_steps,
-        inst=instrumentation,
-    ).run(trading_context)
+    with Instrumentation(experiment_name) as instrumentation:
+        for timing in backtest_timings:
+            trading_context.backtest_timing = timing
+            run_steps(trading_context, per_timing_steps, instrumentation)
+        run_steps(trading_context, final_steps, instrumentation)

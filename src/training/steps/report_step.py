@@ -13,7 +13,6 @@ from pathlib import Path
 
 from src import logs
 from src.observability.log_format import format_log_json
-from src.pipeline.step import PipelineStep
 from src.training.context import TrainingContext
 from src.utils.filesystem import FileSystem
 
@@ -81,7 +80,7 @@ class RankICSummary:
     rolling_20_last: float | None
 
 
-class ReportStep(PipelineStep[TrainingContext]):
+class ReportStep:
     """
     Generate the offline training HTML report from persisted artifacts.
 
@@ -89,11 +88,18 @@ class ReportStep(PipelineStep[TrainingContext]):
     then writes `report/training_report.html`. It does not read runtime
     predictions, model files, preprocess files, feature/label detail, or any
     old Rank IC report engine.
+
+    Example:
+        step = ReportStep()
+        step(context)
     """
 
-    stage = "training_report"
+    def __call__(self, ctx: TrainingContext) -> None:
+        """Generate the persisted training report.
 
-    def run(self, ctx: TrainingContext) -> TrainingContext:
+        Example:
+            step(context)
+        """
         if not ctx.experiment_name:
             raise RuntimeError("[ReportStep] experiment_name is required")
 
@@ -124,7 +130,6 @@ class ReportStep(PipelineStep[TrainingContext]):
             f"[ReportStep] saved path={report_path}\n"
             f"{format_log_json('rank_ic_summary', summary)}"
         )
-        return ctx
 
 
 def _load_json_object(path: Path, *, label: str) -> dict[str, object]:

@@ -7,37 +7,54 @@ from typing import Literal
 import numpy as np
 import pandas as pd
 
-from src.pipeline.phase import is_trainable_row
 from src.utils.price_utils import apply_asof_price_adjustment
 
 
 class DatasetBuildEngine:
-    """Build aligned, trainable feature and label arrays.
+    """Build aligned feature and label arrays.
 
     Responsibility:
     - Pure dataset construction logic
     - NO IO
     - NO PathManager
     - NO Context
+
+    Example:
+        engine = DatasetBuildEngine()
+        X, y = engine.build_one_day(
+            feature_frame=pd.DataFrame({"factor": [1.0]}),
+            label_frame=pd.DataFrame({"target": [0.2]}),
+            feature_columns=("factor",),
+            label_column="target",
+            drop_na=True,
+        )
     """
 
     # ==============================================================
     # Public
     # ==============================================================
     def build_one_day(
-            self,
-            *,
-            feature_frame: pd.DataFrame,
-            label_frame: pd.DataFrame,
-            feature_columns: Sequence[str],
-            label_column: str,
-            drop_na: bool,
-            adjustment: Literal["raw", "qfq", "hfq"] = "raw",
-            adjustment_refdata_frame: pd.DataFrame | None = None,
-            asof_date: str = "",
+        self,
+        *,
+        feature_frame: pd.DataFrame,
+        label_frame: pd.DataFrame,
+        feature_columns: Sequence[str],
+        label_column: str,
+        drop_na: bool,
+        adjustment: Literal["raw", "qfq", "hfq"] = "raw",
+        adjustment_refdata_frame: pd.DataFrame | None = None,
+        asof_date: str = "",
     ) -> tuple[pd.DataFrame, pd.Series]:
-        """
-        Build one train/eval dataset from already loaded formal inputs.
+        """Build one train/eval dataset from already loaded formal inputs.
+
+        Example:
+            X, y = engine.build_one_day(
+                feature_frame=pd.DataFrame({"factor": [1.0]}),
+                label_frame=pd.DataFrame({"target": [0.2]}),
+                feature_columns=("factor",),
+                label_column="target",
+                drop_na=True,
+            )
         """
         feat_df = self._apply_adjustment(
             feat_df=feature_frame,
@@ -49,13 +66,11 @@ class DatasetBuildEngine:
         if feat_df.empty:
             raise RuntimeError("[DatasetBuildEngine] feature_frame is empty")
 
-        trainable = is_trainable_row(feat_df)
-        feat_df = feat_df.loc[trainable]
-        label_frame = label_frame.loc[trainable]
-        if feat_df.empty:
-            return pd.DataFrame(), pd.Series(dtype=float)
-
-        X = feat_df[feature_columns].copy() if feature_columns else feat_df.copy()
+        X = (
+            feat_df.loc[:, list(feature_columns)].copy()
+            if feature_columns
+            else feat_df.copy()
+        )
         y = label_frame[label_column].copy()
 
         metadata_columns = {"trade_date", "ts_us"} & set(X.columns)
@@ -87,13 +102,13 @@ class DatasetBuildEngine:
     # Internal
     # ==============================================================
     def _apply_adjustment(
-            self,
-            *,
-            feat_df: pd.DataFrame,
-            adjustment: Literal["raw", "qfq", "hfq"],
-            adjustment_refdata_frame: pd.DataFrame | None,
-            asof_date: str,
-        ) -> pd.DataFrame:
+        self,
+        *,
+        feat_df: pd.DataFrame,
+        adjustment: Literal["raw", "qfq", "hfq"],
+        adjustment_refdata_frame: pd.DataFrame | None,
+        asof_date: str,
+    ) -> pd.DataFrame:
         if adjustment not in ["raw", "qfq", "hfq"]:
             raise ValueError(
                 f"[DatasetBuildEngine] unsupported adjustment: {adjustment}"

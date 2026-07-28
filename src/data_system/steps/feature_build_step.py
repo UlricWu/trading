@@ -8,27 +8,40 @@ from src.access import meta
 from src.config.app_config import AppConfig
 from src.data_system.builders.registry import get_feature_builder
 from src.data_system.context import DataContext
-from src.observability.instrumentation import Instrumentation
-from src.pipeline.step import PipelineStep
 from src.utils.parquet_writer import write_parquet_atomic
 
 
-class FeatureBuildStep(PipelineStep[DataContext]):
-    """Materialize enabled feature sets selected by the workflow."""
+class FeatureBuildStep:
+    """Materialize enabled feature sets selected by the workflow.
+
+    Example:
+        step = FeatureBuildStep(
+            app_cfg=selected_config,
+            allowed_sets=frozenset({"tushare_daily_basic"}),
+        )
+        step(context)
+    """
 
     def __init__(
         self,
         *,
         app_cfg: AppConfig,
-        inst: Instrumentation | None,
         allowed_sets: frozenset[str] | None = None,
     ) -> None:
-        super().__init__(inst=inst)
+        """Store the selected feature configuration.
+
+        Example:
+            step = FeatureBuildStep(app_cfg=selected_config)
+        """
         self._cfg = app_cfg
         self.allowed_sets = allowed_sets
 
-    def run(self, ctx: DataContext) -> DataContext:
-        """Build enabled feature partitions for one trade date."""
+    def __call__(self, ctx: DataContext) -> None:
+        """Build enabled feature partitions for one trade date.
+
+        Example:
+            step(context)
+        """
         for feature_set, feature_cfg in self._cfg.data.feature_sets.items():
             if not feature_cfg.enabled:
                 continue
@@ -71,5 +84,3 @@ class FeatureBuildStep(PipelineStep[DataContext]):
                 pm=ctx.pm,
                 payload_path=output_path,
             )
-
-        return ctx

@@ -7,7 +7,7 @@ from dataclasses import dataclass, fields, is_dataclass
 
 from src import logs
 from src.config.backtest_config import BacktestConfig, BacktestMode
-from src.pipeline.artifact import resolve_model_artifact
+from src.training.artifact import resolve_model_artifact
 from src.trading.execution.engine import ExecutionOrchestrator
 from src.trading.execution.ideal import IdealExecution
 from src.trading.execution.models.cost_a_share import AShareCostModel

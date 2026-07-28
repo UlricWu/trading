@@ -133,7 +133,17 @@ def normalize_level2(
     trade_date: str,
     target_name: str = "",
 ) -> NormalizeOutput:
-    """Normalize one configured Level-2 raw/output task into processed data."""
+    """Normalize one configured Level-2 raw/output task into processed data.
+
+    Example:
+        output = normalize_level2(
+            input_file=Path("/data/SH_Stock_OrderTrade.csv.7z"),
+            output_name=Path("/data/sh_trade.parquet"),
+            raw_object="SH_Stock_OrderTrade",
+            trade_date="2026-07-27",
+            target_name="sh_trade",
+        )
+    """
 
     spec = resolve_level2_event_spec(
         raw_object=raw_object,
@@ -182,7 +192,9 @@ def normalize_level2(
 
     phase_annotator = PhaseResolver()
     big_tables = phase_annotator.resolve(
-        table=big_tables, exchange=spec.exchange, kind=spec.kind, trade_date=trade_date
+        table=big_tables,
+        exchange=spec.exchange,
+        trade_date=trade_date,
     )
 
     big_tables, symbol_slices = SymbolIndexEngine.execute(big_tables)

@@ -31,7 +31,7 @@ Loguru stderr 输出，由 `JobRuntime` 捕获到 job 文件；不得再让 LOG 
 `job_id` 的生命周期摘要；runtime 自身的文件、进程或线程启动失败属于 system log。
 尚未启动即取消的 Job 不得创建 job log。历史 job log 不自动清理或回写。
 
-CLI 不拥有 start/done 日志；offline workflow/pipeline 拥有业务运行日志。API 不提供
+CLI 不拥有 start/done 日志；offline workflow 拥有业务运行日志。API 不提供
 job log endpoint，不得扫描日志目录，也不得把内部文件路径、异常 repr 或 traceback
 写入 Job JSON。
 

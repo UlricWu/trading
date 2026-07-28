@@ -1,4 +1,4 @@
-# filepath: src/pipeline/artifact.py
+# filepath: src/training/artifact.py
 from __future__ import annotations
 
 import json
@@ -69,6 +69,12 @@ class PreprocessArtifact:
     Contract:
     - feature_columns defines the ONLY valid feature order
     - transform(X) MUST be deterministic and side-effect free
+
+    Example:
+        artifact = PreprocessArtifact(
+            feature_columns=("momentum",),
+            fill_values={"momentum": 0.0},
+        )
     """
 
     # Feature coordinate system
@@ -100,8 +106,7 @@ class PreprocessArtifact:
         object.__setattr__(self, "fill_values", _FrozenFloatMapping(self.fill_values))
 
     def transform(self, X: np.ndarray) -> np.ndarray:
-        """
-        Apply missing-value handling learned during training.
+        """Apply missing-value handling learned during training.
 
         Args:
             X: ndarray of shape (n_samples, n_features)
@@ -109,6 +114,11 @@ class PreprocessArtifact:
 
         Returns:
             Transformed ndarray with same shape.
+
+        Example:
+            transformed = artifact.transform(
+                np.array([[float("nan")]], dtype=float)
+            )
         """
         if X.ndim != 2 or X.shape[1] != len(self.feature_columns):
             raise ValueError(
@@ -152,6 +162,22 @@ class ModelArtifact:
     Hard rules:
     - NEVER expose raw model directly
     - Inference MUST go through build_inference_model()
+
+    Example:
+        artifact = ModelArtifact(
+            model_path=Path("training/model.pkl"),
+            preprocess_path=Path("training/preprocess.pkl"),
+            model_group="sgd_regression",
+            experiment_id="run-1",
+            asof_day="2026-07-20",
+            created_at=datetime.fromisoformat("2026-07-20T12:00:00"),
+            metrics={"ic": 0.1},
+            feature_names=("momentum",),
+            feature_version="v1",
+            feature_set="daily",
+            price_adjustment="raw",
+            label_lookahead=1,
+        )
     """
 
     model_path: Path
@@ -244,10 +270,10 @@ class ModelArtifact:
     # Inference (🔒 ONLY LEGAL ENTRY)
     # ==================================================
     def build_inference_model(self) -> InferenceModel:
-        """
-        Build inference model as an atomic unit:
-            preprocess ∘ model
+        """Build an inference model as ``preprocess ∘ model``.
 
+        Example:
+            inference_model = artifact.build_inference_model()
         """
         model = self._load_model()
         preprocess = self._load_preprocess()
@@ -274,7 +300,14 @@ def resolve_model_artifact(
     pm: PathManager,
     experiment_name: str,
 ) -> ModelArtifact:
-    """Resolve one inference-ready bundle from a training experiment."""
+    """Resolve one inference-ready bundle from a training experiment.
+
+    Example:
+        artifact = resolve_model_artifact(
+            pm=path_manager,
+            experiment_name="training_2026-07-01_2026-07-20_run-1",
+        )
+    """
     meta_path = pm.experiment_training_params(experiment_name=experiment_name)
     if not meta_path.is_file():
         raise RuntimeError(f"[ModelArtifact] params.json not found: {meta_path}")

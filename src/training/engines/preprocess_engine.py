@@ -4,7 +4,7 @@ from __future__ import annotations
 import pandas as pd
 
 from src.config.model_config import MissingConfig, PreprocessingConfig
-from src.pipeline.artifact import PreprocessArtifact
+from src.training.artifact import PreprocessArtifact
 
 
 class PreprocessEngine:

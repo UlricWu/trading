@@ -7,7 +7,7 @@ from typing import Protocol
 import numpy as np
 import pandas as pd
 
-from src.pipeline.artifact import ModelArtifact, PreprocessArtifact
+from src.training.artifact import PreprocessArtifact
 from src.utils.path import PathManager
 
 
@@ -27,31 +27,25 @@ class ModelState:
 
 @dataclass(slots=True)
 class TrainingContext:
-    """
-    Runtime context for one formal training experiment run.
+    """Carry the mutable state of one training experiment.
 
-    The workflow creates this context from accepted job identity. The pipeline
-    only mutates the current date fields and passes the context through steps.
+    Example:
+        context = TrainingContext(
+            pm=path_manager,
+            experiment_name="training_2026-07-01_2026-07-20_run-1",
+        )
     """
 
     pm: PathManager
     experiment_name: str
 
-    train_start_date: str = ""
-    train_end_date: str = ""
-    eval_start_date: str = ""
-    eval_end_date: str = ""
-
-    trade_date: str = ""
-    eval_date: str = ""
-
-    train_X: pd.DataFrame | None = None
-    train_y: pd.Series | None = None
-    eval_X: pd.DataFrame | None = None
-    eval_y: pd.Series | None = None
-    eval_pred: np.ndarray | None = None
-
-    preprocess_artifact: PreprocessArtifact | None = None
-    model_state: ModelState | None = None
+    train_start_date: str = field(init=False)
+    train_end_date: str = field(init=False)
+    eval_date: str = field(init=False)
+    train_X: pd.DataFrame = field(init=False)
+    train_y: pd.Series = field(init=False)
+    eval_X: pd.DataFrame = field(init=False)
+    eval_y: pd.Series = field(init=False)
+    preprocess_artifact: PreprocessArtifact = field(init=False)
+    model_state: ModelState = field(init=False)
     metrics: dict[str, float] = field(default_factory=dict)
-    model_artifact: ModelArtifact | None = None

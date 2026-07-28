@@ -1,7 +1,7 @@
 # CLI 契约
 
 - **状态**：正式 owner
-- **适用范围**：`python -m src.cli` 的命令、参数、退出码和 composition-root 副作用。
+- **适用范围**：`AppConfig` 加载契约，以及 `python -m src.cli` 的命令、参数、退出码和 composition-root 副作用。
 - **业务工作流 owner**：[`docs/offline_workflow_contract.md`](../offline_workflow_contract.md)
 - **HTTP job owner**：[`docs/engineering/job_api_contract.md`](job_api_contract.md)
 
@@ -15,6 +15,26 @@ CLI 不记录 start/done 或原始 JSON；workflow 负责业务运行日志。Ty
 
 日期必须是规范 `YYYY-MM-DD`。范围必须满足 `start <= end`。Training 和 backtest 的
 `EXPERIMENT_ID` 必须匹配 `[A-Za-z0-9][A-Za-z0-9._-]{0,63}`。
+
+## AppConfig
+
+`AppConfig.load()` 是完整应用配置的唯一加载入口。调用者一次获得 `environment`、
+`storage_root`、`secret`、`data`、`model` 和 `backtest`，无需分别识别或加载配置区段。
+进程变量 `ENV` 选择项目根目录的 `.env.dev`、`.env.test` 或 `.env.prod`，缺省为
+`dev`；加载过程不得把文件内容写入进程环境。`ZERO_STORAGE_ROOT` 仍由进程环境提供，
+路径可用性由 `PathManager` 校验。
+
+所选 `.env` 是 FTP 和 Tushare 运行配置的正式来源。`FTP_HOST`、`FTP_USER` 和
+`TUSHARE_TOKEN` 必须非空白，`FTP_PASSWORD` 必须非空且不得裁剪。`FTP_PORT` 缺失或为空
+时为 `21`，显式值必须是 `1..65535` 的整数。`TUSHARE_GATEWAY` 缺失或为空时为 `None`，
+表示使用 Tushare SDK 默认地址；非空值覆盖 SDK 地址。
+
+`override` 只能包含 `data`、`model` 或 `backtest` 根键；因此不能改变
+`environment`、`storage_root` 或 `secret`。mapping 递归合并，标量、列表和显式
+`None` 直接替换；`backtest.strategy` 始终作为完整对象替换。合并后必须校验完整
+`AppConfig`。HTTP Job API 只能先构造已校验 submission，再由 CLI 生成上述受限
+override，不得接收或透传任意配置对象。配置读取、override 拒绝和最终 schema 校验错误
+均归 `AppConfig.load()`，不在下游组件重复校验。
 
 ## Data
 

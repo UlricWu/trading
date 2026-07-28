@@ -10,7 +10,6 @@ from typing import NoReturn
 import typer
 
 from src.config.app_config import AppConfig
-from src.data_system.pipeline import DataRunStatus
 from src.jobs.requests import (
     JOB_EXIT_CODE_SKIPPED,
     InvalidJobRequest,
@@ -21,6 +20,7 @@ from src.jobs.requests import (
 from src.utils.path import PathManager
 from src.workflows.backtest import run_daily_alpha_backtest
 from src.workflows.offline_daily_data import (
+    DataRunStatus,
     run_offline_level2_data,
     run_offline_standard_data,
 )
@@ -57,7 +57,11 @@ def _raise_bad_parameter(
 
 @app.command()  # type: ignore[untyped-decorator]
 def data_standard(date: str) -> None:
-    """Run the standard offline data workflow for one date."""
+    """Run the standard offline data workflow for one date.
+
+    Example:
+        data_standard("2026-07-20")
+    """
     try:
         submission = create_data_submission("data-standard", date)
     except InvalidJobRequest as exc:
@@ -66,7 +70,7 @@ def data_standard(date: str) -> None:
     app_config = AppConfig.load()
     status = run_offline_standard_data(
         app_config=app_config,
-        path_manager=PathManager(app_config.storage.root),
+        path_manager=PathManager(app_config.storage_root),
         trade_date=submission.date,
     )
     if status is DataRunStatus.SKIPPED:
@@ -75,7 +79,11 @@ def data_standard(date: str) -> None:
 
 @app.command()  # type: ignore[untyped-decorator]
 def data_level2(date: str) -> None:
-    """Run the Level-2 offline data workflow for one date."""
+    """Run the Level-2 offline data workflow for one date.
+
+    Example:
+        data_level2("2026-07-20")
+    """
     try:
         submission = create_data_submission("data-level2", date)
     except InvalidJobRequest as exc:
@@ -84,7 +92,7 @@ def data_level2(date: str) -> None:
     app_config = AppConfig.load()
     status = run_offline_level2_data(
         app_config=app_config,
-        path_manager=PathManager(app_config.storage.root),
+        path_manager=PathManager(app_config.storage_root),
         trade_date=submission.date,
     )
     if status is DataRunStatus.SKIPPED:
@@ -97,7 +105,15 @@ def train(
     end_date: str = typer.Option(..., "--end"),
     experiment_id: str = typer.Option(..., "--experiment-id"),
 ) -> None:
-    """Run one offline training experiment."""
+    """Run one offline training experiment.
+
+    Example:
+        train(
+            start_date="2026-07-01",
+            end_date="2026-07-20",
+            experiment_id="training-1",
+        )
+    """
     try:
         submission = create_training_submission(start_date, end_date)
     except InvalidJobRequest as exc:
@@ -110,7 +126,7 @@ def train(
     app_config = AppConfig.load()
     run_offline_training(
         model_config=app_config.model,
-        path_manager=PathManager(app_config.storage.root),
+        path_manager=PathManager(app_config.storage_root),
         experiment_id=experiment_id,
         start_date=submission.start,
         end_date=submission.end,
@@ -126,7 +142,18 @@ def backtest(
     model_experiment: str = typer.Option(..., "--model-experiment"),
     strategy_json: str = typer.Option(..., "--strategy-json"),
 ) -> None:
-    """Run one offline daily-alpha backtest experiment."""
+    """Run one offline daily-alpha backtest experiment.
+
+    Example:
+        backtest(
+            mode="full_backtest",
+            start_date="2026-07-01",
+            end_date="2026-07-20",
+            experiment_id="backtest-1",
+            model_experiment="training-1",
+            strategy_json='{"type":"threshold","params":{"threshold":0.5}}',
+        )
+    """
     experiment_id = _require_experiment_id(experiment_id)
     try:
         submission = create_backtest_submission(
@@ -159,7 +186,7 @@ def backtest(
     )
     run_daily_alpha_backtest(
         backtest_config=app_config.backtest,
-        path_manager=PathManager(app_config.storage.root),
+        path_manager=PathManager(app_config.storage_root),
         experiment_id=experiment_id,
         start_date=submission.start,
         end_date=submission.end,
