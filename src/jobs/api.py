@@ -11,13 +11,11 @@ from werkzeug.exceptions import BadRequest, HTTPException, UnsupportedMediaType
 from src import logs
 from src.jobs.requests import InvalidJobRequest, parse_job_request
 from src.jobs.runtime import (
-    DataJobScope,
     JobNotCancellableError,
     JobNotFoundError,
     JobRuntime,
     JobSnapshot,
     JobStatus,
-    RangeJobScope,
 )
 from src.utils.datetime_utils import DateTimeUtils
 from src.utils.logger import configure_system_logging
@@ -33,9 +31,6 @@ def create_app(job_runtime: JobRuntime) -> Flask:
 
     - ``POST /jobs`` accepts exactly one JSON object:
 
-      - Data single day:
-        ``{"kind": "data-standard", "date": "YYYY-MM-DD"}``, or the same
-        object with ``kind`` set to ``"data-level2"``.
       - Data range:
         ``{"kind": "data-standard", "start": "YYYY-MM-DD",
         "end": "YYYY-MM-DD"}``, or the same object with ``kind`` set to
@@ -52,8 +47,8 @@ def create_app(job_runtime: JobRuntime) -> Flask:
       ``execution_eval``, ``risk_eval``, or ``full_backtest``. ``STRATEGY``
       must match the configured threshold or top-k hysteresis strategy
       schema. Dates are canonical, ranges require ``start <= end``, and extra
-      fields are rejected. A data range creates one Job per natural day;
-      training and backtest each create one full-range Job.
+      fields are rejected. Every request creates one full-range Job; a data
+      single day uses the same value for ``start`` and ``end``.
 
     - ``GET /jobs/<job_id>`` accepts the Job ID as a path value.
     - ``POST /jobs/<job_id>/cancel`` accepts the Job ID as a path value.
@@ -156,20 +151,13 @@ def create_app(job_runtime: JobRuntime) -> Flask:
 
 
 def _job_to_json(job: JobSnapshot) -> dict[str, object]:
-    if isinstance(job.scope, DataJobScope):
-        scope: dict[str, str] = {"date": job.scope.date}
-    elif isinstance(job.scope, RangeJobScope):
-        scope = {
-            "start": job.scope.start,
-            "end": job.scope.end,
-        }
-    else:
-        raise TypeError("unknown job scope type")
-
     return {
         "job_id": job.job_id,
         "kind": job.kind,
-        "scope": scope,
+        "scope": {
+            "start": job.scope.start,
+            "end": job.scope.end,
+        },
         "status": job.status.value,
         "submitted_at": job.submitted_at,
         "started_at": job.started_at,

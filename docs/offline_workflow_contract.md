@@ -25,30 +25,66 @@ skip，不校验 context，也不改变 step 返回值。
 
 ## Data workflow
 
-`run_offline_standard_data` 固定执行 ingest → normalize → feature → label；
-`run_offline_level2_data` 固定执行 ingest → normalize。它们不是带 group 参数的通用入口。
+`run_offline_data(app_config, path_manager, submission)` 是唯一 Python workflow 入口，直接
+消费已经校验的 `DataSubmission(kind, start, end)`。`kind` 只允许
+`data-standard` 或 `data-level2`，完整闭区间是一个 workflow 执行单位。单日使用
+`start == end`，不得拆成每日独立 Job。
 
 配置选择规则：
 
-1. 只选择 `source.group` 分别为 `offline_standard` 或 `offline_level2` 的条目。
+1. `data-standard` 与 `data-level2` 分别选择 `source.group` 为
+   `offline_standard` 与 `offline_level2` 的条目。
 2. `enabled=false` 的 source 被排除。
 3. `use_broker_sources=true` 的 source 按 broker registry names 展开，每项使用同名
    `raw_object` 和单元素同名 `outputs`。
 4. 重复 effective source name 或没有 effective source 必须失败。
-5. feature 和 label 只保留 enabled 且 group 相同的配置。
+5. Feature 与 label 不使用 group。所有 enabled feature 必须属于
+   `{"tushare_daily_basic"}`，所有 enabled label 必须属于
+   `{"daily_t1_net_excess_rank", "daily_forward_excess_rank"}`；额外 enabled identity
+   必须在 workflow 开始前失败，不能静默忽略。
 
 Standard feature step 只允许 `tushare_daily_basic`；label step 只允许
 `daily_t1_net_excess_rank` 与 `daily_forward_excess_rank`。Level-2 不运行 feature 或 label。
 `tushare_daily_basic` 日线 feature partition 不包含 `phase`；phase 的身份与边界由
 [`docs/data/market_phase.md`](data/market_phase.md) 定义。
 
-Ingest 必须尝试所有 effective sources。已有已提交 raw metadata 或本次成功获取 payload
-都表示该 source 可用；单个 source 无 payload 不得提前停止。仅当所有 effective sources
-既无已提交 raw 又未获取到 payload 时返回 `DataRunStatus.SKIPPED`，固定原因为
-`no_source_payload`，后续步骤不执行。部分 source 可用、部分 source 无 payload 时必须在
-完成全部 source 尝试后失败。全部 source 可用时返回 `DataRunStatus.SUCCESS`。空 source
-配置是错误。Ingest step 只以 `bool` 向 workflow 表达是否存在可处理输入；normalize、
-feature 和 label step 成功时返回 `None`。
+两个 kind 都先按自然日升序完成整个 `[start, end]` 的 `trade_calendar` ingest 与
+normalize。日历 source、查询、schema、开市判定和 `daily_bar` 关系只由
+[`docs/data/source_contract.md`](data/source_contract.md) 定义。日历完整后，workflow
+取得其中全部正式交易日，再按日期升序执行 kind 对应的事实层：
+
+- Standard 对每个正式交易日执行除 `trade_calendar` 外的 standard ingest 与 normalize。
+- Level-2 对每个正式交易日执行 Level-2 ingest 与 normalize。
+- 休市日不运行上述事实步骤。只包含休市日的范围返回 `DataRunStatus.SUCCESS`。
+
+每个日期的 ingest 必须尝试该 kind 的全部 effective fact sources。已有已提交 raw Meta
+或本次成功获取 payload 都表示该 source 可用；单个 source 无 payload 不得提前停止。部分
+source 可用、部分 source 无 payload 时，必须在尝试完该日期全部 source 后失败。
+Standard 的正式开市日全部 source 都无 payload 时也是数据缺失并失败。Level-2 只有在
+范围包含正式交易日、且所有正式交易日的全部 effective source 都无 payload 时返回
+`DataRunStatus.SKIPPED`，固定原因为 `no_source_payload`；部分日期完整、部分日期全部
+缺失必须失败。
+
+整个范围的事实层完成后，Standard 按正式交易日升序运行 feature，并在同一个到达日生成
+已经成熟的 label：
+
+```text
+arrival D:
+    feature(D)
+    daily_t1_net_excess_rank(target = D 前第 2 个正式交易日)
+    daily_forward_excess_rank(target = D 前第 5 个正式交易日)
+```
+
+通用规则是：label builder 全部 output column 的最大 `target_lookahead` 为 `L`；
+workflow 取截至并包含到达日 `D` 的最近 `L + 1` 个正式交易日，将第一个日期作为 label
+partition identity，并把完整窗口直接交给 builder。范围开始前所需的日历、processed
+事实和 feature 历史必须已经存在；workflow 不隐式扩大请求范围。任一必要对象缺失时
+失败。
+
+Normalize、feature 或 label 产生零行都是失败，不得只记录 warning、不得省略 payload。
+`DataRunStatus.SUCCESS` 保证请求范围内全部应有的日历、事实、feature 和已成熟 label
+对象都存在有效 payload 与 Meta；已有有效对象可以直接复用。Ingest step 只以 `bool`
+表达当前日期是否存在可处理输入；normalize、feature 和 label 成功时返回 `None`。
 
 ## Training workflow
 
@@ -59,8 +95,8 @@ training_{start_date}_{end_date}_{experiment_id}
 ```
 
 label builder 的 `target_lookahead(label_column)` 是 `eval_offset` 的唯一来源。默认日程
-使用 Access 在请求闭区间内返回的正式 `daily_bar` 交易日，按日期升序。注入的日程结果
-越界、重复或逆序必须失败。
+使用 Access 在请求闭区间内返回的正式交易日历日期，按日期升序。注入的日程结果越界、
+重复或逆序必须失败。
 
 - `train_window_days=0` 表示 expanding。
 - 正整数 N 表示包含当前 training end 的 N 个交易日滚动窗口。
@@ -85,9 +121,9 @@ backtest_{start_date}_{end_date}_{experiment_id}
 ```
 
 Workflow 直接接收 `BacktestConfig`。`backtest_mode`、model reference 和 strategy 只来自该
-对象。默认日程使用 Access 在请求闭区间内返回的正式 `daily_bar` 交易日，并对相邻交易日
-生成 timing：当前日是 signal date 与 feature date，下一日是 forward date；无 timing
-必须失败。
+对象。默认日程使用 Access 在请求闭区间内返回的正式交易日历日期，并对相邻交易日生成
+timing：当前日是 signal date 与 feature date，下一日是 forward date；无 timing 必须
+失败。
 
 `BacktestConfig` 还必须显式提供 `min_listing_calendar_days`。Signal step 把该值原样
 传给 `docs/engineering/access.md` 定义的 `universe()`；当日 ST 与停牌由该正式

@@ -9,6 +9,7 @@ import pyarrow as pa
 import pyarrow.compute as pc
 
 from src import logs
+from src.utils import table_ops
 from src.data_system.arrow.ops import sort_by
 
 
@@ -17,6 +18,10 @@ class SymbolIndexEngine:
 
     The engine requires the full object-level table and performs no I/O; it
     must not be invoked independently for batches that share a symbol index.
+
+    Example:
+        table = pa.table({"symbol": ["600000"], "ts_utc": [1]})
+        sorted_table, slices = SymbolIndexEngine.execute(table)
     """
 
     # --------------------------------------------------
@@ -24,7 +29,12 @@ class SymbolIndexEngine:
     def execute(
         table: pa.Table,
     ) -> tuple[pa.Table, dict[str, range]]:
-        """Return the `(symbol, ts_utc)` sorted table and contiguous slices."""
+        """Return the `(symbol, ts_utc)` sorted table and contiguous slices.
+
+        Example:
+            table = pa.table({"symbol": ["600000"], "ts_utc": [1]})
+            sorted_table, slices = SymbolIndexEngine.execute(table)
+        """
 
         if table.num_rows == 0:
             return table, {}
@@ -32,10 +42,16 @@ class SymbolIndexEngine:
         # --------------------------------------------------
         # 0) normalize symbol column type (CRITICAL)
         # --------------------------------------------------
-        if "symbol" not in table.column_names:
-            raise KeyError("[SymbolIndexEngine] missing 'symbol' column")
-        if "ts_utc" not in table.column_names:
-            raise KeyError("[SymbolIndexEngine] missing 'ts_utc' column")
+        table_ops.require_columns(
+            table,
+            ("symbol", "ts_utc"),
+            who="SymbolIndexEngine",
+        )
+        table_ops.require_nonempty_strings(
+            table,
+            ("symbol",),
+            who="SymbolIndexEngine",
+        )
 
         sym = table["symbol"]
         if pa.types.is_dictionary(sym.type):
@@ -69,11 +85,6 @@ class SymbolIndexEngine:
         index_started_at = perf_counter()
         sym = table["symbol"]
 
-        if pa.types.is_dictionary(sym.type):
-            sym = pc.cast(sym, pa.string())
-        elif not pa.types.is_string(sym.type):
-            raise TypeError(f"[SymbolIndexEngine] invalid symbol type: {sym.type}")
-
         ree = pc.run_end_encode(sym).combine_chunks()
         run_ends = ree.run_ends.to_pylist()
         values = ree.values.to_pylist()
@@ -82,10 +93,6 @@ class SymbolIndexEngine:
         start = 0
 
         for symbol, end_exclusive in zip(values, run_ends):
-            if not isinstance(symbol, str) or not symbol:
-                raise ValueError(
-                    "[SymbolIndexEngine] symbol must be a non-empty string"
-                )
             end_exclusive = int(end_exclusive)
             index[symbol] = range(start, end_exclusive)
             start = end_exclusive

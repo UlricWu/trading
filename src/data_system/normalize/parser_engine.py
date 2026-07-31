@@ -8,6 +8,7 @@ from types import MappingProxyType
 import pyarrow as pa
 import pyarrow.compute as pc
 
+from src.utils import table_ops
 from src.data_system.arrow.ops import map_values_or_null, zeros_i64
 from src.utils.datetime_utils import DateTimeUtils
 
@@ -201,7 +202,28 @@ def parse_events_arrow(
     exchange: str,
     kind: str,
 ) -> pa.Table:
-    """Parse one configured raw Level-2 batch into ``INTERNAL_SCHEMA``."""
+    """Parse one configured raw Level-2 batch into ``INTERNAL_SCHEMA``.
+
+    Example:
+        raw_table = pa.table(
+            {
+                "SecurityID": ["600000"],
+                "TradeTime": ["2026-07-15 09:30:00.000001"],
+                "TickType": ["T"],
+                "Price": [10.0],
+                "Volume": [100],
+                "Side": ["1"],
+                "SubSeq": [1],
+                "BuyNo": [1],
+                "SellNo": [2],
+            }
+        )
+        parsed = parse_events_arrow(
+            table=raw_table,
+            exchange="sh",
+            kind="trade",
+        )
+    """
 
     # ------------------------------------------------------------
     # Registry lookup
@@ -221,8 +243,26 @@ def parse_events_arrow(
             {field.name: pa.array([], type=field.type) for field in INTERNAL_SCHEMA}
         )
 
-    if definition.time_field not in table.column_names:
-        raise ValueError(f"{definition.time_field} is required")
+    required_fields = (
+        definition.symbol_field,
+        definition.time_field,
+        definition.event_field,
+        definition.price_field,
+        definition.volume_field,
+        definition.id_field,
+        *(
+            (definition.side_field,)
+            if definition.side_field and definition.side_mapping
+            else ()
+        ),
+        *((definition.buy_no_field,) if definition.buy_no_field else ()),
+        *((definition.sell_no_field,) if definition.sell_no_field else ()),
+    )
+    table_ops.require_columns(
+        table,
+        required_fields,
+        who=f"Level-2 {exchange} {kind}",
+    )
 
     ts_utc = _trade_time_to_utc_epoch_us(
         table[definition.time_field],

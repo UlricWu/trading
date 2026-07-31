@@ -1,5 +1,5 @@
 # filepath: src/config/data_config.py
-"""Pydantic section models for the docs/data.md `data` configuration."""
+"""Pydantic models for `docs/data/source_contract.md` data configuration."""
 
 from __future__ import annotations
 
@@ -39,27 +39,37 @@ class SourceConfig(BaseModel):
 
 
 class FeatureSetConfig(BaseModel):
-    """Feature set declaration loaded from `data.feature_sets`."""
+    """Feature set declaration loaded from `data.feature_sets`.
+
+    Example:
+        config = FeatureSetConfig(enabled=True, version="v1")
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool = False
     version: str
-    group: str
 
 
 class LabelSetConfig(BaseModel):
-    """Label set declaration loaded from `data.label_sets`."""
+    """Label set declaration loaded from `data.label_sets`.
+
+    Example:
+        config = LabelSetConfig(enabled=True, version="v1")
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool = False
     version: str
-    group: str
 
 
 class DataConfig(BaseModel):
-    """Data configuration schema for docs/data.md broker and source declarations."""
+    """Validate broker, source, feature, and label declarations.
+
+    Example:
+        config = DataConfig()
+    """
 
     model_config = ConfigDict(extra="forbid")
 

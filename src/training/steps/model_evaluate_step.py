@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from scipy.stats import spearmanr
 
+from src.utils import table_ops
 from src.training.context import TrainingContext
 
 
@@ -25,8 +26,7 @@ class ICEvaluateStep:
         Example:
             step(context)
         """
-        if ctx.eval_X.empty:
-            raise RuntimeError("[ICEvaluateStep] eval_X is empty")
+        table_ops.require_nonempty(ctx.eval_X, who="ICEvaluateStep eval_X")
         if len(ctx.eval_X) != len(ctx.eval_y):
             raise RuntimeError("[ICEvaluateStep] eval_X / eval_y length mismatch")
         if not ctx.eval_X.index.equals(ctx.eval_y.index):

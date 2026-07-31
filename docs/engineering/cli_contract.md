@@ -39,12 +39,14 @@ override，不得接收或透传任意配置对象。配置读取、override 拒
 ## Data
 
 ```text
-python -m src.cli data-standard DATE
-python -m src.cli data-level2 DATE
+python -m src.cli data-standard --start YYYY-MM-DD --end YYYY-MM-DD
+python -m src.cli data-level2 --start YYYY-MM-DD --end YYYY-MM-DD
 ```
 
 两个命令分别调用固定的 standard 或 Level-2 workflow，不接受 group、run ID 或实验身份。
-数据对象由 source、version 和 date 标识，不属于一次 experiment。Workflow 返回
+完整闭区间是一次 workflow 执行单位；单日必须传相同的 `--start` 与 `--end`，不提供
+位置参数 `DATE` 或其他单日形式。数据对象由 source、version 和 date 标识，不属于一次
+experiment。Workflow 返回
 `DataRunStatus.SUCCESS` 时退出 `0`；返回 `DataRunStatus.SKIPPED` 时退出 `75`。其他错误退出
 `1`，不得改写成 skipped。
 

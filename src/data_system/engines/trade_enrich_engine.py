@@ -6,33 +6,36 @@ from __future__ import annotations
 import pyarrow as pa
 import pyarrow.compute as pc
 
+from src.utils import table_ops
 from src.data_system.arrow.ops import append_or_replace
 
 
 class TradeEnrichEngine:
-    """
-    TradeEnrichEngine（冻结版）
+    """Append notional and tick-rule side to one symbol-local table.
 
-    输入（契约）：
-      - 单 symbol、已按 (symbol, ts) 排序的 Arrow Table
-      - 至少包含列：price, volume
-      - table.num_rows 允许为 0
-
-    输出：
-      - 行数不变
-      - 仅新增列：
-          - notional: float64  (price * volume)
-          - trade_side: int8   (tick rule: +1 / -1 / 0)
+    Example:
+        engine = TradeEnrichEngine()
+        enriched = engine.execute(
+            pa.table({"price": [10.0], "volume": [100]})
+        )
     """
 
     def __init__(
-            self,
-            *,
-            price_col: str = "price",
-            volume_col: str = "volume",
-            notional_col: str = "notional",
-            side_col: str = "trade_side",
+        self,
+        *,
+        price_col: str = "price",
+        volume_col: str = "volume",
+        notional_col: str = "notional",
+        side_col: str = "trade_side",
     ) -> None:
+        """Bind source and output column names.
+
+        Example:
+            engine = TradeEnrichEngine(
+                price_col="price",
+                volume_col="volume",
+            )
+        """
         self.price_col = price_col
         self.volume_col = volume_col
         self.notional_col = notional_col
@@ -42,10 +45,21 @@ class TradeEnrichEngine:
     # Public API
     # ==========================================================
     def execute(self, table: pa.Table) -> pa.Table:
+        """Return the enriched table without changing its row order.
+
+        Example:
+            enriched = TradeEnrichEngine().execute(
+                pa.table({"price": [10.0], "volume": [100]})
+            )
+        """
         if table.num_rows == 0:
             return table
 
-        self._validate_input(table)
+        table_ops.require_columns(
+            table,
+            (self.price_col, self.volume_col),
+            who="TradeEnrichEngine",
+        )
 
         price = table[self.price_col]
         volume = table[self.volume_col]
@@ -60,19 +74,6 @@ class TradeEnrichEngine:
         out = append_or_replace(out, self.notional_col, notional)
         out = append_or_replace(out, self.side_col, trade_side)
         return out
-
-    # ==========================================================
-    # Internal helpers
-    # ==========================================================
-    def _validate_input(self, table: pa.Table) -> None:
-        missing = []
-        if self.price_col not in table.column_names:
-            missing.append(self.price_col)
-        if self.volume_col not in table.column_names:
-            missing.append(self.volume_col)
-
-        if missing:
-            raise ValueError(f"TradeEnrichEngine missing required columns: {missing}")
 
     def _infer_trade_side(self, price: pa.ChunkedArray | pa.Array) -> pa.Array:
         """

@@ -7,6 +7,7 @@ from typing import Literal
 import numpy as np
 import pandas as pd
 
+from src.utils import table_ops
 from src.utils.price_utils import apply_asof_price_adjustment
 
 
@@ -63,8 +64,10 @@ class DatasetBuildEngine:
             asof_date=asof_date,
         )
 
-        if feat_df.empty:
-            raise RuntimeError("[DatasetBuildEngine] feature_frame is empty")
+        table_ops.require_nonempty(
+            feat_df,
+            who="DatasetBuildEngine feature_frame",
+        )
 
         X = (
             feat_df.loc[:, list(feature_columns)].copy()
@@ -117,21 +120,25 @@ class DatasetBuildEngine:
         if adjustment == "raw":
             return feat_df
 
-        if adjustment_refdata_frame is None or adjustment_refdata_frame.empty:
+        if adjustment_refdata_frame is None:
             raise RuntimeError(
                 "[DatasetBuildEngine] adjustment_refdata_frame is required"
             )
+        table_ops.require_nonempty(
+            adjustment_refdata_frame,
+            who="DatasetBuildEngine adjustment_refdata_frame",
+        )
 
         out = feat_df.merge(
             adjustment_refdata_frame[["symbol", "trade_date", "adj_factor"]],
             on=["symbol", "trade_date"],
             how="left",
         )
-        if out["adj_factor"].isna().any():
-            raise RuntimeError(
-                "[DatasetBuildEngine] adjustment_refdata missing adj_factor "
-                "for feature rows"
-            )
+        table_ops.require_non_null(
+            out,
+            ("adj_factor",),
+            who="DatasetBuildEngine adjusted feature rows",
+        )
 
         adjusted = apply_asof_price_adjustment(
             out,

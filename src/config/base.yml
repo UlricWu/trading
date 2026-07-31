@@ -56,18 +56,15 @@ data:
     tushare_daily_basic:
       enabled: true
       version: "v1"
-      group: "offline_standard"
 
   label_sets:
     daily_t1_net_excess_rank:
       enabled: true
       version: "v1"
-      group: "offline_standard"
 
     daily_forward_excess_rank:
       enabled: true
       version: "v1"
-      group: "offline_standard"
 
 # ==================================================
 # Backtest System

@@ -77,7 +77,11 @@ class TushareBroker:
         record: DownloadPlan,
         pm: PathManager,
     ) -> DownloadPlan | None:
-        """Fetch one Tushare raw object as raw `data.parquet`."""
+        """Fetch one Tushare raw object as raw `data.parquet`.
+
+        Example:
+            fetched = broker.fetch(record=download_plan, pm=path_manager)
+        """
 
         if record.raw_object not in self._TUSHARE_SOURCES:
             raise ValueError(
@@ -87,7 +91,15 @@ class TushareBroker:
 
         api_name = self._TUSHARE_SOURCES[record.raw_object]
 
-        params = {"trade_date": DateTimeUtils.to_compact_date(record.trade_date)}
+        compact_date = DateTimeUtils.to_compact_date(record.trade_date)
+        if record.raw_object == "trade_calendar":
+            params = {
+                "exchange": "SSE",
+                "start_date": compact_date,
+                "end_date": compact_date,
+            }
+        else:
+            params = {"trade_date": compact_date}
         response = self._pro.query(api_name, **params)
 
         if response is None:

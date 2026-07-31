@@ -1,13 +1,13 @@
 # filepath: src/trading/market/daily_signal_data.py
 from __future__ import annotations
 
-import math
 from collections.abc import Sequence
 
 import pandas as pd
 import pyarrow.parquet as pq
 
 from src.access import Access, meta
+from src.utils import table_ops
 from src.trading.market.daily_view import SYMBOL_COL
 from src.utils.path import PathManager
 
@@ -64,13 +64,13 @@ def read_raw_close(
             symbols=ordered_symbols,
         )
 
-    _require_columns(daily, [SYMBOL_COL, RAW_PRICE_COL], "daily_bar")
+    table_ops.require_columns(daily, (SYMBOL_COL, RAW_PRICE_COL), who="daily_bar")
     prices = daily.loc[:, [SYMBOL_COL, RAW_PRICE_COL]].copy()
-    prices[SYMBOL_COL] = prices[SYMBOL_COL].astype(str)
-    _require_unique_symbols(prices, "daily_bar")
+    table_ops.require_nonempty_strings(prices, (SYMBOL_COL,), who="daily_bar")
+    table_ops.require_unique(prices, (SYMBOL_COL,), who="daily_bar")
 
     if symbols is None:
-        _require_positive_finite(prices, [RAW_PRICE_COL])
+        table_ops.require_positive(prices, (RAW_PRICE_COL,), who="daily_bar")
         return prices.loc[:, [SYMBOL_COL, RAW_PRICE_COL]]
 
     prices = (
@@ -78,7 +78,7 @@ def read_raw_close(
         .loc[[str(symbol) for symbol in symbols]]
         .reset_index(drop=True)
     )
-    _require_positive_finite(prices, [RAW_PRICE_COL])
+    table_ops.require_positive(prices, (RAW_PRICE_COL,), who="daily_bar")
     return prices.loc[:, [SYMBOL_COL, RAW_PRICE_COL]]
 
 
@@ -109,51 +109,13 @@ def _read_feature_rows(
     )
     features = pq.ParquetFile(loaded.payload_path).read().to_pandas()
 
-    _require_columns(features, [SYMBOL_COL, *names], "feature")
+    table_ops.require_columns(features, (SYMBOL_COL, *names), who="feature")
     features = features.loc[:, [SYMBOL_COL, *names]].copy()
-    features[SYMBOL_COL] = features[SYMBOL_COL].astype(str)
-    _require_unique_symbols(features, "feature")
+    table_ops.require_nonempty_strings(features, (SYMBOL_COL,), who="feature")
+    table_ops.require_unique(features, (SYMBOL_COL,), who="feature")
 
     return (
         features.set_index(SYMBOL_COL, drop=False)
         .loc[ordered_symbols]
         .reset_index(drop=True)
     )
-
-
-def _require_columns(frame: pd.DataFrame, columns: Sequence[str], label: str) -> None:
-    missing = [column for column in columns if column not in frame.columns]
-    if missing:
-        raise ValueError(f"[daily_signal_data] {label} missing columns: {missing}")
-
-
-def _require_positive_finite(
-    frame: pd.DataFrame,
-    columns: Sequence[str],
-) -> None:
-    for column in columns:
-        values = pd.to_numeric(frame[column], errors="coerce")
-        invalid_mask = ~values.map(math.isfinite) | (values <= 0.0)
-        invalid = frame.loc[invalid_mask, SYMBOL_COL].tolist()
-        if invalid:
-            raise ValueError(
-                f"[daily_signal_data] {column} must be finite and positive "
-                f"for symbols: {invalid}"
-            )
-        frame[column] = values.astype(float)
-
-
-def _require_unique_symbols(frame: pd.DataFrame, label: str) -> None:
-    duplicated = (
-        frame.loc[
-            frame[SYMBOL_COL].duplicated(),
-            SYMBOL_COL,
-        ]
-        .drop_duplicates()
-        .tolist()
-    )
-    if duplicated:
-        raise ValueError(
-            f"[daily_signal_data] {label} rows must be one row per symbol; "
-            f"duplicated symbols: {duplicated}"
-        )

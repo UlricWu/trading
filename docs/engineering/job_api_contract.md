@@ -29,11 +29,10 @@ Flask 进程运行，多个 worker 进程会形成彼此独立且不一致的队
 请求 body 必须是 JSON object，`kind` 是唯一判别字段，额外字段必须拒绝：
 
 - `data-standard`、`data-level2`
-  - 单日形式必须提供 `date`。
-  - 范围形式必须同时提供 `start` 与 `end`。
-  - 两种形式互斥；日期必须是规范 `YYYY-MM-DD`，且 `start <= end`。
-  - 范围按自然日升序、包含首尾地原子展开为一天一个独立 Job。周末及无数据日期不在
-    HTTP 层过滤；workflow 无数据时通过退出码 `75` 产生 `SKIPPED`。
+  - 必须且只允许提供 `start` 与 `end`。
+  - 日期必须是规范 `YYYY-MM-DD`，且 `start <= end`。
+  - 完整闭区间是一个 workflow 执行单位，因此只创建一个 Job。单日使用
+    `start == end`。
 - `train`
   - 必须且只允许提供 `start` 与 `end`。
   - 完整范围是一个 workflow 执行单位，因此只创建一个 Job。
@@ -42,9 +41,8 @@ Flask 进程运行，多个 worker 进程会形成彼此独立且不一致的队
   - 字段业务语义与 CLI 同名参数一致。
   - 完整范围是一个 workflow 执行单位，因此只创建一个 Job。
 
-一个 Job 对应一个最小 workflow 执行单位，不要求一个 HTTP 请求只对应一个 Job。整个
-请求必须先完成字段和业务参数构造，再一次性加入 FIFO；任一字段无效时不得创建任何
-Job、ID、日志或子进程。
+一个 Job 对应一个完整 workflow 执行单位；每个有效请求只创建一个 Job。请求必须先完成
+字段和业务参数构造，再加入 FIFO；任一字段无效时不得创建任何 Job、ID、日志或子进程。
 
 成功固定返回：
 
@@ -57,9 +55,8 @@ Job、ID、日志或子进程。
 ## 请求构造与 CLI 子进程
 
 HTTP 和 CLI 必须共同使用 `src.jobs.requests` 构造完整、可直接消费的 data、training
-或 backtest submission；HTTP 层只拥有 JSON object 形状、`kind` allowlist、每种 kind
-的字段 allowlist 和 data 单日/范围形式选择，不得复制日期、mode、model experiment 或
-strategy 的业务校验。
+或 backtest submission；HTTP 层只拥有 JSON object 形状、`kind` allowlist 和每种 kind
+的字段 allowlist，不得复制日期、mode、model experiment 或 strategy 的业务校验。
 
 Job 子进程必须使用当前服务的 Python 解释器执行 `-m src.cli`，不得调用 PATH 中的
 `python`。Data Job 的 UUID 只标识 Job；training 和 backtest 必须将同一个完整 Job UUID
@@ -73,13 +70,7 @@ Job JSON 必须且只包含：
 job_id, kind, scope, status, submitted_at, started_at, finished_at
 ```
 
-`scope` 只表达该 Job 的执行单位：
-
-```json
-{"date": "YYYY-MM-DD"}
-```
-
-或：
+`scope` 只表达该 Job 的完整执行单位：
 
 ```json
 {"start": "YYYY-MM-DD", "end": "YYYY-MM-DD"}

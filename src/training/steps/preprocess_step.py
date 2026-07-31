@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from src import logs
 from src.config.model_config import PreprocessingConfig
+from src.utils import table_ops
 from src.training.context import TrainingContext
 from src.training.engines.preprocess_engine import PreprocessEngine
 
@@ -34,8 +35,7 @@ class PreprocessStep:
         Example:
             step(context)
         """
-        if ctx.train_X.empty:
-            raise RuntimeError("[Preprocess] train_X is empty")
+        table_ops.require_nonempty(ctx.train_X, who="PreprocessStep train_X")
 
         train_X_proc, artifact = self.engine.fit_transform(
             train_X=ctx.train_X,
@@ -53,6 +53,5 @@ class PreprocessStep:
         ctx.eval_y = ctx.eval_y.loc[eval_X_proc.index]
 
         logs.info(
-            f"[Preprocess] train_rows={len(ctx.train_X)} "
-            f"eval_rows={len(ctx.eval_X)}"
+            f"[Preprocess] train_rows={len(ctx.train_X)} eval_rows={len(ctx.eval_X)}"
         )

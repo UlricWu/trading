@@ -21,8 +21,7 @@ from src.utils.path import PathManager
 from src.workflows.backtest import run_daily_alpha_backtest
 from src.workflows.offline_daily_data import (
     DataRunStatus,
-    run_offline_level2_data,
-    run_offline_standard_data,
+    run_offline_data,
 )
 from src.workflows.offline_training import run_offline_training
 
@@ -56,44 +55,70 @@ def _raise_bad_parameter(
 
 
 @app.command()  # type: ignore[untyped-decorator]
-def data_standard(date: str) -> None:
-    """Run the standard offline data workflow for one date.
+def data_standard(
+    start_date: str = typer.Option(..., "--start"),
+    end_date: str = typer.Option(..., "--end"),
+) -> None:
+    """Run the standard offline data workflow for one inclusive range.
 
     Example:
-        data_standard("2026-07-20")
+        data_standard(
+            start_date="2026-07-01",
+            end_date="2026-07-20",
+        )
     """
     try:
-        submission = create_data_submission("data-standard", date)
+        submission = create_data_submission(
+            "data-standard",
+            start_date,
+            end_date,
+        )
     except InvalidJobRequest as exc:
-        _raise_bad_parameter(exc, {"date": "DATE"})
+        _raise_bad_parameter(
+            exc,
+            {"start": "--start", "end": "--end"},
+        )
 
     app_config = AppConfig.load()
-    status = run_offline_standard_data(
+    status = run_offline_data(
         app_config=app_config,
         path_manager=PathManager(app_config.storage_root),
-        trade_date=submission.date,
+        submission=submission,
     )
     if status is DataRunStatus.SKIPPED:
         raise typer.Exit(code=JOB_EXIT_CODE_SKIPPED)
 
 
 @app.command()  # type: ignore[untyped-decorator]
-def data_level2(date: str) -> None:
-    """Run the Level-2 offline data workflow for one date.
+def data_level2(
+    start_date: str = typer.Option(..., "--start"),
+    end_date: str = typer.Option(..., "--end"),
+) -> None:
+    """Run the Level-2 offline data workflow for one inclusive range.
 
     Example:
-        data_level2("2026-07-20")
+        data_level2(
+            start_date="2026-07-01",
+            end_date="2026-07-20",
+        )
     """
     try:
-        submission = create_data_submission("data-level2", date)
+        submission = create_data_submission(
+            "data-level2",
+            start_date,
+            end_date,
+        )
     except InvalidJobRequest as exc:
-        _raise_bad_parameter(exc, {"date": "DATE"})
+        _raise_bad_parameter(
+            exc,
+            {"start": "--start", "end": "--end"},
+        )
 
     app_config = AppConfig.load()
-    status = run_offline_level2_data(
+    status = run_offline_data(
         app_config=app_config,
         path_manager=PathManager(app_config.storage_root),
-        trade_date=submission.date,
+        submission=submission,
     )
     if status is DataRunStatus.SKIPPED:
         raise typer.Exit(code=JOB_EXIT_CODE_SKIPPED)

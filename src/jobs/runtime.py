@@ -15,16 +15,12 @@ from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from types import TracebackType
-from typing import TypeAlias
 
 from src import logs
 from src.jobs.requests import (
     JOB_EXIT_CODE_SKIPPED,
-    BacktestSubmission,
-    DataSubmission,
     JobKind,
     JobSubmission,
-    TrainingSubmission,
     build_cli_command,
 )
 from src.utils.datetime_utils import DateTimeUtils
@@ -51,17 +47,6 @@ class JobStatus(str, Enum):
 
 
 @dataclass(frozen=True, slots=True)
-class DataJobScope:
-    """Identify the single natural day executed by a data job.
-
-    Example:
-        scope = DataJobScope(date="2026-07-20")
-    """
-
-    date: str
-
-
-@dataclass(frozen=True, slots=True)
 class RangeJobScope:
     """Identify the complete inclusive range executed by one job.
 
@@ -73,9 +58,6 @@ class RangeJobScope:
     end: str
 
 
-JobScope: TypeAlias = DataJobScope | RangeJobScope
-
-
 @dataclass(frozen=True, slots=True)
 class JobSnapshot:
     """Expose the immutable public view of one process-local job.
@@ -84,7 +66,10 @@ class JobSnapshot:
         snapshot = JobSnapshot(
             job_id="00000000-0000-4000-8000-000000000001",
             kind="data-standard",
-            scope=DataJobScope(date="2026-07-20"),
+            scope=RangeJobScope(
+                start="2026-07-20",
+                end="2026-07-20",
+            ),
             status=JobStatus.PENDING,
             submitted_at="2026-07-20T09:30:00.000000+08:00",
             started_at=None,
@@ -94,7 +79,7 @@ class JobSnapshot:
 
     job_id: str
     kind: JobKind
-    scope: JobScope
+    scope: RangeJobScope
     status: JobStatus
     submitted_at: str
     started_at: str | None
@@ -178,7 +163,13 @@ class JobRuntime:
         Example:
             with JobRuntime(Path("logs/jobs")) as runtime:
                 jobs = runtime.submit(
-                    [DataSubmission(kind="data-standard", date="2026-07-20")]
+                    [
+                        DataSubmission(
+                            kind="data-standard",
+                            start="2026-07-20",
+                            end="2026-07-20",
+                        )
+                    ]
                 )
         """
         owned_submissions = tuple(submissions)
@@ -214,7 +205,13 @@ class JobRuntime:
         Example:
             with JobRuntime(Path("logs/jobs")) as runtime:
                 job = runtime.submit(
-                    [DataSubmission(kind="data-standard", date="2026-07-20")]
+                    [
+                        DataSubmission(
+                            kind="data-standard",
+                            start="2026-07-20",
+                            end="2026-07-20",
+                        )
+                    ]
                 )[0]
                 snapshot = runtime.get(job.job_id)
         """
@@ -230,7 +227,13 @@ class JobRuntime:
         Example:
             with JobRuntime(Path("logs/jobs")) as runtime:
                 job = runtime.submit(
-                    [DataSubmission(kind="data-standard", date="2026-07-20")]
+                    [
+                        DataSubmission(
+                            kind="data-standard",
+                            start="2026-07-20",
+                            end="2026-07-20",
+                        )
+                    ]
                 )[0]
                 cancelled = runtime.cancel(job.job_id)
         """
@@ -572,20 +575,14 @@ class JobRuntime:
     @staticmethod
     def _snapshot_locked(job: _Job) -> JobSnapshot:
         submission = job.submission
-        if isinstance(submission, DataSubmission):
-            scope: JobScope = DataJobScope(date=submission.date)
-        elif isinstance(submission, (TrainingSubmission, BacktestSubmission)):
-            scope = RangeJobScope(
-                start=submission.start,
-                end=submission.end,
-            )
-        else:
-            raise TypeError("unknown job submission type")
 
         return JobSnapshot(
             job_id=job.job_id,
             kind=submission.kind,
-            scope=scope,
+            scope=RangeJobScope(
+                start=submission.start,
+                end=submission.end,
+            ),
             status=job.status,
             submitted_at=job.submitted_at,
             started_at=job.started_at,

@@ -5,19 +5,25 @@ from __future__ import annotations
 
 from src import logs
 from src.access import meta
-from src.config.app_config import AppConfig
-from src.data_system.builders.registry import get_label_builder
+from src.utils import table_ops
+from src.data_system.builders.base import LabelBuilder
 from src.data_system.context import DataContext
 from src.utils.parquet_writer import write_parquet_atomic
 
 
 class LabelBuildStep:
-    """Materialize enabled label sets selected by the workflow.
+    """Materialize one label partition from a complete calendar window.
 
     Example:
         step = LabelBuildStep(
-            app_cfg=selected_config,
-            allowed_sets=frozenset({"daily_t1_net_excess_rank"}),
+            label_set="daily_t1_net_excess_rank",
+            version="v1",
+            builder=label_builder,
+            input_dates=(
+                "2026-07-16",
+                "2026-07-17",
+                "2026-07-20",
+            ),
         )
         step(context)
     """
@@ -25,67 +31,75 @@ class LabelBuildStep:
     def __init__(
         self,
         *,
-        app_cfg: AppConfig,
-        allowed_sets: frozenset[str] | None = None,
+        label_set: str,
+        version: str,
+        builder: LabelBuilder,
+        input_dates: tuple[str, ...],
     ) -> None:
-        """Store the selected label configuration.
+        """Store one selected builder and its complete input dates.
 
         Example:
-            step = LabelBuildStep(app_cfg=selected_config)
+            step = LabelBuildStep(
+                label_set="daily_t1_net_excess_rank",
+                version="v1",
+                builder=label_builder,
+                input_dates=(
+                    "2026-07-16",
+                    "2026-07-17",
+                    "2026-07-20",
+                ),
+            )
         """
-        self._cfg = app_cfg
-        self.allowed_sets = allowed_sets
+        self._label_set = label_set
+        self._version = version
+        self._builder = builder
+        self._input_dates = input_dates
 
     def __call__(self, ctx: DataContext) -> None:
-        """Build enabled label partitions for one trade date.
+        """Build the selected label partition for the context date.
 
         Example:
             step(context)
         """
-        for label_set, label_cfg in self._cfg.data.label_sets.items():
-            if not label_cfg.enabled:
-                continue
-            if self.allowed_sets is not None and label_set not in self.allowed_sets:
-                continue
-
-            builder = get_label_builder(label_set, label_cfg.version)
-            logs.info(f"[LabelBuild] build label_set={label_set}")
-            output_meta = ctx.pm.label_meta(
-                label_set=label_set,
-                version=label_cfg.version,
-                trade_date=ctx.trade_date,
-            )
-            output_path = ctx.pm.label_data(
-                label_set=label_set,
-                version=label_cfg.version,
-                trade_date=ctx.trade_date,
-            )
-            if (
-                meta.find(
-                    pm=ctx.pm,
-                    meta_path=output_meta,
-                    expected_payload_path=output_path,
-                )
-                is not None
-            ):
-                logs.info(
-                    f"[LabelBuild] meta hit -> skip label_set={label_set} "
-                    f"trade_date={ctx.trade_date}"
-                )
-                continue
-
-            table = builder.read_input(
+        logs.info(
+            f"[LabelBuild] build label_set={self._label_set} "
+            f"trade_date={ctx.trade_date} maturity_date={self._input_dates[-1]}"
+        )
+        output_meta = ctx.pm.label_meta(
+            label_set=self._label_set,
+            version=self._version,
+            trade_date=ctx.trade_date,
+        )
+        output_path = ctx.pm.label_data(
+            label_set=self._label_set,
+            version=self._version,
+            trade_date=ctx.trade_date,
+        )
+        if (
+            meta.find(
                 pm=ctx.pm,
-                trade_date=ctx.trade_date,
+                meta_path=output_meta,
+                expected_payload_path=output_path,
             )
-            labels = builder.build_partition(table)
-            if labels.num_rows == 0:
-                raise RuntimeError(
-                    f"[LabelBuild] empty label output label_set={label_set} "
-                    f"trade_date={ctx.trade_date}"
-                )
-            write_parquet_atomic(output_file=output_path, table=labels)
-            meta.commit(
-                pm=ctx.pm,
-                payload_path=output_path,
+            is not None
+        ):
+            logs.info(
+                f"[LabelBuild] meta hit -> skip label_set={self._label_set} "
+                f"trade_date={ctx.trade_date}"
             )
+            return
+
+        table = self._builder.read_input(
+            pm=ctx.pm,
+            trade_dates=self._input_dates,
+        )
+        labels = self._builder.build_partition(table)
+        table_ops.require_nonempty(
+            labels,
+            who=(f"LabelBuild label_set={self._label_set} trade_date={ctx.trade_date}"),
+        )
+        write_parquet_atomic(output_file=output_path, table=labels)
+        meta.commit(
+            pm=ctx.pm,
+            payload_path=output_path,
+        )

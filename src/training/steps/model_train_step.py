@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
+from src.utils import table_ops
 from src.training.context import TrainingContext
 from src.training.engines.model.sgd_regressor_train_engine import (
     SklearnSGDRegressorTrainEngine,
@@ -47,8 +48,7 @@ class ModelTrainStep:
             step(context)
         """
 
-        if ctx.train_X.empty:
-            raise RuntimeError("[ModelTrainStep] train_X is empty")
+        table_ops.require_nonempty(ctx.train_X, who="ModelTrainStep train_X")
         if len(ctx.train_X) != len(ctx.train_y):
             raise RuntimeError(
                 f"[ModelTrainStep] train_X / train_y length mismatch: "

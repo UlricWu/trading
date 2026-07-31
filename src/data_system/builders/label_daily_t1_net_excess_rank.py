@@ -1,7 +1,7 @@
 # filepath: src/data_system/builders/label_daily_t1_net_excess_rank.py
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
 
@@ -10,9 +10,8 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from src.access import Access, meta
-from src.data_system.arrow.ops import require_columns
+from src.utils import table_ops
 from src.data_system.builders.base import InputSpec
-from src.utils.datetime_utils import DateTimeUtils
 from src.utils.path import PathManager
 
 
@@ -61,7 +60,12 @@ _OUTPUT_COLUMNS: Mapping[str, _OutputColumn] = MappingProxyType(
 
 
 class DailyT1NetExcessRankV1Builder:
-    """Build v1 T+1 net excess-return rank labels."""
+    """Build v1 T+1 net excess-return rank labels.
+
+    Example:
+        builder = DailyT1NetExcessRankV1Builder()
+        labels = builder.build_partition(input_table)
+    """
 
     key_columns = (
         "symbol",
@@ -80,20 +84,43 @@ class DailyT1NetExcessRankV1Builder:
             raise ValueError(f"unknown label_column: {label_column!r}") from exc
         return column.lookahead
 
-    def read_input(self, *, pm: PathManager, trade_date: str) -> pa.Table:
+    def read_input(
+        self,
+        *,
+        pm: PathManager,
+        trade_dates: Sequence[str],
+    ) -> pa.Table:
+        """Read the complete three-session input window.
+
+        Example:
+            table = builder.read_input(
+                pm=path_manager,
+                trade_dates=("2026-07-16", "2026-07-17", "2026-07-20"),
+            )
+        """
         return _read_window(
             pm=pm,
-            trade_date=trade_date,
-            lookahead=self.lookahead,
+            trade_dates=trade_dates,
         )
 
     def build_partition(
         self,
         table: pa.Table | Mapping[InputSpec, pa.Table],
     ) -> pa.Table:
+        """Build one signal-date label partition.
+
+        Example:
+            labels = DailyT1NetExcessRankV1Builder().build_partition(
+                input_table
+            )
+        """
         if not isinstance(table, pa.Table):
             raise TypeError("daily label input must be a pyarrow.Table")
-        require_columns(table, _REQUIRED_COLUMNS)
+        table_ops.require_columns(
+            table,
+            _REQUIRED_COLUMNS,
+            who="daily_t1_net_excess_rank input",
+        )
 
         df = table.select(_REQUIRED_COLUMNS).to_pandas()
         dates = sorted(df["trade_date"].dropna().unique().tolist())
@@ -195,10 +222,9 @@ def _rank_net_excess_return(frame: pd.DataFrame) -> pd.Series:
 def _read_window(
     *,
     pm: PathManager,
-    trade_date: str,
-    lookahead: int,
+    trade_dates: Sequence[str],
 ) -> pa.Table:
-    window = _window_dates(pm=pm, trade_date=trade_date, lookahead=lookahead)
+    window = tuple(trade_dates)
     access = Access(pm=pm, processed_version="v1")
     daily_tables = [
         pa.Table.from_pandas(
@@ -227,53 +253,18 @@ def _read_window(
 
     daily = pa.concat_tables(daily_tables)
     adj = pa.concat_tables(adj_tables)
-    require_columns(daily, ("symbol", "trade_date", "open", "close"))
-    require_columns(adj, ("symbol", "trade_date", "adj_factor"))
+    table_ops.require_columns(
+        daily,
+        ("symbol", "trade_date", "open", "close"),
+        who="daily_bar",
+    )
+    table_ops.require_columns(
+        adj,
+        ("symbol", "trade_date", "adj_factor"),
+        who="adj_factor",
+    )
 
     daily_df = daily.select(("symbol", "trade_date", "open", "close")).to_pandas()
     adj_df = adj.select(("symbol", "trade_date", "adj_factor")).to_pandas()
     merged = daily_df.merge(adj_df, on=["symbol", "trade_date"], how="left")
     return pa.Table.from_pandas(merged, preserve_index=False)
-
-
-def _window_dates(
-    *,
-    pm: PathManager,
-    trade_date: str,
-    lookahead: int,
-) -> list[str]:
-    dataset_name = "daily_bar"
-    version = "v1"
-    trade_date = DateTimeUtils.require_system_date(
-        trade_date,
-        field_name="trade_date",
-    )
-    root = pm.processed_version_dir(
-        dataset_name=dataset_name,
-        version=version,
-    )
-    dates = []
-    for path in root.glob("trade_date=*"):
-        if not path.is_dir():
-            continue
-        dates.append(
-            DateTimeUtils.require_system_date(
-                path.name.removeprefix("trade_date="),
-                field_name="trade_date",
-            )
-        )
-
-    dates = sorted(set(dates))
-    try:
-        index = dates.index(trade_date)
-    except ValueError as exc:
-        raise RuntimeError(
-            f"[LabelBuild] missing signal partition trade_date={trade_date}"
-        ) from exc
-
-    window = dates[index : index + lookahead + 1]
-    if len(window) != lookahead + 1:
-        raise RuntimeError(
-            f"[LabelBuild] insufficient daily_t1 window trade_date={trade_date}"
-        )
-    return window

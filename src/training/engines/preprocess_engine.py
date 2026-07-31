@@ -4,15 +4,22 @@ from __future__ import annotations
 import pandas as pd
 
 from src.config.model_config import MissingConfig, PreprocessingConfig
+from src.utils import table_ops
 from src.training.artifact import PreprocessArtifact
 
 
 class PreprocessEngine:
-    """
-    In-memory preprocessing engine for missing-value handling.
+    """Apply train-owned missing-value handling to feature tables.
 
     The engine learns fill values from train_X only. Eval data is transformed
     with the resulting artifact; no values are estimated from eval data.
+
+    Example:
+        engine = PreprocessEngine()
+        transformed, artifact = engine.fit_transform(
+            train_X=pd.DataFrame({"factor": [1.0, None]}),
+            cfg=PreprocessingConfig(),
+        )
     """
 
     def fit_transform(
@@ -21,6 +28,14 @@ class PreprocessEngine:
         train_X: pd.DataFrame,
         cfg: PreprocessingConfig,
     ) -> tuple[pd.DataFrame, PreprocessArtifact]:
+        """Fit missing values on training data and return its artifact.
+
+        Example:
+            transformed, artifact = PreprocessEngine().fit_transform(
+                train_X=pd.DataFrame({"factor": [1.0, None]}),
+                cfg=PreprocessingConfig(),
+            )
+        """
         X, fill_values = _fit_missing(train_X.copy(), cfg.missing)
 
         artifact = PreprocessArtifact(
@@ -36,6 +51,14 @@ class PreprocessEngine:
         X: pd.DataFrame,
         artifact: PreprocessArtifact,
     ) -> pd.DataFrame:
+        """Apply one fitted artifact to a feature table.
+
+        Example:
+            transformed = engine.transform_with_artifact(
+                X=pd.DataFrame({"factor": [None]}),
+                artifact=artifact,
+            )
+        """
         out = X.reindex(columns=artifact.feature_columns).copy()
         return _apply_missing(out, artifact)
 
@@ -60,11 +83,11 @@ def _apply_missing(X: pd.DataFrame, artifact: PreprocessArtifact) -> pd.DataFram
     # pandas accepts concrete dict/Series fill values rather than the general
     # read-only Mapping exposed by the artifact.
     out = X.fillna(value=dict(artifact.fill_values))
-    if out.isna().any().any():
-        missing = out.columns[out.isna().any()].tolist()
-        raise ValueError(
-            "[PreprocessEngine] missing values remain without artifact fill values: "
-            f"{missing}"
+    if len(out.columns) > 0:
+        table_ops.require_non_null(
+            out,
+            tuple(out.columns),
+            who="PreprocessEngine artifact fill output",
         )
     return out
 
@@ -82,8 +105,7 @@ def _fill_values(X: pd.DataFrame, cfg: MissingConfig) -> dict[str, float]:
     numeric_cols = X.select_dtypes(include=["number"]).columns
     numeric_col_set = set(numeric_cols)
     non_numeric_missing = [
-        col for col in X.columns[X.isna().any()]
-        if col not in numeric_col_set
+        col for col in X.columns[X.isna().any()] if col not in numeric_col_set
     ]
     if non_numeric_missing:
         raise ValueError(

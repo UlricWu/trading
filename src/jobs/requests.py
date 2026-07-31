@@ -29,7 +29,7 @@ JOB_EXIT_CODE_SKIPPED = 75
 
 _DATA_KINDS = frozenset({"data-standard", "data-level2"})
 _JOB_KINDS = _DATA_KINDS | {"train", "backtest"}
-_DATA_FIELDS = frozenset({"kind", "date", "start", "end"})
+_DATA_FIELDS = frozenset({"kind", "start", "end"})
 _TRAINING_FIELDS = frozenset({"kind", "start", "end"})
 _BACKTEST_FIELDS = frozenset(
     {"kind", "mode", "start", "end", "model_experiment", "strategy"}
@@ -51,14 +51,19 @@ class InvalidJobRequest(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class DataSubmission:
-    """Describe one validated single-day data workflow execution.
+    """Describe one validated full-range data workflow execution.
 
     Example:
-        submission = DataSubmission(kind="data-standard", date="2026-07-20")
+        submission = DataSubmission(
+            kind="data-standard",
+            start="2026-07-20",
+            end="2026-07-20",
+        )
     """
 
     kind: DataJobKind
-    date: str
+    start: str
+    end: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,19 +104,31 @@ class BacktestSubmission:
 JobSubmission: TypeAlias = DataSubmission | TrainingSubmission | BacktestSubmission
 
 
-def create_data_submission(kind: object, trade_date: object) -> DataSubmission:
-    """Construct one usable single-day data submission.
+def create_data_submission(
+    kind: object,
+    start: object,
+    end: object,
+) -> DataSubmission:
+    """Construct one usable full-range data submission.
 
     Example:
-        submission = create_data_submission("data-standard", "2026-07-20")
+        submission = create_data_submission(
+            "data-standard",
+            "2026-07-01",
+            "2026-07-20",
+        )
     """
     if kind not in _DATA_KINDS:
         raise InvalidJobRequest(
             "must be data-standard or data-level2",
             field="kind",
         )
-    normalized_date = _require_date(trade_date, field="date")
-    return DataSubmission(kind=cast(DataJobKind, kind), date=normalized_date)
+    normalized_start, normalized_end = _require_range(start, end)
+    return DataSubmission(
+        kind=cast(DataJobKind, kind),
+        start=normalized_start,
+        end=normalized_end,
+    )
 
 
 def create_training_submission(
@@ -191,7 +208,11 @@ def parse_job_request(payload: object) -> list[JobSubmission]:
 
     Example:
         submissions = parse_job_request(
-            {"kind": "data-standard", "date": "2026-07-20"}
+            {
+                "kind": "data-standard",
+                "start": "2026-07-01",
+                "end": "2026-07-20",
+            }
         )
     """
     if not isinstance(payload, Mapping):
@@ -208,7 +229,13 @@ def parse_job_request(payload: object) -> list[JobSubmission]:
 
     if kind in _DATA_KINDS:
         _reject_unknown_fields(request_payload, _DATA_FIELDS)
-        return _parse_data_request(request_payload, cast(DataJobKind, kind))
+        return [
+            create_data_submission(
+                kind,
+                request_payload.get("start"),
+                request_payload.get("end"),
+            )
+        ]
     if kind == "train":
         _reject_unknown_fields(request_payload, _TRAINING_FIELDS)
         return [
@@ -240,7 +267,11 @@ def build_cli_command(
 
     Example:
         command = build_cli_command(
-            DataSubmission(kind="data-standard", date="2026-07-20"),
+            DataSubmission(
+                kind="data-standard",
+                start="2026-07-01",
+                end="2026-07-20",
+            ),
             "00000000-0000-4000-8000-000000000001",
         )
     """
@@ -251,7 +282,14 @@ def build_cli_command(
         submission.kind,
     ]
     if isinstance(submission, DataSubmission):
-        command.append(submission.date)
+        command.extend(
+            [
+                "--start",
+                submission.start,
+                "--end",
+                submission.end,
+            ]
+        )
     elif isinstance(submission, TrainingSubmission):
         command.extend(
             [
@@ -286,35 +324,6 @@ def build_cli_command(
             ]
         )
     return tuple(command)
-
-
-def _parse_data_request(
-    payload: Mapping[str, object],
-    kind: DataJobKind,
-) -> list[JobSubmission]:
-    has_date = "date" in payload
-    has_start = "start" in payload
-    has_end = "end" in payload
-
-    if has_date and (has_start or has_end):
-        raise InvalidJobRequest("date and start/end are mutually exclusive")
-    if has_date:
-        return [
-            DataSubmission(
-                kind=kind,
-                date=_require_date(payload["date"], field="date"),
-            )
-        ]
-    if not has_start:
-        raise InvalidJobRequest("is required", field="start")
-    if not has_end:
-        raise InvalidJobRequest("is required", field="end")
-
-    start, end = _require_range(payload["start"], payload["end"])
-    return [
-        DataSubmission(kind=kind, date=trade_date)
-        for trade_date in DateTimeUtils.date_range(start, end)
-    ]
 
 
 def _reject_unknown_fields(

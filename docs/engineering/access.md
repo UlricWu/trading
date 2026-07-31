@@ -70,20 +70,24 @@ class Access:
 
 Access 不提供接收 `dataset_name` 的 public 方法，也不提供任意路径或任意表读取。
 
-## 日线与可用交易日
+## 正式交易日与日线
 
 `daily_bars()` 返回正式 `daily_bar`。`symbols=None` 返回当日完整对象；显式 symbol
 序列返回按请求顺序排列的行；空序列返回保留列的空表。请求 symbol 必须是唯一的六位
 数字字符串。
 
-一个实际可用交易日定义为：指定 processed version 下存在且能够通过 Meta 校验的正式
-daily bars 对象。目录或 payload 单独存在不算可用。
+正式交易日只由指定 processed version 下的 `trade_calendar` 对象定义。每个请求自然日
+必须存在能够通过 Meta 校验、schema 精确且日期匹配的单行对象；其中 `is_open=true`
+表示正式交易日，`is_open=false` 表示休市。日历对象 schema 与 `daily_bar` 的职责边界由
+[`docs/data/source_contract.md`](../data/source_contract.md) 所有。
 
-`trade_dates(start_date=S, end_date=E)` 返回闭区间 `[S, E]` 内的可用交易日，按日期
-升序。它不推断休市日，也不维护另一份交易日历。
+`trade_dates(start_date=S, end_date=E)` 要求闭区间 `[S, E]` 的每个自然日日历对象都
+存在，返回其中 `is_open=true` 的日期并按日期升序。缺少任一自然日、无效对象或字段值
+必须失败。
 
-`recent_trade_dates(end_date=E, sessions=N)` 返回截至并包含 `E` 的最近 `N` 个实际
-可用交易日，按日期升序。`N` 必须为正整数；`E` 不可用或历史不足 `N` 日时整体失败。
+`recent_trade_dates(end_date=E, sessions=N)` 要求 `E` 是正式交易日，并返回截至且包含
+`E` 的最近 `N` 个正式交易日，按日期升序。向前扫描期间的每个自然日日历对象都必须
+存在；`N` 必须为正整数，`E` 休市、日历断档或历史不足时整体失败。
 
 ## Universe
 

@@ -12,6 +12,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from src.access import meta
+from src.utils import table_ops
 from src.utils.datetime_utils import DateTimeUtils
 from src.utils.path import PathManager
 
@@ -64,7 +65,7 @@ class Access:
         start_date: str,
         end_date: str,
     ) -> list[str]:
-        """Return formal daily-bar dates in the closed requested interval.
+        """Return formal open dates in the complete calendar interval.
 
         Example:
             for trade_date in access.trade_dates(
@@ -86,16 +87,14 @@ class Access:
                 f"invalid date range: start={validated_start}, end={validated_end}"
             )
 
-        dates = self._daily_bar_meta_dates(
-            start_date=validated_start,
-            end_date=validated_end,
-        )
-        for trade_date in dates:
-            self._load_processed_meta(
-                trade_date=trade_date,
-                dataset_name="daily_bar",
+        return [
+            trade_date
+            for trade_date in DateTimeUtils.date_range(
+                validated_start,
+                validated_end,
             )
-        return dates
+            if self._calendar_is_open(trade_date)
+        ]
 
     def recent_trade_dates(
         self,
@@ -120,28 +119,60 @@ class Access:
         if sessions <= 0:
             raise ValueError("sessions must be positive")
 
-        dates = self._daily_bar_meta_dates(
-            start_date=None,
-            end_date=validated_end,
+        version_dir = self._pm.processed_version_dir(
+            dataset_name="trade_calendar",
+            version=self._processed_version,
         )
-        if validated_end not in dates:
+        if not version_dir.is_dir():
             raise FileNotFoundError(
-                f"formal daily bars are unavailable: trade_date={validated_end}"
-            )
-        if len(dates) < sessions:
-            raise RuntimeError(
-                f"insufficient daily-bar history: "
-                f"trade_date={validated_end}, required={sessions}, "
-                f"available={len(dates)}"
+                f"formal trade-calendar version is unavailable: {version_dir}"
             )
 
-        selected = dates[-sessions:]
-        for trade_date in selected:
-            self._load_processed_meta(
-                trade_date=trade_date,
-                dataset_name="daily_bar",
+        partition_prefix = "trade_date="
+        calendar_dates = []
+        for partition_dir in version_dir.iterdir():
+            if (
+                not partition_dir.is_dir()
+                or not partition_dir.name.startswith(partition_prefix)
+                or not (partition_dir / "meta.json").is_file()
+            ):
+                continue
+            calendar_date = DateTimeUtils.require_system_date(
+                partition_dir.name.removeprefix(partition_prefix),
+                field_name="trade_calendar partition trade_date",
             )
-        return selected
+            if calendar_date <= validated_end:
+                calendar_dates.append(calendar_date)
+
+        if not calendar_dates or validated_end not in calendar_dates:
+            raise FileNotFoundError(
+                f"formal trade calendar is unavailable: trade_date={validated_end}"
+            )
+        if not self._calendar_is_open(validated_end):
+            raise ValueError(
+                f"end_date is not a formal trade date: end_date={validated_end}"
+            )
+
+        earliest_date = min(calendar_dates)
+        selected = [validated_end]
+        if sessions == 1:
+            return selected
+
+        current_date = DateTimeUtils.days_before(validated_end, 1)
+        while current_date >= earliest_date:
+            if self._calendar_is_open(current_date):
+                selected.append(current_date)
+                if len(selected) == sessions:
+                    return list(reversed(selected))
+            if current_date == earliest_date:
+                break
+            current_date = DateTimeUtils.days_before(current_date, 1)
+
+        raise RuntimeError(
+            f"insufficient trade-calendar history: "
+            f"trade_date={validated_end}, required={sessions}, "
+            f"available={len(selected)}"
+        )
 
     def universe(
         self,
@@ -368,10 +399,10 @@ class Access:
                 trade_date=trade_date,
                 dataset_name="stock_basic",
             )
-            _require_columns(
+            table_ops.require_columns(
                 stock_basic,
-                ("symbol", "list_date"),
-                dataset_name="stock_basic",
+                ("list_date",),
+                who="stock_basic",
             )
             stock_basic_symbols = _unique_data_symbols(
                 stock_basic,
@@ -446,40 +477,40 @@ class Access:
         )
         return pq.ParquetFile(loaded.payload_path).read().to_pandas()
 
-    def _daily_bar_meta_dates(
-        self,
-        *,
-        start_date: str | None,
-        end_date: str,
-    ) -> list[str]:
-        version_dir = self._pm.processed_version_dir(
-            dataset_name="daily_bar",
-            version=self._processed_version,
+    def _calendar_is_open(self, trade_date: str) -> bool:
+        loaded = self._load_processed_meta(
+            trade_date=trade_date,
+            dataset_name="trade_calendar",
         )
-        if not version_dir.is_dir():
-            raise FileNotFoundError(
-                f"formal daily-bar version is unavailable: {version_dir}"
+        table = pq.ParquetFile(loaded.payload_path).read()
+        if table.column_names != ["trade_date", "is_open"]:
+            raise ValueError(
+                "trade_calendar columns must be ['trade_date', 'is_open']: "
+                f"trade_date={trade_date}, columns={table.column_names}"
+            )
+        if table.num_rows != 1:
+            raise ValueError(
+                "trade_calendar must contain exactly one row: "
+                f"trade_date={trade_date}, rows={table.num_rows}"
             )
 
-        meta_dates: list[str] = []
-        partition_prefix = "trade_date="
-        for partition_dir in version_dir.iterdir():
-            if not partition_dir.is_dir() or not partition_dir.name.startswith(
-                partition_prefix
-            ):
-                continue
-            if not (partition_dir / "meta.json").is_file():
-                continue
-            trade_date = DateTimeUtils.require_system_date(
-                partition_dir.name.removeprefix(partition_prefix),
-                field_name="daily_bar partition trade_date",
+        stored_date = table.column("trade_date")[0].as_py()
+        if type(stored_date) is not str:
+            raise TypeError(
+                f"trade_calendar trade_date must be a string: trade_date={trade_date}"
             )
-            if trade_date > end_date:
-                continue
-            if start_date is not None and trade_date < start_date:
-                continue
-            meta_dates.append(trade_date)
-        return sorted(meta_dates)
+        if stored_date != trade_date:
+            raise ValueError(
+                "trade_calendar date does not match partition: "
+                f"expected={trade_date}, actual={stored_date}"
+            )
+
+        is_open = table.column("is_open")[0].as_py()
+        if type(is_open) is not bool:
+            raise TypeError(
+                f"trade_calendar is_open must be bool: trade_date={trade_date}"
+            )
+        return is_open
 
     def _load_processed_meta(
         self,
@@ -559,23 +590,12 @@ def _validated_symbols(symbols: Sequence[str]) -> list[str]:
     return requested_symbols
 
 
-def _require_columns(
-    frame: pd.DataFrame,
-    columns: Sequence[str],
-    *,
-    dataset_name: str,
-) -> None:
-    missing_columns = [column for column in columns if column not in frame.columns]
-    if missing_columns:
-        raise ValueError(f"{dataset_name} missing required columns: {missing_columns}")
-
-
 def _unique_data_symbols(
     frame: pd.DataFrame,
     *,
     dataset_name: str,
 ) -> list[str]:
-    _require_columns(frame, ("symbol",), dataset_name=dataset_name)
+    table_ops.require_nonempty_strings(frame, ("symbol",), who=dataset_name)
     symbols = frame["symbol"].tolist()
     invalid_symbols = [
         symbol
@@ -586,8 +606,7 @@ def _unique_data_symbols(
         raise ValueError(
             f"{dataset_name}.symbol must contain six-digit strings: {invalid_symbols!r}"
         )
-    if len(symbols) != len(set(symbols)):
-        raise RuntimeError(f"{dataset_name} contains duplicate symbol identities")
+    table_ops.require_unique(frame, ("symbol",), who=dataset_name)
     return symbols
 
 

@@ -13,6 +13,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from src import logs
+from src.utils import table_ops
 from src.data_system.engines.trade_enrich_engine import TradeEnrichEngine
 from src.data_system.normalize import security_type_resolver
 from src.data_system.normalize.engine import (
@@ -28,6 +29,12 @@ from src.utils.datetime_utils import DateTimeUtils
 
 _TUSHARE_TARGET_SCHEMAS: Mapping[str, pa.Schema] = MappingProxyType(
     {
+        "trade_calendar": pa.schema(
+            [
+                ("trade_date", pa.string()),
+                ("is_open", pa.bool_()),
+            ]
+        ),
         "daily_bar": pa.schema(
             [
                 ("ts_code", pa.string()),
@@ -72,7 +79,17 @@ def normalize_tushare(
     target_name: str = "",
     trade_date: str | None = None,
 ) -> NormalizeOutput:
-    """Normalize one Tushare raw parquet object into the market processed layer."""
+    """Normalize one Tushare raw object into a processed dataset.
+
+    Example:
+        output = normalize_tushare(
+            input_file=Path("/data/raw.parquet"),
+            output_name=Path("/data/data.parquet"),
+            raw_object="trade_calendar",
+            target_name="trade_calendar",
+            trade_date="2026-07-20",
+        )
+    """
 
     raw_df = pq.ParquetFile(input_file).read().to_pandas()
     logs.info(
@@ -81,23 +98,58 @@ def normalize_tushare(
     )
     out = raw_df.copy()
 
-    if "ts_code" in out.columns:
-        out["symbol"] = out["ts_code"].astype("string").str.split(".").str[0]
-
-    if "trade_date" in out.columns:
-        trade_date_str = (
-            out["trade_date"].astype("string").str.replace(".0", "", regex=False)
+    if target_name == "trade_calendar":
+        table_ops.require_columns(
+            out,
+            ("cal_date", "is_open"),
+            who="trade_calendar",
         )
-        out["trade_date"] = trade_date_str.map(
-            lambda value: DateTimeUtils.normalize_source_date(
-                value,
-                field_name="trade_date",
+        if len(out) != 1:
+            raise ValueError(
+                f"trade_calendar must contain exactly one row, rows={len(out)}"
             )
+        expected_date = DateTimeUtils.require_system_date(
+            trade_date,
+            field_name="trade_date",
         )
+        calendar_date = DateTimeUtils.normalize_source_date(
+            out.iloc[0]["cal_date"],
+            field_name="cal_date",
+        )
+        if calendar_date != expected_date:
+            raise ValueError(
+                "trade_calendar date does not match partition: "
+                f"expected={expected_date}, actual={calendar_date}"
+            )
+        open_value = pd.to_numeric(
+            pd.Series([out.iloc[0]["is_open"]]),
+            errors="coerce",
+        ).iloc[0]
+        if pd.isna(open_value) or open_value not in (0, 1):
+            raise ValueError("trade_calendar is_open must be 0 or 1")
+        out = pd.DataFrame(
+            {
+                "trade_date": [calendar_date],
+                "is_open": [bool(open_value)],
+            }
+        )
+    else:
+        if "ts_code" in out.columns:
+            out["symbol"] = out["ts_code"].astype("string").str.split(".").str[0]
+
+        if "trade_date" in out.columns:
+            trade_date_str = (
+                out["trade_date"].astype("string").str.replace(".0", "", regex=False)
+            )
+            out["trade_date"] = trade_date_str.map(
+                lambda value: DateTimeUtils.normalize_source_date(
+                    value,
+                    field_name="trade_date",
+                )
+            )
 
     if target_name == "stock_basic":
-        if "list_date" not in out.columns:
-            raise ValueError("stock_basic missing required column 'list_date'")
+        table_ops.require_columns(out, ("list_date",), who="stock_basic")
         list_date_str = (
             out["list_date"].astype("string").str.replace(".0", "", regex=False)
         )

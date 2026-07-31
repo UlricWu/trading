@@ -11,7 +11,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from src.access import Access, meta
-from src.data_system.arrow.ops import require_columns
+from src.utils import table_ops
 from src.utils.path import PathManager
 from src.utils.price_utils import apply_asof_price_adjustment
 
@@ -112,12 +112,14 @@ def _build_partition(
     required_columns: tuple[str, ...],
     key_columns: tuple[str, ...],
 ) -> pa.Table:
-    require_columns(table, required_columns)
+    table_ops.require_columns(
+        table,
+        required_columns,
+        who="TushareDailyBasicV1Builder input",
+    )
+    table_ops.require_nonempty(table, who="TushareDailyBasicV1Builder input")
 
     df = table.select(required_columns).to_pandas()
-    if df.empty:
-        raise RuntimeError("[FeatureBuild] empty daily_bar input")
-
     df = df.sort_values(list(key_columns)).reset_index(drop=True)
     output_date = df["trade_date"].max()
     df = apply_asof_price_adjustment(
@@ -383,5 +385,5 @@ def _read_processed_columns(
         expected_payload_path=path,
     )
     table = pq.ParquetFile(loaded.payload_path).read()
-    require_columns(table, columns)
+    table_ops.require_columns(table, columns, who=dataset_name)
     return table.select(columns)

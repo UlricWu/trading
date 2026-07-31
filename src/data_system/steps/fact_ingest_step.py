@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 from src import logs
 from src.access import meta
 from src.config.app_config import AppConfig
@@ -53,27 +55,17 @@ class FactIngestStep:
         """
         logs.info(f"[FactIngest] start DATE={ctx.trade_date}")
         sources = self._cfg.data.sources
-        if not sources:
-            raise ValueError("FactIngestStep requires at least one source")
 
         broker_adapters: dict[str, BrokerAdapter] = {}
         available_payload = False
         missing_payloads = 0
 
         for source_name, source_cfg in sources.items():
-            if not source_cfg.enabled:
-                continue
-            if source_cfg.raw_object is None:
-                raise ValueError(
-                    "FactIngestStep requires expanded ordinary sources with "
-                    f"raw_object; source={source_name!r}"
-                )
-
             plan = DownloadPlan(
                 source_name=source_name,
                 trade_date=ctx.trade_date,
                 broker=source_cfg.broker,
-                raw_object=source_cfg.raw_object,
+                raw_object=cast(str, source_cfg.raw_object),
             )
             meta_path = ctx.pm.raw_meta(
                 broker=plan.broker,

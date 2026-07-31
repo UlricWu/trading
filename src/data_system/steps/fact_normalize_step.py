@@ -6,6 +6,8 @@ from __future__ import annotations
 from src import logs
 from src.access import meta
 from src.config.app_config import AppConfig
+from src.config.data_config import SourceConfig
+from src.utils import table_ops
 from src.data_system.context import DataContext
 from src.data_system.normalize.profiles import NORMALIZE_PROFILES
 from src.utils.parquet_writer import write_parquet_atomic
@@ -47,11 +49,10 @@ class FactNormalizeStep:
             step(context)
         """
         logs.info(f"[FactNormalize] start DATE={ctx.trade_date}")
-        plans = [
-            [source_name, source_cfg, output]
+        plans: list[tuple[str, SourceConfig, str]] = [
+            (source_name, source_cfg, output)
             for source_name, source_cfg in self._cfg.data.sources.items()
-            for output in source_cfg.outputs
-            if source_cfg.enabled and source_cfg.outputs
+            for output in source_cfg.outputs or ()
         ]
 
         for source_name, source_cfg, output in plans:
@@ -136,12 +137,13 @@ class FactNormalizeStep:
                 trade_date=ctx.trade_date,
             )
 
-            if target.table.num_rows == 0:
-                logs.warning(
-                    "normalize produced no processed outputs: "
-                    f"source={source_name} output={output_file} "
-                )
-                continue
+            table_ops.require_nonempty(
+                target.table,
+                who=(
+                    f"FactNormalize source={source_name} target={output} "
+                    f"trade_date={ctx.trade_date}"
+                ),
+            )
 
             write_parquet_atomic(
                 output_file=output_file,

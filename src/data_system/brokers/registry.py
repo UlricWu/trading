@@ -12,8 +12,14 @@ class BrokerRegistry:
     Register broker adapter classes and expose the minimal raw object API.
 
     The registry owns pluggable implementation selection only. Raw object
-    identity and fetch semantics are defined by `docs/data.md` and implemented
-    by each registered `BrokerAdapter` protocol implementation.
+    identity and fetch semantics are defined by
+    `docs/data/source_contract.md` and implemented by each registered
+    `BrokerAdapter` protocol implementation.
+
+    Example:
+        registry = BrokerRegistry()
+        registry.register(TushareBroker)
+        registry.freeze()
     """
 
     def __init__(self) -> None:

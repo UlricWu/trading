@@ -6,6 +6,7 @@ from typing import Literal
 
 import pandas as pd
 
+from src.utils import table_ops
 from src.utils.datetime_utils import DateTimeUtils
 
 PriceAdjustment = Literal["raw", "qfq", "hfq"]
@@ -26,11 +27,12 @@ def _validate_price_columns(
     if len(set(owned_price_columns)) != len(owned_price_columns):
         raise ValueError("field 'price_columns' must not contain duplicates")
 
-    missing_price_columns = [
-        column for column in owned_price_columns if column not in frame.columns
-    ]
-    if missing_price_columns:
-        raise ValueError(f"missing price columns: {missing_price_columns}")
+    if owned_price_columns:
+        table_ops.require_columns(
+            frame,
+            owned_price_columns,
+            who="price adjustment",
+        )
     return owned_price_columns
 
 
@@ -40,33 +42,14 @@ def _calculate_qfq_price_scale(
     *,
     validated_asof_date: str,
 ) -> pd.Series:
-    missing_qfq_columns = [
-        column
-        for column in ("symbol", "trade_date")
-        if column not in owned_frame.columns
-    ]
-    if missing_qfq_columns:
-        raise ValueError(f"missing qfq columns: {missing_qfq_columns}")
-    if owned_frame["symbol"].isna().any():
-        raise ValueError("column 'symbol' must not contain null values for qfq")
-    if not owned_frame.empty and (
-        pd.api.types.infer_dtype(
-            owned_frame["symbol"],
-            skipna=False,
-        )
-        != "string"
-        or not owned_frame["symbol"].str.len().gt(0).all()
-    ):
-        raise TypeError("column 'symbol' must contain non-empty strings for qfq")
+    table_ops.require_nonempty_strings(
+        owned_frame,
+        ("symbol", "trade_date"),
+        who="qfq",
+    )
 
     trade_dates = owned_frame["trade_date"]
-    if trade_dates.isna().any():
-        raise ValueError("column 'trade_date' must not contain null values for qfq")
     if not owned_frame.empty:
-        if pd.api.types.infer_dtype(trade_dates, skipna=False) != "string":
-            raise TypeError(
-                "column 'trade_date' must contain YYYY-MM-DD strings for qfq"
-            )
         valid_trade_date_format = trade_dates.str.fullmatch(
             r"\d{4}-\d{2}-\d{2}",
             na=False,
@@ -90,11 +73,11 @@ def _calculate_qfq_price_scale(
         owned_frame["trade_date"] == validated_asof_date,
         ["symbol", "adj_factor"],
     ]
-    if asof_factors["symbol"].duplicated().any():
-        raise ValueError(
-            "qfq requires one as-of factor per symbol; "
-            f"duplicates found for asof_date={validated_asof_date}"
-        )
+    table_ops.require_unique(
+        asof_factors,
+        ("symbol",),
+        who="qfq as-of factors",
+    )
 
     input_symbols = pd.Index(owned_frame["symbol"].unique())
     asof_symbols = pd.Index(asof_factors["symbol"])
@@ -129,6 +112,14 @@ def apply_asof_price_adjustment(
     on ``asof_date``. Non-positive or non-numeric prices and factors produce
     null adjusted values. The input frame is never mutated. The full field and
     ownership contract is in ``docs/data/price_adjustment_contract.md``.
+
+    Example:
+        adjusted = apply_asof_price_adjustment(
+            pd.DataFrame({"close": [10.0]}),
+            adjustment="raw",
+            asof_date="2026-07-15",
+            price_columns=("close",),
+        )
     """
     if not isinstance(frame, pd.DataFrame):
         raise TypeError("field 'frame' must be a pandas.DataFrame")
@@ -149,8 +140,11 @@ def apply_asof_price_adjustment(
                 owned_frame.loc[:, f"{output_prefix}{column}"] = owned_frame[column]
         return owned_frame
 
-    if "adj_factor" not in owned_frame.columns:
-        raise ValueError("missing required column: adj_factor")
+    table_ops.require_columns(
+        owned_frame,
+        ("adj_factor",),
+        who="price adjustment",
+    )
     adjustment_factor = pd.to_numeric(
         owned_frame["adj_factor"],
         errors="coerce",

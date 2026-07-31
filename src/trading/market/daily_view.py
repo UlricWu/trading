@@ -7,6 +7,7 @@ from typing import Sequence
 import numpy as np
 import pandas as pd
 
+from src.utils import table_ops
 from src.trading.market.data_view import MarketDataView
 from src.utils.datetime_utils import DateTimeUtils
 
@@ -35,12 +36,27 @@ class DailyView(MarketDataView):
         price_column: str = PRICE_COL,
         ts_us: int | None = None,
     ) -> None:
-        if data.empty:
-            raise ValueError("DailyView requires non-empty data")
+        """Build one immutable daily view from validated table values.
+
+        Example:
+            view = DailyView(
+                pd.DataFrame(
+                    {"symbol": ["600000"], "adjusted_close": [10.0]}
+                ),
+                trade_date="2026-07-27",
+            )
+        """
+        table_ops.require_nonempty(data, who="DailyView")
 
         price_column = _validated_price_column(price_column)
+        table_ops.require_columns(
+            data,
+            (SYMBOL_COL, price_column),
+            who="DailyView",
+        )
+        table_ops.require_nonempty_strings(data, (SYMBOL_COL,), who="DailyView")
+        table_ops.require_unique(data, (SYMBOL_COL,), who="DailyView")
         frame = data.reset_index(drop=True)
-        frame[SYMBOL_COL] = _validated_symbols(frame[SYMBOL_COL])
 
         self._trade_date = DateTimeUtils.require_system_date(
             trade_date,
@@ -136,20 +152,6 @@ class DailyView(MarketDataView):
             dtype=np.int64,
             count=len(normalized),
         )
-
-
-def _validated_symbols(series: pd.Series) -> pd.Series:
-    if series.isna().any():
-        raise ValueError("DailyView symbol column contains null values")
-
-    symbols = series.astype(str)
-    if (symbols.str.len() == 0).any():
-        raise ValueError("DailyView symbol column contains empty values")
-
-    duplicated = symbols[symbols.duplicated()].drop_duplicates().tolist()
-    if duplicated:
-        raise ValueError(f"DailyView duplicate symbols: {duplicated}")
-    return symbols
 
 
 def _validated_price_column(price_column: str) -> str:

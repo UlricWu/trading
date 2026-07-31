@@ -1,23 +1,26 @@
 # filepath: src/workflows/offline_daily_data.py
-"""Assemble and execute the two fixed offline data workflows."""
+"""Execute the fixed range-based offline data workflow."""
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from enum import StrEnum
-from typing import Protocol
+from typing import cast
 
 from src import logs
+from src.access import Access
 from src.config.app_config import AppConfig
 from src.config.data_config import DataConfig, SourceConfig
 from src.data_system.brokers.bootstrap import build_broker_registry
+from src.data_system.builders.registry import get_label_builder
 from src.data_system.context import DataContext
 from src.data_system.steps.fact_ingest_step import FactIngestStep
 from src.data_system.steps.fact_normalize_step import FactNormalizeStep
 from src.data_system.steps.feature_build_step import FeatureBuildStep
 from src.data_system.steps.label_build_step import LabelBuildStep
+from src.jobs.requests import DataSubmission
 from src.observability.instrumentation import Instrumentation
-from src.pipeline import run_steps
+from src.utils.datetime_utils import DateTimeUtils
 from src.utils.path import PathManager
 
 
@@ -36,56 +39,66 @@ class DataRunStatus(StrEnum):
     """Describe the public outcome of one offline data workflow.
 
     Example:
-        status = DataRunStatus.SKIPPED
+        status = DataRunStatus.SUCCESS
     """
 
     SUCCESS = "success"
     SKIPPED = "skipped"
 
 
-class SourceNameRegistry(Protocol):
-    """Expose broker-native source names used during config expansion.
-
-    Example:
-        names = broker_registry.supported_source_names("level2")
-    """
-
-    def supported_source_names(self, name: str) -> tuple[str, ...]:
-        """Return the source names supported by one broker.
-
-        Example:
-            names = broker_registry.supported_source_names("level2")
-        """
-        ...
-
-
-def select_offline_data_config(
+def run_offline_data(
     *,
     app_config: AppConfig,
-    group: str,
-    broker_registry: SourceNameRegistry,
-) -> AppConfig:
-    """Return the selected config for one fixed offline data workflow.
+    path_manager: PathManager,
+    submission: DataSubmission,
+) -> DataRunStatus:
+    """Materialize one complete standard or Level-2 data range.
 
     Example:
-        selected = select_offline_data_config(
+        status = run_offline_data(
             app_config=app_config,
-            group=OFFLINE_STANDARD,
-            broker_registry=broker_registry,
+            path_manager=path_manager,
+            submission=DataSubmission(
+                kind="data-standard",
+                start="2026-07-01",
+                end="2026-07-20",
+            ),
         )
     """
-    if group not in {OFFLINE_STANDARD, OFFLINE_LEVEL2}:
-        raise ValueError(f"unsupported offline data group: {group}")
+    broker_registry = build_broker_registry()
+    group = OFFLINE_STANDARD if submission.kind == "data-standard" else OFFLINE_LEVEL2
+
+    enabled_feature_sets = {
+        name for name, config in app_config.data.feature_sets.items() if config.enabled
+    }
+    unknown_feature_sets = enabled_feature_sets - OFFLINE_STANDARD_FEATURE_SETS
+    if unknown_feature_sets:
+        raise ValueError(
+            f"unsupported enabled feature sets: {sorted(unknown_feature_sets)}"
+        )
+
+    enabled_label_sets = {
+        name for name, config in app_config.data.label_sets.items() if config.enabled
+    }
+    unknown_label_sets = enabled_label_sets - OFFLINE_STANDARD_LABEL_SETS
+    if unknown_label_sets:
+        raise ValueError(
+            f"unsupported enabled label sets: {sorted(unknown_label_sets)}"
+        )
 
     selected_sources: dict[str, SourceConfig] = {}
+    calendar_source: SourceConfig | None = None
     for source_name, source_config in app_config.data.sources.items():
-        if source_config.group != group:
+        is_target_group = source_config.group == group
+        can_provide_calendar = source_config.group == OFFLINE_STANDARD
+        if not is_target_group and not can_provide_calendar:
             continue
         if not source_config.enabled:
-            logs.warning(
-                f"[OfflineData] skip source={source_name} group={group} "
-                f"broker={source_config.broker} reason=source disabled"
-            )
+            if is_target_group:
+                logs.warning(
+                    f"[OfflineData] skip source={source_name} group={group} "
+                    f"broker={source_config.broker} reason=source_disabled"
+                )
             continue
 
         effective_sources: Sequence[tuple[str, SourceConfig]]
@@ -96,7 +109,7 @@ def select_offline_data_config(
                     SourceConfig(
                         enabled=True,
                         broker=source_config.broker,
-                        group=group,
+                        group=source_config.group,
                         raw_object=dataset_name,
                         outputs=[dataset_name],
                     ),
@@ -109,6 +122,15 @@ def select_offline_data_config(
             effective_sources = ((source_name, source_config),)
 
         for effective_name, effective_config in effective_sources:
+            if can_provide_calendar and effective_name == "trade_calendar":
+                if calendar_source is not None:
+                    raise ValueError(
+                        "offline data produced duplicate trade_calendar source"
+                    )
+                calendar_source = effective_config
+
+            if not is_target_group:
+                continue
             if effective_name in selected_sources:
                 raise ValueError(
                     "offline data group produced duplicate effective source "
@@ -116,123 +138,171 @@ def select_offline_data_config(
                 )
             selected_sources[effective_name] = effective_config
 
-    if not selected_sources:
-        raise ValueError(f"offline data group '{group}' has no effective sources")
+    if calendar_source is None:
+        raise ValueError("offline data requires the Tushare trade_calendar source")
+    if (
+        calendar_source.broker != "tushare"
+        or calendar_source.raw_object != "trade_calendar"
+        or calendar_source.outputs != ["trade_calendar"]
+    ):
+        raise ValueError(
+            "trade_calendar source must map Tushare trade_calendar to "
+            "processed trade_calendar"
+        )
 
+    fact_sources = {
+        name: config
+        for name, config in selected_sources.items()
+        if name != "trade_calendar"
+    }
+    if not fact_sources:
+        raise ValueError(f"offline data group '{group}' has no fact sources")
+
+    calendar_data = DataConfig(
+        brokers=app_config.data.brokers,
+        sources={"trade_calendar": calendar_source},
+    )
+    calendar_config = app_config.model_copy(
+        update={"data": calendar_data},
+        deep=True,
+    )
     selected_data = DataConfig(
         brokers=app_config.data.brokers,
-        sources=selected_sources,
-        feature_sets={
-            name: feature_config
-            for name, feature_config in app_config.data.feature_sets.items()
-            if feature_config.enabled and feature_config.group == group
-        },
-        label_sets={
-            name: label_config
-            for name, label_config in app_config.data.label_sets.items()
-            if label_config.enabled and label_config.group == group
-        },
+        sources=fact_sources,
+        feature_sets=(
+            {
+                name: config
+                for name, config in app_config.data.feature_sets.items()
+                if config.enabled
+            }
+            if submission.kind == "data-standard"
+            else {}
+        ),
+        label_sets=(
+            {
+                name: config
+                for name, config in app_config.data.label_sets.items()
+                if config.enabled
+            }
+            if submission.kind == "data-standard"
+            else {}
+        ),
     )
-    return app_config.model_copy(update={"data": selected_data}, deep=True)
+    selected_config = app_config.model_copy(
+        update={"data": selected_data},
+        deep=True,
+    )
 
-
-def run_offline_standard_data(
-    *,
-    app_config: AppConfig,
-    path_manager: PathManager,
-    trade_date: str,
-) -> DataRunStatus:
-    """Run the fixed standard ingest, normalize, feature, and label flow.
-
-    Example:
-        status = run_offline_standard_data(
-            app_config=app_config,
-            path_manager=path_manager,
-            trade_date="2026-07-20",
-        )
-    """
-    broker_registry = build_broker_registry()
-    selected_config = select_offline_data_config(
-        app_config=app_config,
-        group=OFFLINE_STANDARD,
+    natural_dates = DateTimeUtils.date_range(submission.start, submission.end)
+    calendar_ingest = FactIngestStep(
+        app_cfg=calendar_config,
         broker_registry=broker_registry,
     )
-    context = DataContext(
-        trade_date=trade_date,
-        pm=path_manager,
-    )
-    ingest_step = FactIngestStep(
+    calendar_normalize = FactNormalizeStep(app_cfg=calendar_config)
+    fact_ingest = FactIngestStep(
         app_cfg=selected_config,
         broker_registry=broker_registry,
     )
-    remaining_steps: tuple[Callable[[DataContext], None], ...] = (
-        FactNormalizeStep(app_cfg=selected_config),
-        FeatureBuildStep(
-            app_cfg=selected_config,
-            allowed_sets=OFFLINE_STANDARD_FEATURE_SETS,
-        ),
-        LabelBuildStep(
-            app_cfg=selected_config,
-            allowed_sets=OFFLINE_STANDARD_LABEL_SETS,
-        ),
+    fact_normalize = FactNormalizeStep(app_cfg=selected_config)
+
+    logs.info(
+        f"[OfflineData] started kind={submission.kind} "
+        f"start={submission.start} end={submission.end}"
     )
-
-    logs.info(f"[OfflineData] started trade_date={trade_date}")
-    with Instrumentation(trade_date) as instrumentation:
-        if not instrumentation.call(ingest_step, context):
-            logs.warning(
-                f"[OfflineData] skipped trade_date={trade_date} "
-                f"reason=no_source_payload"
+    scope_name = f"{submission.kind}_{submission.start}_{submission.end}"
+    with Instrumentation(scope_name) as instrumentation:
+        for natural_date in natural_dates:
+            context = DataContext(
+                trade_date=natural_date,
+                pm=path_manager,
             )
-            return DataRunStatus.SKIPPED
-        run_steps(context, remaining_steps, instrumentation)
+            if not instrumentation.call(calendar_ingest, context):
+                raise RuntimeError(
+                    f"[OfflineData] missing trade_calendar trade_date={natural_date}"
+                )
+            instrumentation.call(calendar_normalize, context)
 
-    logs.info(f"[OfflineData] finished trade_date={trade_date}")
-    return DataRunStatus.SUCCESS
-
-
-def run_offline_level2_data(
-    *,
-    app_config: AppConfig,
-    path_manager: PathManager,
-    trade_date: str,
-) -> DataRunStatus:
-    """Run the fixed Level-2 ingest and normalize flow.
-
-    Example:
-        status = run_offline_level2_data(
-            app_config=app_config,
-            path_manager=path_manager,
-            trade_date="2026-07-20",
+        calendar_version = cast(
+            str,
+            calendar_config.data.brokers[calendar_source.broker].normalize_profile,
         )
-    """
-    broker_registry = build_broker_registry()
-    selected_config = select_offline_data_config(
-        app_config=app_config,
-        group=OFFLINE_LEVEL2,
-        broker_registry=broker_registry,
-    )
-    context = DataContext(
-        trade_date=trade_date,
-        pm=path_manager,
-    )
-    ingest_step = FactIngestStep(
-        app_cfg=selected_config,
-        broker_registry=broker_registry,
-    )
-    remaining_steps: tuple[Callable[[DataContext], None], ...] = (
-        FactNormalizeStep(app_cfg=selected_config),
-    )
+        access = Access(
+            pm=path_manager,
+            processed_version=calendar_version,
+        )
+        open_dates = access.trade_dates(
+            start_date=submission.start,
+            end_date=submission.end,
+        )
 
-    logs.info(f"[OfflineData] started trade_date={trade_date}")
-    with Instrumentation(trade_date) as instrumentation:
-        if not instrumentation.call(ingest_step, context):
+        available_fact_dates: list[str] = []
+        missing_fact_dates: list[str] = []
+        for trade_date in open_dates:
+            context = DataContext(
+                trade_date=trade_date,
+                pm=path_manager,
+            )
+            if not instrumentation.call(fact_ingest, context):
+                missing_fact_dates.append(trade_date)
+                continue
+            instrumentation.call(fact_normalize, context)
+            available_fact_dates.append(trade_date)
+
+        if missing_fact_dates:
+            if submission.kind == "data-standard" or available_fact_dates:
+                raise RuntimeError(
+                    "[OfflineData] fact dates are only partially available "
+                    f"missing_dates={missing_fact_dates}"
+                )
             logs.warning(
-                f"[OfflineData] skipped trade_date={trade_date} "
-                f"reason=no_source_payload"
+                f"[OfflineData] skipped kind={submission.kind} "
+                f"start={submission.start} end={submission.end} "
+                "reason=no_source_payload"
             )
             return DataRunStatus.SKIPPED
-        run_steps(context, remaining_steps, instrumentation)
 
-    logs.info(f"[OfflineData] finished trade_date={trade_date}")
+        if submission.kind == "data-standard":
+            feature_step = FeatureBuildStep(app_cfg=selected_config)
+            for maturity_date in open_dates:
+                if selected_config.data.feature_sets:
+                    instrumentation.call(
+                        feature_step,
+                        DataContext(
+                            trade_date=maturity_date,
+                            pm=path_manager,
+                        ),
+                    )
+
+                for label_set, label_config in selected_config.data.label_sets.items():
+                    builder = get_label_builder(
+                        label_set,
+                        label_config.version,
+                    )
+                    lookahead = max(
+                        builder.target_lookahead(column)
+                        for column in builder.output_columns
+                    )
+                    input_dates = tuple(
+                        access.recent_trade_dates(
+                            end_date=maturity_date,
+                            sessions=lookahead + 1,
+                        )
+                    )
+                    instrumentation.call(
+                        LabelBuildStep(
+                            label_set=label_set,
+                            version=label_config.version,
+                            builder=builder,
+                            input_dates=input_dates,
+                        ),
+                        DataContext(
+                            trade_date=input_dates[0],
+                            pm=path_manager,
+                        ),
+                    )
+
+    logs.info(
+        f"[OfflineData] finished kind={submission.kind} "
+        f"start={submission.start} end={submission.end}"
+    )
     return DataRunStatus.SUCCESS
