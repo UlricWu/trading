@@ -1,173 +1,178 @@
 # filepath: src/training/steps/dataset_build_step.py
+"""Load formal feature and label partitions for one training window."""
+
 from __future__ import annotations
+
+from collections.abc import Sequence
 
 import pandas as pd
 import pyarrow.parquet as pq
 
 from src import logs
-from src.access import Access, meta
+from src.access import meta
 from src.config.model_config import FeatureLabelConfig
 from src.training.context import TrainingContext
 from src.training.engines.dataset_build_engine import DatasetBuildEngine
+from src.utils.path import PathManager
 
 
 class DatasetBuildStep:
-    """
-    Load selected formal training inputs for the current train/eval dates.
-
-    The selected `feature_set` / `label_set` identities come from
-    `ModelConfig.dataset`. This step keeps IO and context mutation at the
-    workflow edge and delegates in-memory sample construction to
-    DatasetBuildEngine.
+    """Load selected formal inputs without querying the calendar again.
 
     Example:
-        step = DatasetBuildStep(model_config.dataset)
-        step(context)
+        loader = DatasetBuildStep(
+            pm=path_manager,
+            dataset_cfg=model_config.dataset,
+            processed_version="v1",
+        )
+        train, evaluation = loader.load(
+            train_dates=("2026-07-17", "2026-07-20"),
+            eval_date="2026-07-21",
+        )
     """
 
-    def __init__(self, dataset_cfg: FeatureLabelConfig) -> None:
-        """Create the step for one configured feature/label selection.
-
-        Example:
-            step = DatasetBuildStep(model_config.dataset)
-        """
-        self.dataset_cfg = dataset_cfg
-        self.engine = DatasetBuildEngine()
-
-    def __call__(self, ctx: TrainingContext) -> None:
-        """Load the current training window and evaluation date.
-
-        Example:
-            step(context)
-        """
-        ctx.train_X, ctx.train_y = self._build_train_window(ctx=ctx)
-        ctx.eval_X, ctx.eval_y = self._build_one_day(
-            ctx=ctx,
-            day=ctx.eval_date,
-        )
-
-        logs.info(
-            f"[DatasetBuild] train_start_date={ctx.train_start_date} "
-            f"train_end_date={ctx.train_end_date} "
-            f"train_shape={ctx.train_X.shape} "
-            f"eval_date={ctx.eval_date} "
-            f"eval_shape={ctx.eval_X.shape}"
-        )
-
-    def _build_train_window(
+    def __init__(
         self,
         *,
-        ctx: TrainingContext,
-    ) -> tuple[pd.DataFrame, pd.Series]:
-        train_days = Access(
-            pm=ctx.pm,
-            processed_version="v1",
-        ).trade_dates(
-            start_date=ctx.train_start_date,
-            end_date=ctx.train_end_date,
-        )
-        if not train_days:
-            raise RuntimeError(
-                "[DatasetBuild] no tradable train dates "
-                f"start={ctx.train_start_date} end={ctx.train_end_date}"
-            )
-        if (
-            train_days[0] != ctx.train_start_date
-            or train_days[-1] != ctx.train_end_date
-        ):
-            raise RuntimeError(
-                "[DatasetBuild] train window boundaries are not tradable dates: "
-                f"start={ctx.train_start_date} end={ctx.train_end_date} "
-                f"tradable_start={train_days[0]} tradable_end={train_days[-1]}"
-            )
+        pm: PathManager,
+        dataset_cfg: FeatureLabelConfig,
+        processed_version: str,
+    ) -> None:
+        """Bind formal storage and dataset identities.
 
-        X_parts: list[pd.DataFrame] = []
-        y_parts: list[pd.Series] = []
-        for day in train_days:
-            X, y = self._build_one_day(ctx=ctx, day=day)
-            if X.empty:
+        Example:
+            loader = DatasetBuildStep(
+                pm=path_manager,
+                dataset_cfg=model_config.dataset,
+                processed_version="v1",
+            )
+        """
+        self._pm = pm
+        self._dataset_cfg = dataset_cfg
+        self._processed_version = processed_version
+        self._engine = DatasetBuildEngine()
+
+    def load(
+        self,
+        *,
+        train_dates: Sequence[str],
+        eval_date: str,
+    ) -> tuple[
+        tuple[pd.DataFrame, pd.Series],
+        tuple[pd.DataFrame, pd.Series],
+    ]:
+        """Return training and evaluation feature/label pairs.
+
+        Example:
+            train, evaluation = loader.load(
+                train_dates=("2026-07-17", "2026-07-20"),
+                eval_date="2026-07-21",
+            )
+        """
+        train_X_parts: list[pd.DataFrame] = []
+        train_y_parts: list[pd.Series] = []
+        for trade_date in train_dates:
+            daily_X, daily_y = self._load_one_day(trade_date)
+            if daily_X.empty:
                 continue
-            X_parts.append(X)
-            y_parts.append(y)
+            train_X_parts.append(daily_X)
+            train_y_parts.append(daily_y)
 
-        if not X_parts:
-            return (
-                pd.DataFrame(columns=self.dataset_cfg.feature_columns),
-                pd.Series(dtype=float),
-            )
-
-        return (
-            pd.concat(X_parts, axis=0, ignore_index=True),
-            pd.concat(y_parts, axis=0, ignore_index=True),
+        if train_X_parts:
+            train_X = pd.concat(train_X_parts, axis=0, ignore_index=True)
+            train_y = pd.concat(train_y_parts, axis=0, ignore_index=True)
+        else:
+            train_X = pd.DataFrame(columns=self._dataset_cfg.feature_columns)
+            train_y = pd.Series(dtype=float)
+        eval_X, eval_y = self._load_one_day(eval_date)
+        logs.info(
+            f"[DatasetBuild] train_start_date={train_dates[0]} "
+            f"train_end_date={train_dates[-1]} train_shape={train_X.shape} "
+            f"eval_date={eval_date} eval_shape={eval_X.shape}"
         )
+        return (train_X, train_y), (eval_X, eval_y)
 
-    def _build_one_day(
-        self,
-        *,
-        ctx: TrainingContext,
-        day: str,
-    ) -> tuple[pd.DataFrame, pd.Series]:
-        dataset_cfg = self.dataset_cfg
-        feature_path = ctx.pm.feature_data(
+    def run(self, context: TrainingContext) -> TrainingContext:
+        """Load the Context window and attach its train/evaluation partitions.
+
+        Example:
+            next_context = loader.run(
+                TrainingContext(window=training_window)
+            )
+        """
+        (
+            (context.train_X, context.train_y),
+            (
+                context.eval_X,
+                context.eval_y,
+            ),
+        ) = self.load(
+            train_dates=context.window.train_dates,
+            eval_date=context.window.eval_date,
+        )
+        return context
+
+    def _load_one_day(self, trade_date: str) -> tuple[pd.DataFrame, pd.Series]:
+        dataset_cfg = self._dataset_cfg
+        feature_path = self._pm.feature_data(
             feature_set=dataset_cfg.feature_set,
             version=dataset_cfg.feature_version,
-            trade_date=day,
+            trade_date=trade_date,
         )
         loaded_feature = meta.require(
-            pm=ctx.pm,
-            meta_path=ctx.pm.feature_meta(
+            pm=self._pm,
+            meta_path=self._pm.feature_meta(
                 feature_set=dataset_cfg.feature_set,
                 version=dataset_cfg.feature_version,
-                trade_date=day,
+                trade_date=trade_date,
             ),
             expected_payload_path=feature_path,
         )
-        feat_df = pq.ParquetFile(loaded_feature.payload_path).read().to_pandas()
-        label_path = ctx.pm.label_data(
+        feature_frame = pq.ParquetFile(loaded_feature.payload_path).read().to_pandas()
+
+        label_path = self._pm.label_data(
             label_set=dataset_cfg.label_set,
             version=dataset_cfg.label_version,
-            trade_date=day,
+            trade_date=trade_date,
         )
         loaded_label = meta.require(
-            pm=ctx.pm,
-            meta_path=ctx.pm.label_meta(
+            pm=self._pm,
+            meta_path=self._pm.label_meta(
                 label_set=dataset_cfg.label_set,
                 version=dataset_cfg.label_version,
-                trade_date=day,
+                trade_date=trade_date,
             ),
             expected_payload_path=label_path,
         )
-        lab_df = pq.ParquetFile(loaded_label.payload_path).read().to_pandas()
+        label_frame = pq.ParquetFile(loaded_label.payload_path).read().to_pandas()
 
-        adj_df = None
+        adjustment_frame = None
         if dataset_cfg.adjustment.method != "raw":
-            adjustment_path = ctx.pm.processed_data(
+            adjustment_path = self._pm.processed_data(
                 dataset_name=dataset_cfg.adjustment.dataset_name,
-                version=dataset_cfg.adjustment.version,
-                trade_date=day,
+                version=self._processed_version,
+                trade_date=trade_date,
             )
             loaded_adjustment = meta.require(
-                pm=ctx.pm,
-                meta_path=ctx.pm.processed_meta(
+                pm=self._pm,
+                meta_path=self._pm.processed_meta(
                     dataset_name=dataset_cfg.adjustment.dataset_name,
-                    version=dataset_cfg.adjustment.version,
-                    trade_date=day,
+                    version=self._processed_version,
+                    trade_date=trade_date,
                 ),
                 expected_payload_path=adjustment_path,
             )
-            adj_df = (
+            adjustment_frame = (
                 pq.ParquetFile(loaded_adjustment.payload_path).read().to_pandas()
             )
 
-        X, y = self.engine.build_one_day(
-            feature_frame=feat_df,
-            label_frame=lab_df,
+        return self._engine.build_one_day(
+            feature_frame=feature_frame,
+            label_frame=label_frame,
             feature_columns=dataset_cfg.feature_columns,
             label_column=dataset_cfg.label_column,
             drop_na=dataset_cfg.drop_na,
             adjustment=dataset_cfg.adjustment.method,
-            adjustment_refdata_frame=adj_df,
-            asof_date=day,
+            adjustment_refdata_frame=adjustment_frame,
+            asof_date=trade_date,
         )
-
-        return X, y

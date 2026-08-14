@@ -1,125 +1,167 @@
 # filepath: src/training/steps/artifact_persist_step.py
+"""Persist the final explicit outputs of an offline training workflow."""
+
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
+
 import joblib
 
 from src import logs
 from src.config.model_config import FeatureLabelConfig
+from src.training.artifact import PreprocessArtifact
 from src.training.context import TrainingContext
+from src.training.inference_model import PredictionModel
 from src.utils.datetime_utils import DateTimeUtils
+from src.utils.path import PathManager
+
+
+def persist_training_artifacts(
+    *,
+    pm: PathManager,
+    experiment_name: str,
+    experiment_id: str,
+    model: PredictionModel,
+    preprocess: PreprocessArtifact,
+    metrics: Mapping[str, float],
+    model_group: str,
+    dataset_cfg: FeatureLabelConfig,
+    label_lookahead: int,
+    asof_day: str,
+    processed_version: str,
+) -> None:
+    """Persist the final model, preprocessing, parameters, and metrics.
+
+    Example:
+        persist_training_artifacts(
+            pm=path_manager,
+            experiment_name="training_2026-07-01_2026-07-20_run-1",
+            experiment_id="run-1",
+            model=model,
+            preprocess=preprocess_artifact,
+            metrics={"ic@2026-07-20": 0.1},
+            model_group="sgd_regression",
+            dataset_cfg=model_config.dataset,
+            label_lookahead=2,
+            asof_day="2026-07-19",
+            processed_version="v1",
+        )
+    """
+    artifact_dir = pm.experiment_training_dir(experiment_name=experiment_name)
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    joblib.dump(
+        model,
+        pm.experiment_training_model(experiment_name=experiment_name),
+    )
+    joblib.dump(
+        preprocess,
+        pm.experiment_training_preprocess(experiment_name=experiment_name),
+    )
+    logs.info(
+        f"[ARTIFACT] type=model path={artifact_dir} "
+        f"model_group={model_group} asof_day={asof_day}"
+    )
+
+    adjustment = dataset_cfg.adjustment
+    params = {
+        "experiment_id": experiment_id,
+        "experiment_name": experiment_name,
+        "model_group": model_group,
+        "asof_day": asof_day,
+        "created_at": DateTimeUtils.now().isoformat(),
+        "feature_names": list(preprocess.feature_columns),
+        "feature_set": dataset_cfg.feature_set,
+        "feature_version": dataset_cfg.feature_version,
+        "label_set": dataset_cfg.label_set,
+        "label_version": dataset_cfg.label_version,
+        "label_column": dataset_cfg.label_column,
+        "label_lookahead": label_lookahead,
+        "price_adjustment": adjustment.method,
+        "adjustment_refdata": {
+            "dataset_name": adjustment.dataset_name,
+            "version": processed_version,
+        },
+    }
+    pm.experiment_training_params(experiment_name=experiment_name).write_text(
+        json.dumps(params, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    pm.experiment_training_metrics(experiment_name=experiment_name).write_text(
+        json.dumps(dict(metrics), indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
 
 
 class ArtifactPersistStep:
-    """
-    Persist training outputs under the formal experiment training directory.
-
-    This step writes `model.pkl`, `preprocess.pkl`, `params.json`, and
-    `metrics.json` into one experiment training directory.
+    """Persist the final trained Context under one experiment identity.
 
     Example:
         step = ArtifactPersistStep(
+            pm=path_manager,
+            experiment_name="training_2026-07-01_2026-07-20_run-1",
             experiment_id="run-1",
             model_group="sgd_regression",
             dataset_cfg=model_config.dataset,
             label_lookahead=1,
+            processed_version="v1",
         )
-        step(context)
+        persisted_context = step.run(evaluated_context)
     """
 
     def __init__(
         self,
         *,
+        pm: PathManager,
+        experiment_name: str,
         experiment_id: str,
         model_group: str,
         dataset_cfg: FeatureLabelConfig,
         label_lookahead: int,
+        processed_version: str,
     ) -> None:
-        """Create the step for one training artifact identity.
+        """Bind the final artifact identity and dataset lineage.
 
         Example:
             step = ArtifactPersistStep(
+                pm=path_manager,
+                experiment_name="training_2026-07-01_2026-07-20_run-1",
                 experiment_id="run-1",
                 model_group="sgd_regression",
                 dataset_cfg=model_config.dataset,
                 label_lookahead=1,
+                processed_version="v1",
             )
         """
-        self.experiment_id = experiment_id
-        self.model_group = model_group
-        self.dataset_cfg = dataset_cfg
-        if isinstance(label_lookahead, bool) or not isinstance(label_lookahead, int):
-            raise TypeError("label_lookahead must be an int")
-        if label_lookahead < 0:
-            raise ValueError("label_lookahead must be non-negative")
-        self.label_lookahead = label_lookahead
+        self._pm = pm
+        self._experiment_name = experiment_name
+        self._experiment_id = experiment_id
+        self._model_group = model_group
+        self._dataset_cfg = dataset_cfg
+        self._label_lookahead = label_lookahead
+        self._processed_version = processed_version
 
-    def __call__(self, ctx: TrainingContext) -> None:
-        """Persist the final model, preprocessing, parameters, and metrics.
+    def run(self, context: TrainingContext) -> TrainingContext:
+        """Persist the Context model, preprocessing, metrics, and lineage.
 
         Example:
-            step(context)
+            persisted_context = step.run(evaluated_context)
         """
-        state = ctx.model_state
-        preprocess = ctx.preprocess_artifact
-        if not preprocess.feature_columns:
-            raise RuntimeError("[ArtifactPersistStep] feature_columns is empty")
-        if state.asof_day != ctx.train_end_date:
+        if context.model is None or context.preprocess is None:
             raise RuntimeError(
-                "[ArtifactPersistStep] model_state.asof_day does not match "
-                "ctx.train_end_date"
+                "ArtifactPersistStep requires a model and preprocessing artifact"
             )
-
-        artifact_dir = ctx.pm.experiment_training_dir(
-            experiment_name=ctx.experiment_name
+        persist_training_artifacts(
+            pm=self._pm,
+            experiment_name=self._experiment_name,
+            experiment_id=self._experiment_id,
+            model=context.model,
+            preprocess=context.preprocess,
+            metrics=context.metrics,
+            model_group=self._model_group,
+            dataset_cfg=self._dataset_cfg,
+            label_lookahead=self._label_lookahead,
+            asof_day=context.window.train_dates[-1],
+            processed_version=self._processed_version,
         )
-        artifact_dir.mkdir(parents=True, exist_ok=True)
-        model_path = ctx.pm.experiment_training_model(
-            experiment_name=ctx.experiment_name
-        )
-        preprocess_path = ctx.pm.experiment_training_preprocess(
-            experiment_name=ctx.experiment_name
-        )
-        params_path = ctx.pm.experiment_training_params(
-            experiment_name=ctx.experiment_name
-        )
-        metrics_path = ctx.pm.experiment_training_metrics(
-            experiment_name=ctx.experiment_name
-        )
-        joblib.dump(state.model, model_path)
-        joblib.dump(preprocess, preprocess_path)
-
-        logs.info(
-            f"[ARTIFACT] type=model path={artifact_dir} "
-            f"model_group={self.model_group} asof_day={state.asof_day}"
-        )
-
-        created_at = DateTimeUtils.now()
-        adjustment = self.dataset_cfg.adjustment
-        params = {
-            "experiment_id": self.experiment_id,
-            "experiment_name": ctx.experiment_name,
-            "model_group": self.model_group,
-            "asof_day": state.asof_day,
-            "created_at": created_at.isoformat(),
-            "feature_names": list(preprocess.feature_columns),
-            "feature_set": self.dataset_cfg.feature_set,
-            "feature_version": self.dataset_cfg.feature_version,
-            "label_set": self.dataset_cfg.label_set,
-            "label_version": self.dataset_cfg.label_version,
-            "label_column": self.dataset_cfg.label_column,
-            "label_lookahead": self.label_lookahead,
-            "price_adjustment": adjustment.method,
-            "adjustment_refdata": {
-                "dataset_name": adjustment.dataset_name,
-                "version": adjustment.version,
-            },
-        }
-        params_path.write_text(
-            json.dumps(params, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
-        metrics_path.write_text(
-            json.dumps(dict(ctx.metrics), indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
+        return context

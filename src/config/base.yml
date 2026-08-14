@@ -8,27 +8,19 @@ data:
   # - 声明即默认可用，不承担本次运行的启停选择
   # ----------------------------------
   brokers:
-    tushare:
-      normalize_profile: "v1"
+    tushare: {}
     level2_ftp:
-      normalize_profile: "v1"
       remote_root: "level2"
       ftp_backend: "ftplib"
 
 
   # ----------------------------------
   # Sources (RAW OBJECT / OUTPUT DECLARATION)
-  # - use_broker_sources 表示从 broker 支持集展开普通 source
-  # - 普通 source 的 raw_object 是 broker 能识别的源端对象名
-  # - 普通 source 的 outputs 是系统内部 processed dataset 名；[] 表示 raw-only
+  # - Tushare 结构化 source 由 TushareBroker 的 Python manifest 固定拥有
+  # - 此处只声明 Level-2 文件 source 到 processed output 的映射
+  # - outputs=[] 表示 raw-only
   # ----------------------------------
   sources:
-    tushare:
-      enabled: true
-      broker: "tushare"
-      group: "offline_standard"
-      use_broker_sources: true
-
     sh_stock_ordertrade: # source_name
       enabled: true
       broker: "level2_ftp"
@@ -68,25 +60,10 @@ data:
 
 # ==================================================
 # Backtest System
-# - Runtime backtest_mode, model experiment and strategy are required by backtest.
-# - static config must not provide a default model.
-# - base strategy keeps AppConfig valid; backtest replaces the complete object.
+# - Runtime mode, model experiment and strategy belong to BacktestSubmission.
 # - Minimum listing age is explicit; Access always excludes current ST and suspension.
 # ==================================================
 backtest:
-  name: "rf_alpha_v1"
-  backtest_mode: "full_backtest"
-
-  dates:
-    - "2025-11-17"
-    - "2025-11-18"
-
-  strategy:
-    type: "threshold"
-    params:
-      threshold: 0.5
-      target_quantity: 100
-
   init_cash: 200000
   min_listing_calendar_days: 120
 # ==================================================
@@ -123,4 +100,3 @@ model:
     adjustment:
       method: "raw"
       dataset_name: 'adj_factor'
-      version: 'v1'

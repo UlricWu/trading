@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from types import MappingProxyType
 
 import pandas as pd
@@ -12,9 +12,7 @@ import pyarrow.parquet as pq
 
 from src.access import Access, meta
 from src.utils import table_ops
-from src.data_system.builders.base import InputSpec
 from src.utils.path import PathManager
-
 
 _HORIZONS = (1, 3, 5)
 
@@ -60,11 +58,11 @@ class DailyForwardExcessRankV1Builder:
         labels = builder.build_partition(input_table)
     """
 
-    key_columns = (
+    key_columns: tuple[str, ...] = (
         "symbol",
         "trade_date",
     )
-    output_columns = tuple(_OUTPUT_COLUMNS)
+    output_columns: tuple[str, ...] = tuple(_OUTPUT_COLUMNS)
 
     @property
     def lookahead(self) -> int:
@@ -79,14 +77,18 @@ class DailyForwardExcessRankV1Builder:
     def read_input(
         self,
         *,
+        access: Access,
         pm: PathManager,
+        processed_version: str,
         trade_dates: Sequence[str],
     ) -> pa.Table:
         """Read the complete six-session input window.
 
         Example:
             table = builder.read_input(
+                access=access,
                 pm=path_manager,
+                processed_version="v1",
                 trade_dates=(
                     "2026-07-13",
                     "2026-07-14",
@@ -98,13 +100,15 @@ class DailyForwardExcessRankV1Builder:
             )
         """
         return _read_window(
+            access=access,
             pm=pm,
+            processed_version=processed_version,
             trade_dates=trade_dates,
         )
 
     def build_partition(
         self,
-        table: pa.Table | Mapping[InputSpec, pa.Table],
+        table: pa.Table,
     ) -> pa.Table:
         """Build one signal-date label partition.
 
@@ -259,11 +263,12 @@ def _mask_reason(frame: pd.DataFrame, *, suffix: str) -> pd.Series:
 
 def _read_window(
     *,
+    access: Access,
     pm: PathManager,
+    processed_version: str,
     trade_dates: Sequence[str],
 ) -> pa.Table:
     window = tuple(trade_dates)
-    access = Access(pm=pm, processed_version="v1")
     daily_tables = []
     adj_tables = []
     for date in window:
@@ -275,14 +280,14 @@ def _read_window(
         )
         adjustment_path = pm.processed_data(
             dataset_name="adj_factor",
-            version="v1",
+            version=processed_version,
             trade_date=date,
         )
         loaded_adjustment = meta.require(
             pm=pm,
             meta_path=pm.processed_meta(
                 dataset_name="adj_factor",
-                version="v1",
+                version=processed_version,
                 trade_date=date,
             ),
             expected_payload_path=adjustment_path,

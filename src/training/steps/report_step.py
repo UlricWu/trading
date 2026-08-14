@@ -1,4 +1,5 @@
 # filepath: src/training/steps/report_step.py
+
 from __future__ import annotations
 
 import json
@@ -15,7 +16,7 @@ from src import logs
 from src.observability.log_format import format_log_json
 from src.training.context import TrainingContext
 from src.utils.filesystem import FileSystem
-
+from src.utils.path import PathManager
 
 _IC_KEY = re.compile(r"^ic@(\d{4}-\d{2}-\d{2})$")
 _REQUIRED_PARAMS = (
@@ -80,56 +81,82 @@ class RankICSummary:
     rolling_20_last: float | None
 
 
-class ReportStep:
-    """
-    Generate the offline training HTML report from persisted artifacts.
-
-    The step only reads `training/params.json` and `training/metrics.json`,
-    then writes `report/training_report.html`. It does not read runtime
-    predictions, model files, preprocess files, feature/label detail, or any
-    old Rank IC report engine.
+def generate_training_report(
+    *,
+    pm: PathManager,
+    experiment_name: str,
+) -> None:
+    """Generate the offline training report from persisted JSON artifacts.
 
     Example:
-        step = ReportStep()
-        step(context)
+        generate_training_report(
+            pm=path_manager,
+            experiment_name="training_2026-07-01_2026-07-20_run-1",
+        )
+    """
+    params_path = pm.experiment_training_params(
+        experiment_name=experiment_name,
+    )
+    metrics_path = pm.experiment_training_metrics(
+        experiment_name=experiment_name,
+    )
+    report_path = pm.experiment_training_report(
+        experiment_name=experiment_name,
+    )
+
+    raw_params = _load_json_object(params_path, label="training params")
+    metrics = _load_json_object(metrics_path, label="training metrics")
+    params = _parse_params(raw_params)
+
+    rows = _rank_ic_rows(metrics)
+    summary = _rank_ic_summary(rows)
+    html = _render_html(
+        experiment_name=experiment_name,
+        params=params,
+        summary=summary,
+        rows=rows,
+    )
+    FileSystem.write_bytes_atomic(report_path, html.encode("utf-8"))
+    logs.info(
+        f"[ReportStep] saved path={report_path}\n"
+        f"{format_log_json('rank_ic_summary', summary)}"
+    )
+
+
+class ReportStep:
+    """Generate the final training report for one experiment.
+
+    Example:
+        step = ReportStep(
+            pm=path_manager,
+            experiment_name="training_2026-07-01_2026-07-20_run-1",
+        )
+        reported_context = step.run(persisted_context)
     """
 
-    def __call__(self, ctx: TrainingContext) -> None:
-        """Generate the persisted training report.
+    def __init__(self, *, pm: PathManager, experiment_name: str) -> None:
+        """Bind the persisted experiment used as report input.
 
         Example:
-            step(context)
+            step = ReportStep(
+                pm=path_manager,
+                experiment_name="training_2026-07-01_2026-07-20_run-1",
+            )
         """
-        if not ctx.experiment_name:
-            raise RuntimeError("[ReportStep] experiment_name is required")
+        self._pm = pm
+        self._experiment_name = experiment_name
 
-        params_path = ctx.pm.experiment_training_params(
-            experiment_name=ctx.experiment_name,
-        )
-        metrics_path = ctx.pm.experiment_training_metrics(
-            experiment_name=ctx.experiment_name,
-        )
-        report_path = ctx.pm.experiment_training_report(
-            experiment_name=ctx.experiment_name,
-        )
+    def run(self, context: TrainingContext) -> TrainingContext:
+        """Generate the report and preserve the final training Context.
 
-        raw_params = _load_json_object(params_path, label="training params")
-        metrics = _load_json_object(metrics_path, label="training metrics")
-        params = _parse_params(raw_params)
-
-        rows = _rank_ic_rows(metrics)
-        summary = _rank_ic_summary(rows)
-        html = _render_html(
-            experiment_name=ctx.experiment_name,
-            params=params,
-            summary=summary,
-            rows=rows,
+        Example:
+            reported_context = step.run(persisted_context)
+        """
+        generate_training_report(
+            pm=self._pm,
+            experiment_name=self._experiment_name,
         )
-        FileSystem.write_bytes_atomic(report_path, html.encode("utf-8"))
-        logs.info(
-            f"[ReportStep] saved path={report_path}\n"
-            f"{format_log_json('rank_ic_summary', summary)}"
-        )
+        return context
 
 
 def _load_json_object(path: Path, *, label: str) -> dict[str, object]:
@@ -142,7 +169,7 @@ def _load_json_object(path: Path, *, label: str) -> dict[str, object]:
         raise ValueError(f"invalid {label} JSON: {path}") from exc
 
     if not isinstance(data, dict):
-        raise ValueError(f"{label} must be a JSON object")
+        raise TypeError(f"{label} must be a JSON object")
     return {str(key): value for key, value in data.items()}
 
 
@@ -197,7 +224,7 @@ def _rank_ic_rows(metrics: dict[str, object]) -> list[RankICRow]:
             raise ValueError(f"invalid training metric date: {key}") from exc
 
         if isinstance(raw_value, bool) or not isinstance(raw_value, int | float):
-            raise ValueError(f"training metric {key} must be a finite number")
+            raise TypeError(f"training metric {key} must be a finite number")
         value = float(raw_value)
         if not math.isfinite(value):
             raise ValueError(f"training metric {key} must be a finite number")
@@ -387,7 +414,7 @@ def _format_value(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True)
 
 
-def _format_number(value: object) -> str:
+def _format_number(value: float | None) -> str:
     if value is None:
         return ""
     number = float(value)
@@ -400,7 +427,7 @@ def _format_percent(value: float) -> str:
     return f"{value * 100.0:.1f}%"
 
 
-def _sign_class(value: object) -> str:
+def _sign_class(value: float | None) -> str:
     if value is None:
         return "muted"
     number = float(value)

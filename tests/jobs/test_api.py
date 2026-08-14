@@ -16,7 +16,6 @@ from src.jobs.requests import (
     TrainingSubmission,
 )
 from src.jobs.runtime import (
-    DataJobScope,
     JobNotFoundError,
     JobRuntime,
     JobSnapshot,
@@ -34,9 +33,10 @@ class _StubRuntime:
         snapshots: list[JobSnapshot] = []
         for submission in submissions:
             job_id = f"00000000-0000-4000-8000-{len(self.jobs) + 1:012d}"
-            if isinstance(submission, DataSubmission):
-                scope = DataJobScope(date=submission.date)
-            elif isinstance(submission, (TrainingSubmission, BacktestSubmission)):
+            if isinstance(
+                submission,
+                (DataSubmission, TrainingSubmission, BacktestSubmission),
+            ):
                 scope = RangeJobScope(
                     start=submission.start,
                     end=submission.end,
@@ -96,7 +96,7 @@ def test_route_map_contains_only_the_confirmed_endpoints() -> None:
     }
 
 
-def test_data_range_returns_independent_jobs_and_only_public_fields() -> None:
+def test_data_range_returns_one_job_and_only_public_fields() -> None:
     runtime = _StubRuntime()
     app = create_app(cast(JobRuntime, runtime))
     app.config["TESTING"] = True
@@ -114,8 +114,7 @@ def test_data_range_returns_independent_jobs_and_only_public_fields() -> None:
     payload = response.get_json()
     assert set(payload) == {"jobs"}
     assert [job["scope"] for job in payload["jobs"]] == [
-        {"date": "2026-07-20"},
-        {"date": "2026-07-21"},
+        {"start": "2026-07-20", "end": "2026-07-21"},
     ]
     assert set(payload["jobs"][0]) == {
         "job_id",
@@ -226,7 +225,11 @@ def test_job_runtime_failure_does_not_change_health_response() -> None:
 
     failed_submission = client.post(
         "/jobs",
-        json={"kind": "data-standard", "date": "2026-07-20"},
+        json={
+            "kind": "data-standard",
+            "start": "2026-07-20",
+            "end": "2026-07-20",
+        },
     )
     health = client.get("/health")
 

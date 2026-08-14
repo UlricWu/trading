@@ -7,8 +7,10 @@
 ## 身份与职责
 
 `Access` 表示一个确定的 `(storage_root, processed version)` 市场数据访问能力。
-processed version 必须由 composition root 显式提供；所有查询日期由 public 方法显式
-接收，并且必须是规范的 `YYYY-MM-DD`。
+processed version 必须由 composition root 显式提供；offline data、training 和 backtest
+composition root 固定使用 `v1`，配置和 submission 不选择版本。每次 workflow 从自己的
+唯一 `PathManager` 创建一个 Access，不接受调用方另传可能绑定其他 storage root 的
+Access。所有查询日期由 public 方法显式接收，并且必须是规范的 `YYYY-MM-DD`。
 
 Access 负责把正式 processed 市场对象提供成不暴露 dataset、broker、路径和 Meta 的具名
 研究能力。Meta 负责证明一个存储对象已经提交且 payload 可用。Access 的每次对象读取都

@@ -8,7 +8,6 @@ from pydantic import TypeAdapter, ValidationError
 
 from src.config.backtest_config import (
     BacktestConfig,
-    BacktestMode,
     StrategyConfig,
     ThresholdStrategyConfig,
     TopKHysteresisStrategyConfig,
@@ -46,14 +45,7 @@ def test_topk_strategy_applies_confirmed_defaults() -> None:
 def test_backtest_requires_explicit_listing_age() -> None:
     config = BacktestConfig.model_validate(
         {
-            "name": "daily_alpha",
-            "dates": ["2026-05-06", "2026-05-07"],
-            "strategy": {
-                "type": "threshold",
-                "params": {"threshold": 0.5},
-            },
             "init_cash": 200_000,
-            "backtest_mode": BacktestMode.FULL_BACKTEST,
             "min_listing_calendar_days": 120,
         }
     )
@@ -61,22 +53,28 @@ def test_backtest_requires_explicit_listing_age() -> None:
     assert config.min_listing_calendar_days == 120
 
 
-def test_backtest_rejects_static_symbol_universe() -> None:
+@pytest.mark.parametrize(
+    ("field_name", "value"),
+    [
+        ("name", "daily_alpha"),
+        ("dates", ["2026-05-06", "2026-05-07"]),
+        ("symbols", ["000001"]),
+        ("backtest_mode", "full_backtest"),
+        ("model", {"name": "training-1"}),
+        ("strategy", {"type": "threshold", "params": {"threshold": 0.5}}),
+    ],
+)
+def test_backtest_rejects_runtime_submission_fields(
+    field_name: str,
+    value: object,
+) -> None:
+    payload: dict[str, object] = {
+        "init_cash": 200_000,
+        "min_listing_calendar_days": 120,
+        field_name: value,
+    }
     with pytest.raises(ValidationError):
-        BacktestConfig.model_validate(
-            {
-                "name": "daily_alpha",
-                "dates": ["2026-05-06", "2026-05-07"],
-                "symbols": ["000001"],
-                "strategy": {
-                    "type": "threshold",
-                    "params": {"threshold": 0.5},
-                },
-                "init_cash": 200_000,
-                "backtest_mode": BacktestMode.FULL_BACKTEST,
-                "min_listing_calendar_days": 120,
-            }
-        )
+        BacktestConfig.model_validate(payload)
 
 
 @pytest.mark.parametrize(
@@ -91,14 +89,7 @@ def test_backtest_rejects_invalid_universe_policy(
     value: object,
 ) -> None:
     payload: dict[str, object] = {
-        "name": "daily_alpha",
-        "dates": ["2026-05-06", "2026-05-07"],
-        "strategy": {
-            "type": "threshold",
-            "params": {"threshold": 0.5},
-        },
         "init_cash": 200_000,
-        "backtest_mode": BacktestMode.FULL_BACKTEST,
         "min_listing_calendar_days": 120,
     }
     payload[field_name] = value

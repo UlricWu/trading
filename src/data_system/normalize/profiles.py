@@ -13,7 +13,6 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from src import logs
-from src.utils import table_ops
 from src.data_system.engines.trade_enrich_engine import TradeEnrichEngine
 from src.data_system.normalize import security_type_resolver
 from src.data_system.normalize.engine import (
@@ -23,9 +22,9 @@ from src.data_system.normalize.engine import (
 from src.data_system.normalize.parser_engine import parse_events_arrow
 from src.data_system.normalize.phase_resolver import PhaseResolver
 from src.data_system.normalize.symbol_index_engine import SymbolIndexEngine
+from src.utils import table_ops
 from src.utils.csv7z_batch_source import open_csv7z_batches
 from src.utils.datetime_utils import DateTimeUtils
-
 
 _TUSHARE_TARGET_SCHEMAS: Mapping[str, pa.Schema] = MappingProxyType(
     {
@@ -281,11 +280,9 @@ def normalize_level2(
     )
 
 
-NORMALIZE_PROFILES: Mapping[tuple[str, str], Callable[..., NormalizeOutput]] = (
-    MappingProxyType(
-        {
-            ("tushare", "v1"): normalize_tushare,
-            ("level2_ftp", "v1"): normalize_level2,
-        }
-    )
+NORMALIZE_PROFILES: Mapping[str, Callable[..., NormalizeOutput]] = MappingProxyType(
+    {
+        "tushare": normalize_tushare,
+        "level2_ftp": normalize_level2,
+    }
 )

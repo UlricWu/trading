@@ -7,8 +7,8 @@ import pandas as pd
 import pyarrow.parquet as pq
 
 from src.access import Access, meta
-from src.utils import table_ops
 from src.trading.market.daily_view import SYMBOL_COL
+from src.utils import table_ops
 from src.utils.path import PathManager
 
 RAW_PRICE_COL = "close"
@@ -16,6 +16,7 @@ RAW_PRICE_COL = "close"
 
 def read_daily_raw_signal_view_data(
     *,
+    access: Access,
     pm: PathManager,
     symbols: Sequence[str],
     price_date: str,
@@ -24,11 +25,24 @@ def read_daily_raw_signal_view_data(
     feature_version: str,
     feature_names: Sequence[str],
 ) -> pd.DataFrame:
-    """Read one daily raw-price `DailyView` input for executable replay."""
+    """Read one daily raw-price `DailyView` input for executable replay.
+
+    Example:
+        frame = read_daily_raw_signal_view_data(
+            access=access,
+            pm=path_manager,
+            symbols=("000001",),
+            price_date="2026-07-20",
+            feature_date="2026-07-20",
+            feature_set="daily",
+            feature_version="v1",
+            feature_names=("momentum",),
+        )
+    """
     ordered_symbols = [str(symbol) for symbol in symbols]
     names = [str(name) for name in feature_names]
     prices = read_raw_close(
-        pm=pm,
+        access=access,
         trade_date=price_date,
         symbols=ordered_symbols,
     )
@@ -49,12 +63,19 @@ def read_daily_raw_signal_view_data(
 
 def read_raw_close(
     *,
-    pm: PathManager,
+    access: Access,
     trade_date: str,
     symbols: Sequence[str] | None = None,
 ) -> pd.DataFrame:
-    """Read `symbol, close` raw executable prices from daily_bar."""
-    access = Access(pm=pm, processed_version="v1")
+    """Read `symbol, close` raw executable prices from daily_bar.
+
+    Example:
+        prices = read_raw_close(
+            access=access,
+            trade_date="2026-07-20",
+            symbols=("000001",),
+        )
+    """
     if symbols is None:
         daily = access.daily_bars(trade_date=trade_date)
     else:

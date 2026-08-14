@@ -11,7 +11,6 @@ import typer
 
 from src.config.app_config import AppConfig
 from src.jobs.requests import (
-    JOB_EXIT_CODE_SKIPPED,
     InvalidJobRequest,
     create_backtest_submission,
     create_data_submission,
@@ -19,12 +18,8 @@ from src.jobs.requests import (
 )
 from src.utils.path import PathManager
 from src.workflows.backtest import run_daily_alpha_backtest
-from src.workflows.offline_daily_data import (
-    DataRunStatus,
-    run_offline_data,
-)
+from src.workflows.offline_daily_data import run_offline_data
 from src.workflows.offline_training import run_offline_training
-
 
 app = typer.Typer(help="MinQuant CLI")
 
@@ -54,7 +49,7 @@ def _raise_bad_parameter(
     raise typer.BadParameter(str(error), param_hint=hint) from None
 
 
-@app.command()  # type: ignore[untyped-decorator]
+@app.command()
 def data_standard(
     start_date: str = typer.Option(..., "--start"),
     end_date: str = typer.Option(..., "--end"),
@@ -80,16 +75,14 @@ def data_standard(
         )
 
     app_config = AppConfig.load()
-    status = run_offline_data(
+    run_offline_data(
         app_config=app_config,
         path_manager=PathManager(app_config.storage_root),
         submission=submission,
     )
-    if status is DataRunStatus.SKIPPED:
-        raise typer.Exit(code=JOB_EXIT_CODE_SKIPPED)
 
 
-@app.command()  # type: ignore[untyped-decorator]
+@app.command()
 def data_level2(
     start_date: str = typer.Option(..., "--start"),
     end_date: str = typer.Option(..., "--end"),
@@ -115,16 +108,14 @@ def data_level2(
         )
 
     app_config = AppConfig.load()
-    status = run_offline_data(
+    run_offline_data(
         app_config=app_config,
         path_manager=PathManager(app_config.storage_root),
         submission=submission,
     )
-    if status is DataRunStatus.SKIPPED:
-        raise typer.Exit(code=JOB_EXIT_CODE_SKIPPED)
 
 
-@app.command()  # type: ignore[untyped-decorator]
+@app.command()
 def train(
     start_date: str = typer.Option(..., "--start"),
     end_date: str = typer.Option(..., "--end"),
@@ -152,13 +143,12 @@ def train(
     run_offline_training(
         model_config=app_config.model,
         path_manager=PathManager(app_config.storage_root),
+        submission=submission,
         experiment_id=experiment_id,
-        start_date=submission.start,
-        end_date=submission.end,
     )
 
 
-@app.command()  # type: ignore[untyped-decorator]
+@app.command()
 def backtest(
     mode: str = typer.Option(..., "--mode"),
     start_date: str = typer.Option(..., "--start"),
@@ -200,21 +190,12 @@ def backtest(
             },
         )
 
-    app_config = AppConfig.load(
-        override={
-            "backtest": {
-                "backtest_mode": submission.mode.value,
-                "model": {"name": submission.model_experiment},
-                "strategy": submission.strategy.model_dump(mode="json"),
-            }
-        }
-    )
+    app_config = AppConfig.load()
     run_daily_alpha_backtest(
         backtest_config=app_config.backtest,
         path_manager=PathManager(app_config.storage_root),
+        submission=submission,
         experiment_id=experiment_id,
-        start_date=submission.start,
-        end_date=submission.end,
     )
 
 

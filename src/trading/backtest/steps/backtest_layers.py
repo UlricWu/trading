@@ -1,16 +1,26 @@
 # filepath: src/trading/backtest/steps/backtest_layers.py
+"""Explicit daily-alpha backtest layer operations."""
+
 from __future__ import annotations
 
 import math
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from typing import cast
 
 import numpy as np
 
 from src import logs
 from src.access import Access
-from src.trading.backtest.context import TradingContext
+from src.trading.backtest.context import BacktestContext, BacktestState
+from src.trading.backtest.timing import BacktestTiming
 from src.trading.core.events import SignalEvent, TargetEvent
 from src.trading.engines.backtest_eval import (
+    ExecutionQualityFrame,
+    FullBacktestFrame,
+    RiskEffectFrame,
+    SignalEvalFrame,
+    TradableAlphaFrame,
     execution_quality_frame,
     full_backtest_frame,
     risk_effect_frame,
@@ -31,77 +41,153 @@ from src.trading.portfolio.constructors.base import PortfolioConstructor
 from src.trading.risk.base import RiskContext
 from src.trading.risk.engine import NoOpRiskManager, RiskManager
 from src.trading.signal.base import SignalProvider
-from src.trading.sim.kernel import BacktestKernel
+from src.trading.sim.kernel import BacktestKernel, BarContext
 from src.trading.sim.session import ReplaySession
+from src.utils.path import PathManager
+
+
+@dataclass(frozen=True, slots=True)
+class SignalResult:
+    """Carry one timing's bar, prices, and scores.
+
+    Example:
+        trade_date = signal_result.bar.trade_date
+    """
+
+    bar: BarContext
+    bars_count: int
+    raw_prices: dict[str, float]
+    scores: dict[str, float]
+
+
+@dataclass(frozen=True, slots=True)
+class SignalEvaluationResult:
+    """Carry forward prices with the signal evaluation frame.
+
+    Example:
+        frame = signal_evaluation.frame
+    """
+
+    forward_raw_prices: dict[str, float]
+    frame: SignalEvalFrame
+
+
+@dataclass(frozen=True, slots=True)
+class PortfolioResult:
+    """Carry executable portfolio targets before risk adjustment.
+
+    Example:
+        executable_targets = portfolio_result.targets
+    """
+
+    targets: dict[str, int]
+
+
+@dataclass(frozen=True, slots=True)
+class RiskResult:
+    """Carry adjusted targets with their risk evaluation frame.
+
+    Example:
+        adjusted_targets = risk_result.targets
+    """
+
+    targets: dict[str, int]
+    frame: RiskEffectFrame
+
+
+@dataclass(frozen=True, slots=True)
+class AccountingResult:
+    """Carry one mark-to-market result for workflow-owned persistence.
+
+    Example:
+        state.last_mark_prices = accounting.last_mark_prices
+    """
+
+    market_value: float
+    last_mark_prices: dict[str, float]
 
 
 class SignalStep:
-    """Produce score facts for the current daily_alpha timing.
+    """Produce score facts for one explicit daily-alpha timing.
 
     Example:
-        step = SignalStep(
+        operation = SignalStep(
+            access=access,
+            pm=path_manager,
+            min_listing_calendar_days=120,
             signal=signal,
             feature_set="daily",
             feature_version="v1",
             feature_names=("momentum",),
         )
-        step(context)
+        result = operation(timing, state)
     """
 
     def __init__(
         self,
         *,
+        access: Access,
+        pm: PathManager,
+        min_listing_calendar_days: int,
         signal: SignalProvider,
         feature_set: str,
         feature_version: str,
         feature_names: Sequence[str],
     ) -> None:
-        """Create the step for one signal and feature identity.
+        """Bind market access and signal capabilities.
 
         Example:
-            step = SignalStep(
+            operation = SignalStep(
+                access=access,
+                pm=path_manager,
+                min_listing_calendar_days=120,
                 signal=signal,
                 feature_set="daily",
                 feature_version="v1",
                 feature_names=("momentum",),
             )
         """
-        self.signal = signal
-        self.feature_set = feature_set
-        self.feature_version = feature_version
-        self.feature_names = list(feature_names)
+        self._access = access
+        self._pm = pm
+        self._min_listing_calendar_days = min_listing_calendar_days
+        self._signal = signal
+        self._feature_set = feature_set
+        self._feature_version = feature_version
+        self._feature_names = tuple(feature_names)
 
-    def __call__(self, ctx: TradingContext) -> None:
-        """Produce signal scores for the active backtest timing.
+    def __call__(
+        self,
+        timing: BacktestTiming,
+        state: BacktestState,
+    ) -> SignalResult:
+        """Return the single executable bar, raw prices, and scores.
 
         Example:
-            step(context)
+            result = operation(timing, state)
         """
-        timing = ctx.backtest_timing
         trade_date = timing.signal_date
         prices = read_raw_close(
-            pm=ctx.pm,
+            access=self._access,
             trade_date=trade_date,
             symbols=None,
         )
-        current_raw_prices = {
-            str(row.symbol): float(row.close) for row in prices.itertuples(index=False)
+        raw_prices = {
+            str(row.symbol): float(cast(float, row.close))
+            for row in prices.itertuples(index=False)
         }
-        signal_symbols = Access(
-            pm=ctx.pm,
-            processed_version="v1",
-        ).universe(
+        signal_symbols = self._access.universe(
             trade_date=trade_date,
-            min_listing_calendar_days=ctx.cfg.min_listing_calendar_days,
+            min_listing_calendar_days=self._min_listing_calendar_days,
         )
         view_data = read_daily_raw_signal_view_data(
-            pm=ctx.pm,
+            access=self._access,
+            pm=self._pm,
             symbols=signal_symbols,
             price_date=trade_date,
             feature_date=timing.signal_date,
-            feature_set=self.feature_set,
-            feature_version=self.feature_version,
-            feature_names=self.feature_names,
+            feature_set=self._feature_set,
+            feature_version=self._feature_version,
+            feature_names=self._feature_names,
         )
         data_view = DailyView(
             view_data,
@@ -120,110 +206,165 @@ class SignalStep:
                 f"trade_date={trade_date}; got={len(trade_bars)}"
             )
 
-        ctx.portfolio_state.on_trading_day_start(trade_date)
-
+        state.portfolio_state.on_trading_day_start(trade_date)
         bar = trade_bars[0]
-        scores = self.signal.scores(
+        scores = self._signal.scores(
             ts_us=bar.ts_us,
             data_view=bar.data_view,
             symbols=signal_symbols,
         )
         if not scores:
             raise RuntimeError(f"[SignalStep] no scores generated for {trade_date}")
+        return SignalResult(
+            bar=bar,
+            bars_count=len(bars),
+            raw_prices=raw_prices,
+            scores=dict(scores),
+        )
 
-        ctx.current_bar = bar
-        ctx.current_bars_count = len(bars)
-        ctx.current_raw_prices = current_raw_prices
-        ctx.current_scores = scores
-        ctx.signal_tape.append(
+    def run(self, context: BacktestContext) -> BacktestContext:
+        """Produce and record the signal facts for the Context timing.
+
+        Example:
+            signaled_context = operation.run(context)
+        """
+        signal = self(context.timing, context.state)
+        context.signal = signal
+        context.state.signal_tape.append(
             SignalEvent(
-                ts_us=bar.ts_us,
-                scores=scores,
-                meta={"trade_date": trade_date},
+                ts_us=signal.bar.ts_us,
+                scores=signal.scores,
+                meta={"trade_date": signal.bar.trade_date},
             )
         )
-        ctx.bar_count += len(bars)
-        ctx.signal_count += len(scores)
+        context.state.bar_count += signal.bars_count
+        context.state.signal_count += len(signal.scores)
+        return context
 
 
 class SignalEvalStep:
-    """Evaluate signal scores against the T+1 raw-close label.
+    """Evaluate one signal result against the T+1 raw close.
 
     Example:
-        step = SignalEvalStep()
-        step(context)
+        operation = SignalEvalStep(access=access)
+        evaluation = operation(timing, signal_result)
     """
 
-    def __call__(self, ctx: TradingContext) -> None:
-        """Append signal evaluation for the active timing.
+    def __init__(self, *, access: Access) -> None:
+        """Bind the processed market-data capability.
 
         Example:
-            step(context)
+            operation = SignalEvalStep(access=access)
         """
-        bar = ctx.current_bar
+        self._access = access
+
+    def __call__(
+        self,
+        timing: BacktestTiming,
+        signal: SignalResult,
+    ) -> SignalEvaluationResult:
+        """Return forward prices and one signal evaluation frame.
+
+        Example:
+            evaluation = operation(timing, signal_result)
+        """
         forward_prices = read_raw_close(
-            pm=ctx.pm,
-            trade_date=ctx.backtest_timing.forward_date,
+            access=self._access,
+            trade_date=timing.forward_date,
             symbols=None,
         )
-        ctx.current_forward_raw_prices = {
-            str(row.symbol): float(row.close)
+        forward_raw_prices = {
+            str(row.symbol): float(cast(float, row.close))
             for row in forward_prices.itertuples(index=False)
         }
         frame = signal_eval_frame(
-            scores=ctx.current_scores,
-            entry_prices=ctx.current_raw_prices,
-            exit_prices=ctx.current_forward_raw_prices,
+            scores=signal.scores,
+            entry_prices=signal.raw_prices,
+            exit_prices=forward_raw_prices,
         )
         frame.update(
             {
-                "trade_date": bar.trade_date,
-                "forward_date": ctx.backtest_timing.forward_date,
-                "ts_us": int(bar.ts_us),
+                "trade_date": signal.bar.trade_date,
+                "forward_date": timing.forward_date,
+                "ts_us": int(signal.bar.ts_us),
             }
         )
-        ctx.signal_eval_frames.append(frame)
+        return SignalEvaluationResult(
+            forward_raw_prices=forward_raw_prices,
+            frame=frame,
+        )
+
+    def run(self, context: BacktestContext) -> BacktestContext:
+        """Evaluate and record the Context signal against its forward date.
+
+        Example:
+            evaluated_context = operation.run(signaled_context)
+        """
+        signal = context.signal
+        if signal is None:
+            raise RuntimeError("SignalEvalStep requires a signal result")
+        evaluation = self(context.timing, signal)
+        context.signal_evaluation = evaluation
+        context.state.signal_eval_frames.append(evaluation.frame)
+        return context
 
 
 class TradableAlphaEvalStep:
-    """Build T+1 tradable-alpha label facts without creating orders.
+    """Build one T+1 tradable-alpha evaluation frame.
 
     Example:
-        step = TradableAlphaEvalStep()
-        step(context)
+        frame = TradableAlphaEvalStep()(timing, signal_result, evaluation)
     """
 
-    def __call__(self, ctx: TradingContext) -> None:
-        """Append tradable-alpha evaluation for the active timing.
+    def __call__(
+        self,
+        timing: BacktestTiming,
+        signal: SignalResult,
+        evaluation: SignalEvaluationResult,
+    ) -> TradableAlphaFrame:
+        """Return one tradable-alpha frame without mutating state.
 
         Example:
-            step(context)
+            frame = operation(timing, signal_result, evaluation)
         """
-        bar = ctx.current_bar
         frame = tradable_alpha_frame(
-            scores=ctx.current_scores,
-            entry_prices=ctx.current_raw_prices,
-            exit_prices=ctx.current_forward_raw_prices,
+            scores=signal.scores,
+            entry_prices=signal.raw_prices,
+            exit_prices=evaluation.forward_raw_prices,
         )
         frame.update(
             {
-                "trade_date": bar.trade_date,
-                "forward_date": ctx.backtest_timing.forward_date,
-                "ts_us": int(bar.ts_us),
+                "trade_date": signal.bar.trade_date,
+                "forward_date": timing.forward_date,
+                "ts_us": int(signal.bar.ts_us),
             }
         )
-        ctx.tradable_alpha_frames.append(frame)
+        return frame
+
+    def run(self, context: BacktestContext) -> BacktestContext:
+        """Build and record tradable-alpha facts for the Context timing.
+
+        Example:
+            evaluated_context = operation.run(signal_evaluated_context)
+        """
+        signal = context.signal
+        evaluation = context.signal_evaluation
+        if signal is None or evaluation is None:
+            raise RuntimeError(
+                "TradableAlphaEvalStep requires signal evaluation results"
+            )
+        context.state.tradable_alpha_frames.append(
+            self(context.timing, signal, evaluation)
+        )
+        return context
 
 
 class PortfolioStep:
-    """Transform score facts into target position facts.
+    """Transform score facts into executable target facts.
 
     Example:
-        step = PortfolioStep(
-            constructor=constructor,
-            target_capacity=None,
-        )
-        step(context)
+        operation = PortfolioStep(constructor=constructor, target_capacity=None)
+        portfolio = operation(signal_result, state)
     """
 
     def __init__(
@@ -232,114 +373,146 @@ class PortfolioStep:
         constructor: PortfolioConstructor,
         target_capacity: int | None,
     ) -> None:
-        """Create the step for one portfolio constructor.
+        """Bind the portfolio constructor and optional target capacity.
 
         Example:
-            step = PortfolioStep(
+            operation = PortfolioStep(
                 constructor=constructor,
                 target_capacity=None,
             )
         """
-        self.constructor = constructor
-        self.target_capacity = target_capacity
+        self._constructor = constructor
+        self._target_capacity = target_capacity
 
-    def __call__(self, ctx: TradingContext) -> None:
-        """Build executable targets for the active timing.
+    def __call__(
+        self,
+        signal: SignalResult,
+        state: BacktestState,
+    ) -> PortfolioResult:
+        """Return raw and executable targets for one timing.
 
         Example:
-            step(context)
+            portfolio = operation(signal_result, state)
         """
-        bar = ctx.current_bar
-        targets = self.constructor.targets(
-            ts_us=bar.ts_us,
-            scores=ctx.current_scores,
-            state=ctx.portfolio_state,
+        targets = self._constructor.targets(
+            ts_us=signal.bar.ts_us,
+            scores=signal.scores,
+            state=state.portfolio_state,
         )
-        int_targets = make_executable_targets(
+        executable = make_executable_targets(
             raw_targets=targets,
-            positions=ctx.portfolio_state.positions,
-            current_raw_prices=ctx.current_raw_prices,
-            max_positions=self.target_capacity,
+            positions=state.portfolio_state.positions,
+            current_raw_prices=signal.raw_prices,
+            max_positions=self._target_capacity,
         )
-        ctx.current_raw_targets = dict(int_targets)
-        ctx.current_targets = int_targets
+        return PortfolioResult(targets=dict(executable))
+
+    def run(self, context: BacktestContext) -> BacktestContext:
+        """Build and attach executable portfolio targets for the Context.
+
+        Example:
+            portfolio_context = operation.run(evaluated_context)
+        """
+        signal = context.signal
+        if signal is None:
+            raise RuntimeError("PortfolioStep requires a signal result")
+        context.portfolio = self(signal, context.state)
+        return context
 
 
 class RiskEvalStep:
-    """Apply risk to targets and keep decisions as side facts.
+    """Apply risk and return adjusted targets with side facts.
 
     Example:
-        step = RiskEvalStep(risk=risk_manager)
-        step(context)
+        operation = RiskEvalStep(risk=risk_manager)
+        risk_result = operation(signal_result, portfolio, state)
     """
 
     def __init__(self, *, risk: RiskManager | NoOpRiskManager) -> None:
-        """Create the step for one risk implementation.
+        """Bind one risk implementation.
 
         Example:
-            step = RiskEvalStep(risk=risk_manager)
+            operation = RiskEvalStep(risk=risk_manager)
         """
-        self.risk = risk
+        self._risk = risk
 
-    def __call__(self, ctx: TradingContext) -> None:
-        """Apply risk and append its evaluation facts.
+    def __call__(
+        self,
+        signal: SignalResult,
+        portfolio: PortfolioResult,
+        state: BacktestState,
+    ) -> RiskResult:
+        """Return adjusted targets and one risk evaluation frame.
 
         Example:
-            step(context)
+            risk_result = operation(signal_result, portfolio, state)
         """
-        bar = ctx.current_bar
-        latest = ctx.equity_curve.latest
+        latest = state.equity_curve.latest
         equity = (
             float(latest.equity)
             if latest is not None
-            else float(ctx.portfolio_state.cash)
+            else float(state.portfolio_state.cash)
         )
         peak_equity = (
-            float(ctx.equity_curve.peak_equity) if latest is not None else equity
+            float(state.equity_curve.peak_equity) if latest is not None else equity
         )
-        decision = self.risk.apply(
-            target=ctx.current_targets,
+        decision = self._risk.apply(
+            target=portfolio.targets,
             ctx=RiskContext(
-                ts_us=bar.ts_us,
-                prices=dict(ctx.current_raw_prices),
+                ts_us=signal.bar.ts_us,
+                prices=dict(signal.raw_prices),
                 equity=equity,
-                cash=float(ctx.portfolio_state.cash),
+                cash=float(state.portfolio_state.cash),
                 peak_equity=peak_equity,
-                positions=dict(ctx.portfolio_state.positions),
-                meta={"trade_date": bar.trade_date},
+                positions=dict(state.portfolio_state.positions),
+                meta={"trade_date": signal.bar.trade_date},
             ),
         )
-        ctx.current_targets = dict(decision.adjusted)
-        ctx.target_tape.append(
+        adjusted_targets = dict(decision.adjusted)
+        frame: RiskEffectFrame = {
+            **risk_effect_frame(
+                targets_before=portfolio.targets,
+                targets_after=adjusted_targets,
+                prices=signal.raw_prices,
+                equity=equity,
+                blocked=decision.blocked,
+                scaled=decision.scaled,
+                reason=decision.reason,
+            ),
+            "trade_date": signal.bar.trade_date,
+            "ts_us": int(signal.bar.ts_us),
+        }
+        return RiskResult(targets=adjusted_targets, frame=frame)
+
+    def run(self, context: BacktestContext) -> BacktestContext:
+        """Apply risk and record adjusted targets for the Context timing.
+
+        Example:
+            risk_context = operation.run(portfolio_context)
+        """
+        signal = context.signal
+        portfolio = context.portfolio
+        if signal is None or portfolio is None:
+            raise RuntimeError("RiskEvalStep requires signal and portfolio results")
+        risk = self(signal, portfolio, context.state)
+        context.risk = risk
+        context.state.target_tape.append(
             TargetEvent(
-                ts_us=bar.ts_us,
-                targets=ctx.current_targets,
-                meta={"trade_date": bar.trade_date},
+                ts_us=signal.bar.ts_us,
+                targets=risk.targets,
+                meta={"trade_date": signal.bar.trade_date},
             )
         )
-        ctx.risk_decision_frames.append(
-            {
-                **risk_effect_frame(
-                    targets_before=ctx.current_raw_targets,
-                    targets_after=ctx.current_targets,
-                    prices=ctx.current_raw_prices,
-                    equity=equity,
-                    blocked=decision.blocked,
-                    scaled=decision.scaled,
-                    reason=decision.reason,
-                ),
-                "trade_date": bar.trade_date,
-                "ts_us": int(bar.ts_us),
-            }
-        )
+        context.state.risk_decision_frames.append(risk.frame)
+        return context
 
 
 class ExecutionEvalStep:
-    """Execute target facts; execution does not consume risk decisions.
+    """Execute adjusted targets and return execution quality facts.
 
     Example:
-        step = ExecutionEvalStep(execution=execution)
-        step(context)
+        operation = ExecutionEvalStep(execution=execution)
+        frame = operation(signal_result, risk_result, state)
     """
 
     def __init__(
@@ -347,112 +520,159 @@ class ExecutionEvalStep:
         *,
         execution: IdealExecution | ExecutionOrchestrator,
     ) -> None:
-        """Create the step for one execution implementation.
+        """Bind one execution implementation.
 
         Example:
-            step = ExecutionEvalStep(execution=execution)
+            operation = ExecutionEvalStep(execution=execution)
         """
-        self.execution = execution
+        self._execution = execution
 
-    def __call__(self, ctx: TradingContext) -> None:
-        """Execute targets and append execution evaluation facts.
+    def __call__(
+        self,
+        signal: SignalResult,
+        risk: RiskResult,
+        state: BacktestState,
+    ) -> ExecutionQualityFrame:
+        """Execute targets and return one evaluation frame.
 
         Example:
-            step(context)
+            frame = operation(signal_result, risk_result, state)
         """
-        bar = ctx.current_bar
         execution_view = _RawCloseExecutionView(
-            base=bar.data_view,
-            prices=ctx.current_raw_prices,
+            base=signal.bar.data_view,
+            prices=signal.raw_prices,
         )
-        execution_view.on_time(bar.ts_us)
-        positions_before = dict(ctx.portfolio_state.positions)
-        before_records = len(ctx.execution_ledger.records)
-        fills = self.execution.execute_targets(
-            ts_us=bar.ts_us,
-            targets=ctx.current_targets,
+        execution_view.on_time(signal.bar.ts_us)
+        positions_before = dict(state.portfolio_state.positions)
+        records_before = len(state.execution_ledger.records)
+        fills = self._execution.execute_targets(
+            ts_us=signal.bar.ts_us,
+            targets=risk.targets,
             data_view=execution_view,
-            state=ctx.portfolio_state,
-            ledger=ctx.execution_ledger,
+            state=state.portfolio_state,
+            ledger=state.execution_ledger,
         )
-        new_records = ctx.execution_ledger.records[before_records:]
-        ctx.execution_eval_frames.append(
-            {
-                **execution_quality_frame(
-                    targets=ctx.current_targets,
-                    positions_before=positions_before,
-                    prices=ctx.current_raw_prices,
-                    fills=fills,
-                    ledger_records=new_records,
-                ),
-                "trade_date": bar.trade_date,
-                "ts_us": int(bar.ts_us),
-                "ledger_records_added": int(
-                    len(ctx.execution_ledger.records) - before_records
-                ),
-            }
-        )
+        frame: ExecutionQualityFrame = {
+            **execution_quality_frame(
+                targets=risk.targets,
+                positions_before=positions_before,
+                prices=signal.raw_prices,
+                fills=fills,
+                ledger_records=state.execution_ledger.records[records_before:],
+            ),
+            "trade_date": signal.bar.trade_date,
+            "ts_us": int(signal.bar.ts_us),
+            "ledger_records_added": int(
+                len(state.execution_ledger.records) - records_before
+            ),
+        }
+        return frame
+
+    def run(self, context: BacktestContext) -> BacktestContext:
+        """Execute targets and record execution quality for the Context.
+
+        Example:
+            executed_context = operation.run(risk_context)
+        """
+        signal = context.signal
+        risk = context.risk
+        if signal is None or risk is None:
+            raise RuntimeError("ExecutionEvalStep requires signal and risk results")
+        context.state.execution_eval_frames.append(self(signal, risk, context.state))
+        return context
 
 
 class AccountingStep:
-    """Update account valuation facts after execution.
+    """Calculate one account valuation update after execution.
 
     Example:
-        step = AccountingStep()
-        step(context)
+        accounting = AccountingStep()(signal_result, state)
     """
 
-    def __call__(self, ctx: TradingContext) -> None:
-        """Mark positions and append the active timing equity point.
+    def __call__(
+        self,
+        signal: SignalResult,
+        state: BacktestState,
+    ) -> AccountingResult:
+        """Return current market value and the next mark-price state.
 
         Example:
-            step(context)
+            accounting = operation(signal_result, state)
         """
-        bar = ctx.current_bar
-        market_value, ctx.last_mark_prices = mark_to_market(
-            positions=ctx.portfolio_state.positions,
-            current_raw_prices=ctx.current_raw_prices,
-            last_mark_prices=ctx.last_mark_prices,
+        market_value, last_mark_prices = mark_to_market(
+            positions=state.portfolio_state.positions,
+            current_raw_prices=signal.raw_prices,
+            last_mark_prices=state.last_mark_prices,
         )
-        ctx.equity_curve.append(
-            ts_us=bar.ts_us,
-            cash=float(ctx.portfolio_state.cash),
+        return AccountingResult(
             market_value=float(market_value),
+            last_mark_prices=last_mark_prices,
         )
-        ctx.trade_dates.append(bar.trade_date)
+
+    def run(self, context: BacktestContext) -> BacktestContext:
+        """Apply one valuation update to the persistent Context state.
+
+        Example:
+            accounted_context = AccountingStep().run(executed_context)
+        """
+        signal = context.signal
+        if signal is None:
+            raise RuntimeError("AccountingStep requires a signal result")
+        accounting = self(signal, context.state)
+        context.state.last_mark_prices = dict(accounting.last_mark_prices)
+        context.state.equity_curve.append(
+            ts_us=signal.bar.ts_us,
+            cash=float(context.state.portfolio_state.cash),
+            market_value=accounting.market_value,
+        )
+        context.state.trade_dates.append(signal.bar.trade_date)
+        return context
 
 
 class FullBacktestStep:
-    """Record full-backtest per-timing facts for final aggregation.
+    """Build one full-backtest frame after accounting.
 
     Example:
-        step = FullBacktestStep()
-        step(context)
+        frame = FullBacktestStep()(signal_result, state)
     """
 
-    def __call__(self, ctx: TradingContext) -> None:
-        """Append full-backtest facts for the active timing.
+    def __call__(
+        self,
+        signal: SignalResult,
+        state: BacktestState,
+    ) -> FullBacktestFrame:
+        """Return one full-backtest frame and emit its operational log.
 
         Example:
-            step(context)
+            frame = operation(signal_result, state)
         """
-        bar = ctx.current_bar
-        ctx.full_backtest_frames.append(
-            {
-                **full_backtest_frame(
-                    equity_points=ctx.equity_curve.points,
-                    positions=ctx.portfolio_state.positions,
-                ),
-                "trade_date": bar.trade_date,
-                "ts_us": int(bar.ts_us),
-            }
-        )
+        frame: FullBacktestFrame = {
+            **full_backtest_frame(
+                equity_points=state.equity_curve.points,
+                positions=state.portfolio_state.positions,
+            ),
+            "trade_date": signal.bar.trade_date,
+            "ts_us": int(signal.bar.ts_us),
+        }
         logs.info(
-            f"[FullBacktestStep] processed trade_date={bar.trade_date} "
-            f"symbols={len(bar.symbols)} bars={ctx.current_bars_count} "
-            f"positions={len(ctx.portfolio_state.positions)} "
-            f"ledger_records={len(ctx.execution_ledger.records)}"
+            f"[FullBacktestStep] processed trade_date={signal.bar.trade_date} "
+            f"symbols={len(signal.bar.symbols)} bars={signal.bars_count} "
+            f"positions={len(state.portfolio_state.positions)} "
+            f"ledger_records={len(state.execution_ledger.records)}"
         )
+        return frame
+
+    def run(self, context: BacktestContext) -> BacktestContext:
+        """Build and record the full-backtest frame for the Context timing.
+
+        Example:
+            completed_context = FullBacktestStep().run(accounted_context)
+        """
+        signal = context.signal
+        if signal is None:
+            raise RuntimeError("FullBacktestStep requires a signal result")
+        context.state.full_backtest_frames.append(self(signal, context.state))
+        return context
 
 
 class _RawCloseExecutionView(MarketDataView):
@@ -481,9 +701,7 @@ class _RawCloseExecutionView(MarketDataView):
     def get_price(self, symbol: str) -> float | None:
         self._require_active()
         value = self._prices.get(str(symbol))
-        if value is None:
-            return None
-        if not math.isfinite(float(value)):
+        if value is None or not math.isfinite(float(value)):
             return None
         return float(value)
 

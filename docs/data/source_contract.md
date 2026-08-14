@@ -1,33 +1,51 @@
 # 数据源与核心日线数据契约
 
 - **状态**：正式 owner
-- **适用范围**：`data.brokers`、`data.sources`、source identity、broker source
-  registry、source-native 查询、`trade_calendar` 与 `daily_bar` 的正式语义。
+- **适用范围**：`data.brokers`、`data.sources`、source identity、Tushare active
+  manifest、source-native 查询、`trade_calendar` 与 `daily_bar` 的正式语义。
 - **工作流 owner**：[`docs/offline_workflow_contract.md`](../offline_workflow_contract.md)
 - **存储 owner**：[`docs/data/storage_layout.md`](storage_layout.md)
 
 ## Source identity
 
 `source_name` 是本地 raw 分区身份；`raw_object` 是 broker 识别的源端对象；`outputs`
-是该 raw source 直接产生的 processed dataset 名。普通 source 必须显式声明一个
-`raw_object` 和完整 `outputs`；`outputs=[]` 表示 raw-only。
+是该 raw source 直接产生的 processed dataset 名；`outputs=[]` 表示 raw-only。
 
-`source.group` 只在 `offline_standard` 与 `offline_level2` 之间选择 source。
-`enabled=false` 的 source 不参与执行。`use_broker_sources=true` 的条目不得再声明
-`raw_object` 或 `outputs`；它展开 broker registry 的全部 source name，并对每项固定使用：
+Tushare 结构化 source 与 Level-2 文件 source 使用不同的选择权威：
 
-```text
-source_name = registry name
-raw_object = registry name
-outputs = [registry name]
-```
+- `TushareBroker._TUSHARE_SOURCES` 是 Standard 当前正式启用 source 的唯一 manifest。
+  mapping key 同时固定为 `source_name`、`raw_object` 和单一同名 processed output，value
+  是 Tushare API 名；存在于 mapping 表示启用，不存在表示当前 workflow 不执行。
+- `data.sources` 只声明 Level-2 文件 source。每项必须显式提供 `enabled`、
+  `broker=level2_ftp`、`group=offline_level2`、非空 `raw_object` 和完整 `outputs`；
+  `enabled=false` 的文件 source 不参与执行。
+
+配置不得声明 Tushare source，也不提供 `use_broker_sources`、group 总开关或其他隐式展开
+机制。增加 Tushare capability 不得自动改变正式执行集合；改变 manifest 本身才改变 Standard
+source 集。所有能够通过校验的 `data.sources` 都属于 Level-2，不存在被 workflow 静默忽略
+的其他 group 或 broker 条目。
 
 Feature 与 label 配置不使用 source group，其固定身份与执行归
 [`docs/offline_workflow_contract.md`](../offline_workflow_contract.md) 所有。
 
-## Tushare registry
+Broker implementation 使用不可变的 `broker name -> broker implementation class`
+mapping。该 mapping 只解析执行实现，不选择 source。运行时不得建立可变 register/freeze
+registry。Raw Meta hit 前不得构造 broker adapter；首次 miss 时构造并在同一 workflow 内
+按 broker 复用。
 
-本地 broker `tushare` 的 registry 固定为：
+Broker 到 normalize callable 的关系固定为：
+
+```text
+tushare    -> normalize_tushare
+level2_ftp -> normalize_level2
+```
+
+该关系不是 broker 配置中的 profile/version 选择器。所有 processed 输出固定写入 `v1`；
+broker config 不声明 `normalize_profile`。
+
+## Tushare active manifest
+
+本地 broker `tushare` 的正式 active manifest 固定为：
 
 | source_name / raw_object / output | Tushare API |
 |---|---|
@@ -101,4 +119,4 @@ Workflow 不为 `is_open=false` 的日期请求 `daily_bar`。`is_open=true` 时
 
 Broker 只有在源端明确返回无 payload 时才返回 `None`；transport、认证、response 类型或
 source response 不合法必须传播为错误。`trade_calendar` 对请求自然日返回 `None` 永远是
-错误。其他 source 的 range 聚合和 `SKIPPED` 语义由 workflow owner 定义。
+错误。其他 source 的 range 聚合和缺失失败语义由 workflow owner 定义。

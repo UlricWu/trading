@@ -31,10 +31,9 @@ CLI 不记录 start/done 或原始 JSON；workflow 负责业务运行日志。Ty
 
 `override` 只能包含 `data`、`model` 或 `backtest` 根键；因此不能改变
 `environment`、`storage_root` 或 `secret`。mapping 递归合并，标量、列表和显式
-`None` 直接替换；`backtest.strategy` 始终作为完整对象替换。合并后必须校验完整
-`AppConfig`。HTTP Job API 只能先构造已校验 submission，再由 CLI 生成上述受限
-override，不得接收或透传任意配置对象。配置读取、override 拒绝和最终 schema 校验错误
-均归 `AppConfig.load()`，不在下游组件重复校验。
+`None` 直接替换，不定义字段级特殊合并规则。合并后必须校验完整 `AppConfig`。HTTP Job
+API 和四个 CLI 命令都不得用 request runtime 字段构造 config override。配置读取、
+override 拒绝和最终 schema 校验错误均归 `AppConfig.load()`，不在下游组件重复校验。
 
 ## Data
 
@@ -43,11 +42,11 @@ python -m src.cli data-standard --start YYYY-MM-DD --end YYYY-MM-DD
 python -m src.cli data-level2 --start YYYY-MM-DD --end YYYY-MM-DD
 ```
 
-两个命令分别调用固定的 standard 或 Level-2 workflow，不接受 group、run ID 或实验身份。
+两个命令构造不同 kind 的 `DataSubmission`，但都只调用一次固定的 `run_offline_data`
+workflow，不接受 group、run ID 或实验身份。
 完整闭区间是一次 workflow 执行单位；单日必须传相同的 `--start` 与 `--end`，不提供
 位置参数 `DATE` 或其他单日形式。数据对象由 source、version 和 date 标识，不属于一次
-experiment。Workflow 返回
-`DataRunStatus.SUCCESS` 时退出 `0`；返回 `DataRunStatus.SKIPPED` 时退出 `75`。其他错误退出
+experiment。两个命令成功时都退出 `0`；任一正式交易日 fact 缺失或其他运行错误都退出
 `1`，不得改写成 skipped。
 
 ## Training
@@ -60,7 +59,8 @@ python -m src.cli train \
 ```
 
 Training 只使用基础 `AppConfig.model`，不接受 group 或配置 JSON override。CLI 将已校验
-范围、experiment ID、`ModelConfig` 和 `PathManager` 直接交给 training workflow。
+`TrainingSubmission`、experiment ID、`ModelConfig` 和 `PathManager` 直接交给 training
+workflow。
 通过 HTTP 创建 training Job 时，Job API 使用同一个 Job UUID 作为该必填
 `EXPERIMENT_ID`；HTTP 不接受客户端提供此字段。
 
@@ -93,7 +93,10 @@ python -m src.cli backtest \
 }}
 ```
 
-CLI 只覆盖 `backtest.backtest_mode`、`backtest.model` 和完整的 `backtest.strategy`，然后把
-最终 `BacktestConfig` 交给 workflow。它不接受 group、run ID、model name 或可选策略。
+CLI 不构造 config override。它加载一次只含静态执行设置的 `BacktestConfig`，并把该对象、
+完整 `BacktestSubmission`、`PathManager` 与 experiment ID 直接交给 workflow。Runtime
+mode、model experiment 和 strategy 的唯一 owner 是 submission；`BacktestConfig` 只拥有
+`init_cash` 与 `min_listing_calendar_days`。CLI 不接受 group、run ID、model name 或可选
+策略。
 通过 HTTP 创建 backtest Job 时，Job API 使用同一个 Job UUID 作为该必填
 `EXPERIMENT_ID`；HTTP 不接受客户端提供此字段。

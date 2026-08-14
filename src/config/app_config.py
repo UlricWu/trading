@@ -15,11 +15,6 @@ from .data_config import DataConfig
 from .model_config import ModelConfig
 from .secret_config import SecretConfig
 
-_ATOMIC_OVERRIDE_PATHS = frozenset(
-    {
-        ("backtest", "strategy"),
-    }
-)
 _CONFIG_SECTIONS = ("data", "model", "backtest")
 _ENVIRONMENTS = ("dev", "test", "prod")
 
@@ -46,14 +41,14 @@ class AppConfig(BaseModel):
         cls,
         *,
         override: Mapping[str, object] | None = None,
-    ) -> "AppConfig":
+    ) -> AppConfig:
         """Load the formal environment and YAML config, then validate one snapshot.
 
         Example:
             config = AppConfig.load(
-                override={"backtest": {"model": {"name": "training-1"}}}
+                override={"model": {"train_window_days": 60}}
             )
-            backtest_config = config.backtest
+            model_config = config.model
         """
         environment = os.getenv("ENV", "dev").lower()
         if environment not in _ENVIRONMENTS:
@@ -104,19 +99,13 @@ class AppConfig(BaseModel):
 def _deep_merge(
     base: Mapping[str, object],
     override: Mapping[str, object],
-    *,
-    path: tuple[str, ...] = (),
 ) -> dict[str, object]:
-    """Recursively merge mappings while replacing configured atomic paths."""
+    """Recursively merge mappings and replace every non-mapping value."""
     out = dict(base)
     for key, value in override.items():
-        current_path = (*path, key)
-        if current_path in _ATOMIC_OVERRIDE_PATHS:
-            out[key] = value
-            continue
         base_value = out.get(key)
         if isinstance(base_value, Mapping) and isinstance(value, Mapping):
-            out[key] = _deep_merge(base_value, value, path=current_path)
+            out[key] = _deep_merge(base_value, value)
         else:
             out[key] = value
     return out

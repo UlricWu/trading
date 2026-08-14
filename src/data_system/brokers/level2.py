@@ -7,7 +7,7 @@ import ftplib
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import cast
+from typing import ClassVar, cast
 
 from src import logs
 from src.config.app_config import AppConfig
@@ -46,9 +46,12 @@ class Level2Broker:
     downloads it to staging, copies it into the formal raw path, and returns a
     ``DownloadPlan`` for metadata commit. Archive handling follows
     ``docs/engineering/technology_stack_decisions.md``.
+
+    Example:
+        broker = Level2Broker(app_cfg=AppConfig.load())
     """
 
-    name = "level2_ftp"
+    name: ClassVar[str] = "level2_ftp"
 
     def __init__(self, *, app_cfg: AppConfig) -> None:
         """Load validated FTP settings and backend selection from AppConfig.

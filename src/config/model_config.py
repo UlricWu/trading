@@ -7,17 +7,38 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 
 class AdjustmentRefDataConfig(BaseModel):
-    """Formal processed refdata input selected by `model.dataset`."""
+    """Formal processed refdata input selected by `model.dataset`.
+
+    Example:
+        config = AdjustmentRefDataConfig(
+            method="raw",
+            dataset_name="adj_factor",
+        )
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     method: Literal["raw", "qfq", "hfq"] = "raw"
     dataset_name: str
-    version: str
 
 
 class FeatureLabelConfig(BaseModel):
-    """Formal feature/label input selection parsed from `model.dataset`."""
+    """Formal feature/label input selection parsed from `model.dataset`.
+
+    Example:
+        config = FeatureLabelConfig(
+            feature_set="daily",
+            feature_version="v1",
+            label_set="rank",
+            label_version="v1",
+            feature_columns=["momentum"],
+            label_column="target",
+            adjustment=AdjustmentRefDataConfig(
+                method="raw",
+                dataset_name="adj_factor",
+            ),
+        )
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -32,7 +53,11 @@ class FeatureLabelConfig(BaseModel):
 
 
 class MissingConfig(BaseModel):
-    """Missing-value handling selected by `model.preprocessing.missing`."""
+    """Missing-value handling selected by `model.preprocessing.missing`.
+
+    Example:
+        config = MissingConfig(method="constant", fill_value=0.0)
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -52,18 +77,30 @@ class MissingConfig(BaseModel):
 
 
 class PreprocessingConfig(BaseModel):
-    """Model-input preprocessing parsed from `model.preprocessing`."""
+    """Model-input preprocessing parsed from `model.preprocessing`.
+
+    Example:
+        config = PreprocessingConfig(
+            missing=MissingConfig(method="constant", fill_value=0.0)
+        )
+    """
 
     model_config = ConfigDict(extra="forbid")
 
-    version: str = "v1"
     missing: MissingConfig = Field(
         default_factory=lambda: MissingConfig(method="constant", fill_value=0.0)
     )
 
 
 class ModelConfig(BaseModel):
-    """Training model definition parsed from the `model` config section."""
+    """Training model definition parsed from the `model` config section.
+
+    Example:
+        config = ModelConfig(
+            dataset=feature_label_config,
+            train_window_days=30,
+        )
+    """
 
     model_config = ConfigDict(extra="forbid")
 

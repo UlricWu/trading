@@ -15,7 +15,6 @@ from src.utils import table_ops
 from src.utils.path import PathManager
 from src.utils.price_utils import apply_asof_price_adjustment
 
-
 _REQUIRED_COLUMNS = (
     "symbol",
     "trade_date",
@@ -75,19 +74,38 @@ class TushareDailyBasicV1Builder:
         features = builder.build_partition(table)
     """
 
-    key_columns = (
+    key_columns: tuple[str, ...] = (
         "symbol",
         "trade_date",
     )
-    output_columns = tuple(_OUTPUT_COLUMNS)
+    output_columns: tuple[str, ...] = tuple(_OUTPUT_COLUMNS)
 
     @property
     def lookback(self) -> int:
         return max(_FEATURE_LOOKBACKS.values())
 
-    def read_input(self, *, pm: PathManager, trade_date: str) -> pa.Table:
+    def read_input(
+        self,
+        *,
+        access: Access,
+        pm: PathManager,
+        processed_version: str,
+        trade_date: str,
+    ) -> pa.Table:
+        """Read the formal history needed for one feature partition.
+
+        Example:
+            table = TushareDailyBasicV1Builder().read_input(
+                access=access,
+                pm=path_manager,
+                processed_version="v1",
+                trade_date="2026-07-20",
+            )
+        """
         return _read_history(
+            access=access,
             pm=pm,
+            processed_version=processed_version,
             trade_date=trade_date,
             lookback=self.lookback,
             daily_basic_lookback=20,
@@ -300,15 +318,14 @@ def _position_in_range_by_symbol(
 
 def _read_history(
     *,
+    access: Access,
     pm: PathManager,
+    processed_version: str,
     trade_date: str,
     lookback: int,
     daily_basic_lookback: int | None = None,
 ) -> pa.Table:
-    dates = Access(
-        pm=pm,
-        processed_version="v1",
-    ).recent_trade_dates(
+    dates = access.recent_trade_dates(
         end_date=trade_date,
         sessions=lookback + 1,
     )
@@ -320,7 +337,7 @@ def _read_history(
             _read_processed_columns(
                 pm=pm,
                 dataset_name="daily_bar",
-                version="v1",
+                version=processed_version,
                 trade_date=date,
                 columns=_DAILY_BAR_INPUT_COLUMNS,
             )
@@ -329,7 +346,7 @@ def _read_history(
             _read_processed_columns(
                 pm=pm,
                 dataset_name="adj_factor",
-                version="v1",
+                version=processed_version,
                 trade_date=date,
                 columns=_ADJ_FACTOR_INPUT_COLUMNS,
             )
@@ -347,7 +364,7 @@ def _read_history(
             _read_processed_columns(
                 pm=pm,
                 dataset_name="daily_basic",
-                version="v1",
+                version=processed_version,
                 trade_date=date,
                 columns=_DAILY_BASIC_INPUT_COLUMNS,
             )

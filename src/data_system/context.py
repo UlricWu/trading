@@ -1,21 +1,19 @@
 # filepath: src/data_system/context.py
+"""Range Context shared by one ordered offline data Step chain."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from src.utils.path import PathManager
 
-
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class DataContext:
-    """Carry the immutable identity of one trade-date data workflow.
+    """Carry the requested range and resolved formal trade dates.
 
     Example:
-        context = DataContext(
-            trade_date="2026-07-20",
-            pm=path_manager,
-        )
+        context = DataContext(start="2026-07-01", end="2026-07-20")
     """
 
-    trade_date: str
-    pm: PathManager
+    start: str
+    end: str
+    trade_dates: tuple[str, ...] = ()

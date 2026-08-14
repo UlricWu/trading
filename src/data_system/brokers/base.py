@@ -28,11 +28,6 @@ class BrokerAdapter(Protocol):
 
     name: ClassVar[str]
 
-    @classmethod
-    def supported_source_names(cls) -> tuple[str, ...]:
-        """Return broker-supported source names for source expansion."""
-        ...
-
     def __init__(self, *, app_cfg: AppConfig) -> None:
         """Initialize the adapter from application configuration."""
         ...

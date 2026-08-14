@@ -17,8 +17,15 @@ import src.jobs.runtime as runtime_module
 from src.jobs.requests import DataSubmission
 from src.jobs.runtime import JobRuntime, JobStatus
 
-
 _FIXED_NOW = datetime.fromisoformat("2026-07-20T09:30:00.000000+08:00")
+
+
+def _data_submission(trade_date: str) -> DataSubmission:
+    return DataSubmission(
+        kind="data-standard",
+        start=trade_date,
+        end=trade_date,
+    )
 
 
 class _ControlledProcess:
@@ -98,10 +105,7 @@ def test_ten_jobs_are_accepted_with_two_running_and_fifo_dispatch(
         clock=lambda: _FIXED_NOW,
         job_id_factory=lambda: next(job_ids),
     )
-    submissions = [
-        DataSubmission(kind="data-standard", date=f"2026-07-{day:02d}")
-        for day in range(1, 11)
-    ]
+    submissions = [_data_submission(f"2026-07-{day:02d}") for day in range(1, 11)]
 
     jobs = runtime.submit(submissions)
 
@@ -113,16 +117,12 @@ def test_ten_jobs_are_accepted_with_two_running_and_fifo_dispatch(
     assert [job.job_id for job in jobs] == [
         str(uuid.UUID(int=value)) for value in range(1, 11)
     ]
-    assert all(
-        job.submitted_at == "2026-07-20T09:30:00.000000+08:00"
-        for job in jobs
-    )
+    assert all(job.submitted_at == "2026-07-20T09:30:00.000000+08:00" for job in jobs)
     assert len(process_factory.processes) == 2
     for job in jobs[:2]:
         job_log = next(tmp_path.rglob(f"{job.job_id}.log"))
         assert job_log.read_text(encoding="utf-8") == (
-            f"log_file={job.job_id}.log\n"
-            "child output\n"
+            f"log_file={job.job_id}.log\nchild output\n"
         )
 
     process_factory.processes[0].finish(0)
@@ -164,9 +164,7 @@ def test_running_cancel_waits_for_process_exit_before_cancelled(
         clock=lambda: _FIXED_NOW,
         job_id_factory=lambda: uuid.UUID(int=1),
     )
-    job = runtime.submit(
-        [DataSubmission(kind="data-standard", date="2026-07-20")]
-    )[0]
+    job = runtime.submit([_data_submission("2026-07-20")])[0]
 
     cancelling = runtime.cancel(job.job_id)
 
@@ -214,9 +212,7 @@ def test_wait_failure_kills_and_reaps_before_marking_failed(
         job_id_factory=lambda: uuid.UUID(int=1),
     )
 
-    job = runtime.submit(
-        [DataSubmission(kind="data-standard", date="2026-07-20")]
-    )[0]
+    job = runtime.submit([_data_submission("2026-07-20")])[0]
 
     _wait_for_status(runtime, job.job_id, JobStatus.FAILED)
     assert process.wait_calls == 2
@@ -269,9 +265,7 @@ def test_startup_cleanup_failure_closes_runtime_with_job_nonterminal(
         RuntimeError,
         match="job startup cleanup failed",
     ):
-        runtime.submit(
-            [DataSubmission(kind="data-standard", date="2026-07-20")]
-        )
+        runtime.submit([_data_submission("2026-07-20")])
 
     retained = runtime.get(str(uuid.UUID(int=1)))
     assert retained.status is JobStatus.PENDING
@@ -279,9 +273,7 @@ def test_startup_cleanup_failure_closes_runtime_with_job_nonterminal(
     assert retained.finished_at is None
     assert sent_signals == [(process.pid, signal.SIGKILL)]
     with pytest.raises(RuntimeError, match="job runtime is closed"):
-        runtime.submit(
-            [DataSubmission(kind="data-standard", date="2026-07-21")]
-        )
+        runtime.submit([_data_submission("2026-07-21")])
     runtime.close()
 
 
@@ -335,18 +327,14 @@ def test_second_reap_failure_closes_only_runtime_and_retains_nonterminal_job(
         clock=lambda: _FIXED_NOW,
         job_id_factory=lambda: uuid.UUID(int=1),
     )
-    job = runtime.submit(
-        [DataSubmission(kind="data-standard", date="2026-07-20")]
-    )[0]
+    job = runtime.submit([_data_submission("2026-07-20")])[0]
 
     assert runtime_closed.wait(timeout=5.0)
     retained = runtime.get(job.job_id)
     assert retained.status is JobStatus.RUNNING
     assert retained.finished_at is None
     with pytest.raises(RuntimeError, match="job runtime is closed"):
-        runtime.submit(
-            [DataSubmission(kind="data-standard", date="2026-07-21")]
-        )
+        runtime.submit([_data_submission("2026-07-21")])
 
     runtime.close()
     assert runtime.get(job.job_id).status is JobStatus.CANCELLED
@@ -388,9 +376,7 @@ def test_cancellation_timer_start_failure_force_stops_job_and_closes_runtime(
         clock=lambda: _FIXED_NOW,
         job_id_factory=lambda: uuid.UUID(int=1),
     )
-    job = runtime.submit(
-        [DataSubmission(kind="data-standard", date="2026-07-20")]
-    )[0]
+    job = runtime.submit([_data_submission("2026-07-20")])[0]
 
     cancelling = runtime.cancel(job.job_id)
 
@@ -398,7 +384,5 @@ def test_cancellation_timer_start_failure_force_stops_job_and_closes_runtime(
     _wait_for_status(runtime, job.job_id, JobStatus.CANCELLED)
     assert sent_signals == [signal.SIGTERM, signal.SIGKILL]
     with pytest.raises(RuntimeError, match="job runtime is closed"):
-        runtime.submit(
-            [DataSubmission(kind="data-standard", date="2026-07-21")]
-        )
+        runtime.submit([_data_submission("2026-07-21")])
     runtime.close()

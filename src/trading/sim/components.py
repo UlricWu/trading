@@ -6,8 +6,11 @@ from __future__ import annotations
 from dataclasses import dataclass, fields, is_dataclass
 
 from src import logs
-from src.config.backtest_config import BacktestConfig, BacktestMode
-from src.training.artifact import resolve_model_artifact
+from src.config.backtest_config import (
+    BacktestConfig,
+    BacktestMode,
+    StrategyConfig,
+)
 from src.trading.execution.engine import ExecutionOrchestrator
 from src.trading.execution.ideal import IdealExecution
 from src.trading.execution.models.cost_a_share import AShareCostModel
@@ -22,12 +25,23 @@ from src.trading.portfolio.constructors.topk_hysteresis import TopKHysteresisCon
 from src.trading.risk.engine import NoOpRiskManager
 from src.trading.signal.diagnostics import BasicSignalDiagnostics
 from src.trading.signal.model import ModelSignalProvider
+from src.training.artifact import resolve_model_artifact
 from src.utils.path import PathManager
 
 
 @dataclass(frozen=True)
 class Components:
-    """Runtime components consumed by the fixed backtest step graph."""
+    """Runtime components consumed by the fixed backtest layer graph.
+
+    Example:
+        components = build_components(
+            mode=BacktestMode.FULL_BACKTEST,
+            model_experiment="training-1",
+            strategy=strategy,
+            cfg=backtest_config,
+            pm=path_manager,
+        )
+    """
 
     signal: ModelSignalProvider
     feature_set: str
@@ -42,16 +56,22 @@ class Components:
 def build_components(
     *,
     mode: BacktestMode,
+    model_experiment: str,
+    strategy: StrategyConfig,
     cfg: BacktestConfig,
     pm: PathManager,
 ) -> Components:
-    """Build artifact-backed backtest components for one accepted mode."""
+    """Build artifact-backed components from static config and submission data.
 
-    if cfg.model is None:
-        raise RuntimeError("[components] BacktestConfig.model required")
-    model_experiment = getattr(cfg.model, "name", None)
-    if not isinstance(model_experiment, str) or not model_experiment.strip():
-        raise RuntimeError("[components] BacktestConfig.model.name required")
+    Example:
+        components = build_components(
+            mode=BacktestMode.FULL_BACKTEST,
+            model_experiment="training-1",
+            strategy=strategy,
+            cfg=backtest_config,
+            pm=path_manager,
+        )
+    """
 
     artifact = resolve_model_artifact(
         pm=pm,
@@ -59,7 +79,7 @@ def build_components(
     )
     inference_model = artifact.build_inference_model()
 
-    constructor = build_portfolio_constructor(cfg.strategy)
+    constructor = build_portfolio_constructor(strategy)
     signal = ModelSignalProvider(
         model=inference_model,
         diagnostics=BasicSignalDiagnostics(
@@ -68,6 +88,7 @@ def build_components(
         ),
     )
 
+    execution: IdealExecution | ExecutionOrchestrator
     if mode in {
         BacktestMode.SIGNAL_EVAL,
         BacktestMode.TRADABLE_ALPHA_EVAL,
@@ -76,14 +97,11 @@ def build_components(
         execution = IdealExecution()
     else:
         cost_model = AShareCostModel()
-        slippage_bp = float(getattr(cfg, "slippage_bp", 5.0))
         execution = ExecutionOrchestrator(
             clip_policy=AShareTargetClippingPolicy(),
             validator=AShareOrderValidation(),
             cost_model=cost_model,
-            venue=SimImmediateVenue(
-                slippage_model=FixedBPSlippageModel(bp=slippage_bp)
-            ),
+            venue=SimImmediateVenue(slippage_model=FixedBPSlippageModel(bp=5.0)),
             settlement=SettlementEngine(cost_model=cost_model),
         )
 

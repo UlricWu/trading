@@ -1,51 +1,50 @@
 # filepath: src/training/context.py
+"""Per-window Context for ordered offline training Steps."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Protocol
 
-import numpy as np
 import pandas as pd
 
 from src.training.artifact import PreprocessArtifact
-from src.utils.path import PathManager
+from src.training.inference_model import PredictionModel
 
 
-class PredictionModel(Protocol):
-    """The model behavior consumed after a training update."""
+@dataclass(frozen=True, slots=True)
+class TrainingWindow:
+    """Identify complete training dates and one evaluation date.
 
-    def predict(self, values: np.ndarray) -> np.ndarray: ...
+    Example:
+        window = TrainingWindow(
+            train_dates=("2026-07-17", "2026-07-20"),
+            eval_date="2026-07-21",
+        )
+    """
 
-
-@dataclass(slots=True)
-class ModelState:
-    model: PredictionModel
-    asof_day: str
-    update_count: int
-    warm_start: bool
+    train_dates: tuple[str, ...]
+    eval_date: str
 
 
 @dataclass(slots=True)
 class TrainingContext:
-    """Carry the mutable state of one training experiment.
+    """Carry only values shared by Steps for one training window.
 
     Example:
         context = TrainingContext(
-            pm=path_manager,
-            experiment_name="training_2026-07-01_2026-07-20_run-1",
+            window=TrainingWindow(
+                train_dates=("2026-07-17", "2026-07-20"),
+                eval_date="2026-07-21",
+            )
         )
     """
 
-    pm: PathManager
-    experiment_name: str
-
-    train_start_date: str = field(init=False)
-    train_end_date: str = field(init=False)
-    eval_date: str = field(init=False)
-    train_X: pd.DataFrame = field(init=False)
-    train_y: pd.Series = field(init=False)
-    eval_X: pd.DataFrame = field(init=False)
-    eval_y: pd.Series = field(init=False)
-    preprocess_artifact: PreprocessArtifact = field(init=False)
-    model_state: ModelState = field(init=False)
+    window: TrainingWindow
     metrics: dict[str, float] = field(default_factory=dict)
+    train_X: pd.DataFrame | None = None
+    train_y: pd.Series | None = None
+    eval_X: pd.DataFrame | None = None
+    eval_y: pd.Series | None = None
+    preprocess: PreprocessArtifact | None = None
+    model: PredictionModel | None = None
+    rank_ic: float | None = None

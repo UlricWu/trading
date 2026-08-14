@@ -107,6 +107,10 @@ CANCELLED
 - 子进程启动前的 runtime failure 进入 `FAILED`，`started_at` 保持 `null`，
   `finished_at` 被设置。
 - 子进程退出码 `0`、`75` 和其他值分别产生 `SUCCESS`、`SKIPPED` 和 `FAILED`。
+- Standard 或 Level-2 Data 的任一正式交易日 fact 缺失时，workflow 失败，CLI 子进程退出
+  非零，Job 因而进入 `FAILED`；Data workflow 不产生退出码 `75`。
+- Training 没有可执行 window 或 backtest 没有相邻 timing 时，workflow 以
+  `ValueError` 失败，CLI 子进程退出非零，Job 因而进入 `FAILED`；不得改成 `SKIPPED`。
 - `PENDING` 取消直接进入 `CANCELLED`，不创建 job log 或子进程。
 - `RUNNING` 取消进入 `CANCELLING`；只有进程组退出并完成 wait/reap 后才进入
   `CANCELLED`。

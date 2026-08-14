@@ -4,21 +4,20 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 from types import TracebackType
-from typing import Literal, TypeVar
+from typing import Literal, ParamSpec, Self, TypeVar
 
 from src import logs
 
-
-_ContextT = TypeVar("_ContextT")
+_Parameters = ParamSpec("_Parameters")
 _ResultT = TypeVar("_ResultT")
 
 
 class Instrumentation:
-    """Measure and report accumulated concrete-step runtimes.
+    """Measure and report accumulated named-operation runtimes.
 
     Example:
         with Instrumentation("training_2026-07") as instrumentation:
-            result = instrumentation.call(step, context)
+            result = instrumentation.measure("DatasetBuildStep", load, window)
     """
 
     def __init__(self, scope_name: str) -> None:
@@ -31,12 +30,12 @@ class Instrumentation:
         self._total_seconds_by_step: dict[str, float] = {}
         self._runs_by_step: dict[str, int] = {}
 
-    def __enter__(self) -> Instrumentation:
+    def __enter__(self) -> Self:
         """Return this instrumentation for one workflow execution.
 
         Example:
             with Instrumentation("2026-07-20") as instrumentation:
-                instrumentation.call(step, context)
+                instrumentation.measure("CalendarMaterializeStep", step.run, context)
         """
         return self
 
@@ -52,9 +51,7 @@ class Instrumentation:
             with Instrumentation("2026-07-20"):
                 pass
         """
-        logs.info(
-            f"[Timeline] ===== Pipeline timeline for {self._scope_name} ====="
-        )
+        logs.info(f"[Timeline] ===== Pipeline timeline for {self._scope_name} =====")
         total_seconds = 0.0
         for name, elapsed_seconds in self._total_seconds_by_step.items():
             runs = self._runs_by_step[name]
@@ -68,23 +65,30 @@ class Instrumentation:
         logs.info(f"[Timeline] {'=' * 43}")
         return False
 
-    def call(
+    def measure(
         self,
-        step: Callable[[_ContextT], _ResultT],
-        context: _ContextT,
+        operation_name: str,
+        operation: Callable[_Parameters, _ResultT],
+        *args: _Parameters.args,
+        **kwargs: _Parameters.kwargs,
     ) -> _ResultT:
-        """Call one step and include its elapsed time in the timeline.
+        """Call one operation and include its elapsed time in the timeline.
 
         Example:
-            result = instrumentation.call(step, context)
+            result = instrumentation.measure(
+                "CalendarMaterializeStep",
+                step.run,
+                context,
+            )
         """
-        name = type(step).__name__
         started_at = time.perf_counter()
         try:
-            return step(context)
+            return operation(*args, **kwargs)
         finally:
             elapsed_seconds = time.perf_counter() - started_at
-            self._total_seconds_by_step[name] = (
-                self._total_seconds_by_step.get(name, 0.0) + elapsed_seconds
+            self._total_seconds_by_step[operation_name] = (
+                self._total_seconds_by_step.get(operation_name, 0.0) + elapsed_seconds
             )
-            self._runs_by_step[name] = self._runs_by_step.get(name, 0) + 1
+            self._runs_by_step[operation_name] = (
+                self._runs_by_step.get(operation_name, 0) + 1
+            )

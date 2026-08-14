@@ -3,82 +3,141 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from dataclasses import dataclass
+
 from src import logs
-from src.access import meta
-from src.config.app_config import AppConfig
-from src.utils import table_ops
+from src.access import Access, meta
+from src.config.data_config import FeatureSetConfig
+from src.data_system.builders.base import FeatureBuilder
 from src.data_system.builders.registry import get_feature_builder
 from src.data_system.context import DataContext
+from src.utils import table_ops
 from src.utils.parquet_writer import write_parquet_atomic
+from src.utils.path import PathManager
+
+
+@dataclass(frozen=True, slots=True)
+class _FeatureOperation:
+    feature_set: str
+    version: str
+    builder: FeatureBuilder
 
 
 class FeatureBuildStep:
     """Materialize feature sets already selected by the workflow.
 
     Example:
-        step = FeatureBuildStep(app_cfg=selected_config)
-        step(context)
+        build_features = FeatureBuildStep(
+            pm=path_manager,
+            access=access,
+            processed_version="v1",
+            feature_sets=feature_sets,
+        )
+        build_features.run(
+            DataContext(
+                start="2026-07-01",
+                end="2026-07-20",
+                trade_dates=("2026-07-20",),
+            )
+        )
     """
 
     def __init__(
         self,
         *,
-        app_cfg: AppConfig,
+        pm: PathManager,
+        access: Access,
+        processed_version: str,
+        feature_sets: Mapping[str, FeatureSetConfig],
     ) -> None:
-        """Store the selected feature configuration.
+        """Resolve and bind all selected feature builders.
 
         Example:
-            step = FeatureBuildStep(app_cfg=selected_config)
+            build_features = FeatureBuildStep(
+                pm=path_manager,
+                access=access,
+                processed_version="v1",
+                feature_sets=feature_sets,
+            )
         """
-        self._cfg = app_cfg
+        self._pm = pm
+        self._access = access
+        self._processed_version = processed_version
+        self._operations = tuple(
+            _FeatureOperation(
+                feature_set=feature_set,
+                version=config.version,
+                builder=get_feature_builder(feature_set, config.version),
+            )
+            for feature_set, config in feature_sets.items()
+        )
 
-    def __call__(self, ctx: DataContext) -> None:
+    def __call__(self, trade_date: str) -> None:
         """Build enabled feature partitions for one trade date.
 
         Example:
-            step(context)
+            build_features("2026-07-20")
         """
-        for feature_set, feature_cfg in self._cfg.data.feature_sets.items():
-            builder = get_feature_builder(feature_set, feature_cfg.version)
-            logs.info(f"[FeatureBuild] build feature_set={feature_set}")
-            output_meta = ctx.pm.feature_meta(
-                feature_set=feature_set,
-                version=feature_cfg.version,
-                trade_date=ctx.trade_date,
+        for operation in self._operations:
+            logs.info(f"[FeatureBuild] build feature_set={operation.feature_set}")
+            output_meta = self._pm.feature_meta(
+                feature_set=operation.feature_set,
+                version=operation.version,
+                trade_date=trade_date,
             )
-            output_path = ctx.pm.feature_data(
-                feature_set=feature_set,
-                version=feature_cfg.version,
-                trade_date=ctx.trade_date,
+            output_path = self._pm.feature_data(
+                feature_set=operation.feature_set,
+                version=operation.version,
+                trade_date=trade_date,
             )
             if (
                 meta.find(
-                    pm=ctx.pm,
+                    pm=self._pm,
                     meta_path=output_meta,
                     expected_payload_path=output_path,
                 )
                 is not None
             ):
                 logs.info(
-                    f"[FeatureBuild] meta hit -> skip feature_set={feature_set} "
-                    f"trade_date={ctx.trade_date}"
+                    f"[FeatureBuild] meta hit -> skip "
+                    f"feature_set={operation.feature_set} "
+                    f"trade_date={trade_date}"
                 )
                 continue
 
-            table = builder.read_input(
-                pm=ctx.pm,
-                trade_date=ctx.trade_date,
+            table = operation.builder.read_input(
+                access=self._access,
+                pm=self._pm,
+                processed_version=self._processed_version,
+                trade_date=trade_date,
             )
-            features = builder.build_partition(table)
+            features = operation.builder.build_partition(table)
             table_ops.require_nonempty(
                 features,
                 who=(
-                    f"FeatureBuild feature_set={feature_set} "
-                    f"trade_date={ctx.trade_date}"
+                    f"FeatureBuild feature_set={operation.feature_set} "
+                    f"trade_date={trade_date}"
                 ),
             )
             write_parquet_atomic(output_file=output_path, table=features)
             meta.commit(
-                pm=ctx.pm,
+                pm=self._pm,
                 payload_path=output_path,
             )
+
+    def run(self, context: DataContext) -> DataContext:
+        """Build every selected feature set over all resolved trade dates.
+
+        Example:
+            next_context = build_features.run(
+                DataContext(
+                    start="2026-07-01",
+                    end="2026-07-20",
+                    trade_dates=("2026-07-20",),
+                )
+            )
+        """
+        for trade_date in context.trade_dates:
+            self(trade_date)
+        return context

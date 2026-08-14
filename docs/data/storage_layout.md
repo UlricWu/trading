@@ -176,3 +176,7 @@ experiment，但当前不持久化该引用的 lineage。Experiment 不写 `run_
 
 PathManager 为每个已定义 artifact 提供精确方法，不接受任意 experiment 文件名，也不
 根据文件存在性判断 experiment 是否成功。
+
+Training 或 backtest 在 artifact persist、metrics persist 或 report 阶段失败时，已经创建的
+experiment 目录和制品保留为失败现场，不自动删除、回滚、续跑或恢复。残留目录不表示
+experiment 成功，但会继续触发同名 experiment 的禁止覆盖规则。

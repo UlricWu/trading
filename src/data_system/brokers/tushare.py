@@ -10,11 +10,11 @@ from typing import ClassVar, Protocol
 import pandas
 import tushare as ts
 
+from src import logs
 from src.config.app_config import AppConfig
 from src.data_system.brokers.base import DownloadPlan
 from src.utils.datetime_utils import DateTimeUtils
 from src.utils.filesystem import FileSystem
-from src import logs
 from src.utils.path import PathManager
 
 
@@ -28,12 +28,16 @@ class TushareBroker:
     """
     Materialize one Tushare raw object response directly into raw.
 
-    The broker owns the supported Tushare source registry and source-side no-data
-    translation. It does not normalize, commit metadata, or choose formal raw
-    object identity; those responsibilities remain outside this adapter.
+    The broker owns the active structured-source manifest and source-side no-data
+    translation. Each manifest key is the shared source, raw-object, and processed
+    output identity; each value is its Tushare API name. The broker does not
+    normalize or commit metadata.
+
+    Example:
+        broker = TushareBroker(app_cfg=AppConfig.load())
     """
 
-    name = "tushare"
+    name: ClassVar[str] = "tushare"
 
     _TUSHARE_SOURCES: ClassVar[Mapping[str, str]] = MappingProxyType(
         {
@@ -49,8 +53,6 @@ class TushareBroker:
             "margin": "margin",
             "margin_detail": "margin_detail",
             "moneyflow": "moneyflow",
-            # "moneyflow_hsgt": "moneyflow_hsgt",
-            # todo 2026-07-01 是香港特别行政区成立纪念日，港股和南北向互联互通均休市，因此该空结果符合当日市场安排
             "top_list": "top_list",
         }
     )
@@ -67,8 +69,12 @@ class TushareBroker:
             self._pro._DataApi__http_url = app_cfg.secret.tushare_gateway
 
     @classmethod
-    def supported_source_names(cls) -> tuple[str, ...]:
-        """Return Tushare source names supported by the broker registry."""
+    def active_source_names(cls) -> tuple[str, ...]:
+        """Return the formally active structured Tushare sources.
+
+        Example:
+            source_names = TushareBroker.active_source_names()
+        """
         return tuple(cls._TUSHARE_SOURCES)
 
     def fetch(
@@ -131,7 +137,7 @@ class TushareBroker:
         logs.info(f"[TushareBroker] fetched raw_payload={raw_payload}")
         payload = response.to_parquet()
         if not isinstance(payload, bytes):
-            raise RuntimeError("TushareBroker parquet serialization returned no bytes")
+            raise TypeError("TushareBroker parquet serialization returned no bytes")
         FileSystem.write_bytes_atomic(raw_payload, payload)
 
         return DownloadPlan(
