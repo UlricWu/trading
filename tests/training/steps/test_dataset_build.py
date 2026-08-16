@@ -1,4 +1,4 @@
-# filepath: tests/training/steps/test_dataset_build_step.py
+# filepath: tests/training/steps/test_dataset_build.py
 """Explicit-date loading tests for offline training datasets."""
 
 from __future__ import annotations
@@ -9,7 +9,7 @@ import pandas as pd
 
 from src.access import meta
 from src.config.model_config import AdjustmentRefDataConfig, FeatureLabelConfig
-from src.training.steps.dataset_build_step import DatasetBuildStep
+from src.training.steps.dataset_build import DatasetBuildStep
 from src.utils.path import PathManager
 
 

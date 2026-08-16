@@ -1,24 +1,21 @@
-# filepath: src/training/steps/report_step.py
+# filepath: src/training/engines/report.py
+"""Build the deterministic HTML representation of a training report."""
 
 from __future__ import annotations
 
 import json
 import math
-import re
-import statistics
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import date
 from html import escape
-from pathlib import Path
 
-from src import logs
-from src.observability.log_format import format_log_json
-from src.training.context import TrainingContext
-from src.utils.filesystem import FileSystem
-from src.utils.path import PathManager
+from src.training.engines.rank_ic import (
+    RankICRow,
+    RankICSummary,
+    build_rank_ic_rows,
+    summarize_rank_ic,
+)
 
-_IC_KEY = re.compile(r"^ic@(\d{4}-\d{2}-\d{2})$")
 _REQUIRED_PARAMS = (
     "experiment_name",
     "experiment_id",
@@ -37,9 +34,22 @@ _REQUIRED_PARAMS = (
 
 
 @dataclass(frozen=True, slots=True)
-class TrainingReportParams:
-    """Validated identity and dataset fields rendered in a training report."""
+class TrainingReport:
+    """Contain rendered training HTML and its Rank IC summary.
 
+    Example:
+        report = TrainingReport(
+            html="<html></html>",
+            summary=rank_ic_summary,
+        )
+    """
+
+    html: str
+    summary: RankICSummary
+
+
+@dataclass(frozen=True, slots=True)
+class _TrainingReportParams:
     experiment_name: str
     experiment_id: str
     model_group: str
@@ -55,125 +65,36 @@ class TrainingReportParams:
     price_adjustment: str
 
 
-@dataclass(frozen=True, slots=True)
-class RankICRow:
-    eval_date: str
-    rank_ic: float
-    rolling_5: float | None
-    rolling_20: float | None
-
-
-@dataclass(frozen=True, slots=True)
-class RankICSummary:
-    observations: int
-    eval_start: str
-    eval_end: str
-    mean_ic: float
-    median_ic: float
-    std_ic: float | None
-    t_stat: float | None
-    positive_ratio: float
-    min_ic: float
-    min_ic_date: str
-    max_ic: float
-    max_ic_date: str
-    last_5_mean: float
-    rolling_20_last: float | None
-
-
-def generate_training_report(
+def build_training_report(
     *,
-    pm: PathManager,
     experiment_name: str,
-) -> None:
-    """Generate the offline training report from persisted JSON artifacts.
+    params_payload: Mapping[str, object],
+    metrics_payload: Mapping[str, object],
+) -> TrainingReport:
+    """Build training report HTML from persisted JSON-compatible objects.
 
     Example:
-        generate_training_report(
-            pm=path_manager,
+        report = build_training_report(
             experiment_name="training_2026-07-01_2026-07-20_run-1",
+            params_payload=params,
+            metrics_payload={"ic@2026-07-20": 0.1},
         )
     """
-    params_path = pm.experiment_training_params(
-        experiment_name=experiment_name,
-    )
-    metrics_path = pm.experiment_training_metrics(
-        experiment_name=experiment_name,
-    )
-    report_path = pm.experiment_training_report(
-        experiment_name=experiment_name,
-    )
-
-    raw_params = _load_json_object(params_path, label="training params")
-    metrics = _load_json_object(metrics_path, label="training metrics")
-    params = _parse_params(raw_params)
-
-    rows = _rank_ic_rows(metrics)
-    summary = _rank_ic_summary(rows)
-    html = _render_html(
-        experiment_name=experiment_name,
-        params=params,
+    params = _parse_params(params_payload)
+    rows = build_rank_ic_rows(metrics_payload)
+    summary = summarize_rank_ic(rows)
+    return TrainingReport(
+        html=_render_html(
+            experiment_name=experiment_name,
+            params=params,
+            summary=summary,
+            rows=rows,
+        ),
         summary=summary,
-        rows=rows,
-    )
-    FileSystem.write_bytes_atomic(report_path, html.encode("utf-8"))
-    logs.info(
-        f"saved path={report_path}\n"
-        f"{format_log_json('rank_ic_summary', summary)}"
     )
 
 
-class ReportStep:
-    """Generate the final training report for one experiment.
-
-    Example:
-        step = ReportStep(
-            pm=path_manager,
-            experiment_name="training_2026-07-01_2026-07-20_run-1",
-        )
-        reported_context = step.run(persisted_context)
-    """
-
-    def __init__(self, *, pm: PathManager, experiment_name: str) -> None:
-        """Bind the persisted experiment used as report input.
-
-        Example:
-            step = ReportStep(
-                pm=path_manager,
-                experiment_name="training_2026-07-01_2026-07-20_run-1",
-            )
-        """
-        self._pm = pm
-        self._experiment_name = experiment_name
-
-    def run(self, context: TrainingContext) -> TrainingContext:
-        """Generate the report and preserve the final training Context.
-
-        Example:
-            reported_context = step.run(persisted_context)
-        """
-        generate_training_report(
-            pm=self._pm,
-            experiment_name=self._experiment_name,
-        )
-        return context
-
-
-def _load_json_object(path: Path, *, label: str) -> dict[str, object]:
-    if not path.is_file():
-        raise FileNotFoundError(f"{label} not found: {path}")
-
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"invalid {label} JSON: {path}") from exc
-
-    if not isinstance(data, dict):
-        raise TypeError(f"{label} must be a JSON object")
-    return {str(key): value for key, value in data.items()}
-
-
-def _parse_params(params: dict[str, object]) -> TrainingReportParams:
+def _parse_params(params: Mapping[str, object]) -> _TrainingReportParams:
     missing = [key for key in _REQUIRED_PARAMS if key not in params]
     if missing:
         raise ValueError(f"training params missing required fields: {missing}")
@@ -196,111 +117,29 @@ def _parse_params(params: dict[str, object]) -> TrainingReportParams:
         for key in _REQUIRED_PARAMS
         if key not in {"feature_names", "label_lookahead"}
     }
-    return TrainingReportParams(
+    return _TrainingReportParams(
         **string_values,
         feature_names=tuple(feature_names_raw),
         label_lookahead=label_lookahead,
     )
 
 
-def _required_string(params: dict[str, object], key: str) -> str:
+def _required_string(params: Mapping[str, object], key: str) -> str:
     value = params[key]
     if not isinstance(value, str) or not value:
         raise ValueError(f"training params {key} must be a non-empty string")
     return value
 
 
-def _rank_ic_rows(metrics: dict[str, object]) -> list[RankICRow]:
-    pairs: list[tuple[str, float]] = []
-    for key, raw_value in metrics.items():
-        match = _IC_KEY.fullmatch(str(key))
-        if match is None:
-            continue
-
-        eval_date = match.group(1)
-        try:
-            date.fromisoformat(eval_date)
-        except ValueError as exc:
-            raise ValueError(f"invalid training metric date: {key}") from exc
-
-        if isinstance(raw_value, bool) or not isinstance(raw_value, int | float):
-            raise TypeError(f"training metric {key} must be a finite number")
-        value = float(raw_value)
-        if not math.isfinite(value):
-            raise ValueError(f"training metric {key} must be a finite number")
-        pairs.append((eval_date, value))
-
-    if not pairs:
-        raise ValueError("training metrics must contain ic@YYYY-MM-DD values")
-
-    pairs.sort(key=lambda item: item[0])
-    values = [value for _, value in pairs]
-    rolling_5 = _rolling_means(values, 5)
-    rolling_20 = _rolling_means(values, 20)
-
-    rows: list[RankICRow] = []
-    for idx, (eval_date, value) in enumerate(pairs):
-        rows.append(
-            RankICRow(
-                eval_date=eval_date,
-                rank_ic=value,
-                rolling_5=rolling_5[idx],
-                rolling_20=rolling_20[idx],
-            )
-        )
-    return rows
-
-
-def _rolling_means(values: list[float], window: int) -> list[float | None]:
-    out: list[float | None] = []
-    for idx in range(len(values)):
-        start = idx - window + 1
-        if start < 0:
-            out.append(None)
-        else:
-            out.append(sum(values[start : idx + 1]) / window)
-    return out
-
-
-def _rank_ic_summary(rows: Sequence[RankICRow]) -> RankICSummary:
-    values = [row.rank_ic for row in rows]
-    count = len(values)
-    mean_ic = sum(values) / count
-    std_ic = statistics.stdev(values) if count > 1 else None
-    t_stat = (
-        mean_ic / (std_ic / math.sqrt(count))
-        if std_ic is not None and std_ic > 0.0
-        else None
-    )
-    min_row = min(rows, key=lambda row: row.rank_ic)
-    max_row = max(rows, key=lambda row: row.rank_ic)
-    return RankICSummary(
-        observations=count,
-        eval_start=rows[0].eval_date,
-        eval_end=rows[-1].eval_date,
-        mean_ic=mean_ic,
-        median_ic=statistics.median(values),
-        std_ic=std_ic,
-        t_stat=t_stat,
-        positive_ratio=sum(1 for value in values if value > 0.0) / count,
-        min_ic=min_row.rank_ic,
-        min_ic_date=min_row.eval_date,
-        max_ic=max_row.rank_ic,
-        max_ic_date=max_row.eval_date,
-        last_5_mean=sum(values[-5:]) / min(5, count),
-        rolling_20_last=rows[-1].rolling_20,
-    )
-
-
 def _render_html(
     *,
     experiment_name: str,
-    params: TrainingReportParams,
+    params: _TrainingReportParams,
     summary: RankICSummary,
     rows: Sequence[RankICRow],
 ) -> str:
     context_rows = _table_rows(
-        [
+        (
             ("experiment_name", experiment_name),
             ("experiment_id", params.experiment_id),
             ("model_group", params.model_group),
@@ -312,10 +151,10 @@ def _render_html(
             ("label_column", params.label_column),
             ("label_lookahead", params.label_lookahead),
             ("price_adjustment", params.price_adjustment),
-        ]
+        )
     )
     summary_rows = _table_rows(
-        [
+        (
             ("observations", summary.observations),
             ("eval_start", summary.eval_start),
             ("eval_end", summary.eval_end),
@@ -334,9 +173,9 @@ def _render_html(
             ),
             ("last_5_mean", _format_number(summary.last_5_mean)),
             ("rolling_20_last", _format_number(summary.rolling_20_last)),
-        ]
+        )
     )
-    ic_rows = "\n".join(
+    rank_ic_rows = "\n".join(
         "          <tr>"
         f"<td>{escape(row.eval_date)}</td>"
         f'<td class="num {_sign_class(row.rank_ic)}">'
@@ -348,7 +187,6 @@ def _render_html(
         "</tr>"
         for row in rows
     )
-
     return (
         "<!doctype html>\n"
         '<html lang="en">\n'
@@ -389,7 +227,7 @@ def _render_html(
         "          <tr><th>eval_date</th><th>rank_ic</th><th>rolling_5</th><th>rolling_20</th></tr>\n"
         "        </thead>\n"
         "        <tbody>\n"
-        f"{ic_rows}\n"
+        f"{rank_ic_rows}\n"
         "        </tbody>\n"
         "      </table>\n"
         "    </section>\n"

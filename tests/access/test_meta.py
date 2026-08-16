@@ -110,7 +110,6 @@ def test_only_direct_upstream_is_validated(tmp_path: Path) -> None:
 def test_existing_malformed_meta_raises(tmp_path: Path) -> None:
     pm = PathManager(tmp_path)
     meta_path = tmp_path / "raw" / "meta.json"
-    meta_path.parent.mkdir(parents=True)
     meta_path.write_text("{", encoding="utf-8")
 
     with pytest.raises(RuntimeError, match="invalid Meta JSON"):

@@ -97,6 +97,7 @@ class ModelConfig(BaseModel):
 
     Example:
         config = ModelConfig(
+            group="sgd_regression",
             dataset=feature_label_config,
             train_window_days=30,
         )
@@ -104,6 +105,7 @@ class ModelConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    group: str = Field(min_length=1)
     model_params: dict[str, object] = Field(default_factory=dict)
     train_window_days: int = 252
     preprocessing: PreprocessingConfig = Field(default_factory=PreprocessingConfig)

@@ -186,9 +186,12 @@ Data workflow 保留 started 和 finished 业务日志；其他两个 workflow �
 
 ## Training workflow
 
-Training runtime 范围只来自 `TrainingSubmission`。当前 model group 固定为
-`sgd_regression`。配置中的 feature/label version 继续选择研究制品；processed adjustment
-refdata 固定读取 `v1`，其 version 不是配置项。既有 `params.json` schema 仍记录
+Training runtime 范围只来自 `TrainingSubmission`。Model group 只来自 `ModelConfig.group`，
+workflow 通过 `training.models` 的显式不可变 catalog 取得 trainer，不在 Step 内按名称分支；
+当前 catalog 支持 `sgd_regression`。`group` 必须非空；未登记名称在 experiment identity、
+Access 与 Instrumentation 之前抛 `ValueError`。配置中的 feature/label version 继续选择研究
+制品；processed adjustment refdata 固定读取 `v1`，其 version 不是配置项。既有
+`params.json` schema 将本次配置选择记录为 `model_group`，并继续记录
 `adjustment_refdata.version="v1"`。
 
 Label builder 的 `target_lookahead(label_column)` 是 `eval_offset` 的唯一来源。Workflow
@@ -210,9 +213,9 @@ Schedule 不保存可从 `train_dates` 派生的 start/end/asof，也不重复�
 drop-na 和索引一致性语义。
 
 Workflow 以 `per_window_steps` 显式声明 dataset load → train-only preprocess fit 与 eval
-transform → fresh `SGDRegressor` train → Rank IC，并以 `final_steps` 声明 artifact persist
-→ report。Preprocess 处理后训练集为空时在该 provider 失败；trainer 只保留一次有限值和
-X/y 长度校验。Training step 将每个 IC 写入
+transform → catalog-selected fresh model train → Rank IC，并以 `final_steps` 声明 artifact
+persist → report。Preprocess 处理后训练集为空时在该 provider 失败；trainer 只保留一次
+有限值和 X/y 长度校验。Training step 将每个 IC 写入
 `metrics[f"ic@{eval_date}"]`，最终持久化最后一个 window 的 model/preprocess、全部 IC、
 既有 params schema，再由 persisted JSON 直接生成报告。公共返回值为 `None`。
 

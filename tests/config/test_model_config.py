@@ -11,6 +11,7 @@ from src.config.model_config import ModelConfig
 
 def _model_payload() -> dict[str, object]:
     return {
+        "group": "sgd_regression",
         "model_params": {},
         "train_window_days": 30,
         "preprocessing": {
@@ -35,6 +36,7 @@ def _model_payload() -> dict[str, object]:
 def test_model_config_uses_no_preprocessing_or_adjustment_version_selector() -> None:
     config = ModelConfig.model_validate(_model_payload())
 
+    assert config.group == "sgd_regression"
     assert not hasattr(config.preprocessing, "version")
     assert not hasattr(config.dataset.adjustment, "version")
 
@@ -52,6 +54,22 @@ def test_model_config_rejects_removed_version_fields(field_owner: str) -> None:
         adjustment = dataset["adjustment"]
         assert isinstance(adjustment, dict)
         adjustment["version"] = "v1"
+
+    with pytest.raises(ValidationError):
+        ModelConfig.model_validate(payload)
+
+
+def test_model_config_requires_explicit_nonempty_group() -> None:
+    payload = _model_payload()
+    payload["group"] = ""
+
+    with pytest.raises(ValidationError):
+        ModelConfig.model_validate(payload)
+
+
+def test_model_config_rejects_missing_group() -> None:
+    payload = _model_payload()
+    del payload["group"]
 
     with pytest.raises(ValidationError):
         ModelConfig.model_validate(payload)

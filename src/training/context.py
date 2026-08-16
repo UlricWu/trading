@@ -47,4 +47,3 @@ class TrainingContext:
     eval_y: pd.Series | None = None
     preprocess: PreprocessArtifact | None = None
     model: PredictionModel | None = None
-    rank_ic: float | None = None

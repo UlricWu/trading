@@ -1,4 +1,4 @@
-# filepath: src/training/steps/dataset_build_step.py
+# filepath: src/training/steps/dataset_build.py
 """Load formal feature and label partitions for one training window."""
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ from src import logs
 from src.access import meta
 from src.config.model_config import FeatureLabelConfig
 from src.training.context import TrainingContext
-from src.training.engines.dataset_build_engine import DatasetBuildEngine
+from src.training.engines.dataset import build_daily_training_dataset
 from src.utils.path import PathManager
 
 
@@ -50,7 +50,6 @@ class DatasetBuildStep:
         self._pm = pm
         self._dataset_cfg = dataset_cfg
         self._processed_version = processed_version
-        self._engine = DatasetBuildEngine()
 
     def load(
         self,
@@ -166,7 +165,7 @@ class DatasetBuildStep:
                 pq.ParquetFile(loaded_adjustment.payload_path).read().to_pandas()
             )
 
-        return self._engine.build_one_day(
+        return build_daily_training_dataset(
             feature_frame=feature_frame,
             label_frame=label_frame,
             feature_columns=dataset_cfg.feature_columns,

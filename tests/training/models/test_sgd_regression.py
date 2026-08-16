@@ -1,4 +1,4 @@
-# filepath: tests/training/engines/model/test_sgd_regressor_train_engine.py
+# filepath: tests/training/models/test_sgd_regression.py
 """Fresh-model and input-boundary tests for SGD training."""
 
 from __future__ import annotations
@@ -6,18 +6,23 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from src.training.engines.model.sgd_regressor_train_engine import (
-    SklearnSGDRegressorTrainEngine,
-)
+from src.training.models.sgd_regression import train_sgd_regression
 
 
 def test_each_train_call_returns_a_fresh_model() -> None:
-    engine = SklearnSGDRegressorTrainEngine(model_params={"random_state": 7})
     features = pd.DataFrame({"factor": [0.0, 1.0]})
     labels = pd.Series([0.0, 1.0])
 
-    first = engine.train(X=features, y=labels)
-    second = engine.train(X=features, y=labels)
+    first = train_sgd_regression(
+        X=features,
+        y=labels,
+        model_params={"random_state": 7},
+    )
+    second = train_sgd_regression(
+        X=features,
+        y=labels,
+        model_params={"random_state": 7},
+    )
 
     assert first is not second
     assert first.n_iter_ == 1
@@ -25,10 +30,9 @@ def test_each_train_call_returns_a_fresh_model() -> None:
 
 
 def test_train_rejects_misaligned_input_lengths() -> None:
-    engine = SklearnSGDRegressorTrainEngine()
-
     with pytest.raises(ValueError, match="input length mismatch"):
-        engine.train(
+        train_sgd_regression(
             X=pd.DataFrame({"factor": [0.0, 1.0]}),
             y=pd.Series([0.0]),
+            model_params={},
         )

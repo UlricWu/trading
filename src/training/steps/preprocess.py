@@ -1,4 +1,4 @@
-# filepath: src/training/steps/preprocess_step.py
+# filepath: src/training/steps/preprocess.py
 """Fit train-owned preprocessing and transform one evaluation partition."""
 
 from __future__ import annotations
@@ -9,7 +9,10 @@ from src import logs
 from src.config.model_config import PreprocessingConfig
 from src.training.artifact import PreprocessArtifact
 from src.training.context import TrainingContext
-from src.training.engines.preprocess_engine import PreprocessEngine
+from src.training.engines.preprocessing import (
+    apply_preprocessing,
+    fit_preprocessing,
+)
 from src.utils import table_ops
 
 
@@ -33,7 +36,6 @@ class PreprocessStep:
             preprocess = PreprocessStep(model_config.preprocessing)
         """
         self._preprocessing_cfg = preprocessing_cfg
-        self._engine = PreprocessEngine()
 
     def __call__(
         self,
@@ -59,23 +61,22 @@ class PreprocessStep:
                 eval_y=eval_y,
             )
         """
-        processed_train_X, artifact = self._engine.fit_transform(
+        processed_train_X, artifact = fit_preprocessing(
             train_X=train_X,
-            cfg=self._preprocessing_cfg,
+            config=self._preprocessing_cfg,
         )
         table_ops.require_nonempty(
             processed_train_X,
             who="PreprocessStep train_X",
         )
         processed_train_y = train_y.loc[processed_train_X.index]
-        processed_eval_X = self._engine.transform_with_artifact(
+        processed_eval_X = apply_preprocessing(
             X=eval_X,
             artifact=artifact,
         )
         processed_eval_y = eval_y.loc[processed_eval_X.index]
         logs.info(
-            f"train_rows={len(processed_train_X)} "
-            f"eval_rows={len(processed_eval_X)}"
+            f"train_rows={len(processed_train_X)} eval_rows={len(processed_eval_X)}"
         )
         return (
             processed_train_X,

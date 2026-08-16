@@ -1,4 +1,4 @@
-# filepath: src/training/steps/artifact_persist_step.py
+# filepath: src/training/steps/artifact_persist.py
 """Persist the final explicit outputs of an offline training workflow."""
 
 from __future__ import annotations
@@ -59,8 +59,7 @@ def persist_training_artifacts(
         pm.experiment_training_preprocess(experiment_name=experiment_name),
     )
     logs.info(
-        f"type=model path={artifact_dir} "
-        f"model_group={model_group} asof_day={asof_day}"
+        f"type=model path={artifact_dir} model_group={model_group} asof_day={asof_day}"
     )
 
     adjustment = dataset_cfg.adjustment

@@ -69,8 +69,10 @@ backtest:
 # ==================================================
 # Model / Training System
 # - Runtime range and experiment identity are CLI inputs.
+# - Model group is selected explicitly from the training model catalog.
 # ==================================================
 model:
+  group: "sgd_regression"
   model_params:
     alpha: 0.0005
     l1_ratio: 0.0

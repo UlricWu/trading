@@ -12,17 +12,16 @@ from src.jobs.requests import TrainingSubmission
 from src.observability.instrumentation import Instrumentation
 from src.pipeline import PipelineStep
 from src.training.context import TrainingContext, TrainingWindow
+from src.training.models.catalog import get_model_trainer
 from src.training.pipeline import TrainingPipeline
-from src.training.steps.artifact_persist_step import ArtifactPersistStep
-from src.training.steps.dataset_build_step import DatasetBuildStep
-from src.training.steps.model_evaluate_step import ICEvaluateStep
-from src.training.steps.model_train_step import ModelTrainStep
-from src.training.steps.preprocess_step import PreprocessStep
-from src.training.steps.report_step import ReportStep
+from src.training.steps.artifact_persist import ArtifactPersistStep
+from src.training.steps.dataset_build import DatasetBuildStep
+from src.training.steps.ic_evaluate import ICEvaluateStep
+from src.training.steps.model_train import ModelTrainStep
+from src.training.steps.preprocess import PreprocessStep
+from src.training.steps.report import ReportStep
 from src.utils.path import PathManager
 from src.workflows import PROCESSED_VERSION, require_new_experiment
-
-MODEL_GROUP = "sgd_regression"
 
 
 def resolve_training_windows(
@@ -90,6 +89,7 @@ def run_offline_training(
             experiment_id="run-1",
         )
     """
+    trainer = get_model_trainer(model_config.group)
     experiment_name = require_new_experiment(
         path_manager=path_manager,
         kind="training",
@@ -119,7 +119,10 @@ def run_offline_training(
             processed_version=PROCESSED_VERSION,
         ),
         PreprocessStep(model_config.preprocessing),
-        ModelTrainStep(model_params=model_config.model_params),
+        ModelTrainStep(
+            trainer=trainer,
+            model_params=model_config.model_params,
+        ),
         ICEvaluateStep(),
     )
     final_steps: tuple[PipelineStep[TrainingContext], ...] = (
@@ -127,7 +130,7 @@ def run_offline_training(
             pm=path_manager,
             experiment_name=experiment_name,
             experiment_id=experiment_id,
-            model_group=MODEL_GROUP,
+            model_group=model_config.group,
             dataset_cfg=model_config.dataset,
             label_lookahead=eval_offset,
             processed_version=PROCESSED_VERSION,

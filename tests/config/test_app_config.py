@@ -31,6 +31,7 @@ data:
   feature_sets: {}
   label_sets: {}
 model:
+  group: sgd_regression
   model_params: {}
   train_window_days: 30
   preprocessing:
@@ -85,6 +86,7 @@ def test_override_recursively_merges_any_formal_config_field(
     )
 
     assert config.model.train_window_days == 0
+    assert config.model.group == "sgd_regression"
     assert config.model.dataset.feature_columns == ["factor"]
     assert config.backtest.init_cash == 123_456
     assert config.backtest.min_listing_calendar_days == 120
