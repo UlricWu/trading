@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from pathlib import Path
 from types import MappingProxyType
 from typing import ClassVar, Protocol
 
@@ -45,7 +46,7 @@ class TushareBroker:
             "daily_bar": "daily",
             "adj_factor": "adj_factor",
             "daily_basic": "daily_basic",
-            "stock_basic": "stock_basic",
+            "stock_basic": "bak_basic",
             "stock_st": "stock_st",
             "stk_limit": "stk_limit",
             "suspend_d": "suspend_d",
@@ -94,51 +95,26 @@ class TushareBroker:
                 f"TushareBroker does not support raw_object={record.raw_object!r} "
                 f"for source_name={record.source_name!r}"
             )
+        if record.raw_object == "trade_calendar":
+            raise ValueError(
+                "trade_calendar must be fetched with fetch_trade_calendar()"
+            )
 
         api_name = self._TUSHARE_SOURCES[record.raw_object]
-
         compact_date = DateTimeUtils.to_compact_date(record.trade_date)
-        if record.raw_object == "trade_calendar":
-            params = {
-                "exchange": "SSE",
-                "start_date": compact_date,
-                "end_date": compact_date,
-            }
-        else:
-            params = {"trade_date": compact_date}
-        response = self._pro.query(api_name, **params)
-
-        if response is None:
-            logs.info(
-                f"[TushareBroker] no data source={record.source_name} "
-                f"api name={api_name} "
-                f"params={params}"
-            )
-            return None
-        if not isinstance(response, pandas.DataFrame):
-            raise TypeError(
-                f"TushareBroker response must be a DataFrame, "
-                f"got={type(response).__name__}"
-            )
-        if response.empty:
-            logs.info(
-                f"[TushareBroker] no data source={record.source_name} "
-                f"api_name={api_name} params={params}"
-            )
-            return None
-
-        payload_file = record.payload_file
         raw_payload = pm.raw_payload(
             broker=record.broker,
             trade_date=record.trade_date,
             source_name=record.source_name,
-            payload_file=payload_file,
+            payload_file=record.payload_file,
         )
-        logs.info(f"[TushareBroker] fetched raw_payload={raw_payload}")
-        payload = response.to_parquet()
-        if not isinstance(payload, bytes):
-            raise TypeError("TushareBroker parquet serialization returned no bytes")
-        FileSystem.write_bytes_atomic(raw_payload, payload)
+        if not self._materialize_query(
+            source_name=record.source_name,
+            api_name=api_name,
+            params={"trade_date": compact_date},
+            raw_payload=raw_payload,
+        ):
+            return None
 
         return DownloadPlan(
             trade_date=record.trade_date,
@@ -147,3 +123,71 @@ class TushareBroker:
             raw_object=record.raw_object,
             payload_file=raw_payload.name,
         )
+
+    def fetch_trade_calendar(
+        self,
+        *,
+        calendar_year: int,
+        pm: PathManager,
+    ) -> Path | None:
+        """Fetch one complete Tushare SSE calendar year into raw storage.
+
+        Example:
+            payload = broker.fetch_trade_calendar(
+                calendar_year=2026,
+                pm=path_manager,
+            )
+        """
+        raw_payload = pm.raw_year_payload(
+            broker=self.name,
+            source_name="trade_calendar",
+            calendar_year=calendar_year,
+            payload_file="data.parquet",
+        )
+        api_name = self._TUSHARE_SOURCES["trade_calendar"]
+        if not self._materialize_query(
+            source_name="trade_calendar",
+            api_name=api_name,
+            params={
+                "exchange": "SSE",
+                "start_date": f"{calendar_year:04d}0101",
+                "end_date": f"{calendar_year:04d}1231",
+            },
+            raw_payload=raw_payload,
+        ):
+            return None
+        return raw_payload
+
+    def _materialize_query(
+        self,
+        *,
+        source_name: str,
+        api_name: str,
+        params: Mapping[str, str],
+        raw_payload: Path,
+    ) -> bool:
+        response = self._pro.query(api_name, **dict(params))
+        if response is None:
+            logs.info(
+                f"no data source={source_name} "
+                f"api_name={api_name} params={params}"
+            )
+            return False
+        if not isinstance(response, pandas.DataFrame):
+            raise TypeError(
+                f"TushareBroker response must be a DataFrame, "
+                f"got={type(response).__name__}"
+            )
+        if response.empty:
+            logs.info(
+                f"no data source={source_name} "
+                f"api_name={api_name} params={params}"
+            )
+            return False
+
+        logs.info(f"fetched raw_payload={raw_payload}")
+        payload = response.to_parquet()
+        if not isinstance(payload, bytes):
+            raise TypeError("TushareBroker parquet serialization returned no bytes")
+        FileSystem.write_bytes_atomic(raw_payload, payload)
+        return True

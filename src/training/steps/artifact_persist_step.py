@@ -59,7 +59,7 @@ def persist_training_artifacts(
         pm.experiment_training_preprocess(experiment_name=experiment_name),
     )
     logs.info(
-        f"[ARTIFACT] type=model path={artifact_dir} "
+        f"type=model path={artifact_dir} "
         f"model_group={model_group} asof_day={asof_day}"
     )
 

@@ -39,6 +39,21 @@ step 类型；它必须严格按传入顺序把同一个 Context 交给每个 st
 返回同一领域的 Context，业务终止以异常表达。不得建立通用 Pipeline/Workflow 基类、
 DAG、step registry、依赖声明、priority 或 before/after 规则。
 
+`src/data_system/steps` 是 offline data 业务行为的唯一实现目录；日期循环、Meta reuse、
+缺失与部分可用语义、payload 发布顺序和 lineage 提交都由具体 Step 直接拥有。Broker、
+builder 与 normalize 分别保留在 `src/data_system/brokers`、`builders` 与 `normalize`，这些
+目录本身就是 Step 调用的具体执行能力，不再外包一层通用 `engines` 目录。跨多个
+normalize 模块复用的 Arrow 原语只允许作为 `normalize` 的 private module；不得建立公共
+Arrow engine。无状态 normalize 计算直接使用领域具名函数，不建立只提供 `execute()` 或
+`resolve()` 的 Engine/Resolver 包装类。不存在 Materializer、Service 或 Manager 转发层。
+
+Normalize 的公共入口按 source family 固定为
+`normalize.tushare.normalize_tushare` 与 `normalize.level2.normalize_level2`，共享返回契约
+只由 `normalize.NormalizeOutput` 表达。Workflow 直接把这两个 callable 绑定到 broker；
+不得建立 `profiles.py`、profile registry 或第二层 profile 名称。Level-2 batch parse、完整
+日表 index 和 enrichment 属于同一个 `level2` 模块；只有独立变化的证券代码段规则与
+生效日期/成交时段规则分别保留为 `level2_security` 和 `level2_phase`。
+
 ### 公共 Step 链执行边界
 
 `run_steps(...)` 是无状态的单段 Step 链执行原语，统一拥有四个不变量：严格使用调用方
@@ -113,7 +128,8 @@ Instrumentation 和 I/O 前失败。完整闭区间是一个 workflow 执行单�
 2. Standard 选择 manifest 中除 calendar 外的全部 fact source；Level-2 排除配置中 disabled
    文件 source，并选择剩余全部条目；
 3. 确认当前 kind 至少有一个 fact source；
-4. 解析所有 source 的 broker class 和固定 broker normalize callable；
+4. 绑定固定的 Tushare calendar broker/normalize，并解析所有 fact source 的 broker class
+   和固定 broker normalize callable；
 5. 选择当前 kind 的 feature 与 label operation；
 6. 解析全部被选择的 `(feature_set, version)` 与 `(label_set, version)` builder，并计算每个
    label builder 全部 output column 的最大 lookahead。
@@ -125,16 +141,18 @@ identity allowlist。Standard 当前选择所有 enabled feature 与 label 配�
 Standard 的 feature 或 label 配置。
 
 Tushare manifest 是受代码审查的执行清单，不通过配置、Broker 反射或 capability provider
-动态展开。Level-2 配置则只表达文件 identity、启停和输出映射。两者在 workflow 准备阶段
-统一转换为完整 `SourceConfig` 后交给同一个 `SourceMaterializer`。
+动态展开。Level-2 配置则只表达文件 identity、启停和输出映射。除 calendar 外的所选
+source 在 workflow 准备阶段转换为完整 `SourceConfig` 后直接绑定到
+`FactMaterializeStep`；固定的 Tushare calendar 由 `CalendarMaterializeStep` 按年度对象
+直接承担。
 
 Broker adapter 在首次 raw Meta miss 时才构造，并按 broker 在整个 workflow 内缓存一次。
 全 Meta hit 不构造 adapter。一次 fetch 仍可拥有自己的网络 session。Normalize、feature
 和 label operation 在准备阶段绑定 source/profile/builder；日期循环不得重复解析 capability。
 
 两个 kind 的 workflow 都只显式组装一个线性 step tuple。`CalendarMaterializeStep` 先在自己
-的一次 `run` 中按自然日升序完成整个 `[start, end]` 的 `trade_calendar` ingest 与
-normalize，再通过同一个 Access 把正式交易日写入 Context。随后：
+的一次 `run` 中按自然年升序复用或物化完整 `[start, end]` 所需的 `trade_calendar` 年度
+对象，再通过同一个 Access 把正式交易日写入 Context。随后：
 
 - `FactMaterializeStep` 在自己的一次 `run` 中对每个正式交易日执行所选 fact source 的
   ingest 与 normalize；
@@ -146,9 +164,11 @@ source 后抛 `RuntimeError`。两个 kind 的任一正式交易日全部 fact s
 `FactMaterializeStep` 必须完成范围内所有正式交易日的尝试后，一次报告全部缺失日期。不得
 返回 workflow 级 skipped 或跳过缺失日期。只包含休市日、因而没有正式交易日的范围成功。
 
-Source ingest、raw Meta、normalize、lineage 和 lazy broker adapter cache 责任由非 Step 的
-`SourceMaterializer` 统一承担，并分别注入 calendar 与 fact 领域 step。仅当某日全部所选
-source 可用时才 normalize，不再拆分独立 ingest/normalize Pipeline Step 或转发对象。
+Calendar 的年度 ingest、raw Meta、normalize 和 lineage 由
+`CalendarMaterializeStep` 直接承担；fact 的对应责任由 `FactMaterializeStep` 直接承担。
+两个 Step 共享 workflow 的 lazy broker adapter cache。仅当某日全部所选 fact source 可用
+时才 normalize；不得拆分独立 ingest/normalize Pipeline Step，也不得引入 Materializer 或
+其他转发对象。
 
 所有 fact 日期完成后，一个 `FeatureBuildStep` 才在自己的一次 `run` 中按到达日升序生成
 全部 selected feature operation；一个 `LabelBuildStep` 再按相同日期顺序生成全部 selected

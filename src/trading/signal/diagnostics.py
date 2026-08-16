@@ -89,7 +89,6 @@ class BasicSignalDiagnostics:
         top_str = ", ".join(top) or "none"
 
         logs.info(
-            "[FeatureMissing] "
             f"ts_us={ts_us} "
             f"n_sym={n_syms} "
             f"n_feat={n_feats} "
@@ -128,7 +127,6 @@ class BasicSignalDiagnostics:
             thresholds=self.score_thresholds,
         )
         logs.info(
-            "[ScoreDist] "
             f"ts_us={ts_us} "
             f"n={arr.size} "
             f"finite_n={finite.size} "

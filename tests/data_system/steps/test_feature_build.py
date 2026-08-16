@@ -1,4 +1,4 @@
-# filepath: tests/data_system/steps/test_feature_build_step.py
+# filepath: tests/data_system/steps/test_feature_build.py
 """Behavior tests for feature materialization."""
 
 from __future__ import annotations
@@ -12,8 +12,8 @@ import pytest
 
 from src.access import Access, meta
 from src.config.data_config import FeatureSetConfig
-from src.data_system.steps import feature_build_step as feature_module
-from src.data_system.steps.feature_build_step import FeatureBuildStep
+from src.data_system.steps import feature_build as feature_module
+from src.data_system.steps.feature_build import FeatureBuildStep
 from src.utils.path import PathManager
 
 

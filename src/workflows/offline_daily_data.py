@@ -8,16 +8,17 @@ from src.access import Access
 from src.config.app_config import AppConfig
 from src.config.data_config import SourceConfig
 from src.data_system.brokers.base import BrokerAdapter
-from src.data_system.brokers.bootstrap import BROKER_ADAPTER_CLASSES
+from src.data_system.brokers.catalog import BROKER_ADAPTER_CLASSES
+from src.data_system.brokers.level2 import Level2Broker
 from src.data_system.brokers.tushare import TushareBroker
 from src.data_system.context import DataContext
-from src.data_system.normalize.profiles import NORMALIZE_PROFILES
+from src.data_system.normalize.level2 import normalize_level2
+from src.data_system.normalize.tushare import normalize_tushare
 from src.data_system.pipeline import DataPipeline
-from src.data_system.source_materializer import SourceMaterializer
-from src.data_system.steps.calendar_materialize_step import CalendarMaterializeStep
-from src.data_system.steps.fact_materialize_step import FactMaterializeStep
-from src.data_system.steps.feature_build_step import FeatureBuildStep
-from src.data_system.steps.label_build_step import LabelBuildStep
+from src.data_system.steps.calendar_materialize import CalendarMaterializeStep
+from src.data_system.steps.fact_materialize import FactMaterializeStep
+from src.data_system.steps.feature_build import FeatureBuildStep
+from src.data_system.steps.label_build import LabelBuildStep
 from src.jobs.requests import DataSubmission
 from src.observability.instrumentation import Instrumentation
 from src.pipeline import PipelineStep
@@ -51,20 +52,23 @@ def run_offline_data(
         raise ValueError(
             "run_offline_data requires kind='data-standard' or 'data-level2'"
         )
-    calendar_source =  "trade_calendar"
-    tushare_sources = {
-        source_name: SourceConfig(
-            enabled=True,
-            broker=TushareBroker.name,
-            group=OFFLINE_STANDARD,
-            raw_object=source_name,
-            outputs=[source_name],
-        )
-        for source_name in TushareBroker.active_source_names() if source_name !=calendar_source
-    }
+    calendar_source_name = "trade_calendar"
+    tushare_source_names = TushareBroker.active_source_names()
+    if calendar_source_name not in tushare_source_names:
+        raise ValueError("Tushare active manifest requires trade_calendar")
 
     if submission.kind == "data-standard":
-        fact_sources = tushare_sources
+        fact_sources = {
+            source_name: SourceConfig(
+                enabled=True,
+                broker=TushareBroker.name,
+                group=OFFLINE_STANDARD,
+                raw_object=source_name,
+                outputs=[source_name],
+            )
+            for source_name in tushare_source_names
+            if source_name != calendar_source_name
+        }
         feature_sets = {
             name: config
             for name, config in app_config.data.feature_sets.items()
@@ -80,7 +84,7 @@ def run_offline_data(
         for source_name, source_config in app_config.data.sources.items():
             if not source_config.enabled:
                 logs.warning(
-                    f"[OfflineData] skip source={source_name} group={OFFLINE_LEVEL2} "
+                    f"skip source={source_name} group={OFFLINE_LEVEL2} "
                     f"broker={source_config.broker} reason=source_disabled"
                 )
                 continue
@@ -93,30 +97,26 @@ def run_offline_data(
 
     access = Access(pm=path_manager, processed_version=PROCESSED_VERSION)
     adapter_cache: dict[str, BrokerAdapter] = {}
-    calendar_materializer = SourceMaterializer(
-        app_config=app_config,
-        path_manager=path_manager,
-        sources={"trade_calendar": calendar_source},
-        broker_classes=BROKER_ADAPTER_CLASSES,
-        normalize_profiles=NORMALIZE_PROFILES,
-        processed_version=PROCESSED_VERSION,
-        adapter_cache=adapter_cache,
-    )
-    fact_materializer = SourceMaterializer(
-        app_config=app_config,
-        path_manager=path_manager,
-        sources=fact_sources,
-        broker_classes=BROKER_ADAPTER_CLASSES,
-        normalize_profiles=NORMALIZE_PROFILES,
-        processed_version=PROCESSED_VERSION,
-        adapter_cache=adapter_cache,
-    )
     steps: tuple[PipelineStep[DataContext], ...] = (
         CalendarMaterializeStep(
-            materializer=calendar_materializer,
+            app_config=app_config,
+            path_manager=path_manager,
             access=access,
+            processed_version=PROCESSED_VERSION,
+            adapter_cache=adapter_cache,
         ),
-        FactMaterializeStep(materializer=fact_materializer),
+        FactMaterializeStep(
+            app_config=app_config,
+            path_manager=path_manager,
+            sources=fact_sources,
+            broker_classes=BROKER_ADAPTER_CLASSES,
+            normalize_operations={
+                TushareBroker.name: normalize_tushare,
+                Level2Broker.name: normalize_level2,
+            },
+            processed_version=PROCESSED_VERSION,
+            adapter_cache=adapter_cache,
+        ),
         FeatureBuildStep(
             pm=path_manager,
             access=access,
@@ -138,11 +138,9 @@ def run_offline_data(
         instrumentation=instrumentation,
     )
     logs.info(
-        f"[OfflineData] started kind={submission.kind} "
-        f"start={submission.start} end={submission.end}"
+        f"started kind={submission.kind} start={submission.start} end={submission.end}"
     )
     pipeline.run(DataContext(start=submission.start, end=submission.end))
     logs.info(
-        f"[OfflineData] finished kind={submission.kind} "
-        f"start={submission.start} end={submission.end}"
+        f"finished kind={submission.kind} start={submission.start} end={submission.end}"
     )

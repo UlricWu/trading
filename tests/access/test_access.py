@@ -85,41 +85,69 @@ def test_daily_bars_rejects_missing_object_and_invalid_symbol_request(
         access.daily_bars(trade_date=trade_date, symbols=["600000"])
 
 
-def test_trade_dates_use_ascending_committed_daily_bars(tmp_path: Path) -> None:
+def test_trade_dates_read_annual_calendar_objects_in_ascending_order(
+    tmp_path: Path,
+) -> None:
     pm = PathManager(tmp_path)
-    for trade_date in ("2026-05-04", "2026-05-05", "2026-05-06"):
-        _write_processed_frame(
-            pm,
-            trade_date,
-            "daily_bar",
-            pd.DataFrame({"symbol": ["000001"]}),
-        )
-
-    payload_only = pm.processed_data(
-        dataset_name="daily_bar",
-        version="v1",
-        trade_date="2026-05-03",
+    _write_calendar_year(
+        pm,
+        2025,
+        pd.DataFrame(
+            {
+                "trade_date": ["2025-12-30", "2025-12-31"],
+                "is_open": [False, True],
+            }
+        ),
     )
-    payload_only.parent.mkdir(parents=True)
-    pd.DataFrame({"symbol": ["000001"]}).to_parquet(payload_only, index=False)
+    _write_calendar_year(
+        pm,
+        2026,
+        pd.DataFrame(
+            {
+                "trade_date": ["2026-01-01", "2026-01-02", "2026-01-03"],
+                "is_open": [False, True, True],
+            }
+        ),
+    )
 
     access = Access(pm=pm, processed_version="v1")
 
     assert access.trade_dates(
-        start_date="2026-05-03",
-        end_date="2026-05-06",
+        start_date="2025-12-30",
+        end_date="2026-01-03",
     ) == [
-        "2026-05-04",
-        "2026-05-05",
-        "2026-05-06",
+        "2025-12-31",
+        "2026-01-02",
+        "2026-01-03",
     ]
     assert access.recent_trade_dates(
-        end_date="2026-05-06",
-        sessions=2,
+        end_date="2026-01-03",
+        sessions=3,
     ) == [
-        "2026-05-05",
-        "2026-05-06",
+        "2025-12-31",
+        "2026-01-02",
+        "2026-01-03",
     ]
+
+
+def test_trade_dates_requires_every_requested_calendar_year(tmp_path: Path) -> None:
+    pm = PathManager(tmp_path)
+    _write_calendar_year(
+        pm,
+        2025,
+        pd.DataFrame(
+            {
+                "trade_date": ["2025-12-31"],
+                "is_open": [True],
+            }
+        ),
+    )
+
+    with pytest.raises(FileNotFoundError, match="required Meta"):
+        Access(pm=pm, processed_version="v1").trade_dates(
+            start_date="2025-12-31",
+            end_date="2026-01-01",
+        )
 
 
 def test_universe_applies_listing_st_and_suspension_filters(
@@ -234,6 +262,34 @@ def test_universe_includes_exact_listing_age_boundary(tmp_path: Path) -> None:
     ) == ("000001",)
 
 
+def test_universe_excludes_missing_and_null_listing_dates(tmp_path: Path) -> None:
+    pm = PathManager(tmp_path)
+    trade_date = "2026-05-06"
+    _write_processed_frame(
+        pm,
+        trade_date,
+        "daily_bar",
+        pd.DataFrame({"symbol": ["000001", "000002", "000003"]}),
+    )
+    _write_processed_frame(
+        pm,
+        trade_date,
+        "stock_basic",
+        pd.DataFrame(
+            {
+                "symbol": ["000001", "000002"],
+                "list_date": ["2000-01-01", None],
+            }
+        ),
+    )
+    _write_empty_universe_exclusions(pm=pm, trade_date=trade_date)
+
+    assert Access(pm=pm, processed_version="v1").universe(
+        trade_date=trade_date,
+        min_listing_calendar_days=30,
+    ) == ("000001",)
+
+
 def test_universe_requires_current_st_and_suspension_objects(
     tmp_path: Path,
 ) -> None:
@@ -296,8 +352,8 @@ def test_level2_universe_uses_level2_base_and_canonical_order(
         "stock_basic",
         pd.DataFrame(
             {
-                "symbol": ["000001", "600000", "600001", "600002"],
-                "list_date": ["2000-01-01"] * 4,
+                "symbol": ["000001", "600000", "600001"],
+                "list_date": ["2000-01-01", "2000-01-01", None],
             }
         ),
     )
@@ -317,7 +373,7 @@ def test_level2_universe_uses_level2_base_and_canonical_order(
     assert Access(pm=pm, processed_version="v1").level2_universe(
         trade_date=trade_date,
         min_listing_calendar_days=20,
-    ) == ("000001", "600001")
+    ) == ("000001",)
 
 
 def test_trades_preserve_requested_order(tmp_path: Path) -> None:
@@ -526,6 +582,24 @@ def _write_processed_frame(
         dataset_name=dataset_name,
         version="v1",
         trade_date=trade_date,
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    frame.to_parquet(path, index=False)
+    meta.commit(
+        pm=pm,
+        payload_path=path,
+    )
+
+
+def _write_calendar_year(
+    pm: PathManager,
+    calendar_year: int,
+    frame: pd.DataFrame,
+) -> None:
+    path = pm.processed_year_data(
+        dataset_name="trade_calendar",
+        version="v1",
+        calendar_year=calendar_year,
     )
     path.parent.mkdir(parents=True, exist_ok=True)
     frame.to_parquet(path, index=False)

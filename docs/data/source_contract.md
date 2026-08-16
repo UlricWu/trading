@@ -53,7 +53,7 @@ broker config 不声明 `normalize_profile`。
 | `daily_bar` | `daily` |
 | `adj_factor` | `adj_factor` |
 | `daily_basic` | `daily_basic` |
-| `stock_basic` | `stock_basic` |
+| `stock_basic` | `bak_basic` |
 | `stock_st` | `stock_st` |
 | `stk_limit` | `stk_limit` |
 | `suspend_d` | `suspend_d` |
@@ -63,15 +63,23 @@ broker config 不声明 `normalize_profile`。
 | `moneyflow` | `moneyflow` |
 | `top_list` | `top_list` |
 
+本地 `stock_basic` 是历史日股票列表，源端固定查询支持 `trade_date` 的 `bak_basic`；不得
+使用当前股票基础信息快照接口 `stock_basic` 代替。
+
+`processed/stock_basic/v1.list_date` 把能够按 Tushare 紧凑日期格式解析的值转换为
+`YYYY-MM-DD`，其他值转换为 null。Tushare response 的记录集合是该对象的权威；本系统不
+解释无法解析值的业务含义，也不与 `daily_bar` 或其他 source 检查记录覆盖关系。
+
 除 `trade_calendar` 外，当前 Tushare source 按单日参数
-`trade_date=YYYYMMDD` 查询。`trade_calendar` 固定查询 SSE：
+`trade_date=YYYYMMDD` 查询。`trade_calendar` 固定查询 SSE，并以自然年作为唯一请求与对象
+分区：
 
 ```text
-trade_cal(exchange="SSE", start_date=D, end_date=D)
+trade_cal(exchange="SSE", start_date=YYYY0101, end_date=YYYY1231)
 ```
 
-其中 `D` 使用 `YYYYMMDD`。每个 source response 原样保存为自己的 raw Parquet；broker
-不改变正式 processed 字段。
+每个缺失自然年最多请求一次。全年 response 原样保存为该年的 raw Parquet；其他 source
+response 仍按单日保存。Broker 不改变正式 processed 字段。
 
 ## Level-2 source identity
 
@@ -86,25 +94,29 @@ trade_cal(exchange="SSE", start_date=D, end_date=D)
 
 ## 正式交易日历
 
-`processed/trade_calendar/v1` 是唯一正式交易日历。每个请求自然日必须产生一个有效正式
-对象，payload 精确包含一行：
+`processed/trade_calendar/v1` 是唯一正式交易日历，以 `year=YYYY` 保存每个自然年的一个
+正式对象。payload 包含该年 Tushare response 转换后的全部行，schema 精确为：
 
 ```text
 trade_date: string  # Tushare cal_date 归一化为 YYYY-MM-DD
 is_open: bool
 ```
 
-该行的 `trade_date` 必须等于分区日期。空 response、非唯一日期、日期不匹配、缺少字段
-或 `is_open` 不是 `0`/`1` 都必须失败。`0` 归一化为 `false`，`1` 归一化为 `true`。
+Tushare `trade_cal` 是日历日期完整性、唯一性、请求范围、交易所和 `is_open` 取值的正式
+数据源权威。本系统不重复检查这些 source 业务不变量；normalize 只执行字段选择、日期格式
+转换和 `0`/`1` 到 boolean 的类型映射。外部请求失败、空 response、缺少转换所需字段或
+`cal_date` 无法完成日期格式转换仍必须失败。
 
-有效 Meta 只证明该自然日的日历对象完整，不表示开市。正式交易日定义为：
+有效 Meta 证明该自然年对象已经正式提交，不表示其中每一行都开市。正式交易日定义为：
 
 ```text
-valid trade_calendar object AND is_open == true
+row in valid yearly trade_calendar object AND is_open == true
 ```
 
-因此开市日和休市日都必须保存非空 payload 与有效 Meta。日历范围缺少任一自然日对象时，
-整个范围不可用。
+开市日和休市日都保存在同一个年度 payload 中。查询范围涉及的任一年度对象缺失时，整个
+范围不可用。Producer 发现有效年度 Processed Meta 时直接复用，不隐式刷新或覆盖；日历
+刷新不是当前 offline data workflow 的行为。旧 `trade_date=YYYY-MM-DD` 日历对象不构成
+年度正式对象，Access 不读取该旧布局。
 
 ## Daily bar
 
@@ -117,6 +129,7 @@ Workflow 不为 `is_open=false` 的日期请求 `daily_bar`。`is_open=true` 时
 
 ## Source no-data 边界
 
-Broker 只有在源端明确返回无 payload 时才返回 `None`；transport、认证、response 类型或
-source response 不合法必须传播为错误。`trade_calendar` 对请求自然日返回 `None` 永远是
-错误。其他 source 的 range 聚合和缺失失败语义由 workflow owner 定义。
+Broker 只有在源端明确返回无 payload 时才返回 `None`；transport、认证、response 类型、
+必要字段缺失或没有上述可空映射的字段转换失败必须传播为错误。`trade_calendar` 对请求
+自然年返回 `None` 永远是错误。其他 source 的 range 聚合和缺失失败语义由 workflow
+owner 定义。

@@ -145,7 +145,7 @@ class Level2Broker:
                 )
 
             logs.info(
-                f"[Level2Broker] download_start "
+                f"download_start "
                 f"remote_size={FileSystem.format_size(remote_size)} "
                 f"trade_date={trade_date} "
                 f"file={remote_file} "
@@ -245,7 +245,7 @@ class Level2Broker:
                         if FileSystem.get_file_size(part_file) != remote_size_bytes:
                             raise
                         logs.warning(
-                            f"[FTP] control response timed out after full payload; "
+                            f"control response timed out after full payload; "
                             f"remote_file={remote_file}"
                         )
                     else:

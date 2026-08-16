@@ -106,7 +106,7 @@ def build_components(
         )
 
     logs.info(
-        f"[components] ready "
+        f"ready "
         f"mode={mode.value} "
         f"signal={type(signal).__name__} "
         f"feature_set={artifact.feature_set} "

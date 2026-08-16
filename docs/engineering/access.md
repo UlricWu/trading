@@ -78,18 +78,18 @@ Access 不提供接收 `dataset_name` 的 public 方法，也不提供任意路�
 序列返回按请求顺序排列的行；空序列返回保留列的空表。请求 symbol 必须是唯一的六位
 数字字符串。
 
-正式交易日只由指定 processed version 下的 `trade_calendar` 对象定义。每个请求自然日
-必须存在能够通过 Meta 校验、schema 精确且日期匹配的单行对象；其中 `is_open=true`
-表示正式交易日，`is_open=false` 表示休市。日历对象 schema 与 `daily_bar` 的职责边界由
+正式交易日只由指定 processed version 下按自然年分区的 `trade_calendar` 对象定义；其中
+`is_open=true` 表示正式交易日，`is_open=false` 表示休市。日历对象 schema、Tushare
+权威边界与 `daily_bar` 的职责边界由
 [`docs/data/source_contract.md`](../data/source_contract.md) 所有。
 
-`trade_dates(start_date=S, end_date=E)` 要求闭区间 `[S, E]` 的每个自然日日历对象都
-存在，返回其中 `is_open=true` 的日期并按日期升序。缺少任一自然日、无效对象或字段值
-必须失败。
+`trade_dates(start_date=S, end_date=E)` 要求闭区间 `[S, E]` 涉及的每个年度日历对象都
+存在，返回范围内 `is_open=true` 的日期并按日期升序。缺少任一年度对象必须失败；Access
+不重复检查 source 已保证的日期完整性、唯一性、范围和字段值域。
 
 `recent_trade_dates(end_date=E, sessions=N)` 要求 `E` 是正式交易日，并返回截至且包含
-`E` 的最近 `N` 个正式交易日，按日期升序。向前扫描期间的每个自然日日历对象都必须
-存在；`N` 必须为正整数，`E` 休市、日历断档或历史不足时整体失败。
+`E` 的最近 `N` 个正式交易日，按日期升序。该方法从 `E` 所在年度开始按需向前读取连续
+年度对象；`N` 必须为正整数，`E` 休市、年度对象断档或历史不足时整体失败。
 
 ## Universe
 
@@ -134,15 +134,16 @@ symbol 升序排列，不继承底层 payload 的物理行顺序。
 
 `min_listing_calendar_days=N` 必须是非负整数，并由调用方显式提供。
 
-`N=0` 表示不执行上市天数过滤，也不读取 `stock_basic`。正整数 `N` 保留满足下式的
-symbol：
+`N=0` 表示不执行上市天数过滤，也不读取 `stock_basic`。正整数 `N` 保留在
+`stock_basic` 中存在非 null `list_date` 且满足下式的 symbol：
 
 ```text
 T - stock_basic.list_date(symbol) >= N 个自然日
 ```
 
-上市当日为第 `0` 天，恰好满 `N` 个自然日时保留。过滤启用时，任一基础集合 symbol
-缺少 `stock_basic` 记录或 `list_date` 非法都必须失败，不得静默剔除。
+上市当日为第 `0` 天，恰好满 `N` 个自然日时保留。基础集合 symbol 缺少 `stock_basic`
+记录或 `list_date=null` 时不满足上市天数条件。Access 信任 Tushare 对象的记录集合，不
+跨 source 检查覆盖关系，也不解释 null 的源端业务含义。
 
 当前 universe 不包含历史 ST 冷却、涨跌停、成交额、流动性、市值、行业或其他策略筛选。
 

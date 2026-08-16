@@ -1,5 +1,5 @@
-# filepath: tests/data_system/test_source_materializer.py
-"""Behavior tests for raw-to-processed source materialization."""
+# filepath: tests/data_system/steps/test_fact_materialize.py
+"""Behavior tests for range fact materialization."""
 
 from __future__ import annotations
 
@@ -13,10 +13,11 @@ import pytest
 from src.access import meta
 from src.config.app_config import AppConfig
 from src.config.data_config import SourceConfig
-from src.data_system import source_materializer as materializer_module
 from src.data_system.brokers.base import BrokerAdapter, DownloadPlan
-from src.data_system.normalize.profiles import NormalizeOutput
-from src.data_system.source_materializer import SourceMaterializer
+from src.data_system.context import DataContext
+from src.data_system.normalize import NormalizeOutput
+from src.data_system.steps import fact_materialize as fact_module
+from src.data_system.steps.fact_materialize import FactMaterializeStep
 from src.utils.path import PathManager
 
 
@@ -30,7 +31,15 @@ def _source(raw_object: str, *, outputs: list[str] | None = None) -> SourceConfi
     )
 
 
-def test_materializer_attempts_every_source_then_rejects_partial_availability(
+def _context(*trade_dates: str) -> DataContext:
+    return DataContext(
+        start=trade_dates[0],
+        end=trade_dates[-1],
+        trade_dates=trade_dates,
+    )
+
+
+def test_fact_step_attempts_every_source_then_rejects_partial_availability(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     path_manager = Mock(spec=PathManager)
@@ -47,10 +56,10 @@ def test_materializer_attempts_every_source_then_rejects_partial_availability(
         ),
     ]
     adapter_class = Mock(return_value=adapter)
-    monkeypatch.setattr(materializer_module.meta, "find", Mock(return_value=None))
+    monkeypatch.setattr(fact_module.meta, "find", Mock(return_value=None))
     commit = Mock()
-    monkeypatch.setattr(materializer_module.meta, "commit", commit)
-    materializer = SourceMaterializer(
+    monkeypatch.setattr(fact_module.meta, "commit", commit)
+    step = FactMaterializeStep(
         app_config=cast("AppConfig", object()),
         path_manager=path_manager,
         sources={
@@ -61,51 +70,61 @@ def test_materializer_attempts_every_source_then_rejects_partial_availability(
             "dict[str, type[BrokerAdapter]]",
             {"broker": adapter_class},
         ),
-        normalize_profiles={"broker": Mock()},
+        normalize_operations={"broker": Mock()},
         processed_version="v1",
         adapter_cache={},
     )
 
     with pytest.raises(RuntimeError, match="only partially available"):
-        materializer.materialize("2026-07-20")
+        step.run(_context("2026-07-20"))
 
     assert adapter.fetch.call_count == 2
     adapter_class.assert_called_once()
     commit.assert_called_once()
 
 
-def test_materializer_returns_false_without_normalizing_when_all_sources_missing(
+def test_fact_step_reports_all_wholly_missing_dates_without_normalizing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     path_manager = Mock(spec=PathManager)
     adapter = Mock(spec=BrokerAdapter)
     adapter.fetch.return_value = None
+    adapter_class = Mock(return_value=adapter)
     normalize = Mock()
-    monkeypatch.setattr(materializer_module.meta, "find", Mock(return_value=None))
-    materializer = SourceMaterializer(
+    monkeypatch.setattr(fact_module.meta, "find", Mock(return_value=None))
+    step = FactMaterializeStep(
         app_config=cast("AppConfig", object()),
         path_manager=path_manager,
         sources={"bars": _source("bars")},
         broker_classes=cast(
             "dict[str, type[BrokerAdapter]]",
-            {"broker": Mock(return_value=adapter)},
+            {"broker": adapter_class},
         ),
-        normalize_profiles={"broker": normalize},
+        normalize_operations={"broker": normalize},
         processed_version="v1",
         adapter_cache={},
     )
 
-    assert materializer.materialize("2026-07-20") is False
+    with pytest.raises(
+        RuntimeError,
+        match=r"missing_dates=\['2026-07-20', '2026-07-21'\]",
+    ):
+        step.run(_context("2026-07-20", "2026-07-21"))
+
+    assert [
+        call.kwargs["record"].trade_date for call in adapter.fetch.call_args_list
+    ] == ["2026-07-20", "2026-07-21"]
+    adapter_class.assert_called_once()
     normalize.assert_not_called()
 
 
-def test_materializer_meta_hit_does_not_construct_a_broker_adapter(
+def test_fact_step_raw_meta_hit_does_not_construct_a_broker(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     path_manager = Mock(spec=PathManager)
     adapter_class = Mock()
-    monkeypatch.setattr(materializer_module.meta, "find", Mock(return_value=object()))
-    materializer = SourceMaterializer(
+    monkeypatch.setattr(fact_module.meta, "find", Mock(return_value=object()))
+    step = FactMaterializeStep(
         app_config=cast("AppConfig", object()),
         path_manager=path_manager,
         sources={"bars": _source("bars", outputs=[])},
@@ -113,42 +132,17 @@ def test_materializer_meta_hit_does_not_construct_a_broker_adapter(
             "dict[str, type[BrokerAdapter]]",
             {"broker": adapter_class},
         ),
-        normalize_profiles={},
+        normalize_operations={},
         processed_version="v1",
         adapter_cache={},
     )
+    context = _context("2026-07-20")
 
-    assert materializer.materialize("2026-07-20") is True
+    assert step.run(context) is context
     adapter_class.assert_not_called()
 
 
-def test_materializer_reuses_one_lazy_adapter_across_dates(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    path_manager = Mock(spec=PathManager)
-    adapter = Mock(spec=BrokerAdapter)
-    adapter.fetch.return_value = None
-    adapter_class = Mock(return_value=adapter)
-    monkeypatch.setattr(materializer_module.meta, "find", Mock(return_value=None))
-    materializer = SourceMaterializer(
-        app_config=cast("AppConfig", object()),
-        path_manager=path_manager,
-        sources={"bars": _source("bars")},
-        broker_classes=cast(
-            "dict[str, type[BrokerAdapter]]",
-            {"broker": adapter_class},
-        ),
-        normalize_profiles={"broker": Mock()},
-        processed_version="v1",
-        adapter_cache={},
-    )
-
-    assert materializer.materialize("2026-07-20") is False
-    assert materializer.materialize("2026-07-21") is False
-    adapter_class.assert_called_once()
-
-
-def test_materializer_uses_staging_only_when_size_matches_raw(
+def test_fact_step_uses_matching_staging_payload_for_normalization(
     tmp_path: Path,
 ) -> None:
     path_manager = PathManager(tmp_path)
@@ -172,7 +166,7 @@ def test_materializer_uses_staging_only_when_size_matches_raw(
     staging_path.write_bytes(b"same-size")
     selected_inputs: list[Path] = []
 
-    def normalize_profile(
+    def normalize_operation(
         *,
         input_file: Path,
         output_name: Path,
@@ -183,7 +177,7 @@ def test_materializer_uses_staging_only_when_size_matches_raw(
         selected_inputs.append(input_file)
         return NormalizeOutput(table=pa.table({"value": [1]}))
 
-    materializer = SourceMaterializer(
+    step = FactMaterializeStep(
         app_config=cast("AppConfig", object()),
         path_manager=path_manager,
         sources={"source": _source("raw_object", outputs=["output"])},
@@ -191,20 +185,19 @@ def test_materializer_uses_staging_only_when_size_matches_raw(
             "dict[str, type[BrokerAdapter]]",
             {"broker": Mock()},
         ),
-        normalize_profiles={"broker": normalize_profile},
+        normalize_operations={"broker": normalize_operation},
         processed_version="v1",
         adapter_cache={},
     )
 
-    assert materializer.materialize(trade_date) is True
+    step.run(_context(trade_date))
+
     assert selected_inputs == [staging_path]
 
 
-def test_materializer_rejects_an_unknown_profile_before_date_io(
-    tmp_path: Path,
-) -> None:
-    with pytest.raises(KeyError, match="not registered"):
-        SourceMaterializer(
+def test_fact_step_rejects_unbound_normalizer_before_date_io(tmp_path: Path) -> None:
+    with pytest.raises(KeyError, match="not bound"):
+        FactMaterializeStep(
             app_config=cast("AppConfig", object()),
             path_manager=PathManager(tmp_path),
             sources={"source": _source("source")},
@@ -212,7 +205,7 @@ def test_materializer_rejects_an_unknown_profile_before_date_io(
                 "dict[str, type[BrokerAdapter]]",
                 {"broker": Mock()},
             ),
-            normalize_profiles={},
+            normalize_operations={},
             processed_version="v1",
             adapter_cache={},
         )

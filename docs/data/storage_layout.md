@@ -40,6 +40,12 @@ experiment ID 另须匹配 `[A-Za-z0-9][A-Za-z0-9._-]{0,63}`。
 trade_date=YYYY-MM-DD
 ```
 
+`trade_calendar` 是唯一年度分区对象。日历年份必须是 `1..9999` 的整数，分区名固定为：
+
+```text
+year=YYYY
+```
+
 ## Raw 与 staging
 
 ```text
@@ -49,9 +55,17 @@ raw/<broker>/<source_name>/trade_date=<date>/meta.json
 staging/<broker>/<source_name>/trade_date=<date>/<payload_file>
 ```
 
+`trade_calendar` 不使用单日 raw 或 staging 分区，固定为：
+
+```text
+raw/tushare/trade_calendar/year=<YYYY>/data.parquet
+raw/tushare/trade_calendar/year=<YYYY>/meta.json
+```
+
 `payload_file` 是 source-native 身份的一部分，调用方必须显式提供，PathManager 不提供
-默认文件名。每个 `(broker, source_name, trade_date)` raw partition 只有一个由同目录
-`meta.json` 描述的正式 payload。Meta 的 `payload` basename 必须指向该同目录文件。
+默认文件名。每个单日 `(broker, source_name, trade_date)` 或年度
+`(broker, source_name, year)` raw partition 只有一个由同目录 `meta.json` 描述的正式
+payload。Meta 的 `payload` basename 必须指向该同目录文件。
 
 `staging` 是 raw ingest 的操作性暂存层，不进入正式 lineage。Normalize 可以在同名
 staging payload 是普通文件且字节数与正式 raw payload 相同时读取 staging；不存在或
@@ -70,6 +84,13 @@ labels/<label_set>/<version>/trade_date=<date>/data.parquet
 labels/<label_set>/<version>/trade_date=<date>/meta.json
 ```
 
+`trade_calendar` 不使用单日 processed 分区，固定为：
+
+```text
+processed/trade_calendar/v1/year=<YYYY>/data.parquet
+processed/trade_calendar/v1/year=<YYYY>/meta.json
+```
+
 PathManager 只返回完整路径，不读取 Parquet、不检查列、不判断数据质量，也不创建业务
 分区。正式对象由 payload 和同目录有效 `meta.json` 共同构成；正式消费者必须先通过
 Meta `require()` 取得已校验的 payload，不得因规范位置单独存在 `data.parquet` 而直接
@@ -79,6 +100,8 @@ Meta API，不建立第二套对象校验。
 
 `processed/<dataset_name>/<version>/` 是实际分区扫描所需的正式目录身份，由
 `PathManager.processed_version_dir()` 返回。调用方不得从 processed root 手工拼接该路径。
+年度 raw 与 processed 路径分别由 `raw_year_payload()`、`raw_year_meta()`、
+`processed_year_data()` 和 `processed_year_meta()` 返回。
 
 ## Object-side Meta
 

@@ -63,13 +63,13 @@ def create_app(job_runtime: JobRuntime) -> Flask:
     @flask_app.before_request
     def log_request() -> None:
         g.request_started_at = time.monotonic()
-        logs.info(f"[HTTP] request method={request.method} path={request.path}")
+        logs.info(f"request method={request.method} path={request.path}")
 
     @flask_app.after_request
     def log_response(response: Response) -> Response:
         duration_seconds = time.monotonic() - g.request_started_at
         logs.info(
-            f"[HTTP] response method={request.method} path={request.path} "
+            f"response method={request.method} path={request.path} "
             f"status={response.status_code} duration_s={duration_seconds:.6f}"
         )
         return response
@@ -112,7 +112,7 @@ def create_app(job_runtime: JobRuntime) -> Flask:
     @flask_app.errorhandler(Exception)
     def handle_internal_error(error: Exception) -> HttpResponse:
         logs.opt(exception=error).error(
-            f"[HTTP] internal_error method={request.method} path={request.path}"
+            f"internal_error method={request.method} path={request.path}"
         )
         return _error_response(
             code="internal_error",
@@ -191,7 +191,7 @@ def main() -> None:
     system_log_file = Path("logs") / "system" / f"{started_at:%Y-%m-%d-%H-%M-%S.%f}.log"
     configure_system_logging(system_log_file)
     pid = os.getpid()
-    logs.info(f"[SYSTEM] api.start pid={pid} started_at={started_at.isoformat()}")
+    logs.info(f"api.start pid={pid} started_at={started_at.isoformat()}")
 
     try:
         with JobRuntime() as job_runtime:
@@ -204,10 +204,10 @@ def main() -> None:
                 threaded=True,
             )
     except Exception:
-        logs.exception(f"[SYSTEM] api.failed pid={pid}")
+        logs.exception(f"api.failed pid={pid}")
         raise
     finally:
-        logs.info(f"[SYSTEM] api.stop pid={pid}")
+        logs.info(f"api.stop pid={pid}")
         logs.complete()
         logs.remove()
 

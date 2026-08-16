@@ -81,7 +81,7 @@ class DownloadProgress:
         self._last_reported_at_seconds = now_seconds
         status = self._format_status(now_seconds=now_seconds)
         self._logger.info(
-            f"[DownloadProgress] progress filename={self._filename} status={status}"
+            f"progress filename={self._filename} status={status}"
         )
 
     def finish(self) -> None:
@@ -89,7 +89,7 @@ class DownloadProgress:
         now_seconds = self._read_clock_seconds()
         status = self._format_status(now_seconds=now_seconds)
         self._logger.info(
-            f"[DownloadProgress] complete filename={self._filename} status={status}"
+            f"complete filename={self._filename} status={status}"
         )
 
     def _read_clock_seconds(self) -> float:

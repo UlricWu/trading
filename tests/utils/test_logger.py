@@ -49,14 +49,14 @@ def test_configure_system_logging_routes_to_new_file_and_stderr(
     system_log_file = tmp_path / "logs" / "system" / "2026-07-22-09-15-32.123456.log"
 
     configure_system_logging(system_log_file)
-    logs.info("[SYSTEM] test run_id=service-1")
+    logs.info("test run_id=service-1")
     logs.complete()
 
     assert list(system_log_file.parent.iterdir()) == [system_log_file]
-    assert "[SYSTEM] test run_id=service-1" in system_log_file.read_text(
+    assert "test run_id=service-1" in system_log_file.read_text(
         encoding="utf-8"
     )
-    assert "[SYSTEM] test run_id=service-1" in capsys.readouterr().err
+    assert "test run_id=service-1" in capsys.readouterr().err
     assert replaced_sink_messages == []
 
 

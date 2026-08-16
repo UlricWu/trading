@@ -19,6 +19,8 @@ Loguru 是项目明确选定的日志技术栈。项目自有日志实现必须�
 服务运行始终写入这个文件，不按时间或大小轮转，也不自动清理历史文件；启动文件已
 存在时必须失败，不得追加。API 请求日志属于 system log，不得另建 API file sink。
 System log 不得记录请求 payload、strategy、子进程 argv 或子进程 traceback。
+项目自有日志消息不得添加方括号组件 prefix；消息必须直接以动作或状态开头，并保留
+用于检索和聚合的稳定 `key=value` 上下文。
 
 每个 job 的日志包含文件身份首行及该 job 子进程的完整 stdout/stderr 输出。每次 job
 启动时，`JobRuntime` 必须只读取一次 `Asia/Shanghai` 时间，该时间同时确定
@@ -195,8 +197,8 @@ staging 到 raw 的复制不属于 FTP transport；`Level2Broker` 在下载完�
 `550`、空目录或期望文件不存在翻译为 `None`。认证、连接、timeout、size、同名多匹配、
 写入或最终 size mismatch 必须失败。
 
-FTP transport 和进度日志分别使用 `[Level2Broker]`、`[FTP]` 或 `[DownloadProgress]`
-prefix，可以记录日期、文件名、backend、size 和进度，不得记录密码、token 或完整凭证。
+FTP transport 和进度日志直接以动作或状态开头，可以记录日期、文件名、backend、size
+和进度，不得记录密码、token 或完整凭证。
 Broker 测试拥有文件选择、续传、staging/raw 发布、no-data、失败和 session 释放边界；
 `DownloadProgress` 测试拥有间隔、百分比、速度、ETA、未知总量、单位和参数拒绝边界。
 

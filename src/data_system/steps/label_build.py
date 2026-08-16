@@ -1,4 +1,4 @@
-# filepath: src/data_system/steps/label_build_step.py
+# filepath: src/data_system/steps/label_build.py
 """Build selected label partitions from processed inputs."""
 
 from __future__ import annotations
@@ -103,7 +103,7 @@ class LabelBuildStep:
                 )
                 target_date = input_dates[0]
                 logs.info(
-                    f"[LabelBuild] build label_set={operation.label_set} "
+                    f"build label_set={operation.label_set} "
                     f"trade_date={target_date} maturity_date={input_dates[-1]}"
                 )
                 output_meta = self._pm.label_meta(
@@ -125,7 +125,7 @@ class LabelBuildStep:
                     is not None
                 ):
                     logs.info(
-                        "[LabelBuild] meta hit -> skip "
+                        "meta hit -> skip "
                         f"label_set={operation.label_set} trade_date={target_date}"
                     )
                     continue

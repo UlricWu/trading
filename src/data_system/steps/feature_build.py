@@ -1,4 +1,4 @@
-# filepath: src/data_system/steps/feature_build_step.py
+# filepath: src/data_system/steps/feature_build.py
 """Build feature partitions from processed inputs."""
 
 from __future__ import annotations
@@ -80,7 +80,7 @@ class FeatureBuildStep:
             build_features("2026-07-20")
         """
         for operation in self._operations:
-            logs.info(f"[FeatureBuild] build feature_set={operation.feature_set}")
+            logs.info(f"build feature_set={operation.feature_set}")
             output_meta = self._pm.feature_meta(
                 feature_set=operation.feature_set,
                 version=operation.version,
@@ -100,7 +100,7 @@ class FeatureBuildStep:
                 is not None
             ):
                 logs.info(
-                    f"[FeatureBuild] meta hit -> skip "
+                    f"meta hit -> skip "
                     f"feature_set={operation.feature_set} "
                     f"trade_date={trade_date}"
                 )

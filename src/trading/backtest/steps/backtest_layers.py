@@ -655,7 +655,7 @@ class FullBacktestStep:
             "ts_us": int(signal.bar.ts_us),
         }
         logs.info(
-            f"[FullBacktestStep] processed trade_date={signal.bar.trade_date} "
+            f"processed trade_date={signal.bar.trade_date} "
             f"symbols={len(signal.bar.symbols)} bars={signal.bars_count} "
             f"positions={len(state.portfolio_state.positions)} "
             f"ledger_records={len(state.execution_ledger.records)}"

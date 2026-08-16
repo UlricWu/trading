@@ -193,7 +193,7 @@ class JobRuntime:
                 self._jobs[job.job_id] = job
                 self._pending_job_ids.append(job.job_id)
                 logs.info(
-                    f"[JOB] accepted job_id={job.job_id} "
+                    f"accepted job_id={job.job_id} "
                     f"kind={job.submission.kind}"
                 )
             self._dispatch_pending_locked()
@@ -249,7 +249,7 @@ class JobRuntime:
                     timespec="microseconds"
                 )
                 logs.info(
-                    f"[JOB] transition job_id={job.job_id} "
+                    f"transition job_id={job.job_id} "
                     f"from=PENDING to=CANCELLED"
                 )
             elif job.status is JobStatus.RUNNING:
@@ -293,7 +293,7 @@ class JobRuntime:
                 job.process is not None for job in self._jobs.values()
             )
             logs.info(
-                f"[JOB] runtime.close pending_discarded={pending_count} "
+                f"runtime.close pending_discarded={pending_count} "
                 f"active={active_count}"
             )
 
@@ -323,7 +323,7 @@ class JobRuntime:
                 exit_code = self._kill_and_reap_process(process)
             except Exception as error:
                 logs.opt(exception=error).error(
-                    f"[JOB] close reap failed job_id={job.job_id}"
+                    f"close reap failed job_id={job.job_id}"
                 )
                 continue
 
@@ -341,7 +341,7 @@ class JobRuntime:
                 job.waiter = None
                 job.cancel_timer = None
                 logs.info(
-                    f"[JOB] transition job_id={job.job_id} "
+                    f"transition job_id={job.job_id} "
                     f"from={old_status.value} to={job.status.value} "
                     f"exit_code={exit_code}"
                 )
@@ -373,7 +373,7 @@ class JobRuntime:
                     timespec="microseconds"
                 )
                 logs.exception(
-                    f"[JOB] startup failed job_id={job.job_id} "
+                    f"startup failed job_id={job.job_id} "
                     f"kind={job.submission.kind}"
                 )
                 continue
@@ -435,7 +435,7 @@ class JobRuntime:
         job.started_at = started_at.isoformat(timespec="microseconds")
         job.status = JobStatus.RUNNING
         logs.info(
-            f"[JOB] transition job_id={job.job_id} "
+            f"transition job_id={job.job_id} "
             f"from=PENDING to=RUNNING"
         )
 
@@ -457,12 +457,12 @@ class JobRuntime:
                     if job.process is process:
                         self._is_closed = True
                 logs.opt(exception=wait_error).error(
-                    f"[JOB] wait/reap failed job_id={job_id} "
+                    f"wait/reap failed job_id={job_id} "
                     "runtime_closed=true"
                 )
                 return
             logs.opt(exception=wait_error).error(
-                f"[JOB] wait failed job_id={job_id} child_reaped=true"
+                f"wait failed job_id={job_id} child_reaped=true"
             )
             wait_failed = True
 
@@ -488,7 +488,7 @@ class JobRuntime:
                 cancel_timer.cancel()
             job.cancel_timer = None
             logs.info(
-                f"[JOB] transition job_id={job.job_id} "
+                f"transition job_id={job.job_id} "
                 f"from={old_status.value} to={job.status.value} "
                 f"exit_code={exit_code}"
             )
@@ -509,7 +509,7 @@ class JobRuntime:
 
         job.status = JobStatus.CANCELLING
         logs.info(
-            f"[JOB] transition job_id={job.job_id} "
+            f"transition job_id={job.job_id} "
             f"from=RUNNING to=CANCELLING signal=SIGTERM"
         )
         force_cancel = threading.Timer(
@@ -533,7 +533,7 @@ class JobRuntime:
                     f"failed to force-stop child: {kill_error}"
                 )
             logs.opt(exception=timer_error).error(
-                f"[JOB] cancellation timer failed job_id={job.job_id} "
+                f"cancellation timer failed job_id={job.job_id} "
                 "runtime_closed=true signal=SIGKILL"
             )
 
@@ -555,11 +555,11 @@ class JobRuntime:
                 pass
             except OSError:
                 logs.exception(
-                    f"[JOB] forced cancellation failed job_id={job.job_id}"
+                    f"forced cancellation failed job_id={job.job_id}"
                 )
                 return
             logs.info(
-                f"[JOB] cancellation escalated job_id={job.job_id} signal=SIGKILL"
+                f"cancellation escalated job_id={job.job_id} signal=SIGKILL"
             )
 
     @staticmethod

@@ -74,7 +74,7 @@ class PreprocessStep:
         )
         processed_eval_y = eval_y.loc[processed_eval_X.index]
         logs.info(
-            f"[Preprocess] train_rows={len(processed_train_X)} "
+            f"train_rows={len(processed_train_X)} "
             f"eval_rows={len(processed_eval_X)}"
         )
         return (

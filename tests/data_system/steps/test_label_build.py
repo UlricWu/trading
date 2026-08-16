@@ -1,4 +1,4 @@
-# filepath: tests/data_system/steps/test_label_build_step.py
+# filepath: tests/data_system/steps/test_label_build.py
 """Behavior tests for label materialization."""
 
 from __future__ import annotations
@@ -14,8 +14,8 @@ import pytest
 from src.access import Access, meta
 from src.config.data_config import LabelSetConfig
 from src.data_system.context import DataContext
-from src.data_system.steps import label_build_step as label_module
-from src.data_system.steps.label_build_step import LabelBuildStep
+from src.data_system.steps import label_build as label_module
+from src.data_system.steps.label_build import LabelBuildStep
 from src.utils.path import PathManager
 
 

@@ -1,4 +1,4 @@
-# filepath: src/data_system/brokers/bootstrap.py
+# filepath: src/data_system/brokers/catalog.py
 """Immutable raw-source broker capabilities."""
 
 from __future__ import annotations

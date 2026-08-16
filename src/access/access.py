@@ -87,14 +87,23 @@ class Access:
                 f"invalid date range: start={validated_start}, end={validated_end}"
             )
 
-        return [
-            trade_date
-            for trade_date in DateTimeUtils.date_range(
+        trade_dates: list[str] = []
+        for calendar_year in range(
+            int(validated_start[:4]),
+            int(validated_end[:4]) + 1,
+        ):
+            calendar = self._read_calendar_year(calendar_year)
+            requested_rows = calendar["trade_date"].between(
                 validated_start,
                 validated_end,
             )
-            if self._calendar_is_open(trade_date)
-        ]
+            trade_dates.extend(
+                calendar.loc[
+                    requested_rows & calendar["is_open"],
+                    "trade_date",
+                ].tolist()
+            )
+        return sorted(trade_dates)
 
     def recent_trade_dates(
         self,
@@ -128,8 +137,8 @@ class Access:
                 f"formal trade-calendar version is unavailable: {version_dir}"
             )
 
-        partition_prefix = "trade_date="
-        calendar_dates = []
+        partition_prefix = "year="
+        calendar_years: list[int] = []
         for partition_dir in version_dir.iterdir():
             if (
                 not partition_dir.is_dir()
@@ -137,36 +146,35 @@ class Access:
                 or not (partition_dir / "meta.json").is_file()
             ):
                 continue
-            calendar_date = DateTimeUtils.require_system_date(
-                partition_dir.name.removeprefix(partition_prefix),
-                field_name="trade_calendar partition trade_date",
-            )
-            if calendar_date <= validated_end:
-                calendar_dates.append(calendar_date)
+            year_text = partition_dir.name.removeprefix(partition_prefix)
+            if len(year_text) == 4 and year_text.isdigit():
+                calendar_year = int(year_text)
+                if calendar_year <= int(validated_end[:4]):
+                    calendar_years.append(calendar_year)
 
-        if not calendar_dates or validated_end not in calendar_dates:
+        end_year = int(validated_end[:4])
+        if end_year not in calendar_years:
             raise FileNotFoundError(
                 f"formal trade calendar is unavailable: trade_date={validated_end}"
             )
-        if not self._calendar_is_open(validated_end):
-            raise ValueError(
-                f"end_date is not a formal trade date: end_date={validated_end}"
+
+        selected: list[str] = []
+        for calendar_year in range(end_year, min(calendar_years) - 1, -1):
+            calendar = self._read_calendar_year(calendar_year)
+            if calendar_year == end_year:
+                calendar = calendar.loc[calendar["trade_date"] <= validated_end]
+            open_dates = sorted(
+                calendar.loc[calendar["is_open"], "trade_date"].tolist()
             )
+            if calendar_year == end_year and validated_end not in open_dates:
+                raise ValueError(
+                    f"end_date is not a formal trade date: end_date={validated_end}"
+                )
 
-        earliest_date = min(calendar_dates)
-        selected = [validated_end]
-        if sessions == 1:
-            return selected
-
-        current_date = DateTimeUtils.days_before(validated_end, 1)
-        while current_date >= earliest_date:
-            if self._calendar_is_open(current_date):
-                selected.append(current_date)
-                if len(selected) == sessions:
-                    return list(reversed(selected))
-            if current_date == earliest_date:
-                break
-            current_date = DateTimeUtils.days_before(current_date, 1)
+            missing_sessions = sessions - len(selected)
+            selected = open_dates[-missing_sessions:] + selected
+            if len(selected) == sessions:
+                return selected
 
         raise RuntimeError(
             f"insufficient trade-calendar history: "
@@ -401,40 +409,25 @@ class Access:
             )
             table_ops.require_columns(
                 stock_basic,
-                ("list_date",),
+                ("symbol", "list_date"),
                 who="stock_basic",
-            )
-            stock_basic_symbols = _unique_data_symbols(
-                stock_basic,
-                dataset_name="stock_basic",
-            )
-            missing_symbols = set(selected_symbols) - set(stock_basic_symbols)
-            if missing_symbols:
-                raise KeyError(
-                    "universe symbols not found in stock_basic: "
-                    f"{sorted(missing_symbols)}"
-                )
-
-            list_date_by_symbol = dict(
-                zip(
-                    stock_basic_symbols,
-                    stock_basic["list_date"].tolist(),
-                    strict=True,
-                )
             )
             minimum_list_date = DateTimeUtils.days_before(
                 trade_date,
                 min_listing_calendar_days,
                 field_name="trade_date",
             )
+            list_dates = stock_basic["list_date"]
+            listing_eligible_symbols = set(
+                stock_basic.loc[
+                    list_dates.notna() & list_dates.le(minimum_list_date),
+                    "symbol",
+                ].tolist()
+            )
             selected_symbols = [
                 symbol
                 for symbol in selected_symbols
-                if DateTimeUtils.require_system_date(
-                    list_date_by_symbol[symbol],
-                    field_name=f"stock_basic.list_date[{symbol}]",
-                )
-                <= minimum_list_date
+                if symbol in listing_eligible_symbols
             ]
 
         stock_st = self._read_processed_frame(
@@ -477,40 +470,23 @@ class Access:
         )
         return pq.ParquetFile(loaded.payload_path).read().to_pandas()
 
-    def _calendar_is_open(self, trade_date: str) -> bool:
-        loaded = self._load_processed_meta(
-            trade_date=trade_date,
+    def _read_calendar_year(self, calendar_year: int) -> pd.DataFrame:
+        meta_path = self._pm.processed_year_meta(
             dataset_name="trade_calendar",
+            version=self._processed_version,
+            calendar_year=calendar_year,
         )
-        table = pq.ParquetFile(loaded.payload_path).read()
-        if table.column_names != ["trade_date", "is_open"]:
-            raise ValueError(
-                "trade_calendar columns must be ['trade_date', 'is_open']: "
-                f"trade_date={trade_date}, columns={table.column_names}"
-            )
-        if table.num_rows != 1:
-            raise ValueError(
-                "trade_calendar must contain exactly one row: "
-                f"trade_date={trade_date}, rows={table.num_rows}"
-            )
-
-        stored_date = table.column("trade_date")[0].as_py()
-        if type(stored_date) is not str:
-            raise TypeError(
-                f"trade_calendar trade_date must be a string: trade_date={trade_date}"
-            )
-        if stored_date != trade_date:
-            raise ValueError(
-                "trade_calendar date does not match partition: "
-                f"expected={trade_date}, actual={stored_date}"
-            )
-
-        is_open = table.column("is_open")[0].as_py()
-        if type(is_open) is not bool:
-            raise TypeError(
-                f"trade_calendar is_open must be bool: trade_date={trade_date}"
-            )
-        return is_open
+        output_path = self._pm.processed_year_data(
+            dataset_name="trade_calendar",
+            version=self._processed_version,
+            calendar_year=calendar_year,
+        )
+        loaded = meta.require(
+            pm=self._pm,
+            meta_path=meta_path,
+            expected_payload_path=output_path,
+        )
+        return pq.ParquetFile(loaded.payload_path).read().to_pandas()
 
     def _load_processed_meta(
         self,

@@ -57,7 +57,6 @@ def test_data_workflow_supplies_one_linear_domain_step_sequence(
     pipeline.run.side_effect = lambda context: context
     pipeline_factory = Mock(return_value=pipeline)
     monkeypatch.setattr(workflow_module, "DataPipeline", pipeline_factory)
-    monkeypatch.setattr(workflow_module, "SourceMaterializer", Mock())
     path_manager = cast("PathManager", object())
     submission = DataSubmission(
         kind=cast("DataJobKind", kind),
@@ -90,9 +89,13 @@ def test_standard_sources_come_only_from_the_tushare_active_manifest(
 ) -> None:
     pipeline = Mock(spec=DataPipeline)
     pipeline.run.side_effect = lambda context: context
-    materializer_factory = Mock()
+    fact_step_factory = Mock()
     monkeypatch.setattr(workflow_module, "DataPipeline", Mock(return_value=pipeline))
-    monkeypatch.setattr(workflow_module, "SourceMaterializer", materializer_factory)
+    monkeypatch.setattr(
+        workflow_module,
+        "FactMaterializeStep",
+        fact_step_factory,
+    )
     monkeypatch.setattr(
         workflow_module.TushareBroker,
         "active_source_names",
@@ -109,9 +112,7 @@ def test_standard_sources_come_only_from_the_tushare_active_manifest(
         ),
     )
 
-    calendar_sources = materializer_factory.call_args_list[0].kwargs["sources"]
-    fact_sources = materializer_factory.call_args_list[1].kwargs["sources"]
-    assert list(calendar_sources) == ["trade_calendar"]
+    fact_sources = fact_step_factory.call_args.kwargs["sources"]
     assert list(fact_sources) == ["daily_bar", "daily_basic"]
     assert all(source.broker == "tushare" for source in fact_sources.values())
     assert all(
@@ -133,9 +134,13 @@ def test_level2_sources_come_only_from_enabled_file_config(
     )
     pipeline = Mock(spec=DataPipeline)
     pipeline.run.side_effect = lambda context: context
-    materializer_factory = Mock()
+    fact_step_factory = Mock()
     monkeypatch.setattr(workflow_module, "DataPipeline", Mock(return_value=pipeline))
-    monkeypatch.setattr(workflow_module, "SourceMaterializer", materializer_factory)
+    monkeypatch.setattr(
+        workflow_module,
+        "FactMaterializeStep",
+        fact_step_factory,
+    )
 
     run_offline_data(
         app_config=config,
@@ -147,7 +152,7 @@ def test_level2_sources_come_only_from_enabled_file_config(
         ),
     )
 
-    fact_sources = materializer_factory.call_args_list[1].kwargs["sources"]
+    fact_sources = fact_step_factory.call_args.kwargs["sources"]
     assert list(fact_sources) == ["sh_trade"]
 
 
@@ -166,7 +171,6 @@ def test_level2_uses_empty_feature_and_label_operations(
     pipeline = Mock(spec=DataPipeline)
     pipeline.run.side_effect = lambda context: context
     monkeypatch.setattr(workflow_module, "DataPipeline", Mock(return_value=pipeline))
-    monkeypatch.setattr(workflow_module, "SourceMaterializer", Mock())
 
     run_offline_data(
         app_config=config,
@@ -193,9 +197,6 @@ def test_standard_resolves_enabled_feature_and_label_operations_before_io(
         enabled=True,
         version="v1",
     )
-    materializer = Mock()
-    monkeypatch.setattr(workflow_module, "SourceMaterializer", materializer)
-
     with pytest.raises(ValueError, match="unknown feature builder"):
         run_offline_data(
             app_config=config,
@@ -207,14 +208,12 @@ def test_standard_resolves_enabled_feature_and_label_operations_before_io(
             ),
         )
 
-    materializer.return_value.materialize.assert_not_called()
-
 
 def test_data_workflow_rejects_an_invalid_kind_before_preparation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    materializer = Mock()
-    monkeypatch.setattr(workflow_module, "SourceMaterializer", materializer)
+    pipeline_factory = Mock()
+    monkeypatch.setattr(workflow_module, "DataPipeline", pipeline_factory)
 
     with pytest.raises(ValueError, match="data-standard.*data-level2"):
         run_offline_data(
@@ -227,4 +226,4 @@ def test_data_workflow_rejects_an_invalid_kind_before_preparation(
             ),
         )
 
-    materializer.assert_not_called()
+    pipeline_factory.assert_not_called()

@@ -118,7 +118,7 @@ def generate_training_report(
     )
     FileSystem.write_bytes_atomic(report_path, html.encode("utf-8"))
     logs.info(
-        f"[ReportStep] saved path={report_path}\n"
+        f"saved path={report_path}\n"
         f"{format_log_json('rank_ic_summary', summary)}"
     )
 

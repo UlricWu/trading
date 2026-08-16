@@ -50,7 +50,7 @@ def test_download_progress_update_reports_percent_speed_and_eta() -> None:
     progress.update(50)
 
     assert logger.messages == [
-        "[DownloadProgress] progress filename=payload.csv.7z "
+        "progress filename=payload.csv.7z "
         "status=percent=50.00% speed=33.33 B/s eta=00:01"
     ]
 
@@ -70,7 +70,7 @@ def test_download_progress_finish_reports_unknown_total() -> None:
     progress.finish()
 
     assert logger.messages == [
-        "[DownloadProgress] complete filename=payload.csv.7z "
+        "complete filename=payload.csv.7z "
         "status=downloaded=2.00 KiB speed=1.00 KiB/s eta=unknown"
     ]
 
@@ -88,7 +88,7 @@ def test_download_progress_zero_total_is_a_known_empty_download() -> None:
     progress.finish()
 
     assert logger.messages == [
-        "[DownloadProgress] complete filename=empty.csv "
+        "complete filename=empty.csv "
         "status=percent=100.00% speed=0.00 B/s eta=00:00"
     ]
 

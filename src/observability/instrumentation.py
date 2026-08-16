@@ -51,18 +51,18 @@ class Instrumentation:
             with Instrumentation("2026-07-20"):
                 pass
         """
-        logs.info(f"[Timeline] ===== Pipeline timeline for {self._scope_name} =====")
+        logs.info(f"===== Pipeline timeline for {self._scope_name} =====")
         total_seconds = 0.0
         for name, elapsed_seconds in self._total_seconds_by_step.items():
             runs = self._runs_by_step[name]
             average_seconds = elapsed_seconds / runs
             logs.info(
-                f"[Timeline] {name:<35} {elapsed_seconds:>8.3f}s "
+                f"{name:<35} {elapsed_seconds:>8.3f}s "
                 f"avg={average_seconds:.3f}s runs={runs}"
             )
             total_seconds += elapsed_seconds
-        logs.info(f"[Timeline] {'Total':<35} {total_seconds:>8.3f}s")
-        logs.info(f"[Timeline] {'=' * 43}")
+        logs.info(f"{'Total':<35} {total_seconds:>8.3f}s")
+        logs.info(f"{'=' * 43}")
         return False
 
     def measure(

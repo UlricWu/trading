@@ -71,7 +71,7 @@ def persist_backtest_metrics(
         ).encode("utf-8"),
     )
     logs.info(
-        f"[MetricsPersistStep] saved metrics={metrics_path} "
+        f"saved metrics={metrics_path} "
         f"dates={len(state.trade_dates)} bars={state.bar_count} "
         f"signals={state.signal_count}"
     )

@@ -86,7 +86,7 @@ class DatasetBuildStep:
             train_y = pd.Series(dtype=float)
         eval_X, eval_y = self._load_one_day(eval_date)
         logs.info(
-            f"[DatasetBuild] train_start_date={train_dates[0]} "
+            f"train_start_date={train_dates[0]} "
             f"train_end_date={train_dates[-1]} train_shape={train_X.shape} "
             f"eval_date={eval_date} eval_shape={eval_X.shape}"
         )
