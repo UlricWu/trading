@@ -1,6 +1,7 @@
 # filepath: tests/utils/test_price_utils.py
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -69,6 +70,66 @@ def test_apply_asof_price_adjustment_invalid_factor_outputs_null() -> None:
 
     assert pd.isna(out["qfq_close"].iloc[0])
     assert out["qfq_close"].iloc[1] == pytest.approx(10.0)
+
+
+def test_apply_asof_price_adjustment_hfq_outputs_only_positive_finite_prices() -> None:
+    frame = pd.DataFrame(
+        {
+            "close": [np.inf, 10.0, 1e308, 1e-308, 10.0],
+            "adj_factor": [1.0, np.inf, 1e308, 1e-308, 2.0],
+        }
+    )
+
+    adjusted = apply_asof_price_adjustment(
+        frame,
+        adjustment="hfq",
+        asof_date="2026-01-02",
+        price_columns=("close",),
+    )
+
+    assert adjusted["close"].isna().tolist() == [True, True, True, True, False]
+    assert adjusted["close"].iloc[-1] == pytest.approx(20.0)
+
+
+def test_apply_asof_price_adjustment_qfq_nulls_nonfinite_scale() -> None:
+    frame = pd.DataFrame(
+        {
+            "symbol": ["000001", "000001"],
+            "trade_date": ["2026-01-01", "2026-01-02"],
+            "close": [10.0, 10.0],
+            "adj_factor": [np.inf, 1.0],
+        }
+    )
+
+    adjusted = apply_asof_price_adjustment(
+        frame,
+        adjustment="qfq",
+        asof_date="2026-01-02",
+        price_columns=("close",),
+    )
+
+    assert pd.isna(adjusted["close"].iloc[0])
+    assert adjusted["close"].iloc[1] == pytest.approx(10.0)
+
+
+def test_apply_asof_price_adjustment_qfq_rejects_negative_factor_ratio() -> None:
+    frame = pd.DataFrame(
+        {
+            "symbol": ["000001", "000001"],
+            "trade_date": ["2026-01-01", "2026-01-02"],
+            "close": [10.0, 10.0],
+            "adj_factor": [-1.0, -2.0],
+        }
+    )
+
+    adjusted = apply_asof_price_adjustment(
+        frame,
+        adjustment="qfq",
+        asof_date="2026-01-02",
+        price_columns=("close",),
+    )
+
+    assert adjusted["close"].isna().all()
 
 
 def test_apply_asof_price_adjustment_requires_requested_price_columns() -> None:

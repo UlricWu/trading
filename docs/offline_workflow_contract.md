@@ -35,13 +35,16 @@ step 类型；它必须严格按传入顺序把同一个 Context 交给每个 st
 所有 Pipeline 都不得创建、发现、排序或按类型重排 step。
 
 公共编排抽象只允许结构化 `PipelineStep[ContextT]` 协议和 `run_steps(...)` 保序执行器。
-`run_steps(...)` 自动以具体 step 类名调用 `Instrumentation.measure(...)`；每个 step 必须
-返回同一领域的 Context，业务终止以异常表达。不得建立通用 Pipeline/Workflow 基类、
-DAG、step registry、依赖声明、priority 或 before/after 规则。
+`run_steps(...)` 自动以具体 step 类名调用 `Instrumentation.measure(...)`；该公共调用形式
+由 [`docs/engineering/technology_stack_decisions.md`](engineering/technology_stack_decisions.md#instrumentation-公共调用形式)
+拥有。每个 step 必须返回同一领域的 Context，业务终止以异常表达。不得建立通用
+Pipeline/Workflow 基类、DAG、step registry、依赖声明、priority 或 before/after 规则。
 
-`src/data_system/steps` 是 offline data 业务行为的唯一实现目录；日期循环、Meta reuse、
-缺失与部分可用语义、payload 发布顺序和 lineage 提交都由具体 Step 直接拥有。Broker、
-builder 与 normalize 分别保留在 `src/data_system/brokers`、`builders` 与 `normalize`，这些
+`src/data_system/steps` 是 offline data 业务行为的唯一实现目录；日期循环和 operation
+调度由具体 Step 拥有。Feature 与 label Step 共用一个 private derived-partition 发布函数，
+该函数唯一拥有 Meta reuse、非空检查、payload 先于 Meta 的发布顺序；它不拥有日期、
+dataset identity、日志或计算。Broker、builder 与 normalize 分别保留在
+`src/data_system/brokers`、`builders` 与 `normalize`，这些
 目录本身就是 Step 调用的具体执行能力，不再外包一层通用 `engines` 目录。跨多个
 normalize 模块复用的 Arrow 原语只允许作为 `normalize` 的 private module；不得建立公共
 Arrow engine。无状态 normalize 计算直接使用领域具名函数，不建立只提供 `execute()` 或
@@ -131,8 +134,8 @@ Instrumentation 和 I/O 前失败。完整闭区间是一个 workflow 执行单�
 4. 绑定固定的 Tushare calendar broker/normalize，并解析所有 fact source 的 broker class
    和固定 broker normalize callable；
 5. 选择当前 kind 的 feature 与 label operation；
-6. 解析全部被选择的 `(feature_set, version)` 与 `(label_set, version)` builder，并计算每个
-   label builder 全部 output column 的最大 lookahead。
+6. 解析全部被选择的 `(feature_set, version)` 与 `(label_set, version)` builder；每个 label
+   builder 直接提供该 set 唯一的 `lookahead` 和 `label_column`。
 
 Feature 与 label 的支持集只由各自不可变 builder mapping 表达；workflow 不维护第二份
 identity allowlist。Standard 当前选择所有 enabled feature 与 label 配置；任一 identity 无法
@@ -172,9 +175,15 @@ Calendar 的年度 ingest、raw Meta、normalize 和 lineage 由
 
 所有 fact 日期完成后，一个 `FeatureBuildStep` 才在自己的一次 `run` 中按到达日升序生成
 全部 selected feature operation；一个 `LabelBuildStep` 再按相同日期顺序生成全部 selected
-label operation。通用 label 规则为：某 label builder 的最大 lookahead 是 `L` 时，Access
+label operation。每个 label set 只有一个 maturity：builder 的 `lookahead=L` 时，Access
 返回截至到达日的最近 `L + 1` 个正式交易日；完整 tuple 交给 builder，首日是 label
-partition identity。空 operation 集自然不产生数据；Pipeline 不隐式扩大请求范围。
+partition identity，末日是 maturity。多个 label set（包括不同 lookahead）在同一个
+`LabelBuildStep` 中各自解析窗口、复用 Meta 和发布分区，互不改变对方的 maturity。空
+operation 集自然不产生数据；Pipeline 不隐式扩大请求范围。
+
+Feature/label builder 和 Access 不记录运行日志。Private 发布函数也不记录日志；具体 Step
+在每个 operation 完成后只记录该分区是 `reused` 还是 `published`，label 日志同时携带
+partition date 与 maturity date。调度、计算或发布错误原样传播，不追加重复错误日志。
 
 两个 kind 使用同一套 workflow 语义，显式 step 顺序都固定为 calendar materialize → fact
 materialize → feature build → label build。差异只存在于 workflow 准备阶段选择的 source、
@@ -195,13 +204,13 @@ Access 与 Instrumentation 之前抛 `ValueError`。配置必须显式选择非�
 
 Feature producer 及其 feature set/version 拥有价格口径。Training、evaluation、artifact
 loader 与 backtest 都只消费同一 feature set/version，不读取复权因子，也不再做 raw/qfq/hfq
-转换。当前 `tushare_daily_basic/v1` producer 以输出日作为 qfq as-of；其他价格口径必须用
-不同的 feature set/version 表达，不能成为模型运行时开关。该 producer 从固定 processed
-`adj_factor/v1` 读取因子；对象或必需列缺失时由 Meta/table 边界直接失败，symbol 缺少唯一
-as-of 行时由 qfq 边界以 `ValueError` 失败。非数值或非正因子按价格复权 owner 产生 NaN
-feature，再由所选 fitted preprocessing 处理，不在模型层补因子或回退日期。
+转换。当前 feature/label 的精确 schema、复权口径、观测时间与 maturity 由
+[`docs/data/daily_feature_label_contract.md`](data/daily_feature_label_contract.md) 所有。
+Producer 只通过 workflow 绑定的同一个 Access 读取具名正式对象，不接收 `PathManager` 或
+processed version，也不直接解析 processed 路径或 Meta。
 
-Label builder 的 `target_lookahead(label_column)` 是 `eval_offset` 的唯一来源。Workflow
+所选 label builder 的 set-level `lookahead` 是 `eval_offset` 的唯一来源；配置的
+`label_column` 必须精确等于该 builder 唯一的 `label_column`，否则在日历读取前失败。Workflow
 通过 Access 读取请求闭区间正式交易日，然后由纯 schedule resolver 产生：
 
 ```python
@@ -216,7 +225,8 @@ TrainingWindow(train_dates: tuple[str, ...], eval_date: str)
 
 Schedule 不保存可从 `train_dates` 派生的 start/end/asof，也不重复查询或重新验证 Access
 提供的日期。Dataset loader 直接消费完整 `train_dates` 和 `eval_date`，读取所选 feature 与
-label，要求两者索引一致，只删除 label 为 NaN 的行，并保留 feature NaN 交给预处理。Missing
+label，要求两者 `(symbol, trade_date)` key 的值和顺序精确一致，不执行 join；只删除 label
+为 NaN 的行，并保留 feature NaN 交给预处理。Missing
 只表示 NaN；正负无穷是无效输入，必须在 dataset 或 preprocessing 边界以 `ValueError`
 失败，不得转换成 NaN、填充值或零。
 

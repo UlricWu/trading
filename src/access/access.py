@@ -284,30 +284,72 @@ class Access:
         if symbols is not None:
             requested_symbols = _validated_symbols(symbols)
 
-        frame = self._read_processed_frame(
+        return self._read_daily_object(
             trade_date=validated_date,
             dataset_name="daily_bar",
+            required_columns=("symbol", "trade_date"),
+            symbols=requested_symbols,
         )
-        if requested_symbols is None:
-            return frame
 
-        available_symbols = _unique_data_symbols(
-            frame,
-            dataset_name="daily_bar",
-        )
-        missing_symbols = set(requested_symbols) - set(available_symbols)
-        if missing_symbols:
-            raise KeyError(
-                f"symbols not found in daily bars: {sorted(missing_symbols)}"
+    def adjustment_factors(
+        self,
+        *,
+        trade_date: str,
+        symbols: Sequence[str] | None = None,
+    ) -> pd.DataFrame:
+        """Return formal daily adjustment factors in requested symbol order.
+
+        Example:
+            factors = access.adjustment_factors(
+                trade_date="2026-05-06",
+                symbols=("000001", "600000"),
             )
-        if not requested_symbols:
-            return frame.iloc[0:0].copy()
-
-        return (
-            frame.set_index("symbol", drop=False)
-            .loc[requested_symbols]
-            .reset_index(drop=True)
+        """
+        validated_date = DateTimeUtils.require_system_date(
+            trade_date,
+            field_name="trade_date",
         )
+        requested_symbols = None
+        if symbols is not None:
+            requested_symbols = _validated_symbols(symbols)
+        columns = ("symbol", "trade_date", "adj_factor")
+        frame = self._read_daily_object(
+            trade_date=validated_date,
+            dataset_name="adj_factor",
+            required_columns=columns,
+            symbols=requested_symbols,
+        )
+        return frame.loc[:, list(columns)].copy()
+
+    def turnover_rates(
+        self,
+        *,
+        trade_date: str,
+        symbols: Sequence[str] | None = None,
+    ) -> pd.DataFrame:
+        """Return formal daily turnover rates in requested symbol order.
+
+        Example:
+            turnover = access.turnover_rates(
+                trade_date="2026-05-06",
+                symbols=("000001", "600000"),
+            )
+        """
+        validated_date = DateTimeUtils.require_system_date(
+            trade_date,
+            field_name="trade_date",
+        )
+        requested_symbols = None
+        if symbols is not None:
+            requested_symbols = _validated_symbols(symbols)
+        columns = ("symbol", "trade_date", "turnover_rate")
+        frame = self._read_daily_object(
+            trade_date=validated_date,
+            dataset_name="daily_basic",
+            required_columns=columns,
+            symbols=requested_symbols,
+        )
+        return frame.loc[:, list(columns)].copy()
 
     def trades(
         self,
@@ -469,6 +511,49 @@ class Access:
             dataset_name=dataset_name,
         )
         return pq.ParquetFile(loaded.payload_path).read().to_pandas()
+
+    def _read_daily_object(
+        self,
+        *,
+        trade_date: str,
+        dataset_name: str,
+        required_columns: Sequence[str],
+        symbols: Sequence[str] | None,
+    ) -> pd.DataFrame:
+        frame = self._read_processed_frame(
+            trade_date=trade_date,
+            dataset_name=dataset_name,
+        )
+        table_ops.require_columns(frame, required_columns, who=dataset_name)
+        available_symbols = _unique_data_symbols(
+            frame,
+            dataset_name=dataset_name,
+        )
+        table_ops.require_nonempty_strings(
+            frame,
+            ("trade_date",),
+            who=dataset_name,
+        )
+        if not frame["trade_date"].eq(trade_date).all():
+            raise ValueError(
+                f"{dataset_name}.trade_date must equal requested date: "
+                f"trade_date={trade_date}"
+            )
+        if symbols is None:
+            return frame
+
+        missing_symbols = set(symbols) - set(available_symbols)
+        if missing_symbols:
+            raise KeyError(
+                f"symbols not found in {dataset_name}: {sorted(missing_symbols)}"
+            )
+        if not symbols:
+            return frame.iloc[0:0].copy()
+        return (
+            frame.set_index("symbol", drop=False)
+            .loc[list(symbols)]
+            .reset_index(drop=True)
+        )
 
     def _read_calendar_year(self, calendar_year: int) -> pd.DataFrame:
         meta_path = self._pm.processed_year_meta(

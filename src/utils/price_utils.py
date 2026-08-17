@@ -4,6 +4,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Literal
 
+import numpy as np
 import pandas as pd
 
 from src.utils import table_ops
@@ -90,11 +91,16 @@ def _calculate_qfq_price_scale(
         )
 
     asof_factor_by_symbol = asof_factors.set_index("symbol")["adj_factor"]
-    row_asof_factor = owned_frame["symbol"].map(asof_factor_by_symbol)
-    return adjustment_factor / pd.to_numeric(
-        row_asof_factor,
+    asof_factor = pd.to_numeric(
+        owned_frame["symbol"].map(asof_factor_by_symbol),
         errors="coerce",
     )
+    valid_adjustment_factor = np.isfinite(adjustment_factor) & adjustment_factor.gt(0)
+    valid_asof_factor = np.isfinite(asof_factor) & asof_factor.gt(0)
+    with np.errstate(divide="ignore", invalid="ignore", over="ignore", under="ignore"):
+        return adjustment_factor.where(valid_adjustment_factor) / asof_factor.where(
+            valid_asof_factor
+        )
 
 
 def apply_asof_price_adjustment(
@@ -109,9 +115,9 @@ def apply_asof_price_adjustment(
 
     ``raw`` copies prices unchanged, ``hfq`` multiplies each price by its row
     factor, and ``qfq`` divides that value by the same symbol's unique factor
-    on ``asof_date``. Non-positive or non-numeric prices and factors produce
-    null adjusted values. The input frame is never mutated. The full field and
-    ownership contract is in ``docs/data/price_adjustment_contract.md``.
+    on ``asof_date``. Adjusted outputs are positive finite numbers or null. The
+    input frame is never mutated. The full field and ownership contract is in
+    ``docs/data/price_adjustment_contract.md``.
 
     Example:
         adjusted = apply_asof_price_adjustment(
@@ -159,12 +165,16 @@ def apply_asof_price_adjustment(
             validated_asof_date=validated_asof_date,
         )
 
-    valid_scale = pd.to_numeric(price_scale, errors="coerce").gt(0)
+    valid_scale = np.isfinite(price_scale) & price_scale.gt(0)
     for column in owned_price_columns:
         target_column = f"{output_prefix}{column}" if output_prefix else column
         numeric_price = pd.to_numeric(owned_frame[column], errors="coerce")
-        owned_frame.loc[:, target_column] = (numeric_price * price_scale).where(
-            numeric_price.gt(0) & valid_scale
+        valid_price = np.isfinite(numeric_price) & numeric_price.gt(0)
+        with np.errstate(invalid="ignore", over="ignore", under="ignore"):
+            adjusted_price = numeric_price * price_scale
+        valid_adjusted_price = np.isfinite(adjusted_price) & adjusted_price.gt(0)
+        owned_frame.loc[:, target_column] = adjusted_price.where(
+            valid_price & valid_scale & valid_adjusted_price
         )
 
     return owned_frame

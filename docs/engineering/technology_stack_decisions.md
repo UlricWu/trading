@@ -1,8 +1,8 @@
 # 技术栈决策
 
 - **状态**：强制执行
-- **适用范围**：项目日志实现、单文件 Parquet 物理写入，以及 Level-2 source-native
-  `.csv.7z` raw payload 的 ingest、读取、归一化和转换流程。
+- **适用范围**：项目日志实现、Instrumentation 公共调用形式、单文件 Parquet 物理写入，
+  以及 Level-2 source-native `.csv.7z` raw payload 的 ingest、读取、归一化和转换流程。
 - **用途**：记录已经明确选定的技术栈、生产约束及其决策依据。改变本文中的技术
   选型或约束前，必须先更新本文并补充新的验证依据。
 - **规范词**：本文中的“必须”“不得”“仅”均为硬约束，不表示建议。
@@ -36,6 +36,38 @@ Loguru stderr 输出，由 `JobRuntime` 捕获到 job 文件；不得再让 LOG 
 CLI 不拥有 start/done 日志；offline workflow 拥有业务运行日志。API 不提供
 job log endpoint，不得扫描日志目录，也不得把内部文件路径、异常 repr 或 traceback
 写入 Job JSON。
+
+## Instrumentation 公共调用形式
+
+### Owner 边界
+
+本节只拥有 `Instrumentation` 将单次计时表达为具名 `measure(...)` 方法、而不是
+`__call__` 的公共接口决策。测量时机、step label、累计规则、异常传播和 timeline 输出
+继续由 [`docs/offline_workflow_contract.md`](../offline_workflow_contract.md) 拥有。
+
+### 接口决策
+
+单次计时必须显式调用：
+
+```python
+result = instrumentation.measure(
+    operation_name,
+    operation,
+    *args,
+    **kwargs,
+)
+```
+
+`Instrumentation` 不得实现 `__call__` 作为该方法的替代入口或别名。该对象拥有一个
+workflow 作用域内的累计状态和 context-manager 生命周期，并不表示一个已经绑定的单一
+operation；因此把实例本身设计为 callable 会错误表达其对象语义。`measure` 在调用处
+直接说明“调用并计时、累计”的可观察副作用，同时保持 operation label、被调用 callable
+及其参数彼此显式。若写成 `instrumentation(...)`，调用语法本身无法区分测量、执行、
+记录或装饰等可能含义。
+
+`__call__` 只适合实例本身语义上就是一个 callable 的类型。为同一计时行为同时提供
+`measure(...)` 和 `__call__(...)` 不增加能力，却会产生两个等价公共入口及相应的文档、
+类型、测试和兼容责任，因此不保留别名。
 
 ## 单文件 Parquet 物理写入
 
@@ -257,6 +289,65 @@ nan
 除上述精确 token 外，不得在该低层 reader 中自行 trim、大小写折叠、数值转换或新增
 其他 null 别名。业务字段类型、范围和跨字段约束必须由下游 source adapter 的正式
 schema owner 校验；低层 reader 不得根据样本内容推断业务类型。
+
+### `MainSeq`、`SubSeq` 排序决策的 raw 证据
+
+本节只记录技术选型依据。`MainSeq`、`SubSeq` 的正式 processed 字段和排序语义由
+[`docs/data/level2_normalization.md`](../data/level2_normalization.md) 拥有；以下观察不得
+被解释为日级完整性契约、发布门槛或 Access 校验责任。
+
+2026-08-18 对本机 `/Users/ulric/data/raw/level2_ftp` 下现存 9 个 source-native archive
+做了逐行全量扫描，不是抽样。扫描对象是三个交易日各自的
+`SH_Stock_OrderTrade.csv.7z`、`SZ_Order.csv.7z`、`SZ_Trade.csv.7z`，精确输入路径为：
+
+```text
+SH_Stock_OrderTrade/trade_date={2026-05-06,2026-07-14,2026-07-15}/SH_Stock_OrderTrade.csv.7z
+SZ_Order/trade_date={2026-05-06,2026-07-14,2026-07-15}/SZ_Order.csv.7z
+SZ_Trade/trade_date={2026-05-06,2026-07-14,2026-07-15}/SZ_Trade.csv.7z
+```
+
+扫描直接流式读取 archive 的精确 CSV member；对每个 `(raw object, MainSeq)` 统计 raw
+行序转移，对同日对象联合统计 `(MainSeq, SubSeq)` 交集、计数、观测最小值、观测最大值
+和位图覆盖。输入行数如下：
+
+| trade date | `SH_Stock_OrderTrade` | `SZ_Order` | `SZ_Trade` | 合计 |
+|---|---:|---:|---:|---:|
+| `2026-05-06` | 228,065,634 | 177,926,057 | 161,787,963 | 567,779,654 |
+| `2026-07-14` | 253,001,384 | 179,134,131 | 163,172,942 | 595,308,457 |
+| `2026-07-15` | 222,489,909 | 173,204,909 | 157,367,952 | 553,062,770 |
+| 合计 | 703,556,927 | 530,265,097 | 482,328,857 | 1,716,150,881 |
+
+三个交易日的观察结果一致：
+
+- 9 个 archive 中 `MainSeq`、`SubSeq` 的 null、零值和负值均为 0；每个 raw object 内
+  `(MainSeq, SubSeq)` 重复数均为 0，同一 `MainSeq` 按 raw 行序出现的 `SubSeq` 相等或
+  下降次数均为 0。
+- SH 每日观测到的 `MainSeq` 都是 `{1,2,3,4,5,6,20}`；SZ 每日观测到的 `MainSeq`
+  都是 `{2011..2015,2021..2025,2031..2035}`。三个样本日内 SH 与 SZ 的 MainSeq 集合
+  不相交。
+- 66 个已观测 `(trade date, MainSeq)` 都以 `SubSeq=1` 开始。SH 每个 MainSeq 在单一
+  `SH_Stock_OrderTrade` 文件中覆盖观测区间 `1..N`；SZ 单个 Order 或 Trade 文件各自
+  有空洞，但同日 `SZ_Order ∪ SZ_Trade` 覆盖观测区间 `1..N`，两个文件的 key 交集为 0。
+- 各日观测到的终止序号范围为：SH `2026-05-06` 的 `N=57,273..42,488,250`、
+  `2026-07-14` 的 `N=31,406..46,199,246`、`2026-07-15` 的
+  `N=36,579..41,803,175`；SZ 对应为 `N=2,478,277..60,164,539`、
+  `N=1,927,339..57,474,245`、`N=1,964,925..55,317,513`。这里的 `N` 只是文件内
+  观测最大值，不是 broker 声明的应有末尾。
+- SZ Order/Trade 跨文件相邻序号共 484,325,559 次，证明两个对象在同一 MainSeq 中
+  交错；SH 不同 `TickType` 间的相邻序号共 319,192,590 次，证明 S/A/D/T 使用同一
+  通道序列。三个交易日所有 MainSeq 在午间前后都继续递增，没有观察到重置。
+- 每个交易日同一 `SecurityID` 跨多个 `MainSeq` 的观测数为 0；这只是当前输入事实，
+  不提升为证券到通道的长期映射契约。
+- SH 按 `SubSeq` 接收顺序观察到 `TickTime` 回退 19,334 次。例如
+  `MainSeq=1, SubSeq=933, TickTime=9250004` 后出现
+  `SubSeq=934, TickTime=9150220`。因此事件时间与 broker 通道接收顺序是两个不同维度，
+  不能互相替代。
+
+这些结果支持把 `MainSeq`、`SubSeq` 保留为 processed 的通道排序字段，并用它们替代
+无法表达 broker 语义的 raw 文件行位置。它们不能证明文件末尾之后没有事件，也不能发现
+整个未出现的 MainSeq；broker 提供的是最终版本文件，没有可请求的更准确 raw 版本。
+因此生产链路不得根据起始值、连续性或三个对象的联合覆盖拒绝发布 processed，也不得为此
+额外扫描 raw-only 的 `SZ_Order`。
 
 ## 选择 `7zz` 作为主链路 CLI 的依据
 

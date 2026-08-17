@@ -25,8 +25,9 @@ Tushare 结构化 source 与 Level-2 文件 source 使用不同的选择权威�
 source 集。所有能够通过校验的 `data.sources` 都属于 Level-2，不存在被 workflow 静默忽略
 的其他 group 或 broker 条目。
 
-Feature 与 label 配置不使用 source group，其固定身份与执行归
-[`docs/offline_workflow_contract.md`](../offline_workflow_contract.md) 所有。
+Feature 与 label 配置不使用 source group；其固定身份与字段语义由
+[`docs/data/daily_feature_label_contract.md`](daily_feature_label_contract.md) 所有，执行编排
+由 [`docs/offline_workflow_contract.md`](../offline_workflow_contract.md) 所有。
 
 Broker implementation 使用不可变的 `broker name -> broker implementation class`
 mapping。该 mapping 只解析执行实现，不选择 source。运行时不得建立可变 register/freeze

@@ -2,7 +2,8 @@
 
 - **状态**：正式 owner
 - **适用范围**：`src/access/access.py::Access` 的正式 processed 市场数据读取、
-  可用交易日、日频 universe、Level-2 universe 和 Level-2 symbol 读取。
+  可用交易日、日频行情/复权因子/换手率、日频 universe、Level-2 universe 和 Level-2
+  symbol 读取。
 
 ## 身份与职责
 
@@ -62,6 +63,20 @@ class Access:
         symbols: Sequence[str] | None = None,
     ) -> pd.DataFrame: ...
 
+    def adjustment_factors(
+        self,
+        *,
+        trade_date: str,
+        symbols: Sequence[str] | None = None,
+    ) -> pd.DataFrame: ...
+
+    def turnover_rates(
+        self,
+        *,
+        trade_date: str,
+        symbols: Sequence[str] | None = None,
+    ) -> pd.DataFrame: ...
+
     def trades(
         self,
         *,
@@ -72,11 +87,22 @@ class Access:
 
 Access 不提供接收 `dataset_name` 的 public 方法，也不提供任意路径或任意表读取。
 
-## 正式交易日与日线
+## 正式交易日与日频对象
 
 `daily_bars()` 返回正式 `daily_bar`。`symbols=None` 返回当日完整对象；显式 symbol
 序列返回按请求顺序排列的行；空序列返回保留列的空表。请求 symbol 必须是唯一的六位
-数字字符串。
+数字字符串。`adjustment_factors()` 和 `turnover_rates()` 使用相同选择规则，并分别返回
+精确列：
+
+```text
+symbol, trade_date, adj_factor
+symbol, trade_date, turnover_rate
+```
+
+三个方法都要求底层对象包含所需列、`symbol` 是唯一六位数字字符串，并且每行
+`trade_date` 精确等于请求日期。Access 保证对象 identity 与请求选择已经可直接消费，
+不解释价格、因子或换手率数值的 feature/label 有效性。该数值语义由对应 producer owner
+拥有。
 
 正式交易日只由指定 processed version 下按自然年分区的 `trade_calendar` 对象定义；其中
 `is_open=true` 表示正式交易日，`is_open=false` 表示休市。日历对象 schema、Tushare

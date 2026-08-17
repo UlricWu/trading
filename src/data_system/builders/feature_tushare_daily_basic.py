@@ -1,261 +1,255 @@
 # filepath: src/data_system/builders/feature_tushare_daily_basic.py
-"""Tushare daily bar feature builder."""
+"""Post-close daily features built from formal Tushare objects."""
 
 from __future__ import annotations
-
-from types import MappingProxyType
 
 import numpy as np
 import pandas as pd
 import pyarrow as pa
-import pyarrow.parquet as pq
 
-from src.access import Access, meta
+from src.access import Access
 from src.utils import table_ops
-from src.utils.path import PathManager
 from src.utils.price_utils import apply_asof_price_adjustment
 
-_REQUIRED_COLUMNS = (
+_KEY_COLUMNS = ("symbol", "trade_date")
+_DAILY_BAR_COLUMNS = (
     "symbol",
     "trade_date",
     "open",
     "high",
     "low",
     "close",
-    "pre_close",
-    "vol",
-    "amount",
-    "adj_factor",
-    "turnover_rate",
-)
-
-_DAILY_BAR_INPUT_COLUMNS = (
-    "symbol",
-    "trade_date",
-    "open",
-    "high",
-    "low",
-    "close",
-    "pre_close",
     "vol",
     "amount",
 )
-_ADJ_FACTOR_INPUT_COLUMNS = ("symbol", "trade_date", "adj_factor")
-_DAILY_BASIC_INPUT_COLUMNS = ("symbol", "trade_date", "turnover_rate")
-
-_FEATURE_LOOKBACKS = MappingProxyType(
-    {
-        "f_d_return": 1,
-        "f_d_gap": 1,
-        "f_d_intraday_return": 0,
-        "f_d_range": 1,
-        "f_d_log_volume": 0,
-        "f_d_log_amount": 0,
-        "f_d_max_drawdown_20d_asof_tminus1": 20,
-        "f_d_volatility_60d_asof_tminus1": 61,
-        "f_d_distance_to_20d_high_asof_tminus1": 20,
-        "f_d_amount_mean_5d_asof_tminus1": 5,
-        "f_d_amount_mean_20d_asof_tminus1": 20,
-        "f_d_ret_5d_asof_tminus1": 5,
-        "f_d_ret_20d_asof_tminus1": 20,
-        "f_d_volatility_20d_asof_tminus1": 21,
-        "f_d_turnover_mean_20d_asof_tminus1": 20,
-        "f_d_position_in_20d_range_asof_tminus1": 20,
-    }
+_OUTPUT_COLUMNS = (
+    "f_d_close_return_1d",
+    "f_d_open_gap_1d",
+    "f_d_intraday_return",
+    "f_d_range_vs_prev_close",
+    "f_d_log_volume",
+    "f_d_log_amount",
+    "f_d_max_drawdown_20d_asof_tminus1",
+    "f_d_close_volatility_60d_asof_tminus1",
+    "f_d_close_distance_to_high_20d_asof_tminus1",
+    "f_d_amount_mean_5d_asof_tminus1",
+    "f_d_amount_mean_20d_asof_tminus1",
+    "f_d_close_return_5d_asof_tminus1",
+    "f_d_close_return_20d_asof_tminus1",
+    "f_d_close_volatility_20d_asof_tminus1",
+    "f_d_turnover_rate_mean_20d_asof_tminus1",
+    "f_d_close_position_in_range_20d_asof_tminus1",
 )
-_OUTPUT_COLUMNS = tuple(_FEATURE_LOOKBACKS)
+_LONG_VOLATILITY_WINDOW = 60
+_HISTORY_SESSIONS = _LONG_VOLATILITY_WINDOW + 1
+_TURNOVER_WINDOW = 20
 
 
 class TushareDailyBasicV1Builder:
-    """Build the v1 daily Tushare feature partition.
+    """Build one post-close ``tushare_daily_basic/v1`` partition.
 
     Example:
-        builder = TushareDailyBasicV1Builder()
-        features = builder.build_partition(table)
+        features = TushareDailyBasicV1Builder().build(
+            access=access,
+            trade_date="2026-07-20",
+        )
     """
 
-    key_columns: tuple[str, ...] = (
-        "symbol",
-        "trade_date",
-    )
-    output_columns: tuple[str, ...] = tuple(_OUTPUT_COLUMNS)
-
-    @property
-    def lookback(self) -> int:
-        return max(_FEATURE_LOOKBACKS.values())
-
-    def read_input(
+    def build(
         self,
         *,
         access: Access,
-        pm: PathManager,
-        processed_version: str,
         trade_date: str,
     ) -> pa.Table:
-        """Read the formal history needed for one feature partition.
+        """Return features whose identity and as-of date are ``trade_date``.
 
         Example:
-            table = TushareDailyBasicV1Builder().read_input(
+            features = TushareDailyBasicV1Builder().build(
                 access=access,
-                pm=path_manager,
-                processed_version="v1",
                 trade_date="2026-07-20",
             )
         """
-        return _read_history(
-            access=access,
-            pm=pm,
-            processed_version=processed_version,
-            trade_date=trade_date,
-            lookback=self.lookback,
-            daily_basic_lookback=20,
+        dates = tuple(
+            access.recent_trade_dates(
+                end_date=trade_date,
+                sessions=_HISTORY_SESSIONS + 1,
+            )
+        )
+        output_date = dates[-1]
+        daily_parts: list[pd.DataFrame] = []
+        current_symbols: tuple[str, ...] = ()
+        for date in dates:
+            bars = access.daily_bars(trade_date=date)
+            table_ops.require_columns(
+                bars,
+                _DAILY_BAR_COLUMNS,
+                who="tushare_daily_basic daily_bar",
+            )
+            if date == output_date:
+                current_symbols = tuple(bars["symbol"])
+            factors = access.adjustment_factors(trade_date=date)
+            daily_parts.append(
+                bars.loc[:, list(_DAILY_BAR_COLUMNS)].merge(
+                    factors,
+                    on=list(_KEY_COLUMNS),
+                    how="left",
+                    validate="one_to_one",
+                )
+            )
+
+        frame = pd.concat(daily_parts, ignore_index=True)
+        frame = frame.loc[frame["symbol"].isin(current_symbols)].copy()
+        expected_keys = pd.MultiIndex.from_product(
+            (current_symbols, dates),
+            names=_KEY_COLUMNS,
+        ).to_frame(index=False)
+        frame = expected_keys.merge(
+            frame,
+            on=list(_KEY_COLUMNS),
+            how="left",
+            validate="one_to_one",
+        )
+        turnover_dates = dates[-(_TURNOVER_WINDOW + 1) : -1]
+        turnover = pd.concat(
+            [access.turnover_rates(trade_date=date) for date in turnover_dates],
+            ignore_index=True,
+        )
+        frame = frame.merge(
+            turnover,
+            on=list(_KEY_COLUMNS),
+            how="left",
+            validate="one_to_one",
+        )
+        frame = frame.sort_values(list(_KEY_COLUMNS)).reset_index(drop=True)
+        frame = apply_asof_price_adjustment(
+            frame,
+            adjustment="qfq",
+            asof_date=output_date,
+            price_columns=("open", "close", "high", "low"),
+            output_prefix="qfq_",
         )
 
-    def build_partition(self, table: pa.Table) -> pa.Table:
-        """Return the daily feature partition without an intraday phase.
+        current = frame.loc[frame["trade_date"] == output_date].copy()
+        history = frame.loc[frame["trade_date"] < output_date].copy()
+        features = current.loc[:, list(_KEY_COLUMNS)].copy()
+        symbols = current["symbol"]
 
-        Example:
-            features = TushareDailyBasicV1Builder().build_partition(table)
-        """
-        return _build_partition(
-            table=table,
-            required_columns=_REQUIRED_COLUMNS,
-            key_columns=self.key_columns,
+        previous_close = _latest_by_symbol(history, "qfq_close")
+        current_close = current["qfq_close"]
+        current_open = current["qfq_open"]
+        current_high = current["qfq_high"]
+        current_low = current["qfq_low"]
+        mapped_previous_close = symbols.map(previous_close)
+
+        features["f_d_close_return_1d"] = _ratio_minus_one(
+            current_close,
+            mapped_previous_close,
+        )
+        features["f_d_open_gap_1d"] = _ratio_minus_one(
+            current_open,
+            mapped_previous_close,
+        )
+        features["f_d_intraday_return"] = _ratio_minus_one(
+            _positive(current["close"]),
+            _positive(current["open"]),
+        )
+        features["f_d_range_vs_prev_close"] = (
+            (current_high - current_low) / mapped_previous_close
+        ).where(mapped_previous_close.notna())
+        features["f_d_log_volume"] = np.log1p(_non_negative(current["vol"]))
+        features["f_d_log_amount"] = np.log1p(_non_negative(current["amount"]))
+
+        metrics = {
+            "f_d_max_drawdown_20d_asof_tminus1": _max_drawdown_by_symbol(history, 20),
+            "f_d_close_volatility_60d_asof_tminus1": _volatility_by_symbol(
+                history,
+                _LONG_VOLATILITY_WINDOW,
+            ),
+            "f_d_close_distance_to_high_20d_asof_tminus1": (
+                _distance_to_high_by_symbol(history, 20)
+            ),
+            "f_d_amount_mean_5d_asof_tminus1": _mean_non_negative_by_symbol(
+                history, "amount", 5
+            ),
+            "f_d_amount_mean_20d_asof_tminus1": _mean_non_negative_by_symbol(
+                history, "amount", 20
+            ),
+            "f_d_close_return_5d_asof_tminus1": _return_by_symbol(history, 5),
+            "f_d_close_return_20d_asof_tminus1": _return_by_symbol(history, 20),
+            "f_d_close_volatility_20d_asof_tminus1": _volatility_by_symbol(history, 20),
+            "f_d_turnover_rate_mean_20d_asof_tminus1": (
+                _mean_non_negative_by_symbol(
+                    history,
+                    "turnover_rate",
+                    _TURNOVER_WINDOW,
+                )
+            ),
+            "f_d_close_position_in_range_20d_asof_tminus1": (
+                _position_in_range_by_symbol(history, 20)
+            ),
+        }
+        for column_name, metric_by_symbol in metrics.items():
+            features[column_name] = symbols.map(metric_by_symbol)
+        for column_name in _OUTPUT_COLUMNS:
+            features[column_name] = pd.to_numeric(
+                features[column_name],
+                errors="coerce",
+            ).astype("Float64")
+
+        return pa.Table.from_pandas(
+            features.loc[:, [*_KEY_COLUMNS, *_OUTPUT_COLUMNS]],
+            preserve_index=False,
         )
 
 
-def _build_partition(
-    *,
-    table: pa.Table,
-    required_columns: tuple[str, ...],
-    key_columns: tuple[str, ...],
-) -> pa.Table:
-    table_ops.require_columns(
-        table,
-        required_columns,
-        who="TushareDailyBasicV1Builder input",
-    )
-    table_ops.require_nonempty(table, who="TushareDailyBasicV1Builder input")
-
-    df = table.select(required_columns).to_pandas()
-    df = df.sort_values(list(key_columns)).reset_index(drop=True)
-    output_date = df["trade_date"].max()
-    df = apply_asof_price_adjustment(
-        df,
-        adjustment="qfq",
-        asof_date=output_date,
-        price_columns=("open", "close", "high", "low"),
-        output_prefix="qfq_",
-    )
-    current = df.loc[df["trade_date"] == output_date].copy()
-    history = df.loc[df["trade_date"] < output_date].copy()
-    features = current.loc[:, list(key_columns)].copy()
-    symbols = current["symbol"]
-
-    previous_close = _latest_positive_by_symbol(history, "qfq_close")
-    current_qfq_close = _numeric(current["qfq_close"])
-    current_qfq_open = _numeric(current["qfq_open"])
-    current_qfq_high = _numeric(current["qfq_high"])
-    current_qfq_low = _numeric(current["qfq_low"])
-    mapped_previous_close = symbols.map(previous_close)
-
-    features["f_d_return"] = _positive_ratio_minus_one(
-        current_qfq_close,
-        mapped_previous_close,
-    )
-    features["f_d_gap"] = _positive_ratio_minus_one(
-        current_qfq_open,
-        mapped_previous_close,
-    )
-    features["f_d_intraday_return"] = _ratio_minus_one_series(
-        _numeric(current["close"]),
-        _numeric(current["open"]),
-    )
-    features["f_d_range"] = (
-        (current_qfq_high - current_qfq_low) / mapped_previous_close
-    ).where(
-        (current_qfq_high > 0) & (current_qfq_low > 0) & (mapped_previous_close > 0)
-    )
-    volume = _numeric(current["vol"])
-    amount = _numeric(current["amount"])
-    features["f_d_log_volume"] = np.log1p(volume.where(volume >= 0))
-    features["f_d_log_amount"] = np.log1p(amount.where(amount >= 0))
-
-    metrics = {
-        "f_d_max_drawdown_20d_asof_tminus1": _max_drawdown_by_symbol(history, 20),
-        "f_d_volatility_60d_asof_tminus1": _volatility_by_symbol(history, 60),
-        "f_d_distance_to_20d_high_asof_tminus1": _distance_to_high_by_symbol(
-            history, 20
-        ),
-        "f_d_amount_mean_5d_asof_tminus1": _mean_positive_by_symbol(
-            history, "amount", 5
-        ),
-        "f_d_amount_mean_20d_asof_tminus1": _mean_positive_by_symbol(
-            history, "amount", 20
-        ),
-        "f_d_ret_5d_asof_tminus1": _return_by_symbol(history, 5),
-        "f_d_ret_20d_asof_tminus1": _return_by_symbol(history, 20),
-        "f_d_volatility_20d_asof_tminus1": _volatility_by_symbol(history, 20),
-        "f_d_turnover_mean_20d_asof_tminus1": _mean_positive_by_symbol(
-            history, "turnover_rate", 20
-        ),
-        "f_d_position_in_20d_range_asof_tminus1": _position_in_range_by_symbol(
-            history, 20
-        ),
-    }
-    for column_name, metric_by_symbol in metrics.items():
-        features[column_name] = symbols.map(metric_by_symbol)
-
-    return pa.Table.from_pandas(
-        features.loc[:, [*key_columns, *_OUTPUT_COLUMNS]],
-        preserve_index=False,
-    )
+def _finite_numeric(values: pd.Series) -> pd.Series:
+    numeric = pd.to_numeric(values, errors="coerce")
+    return numeric.where(np.isfinite(numeric))
 
 
-def _numeric(values: pd.Series) -> pd.Series:
-    return pd.to_numeric(values, errors="coerce")
+def _positive(values: pd.Series) -> pd.Series:
+    numeric = _finite_numeric(values)
+    return numeric.where(numeric > 0)
 
 
-def _positive_ratio_minus_one(
+def _non_negative(values: pd.Series) -> pd.Series:
+    numeric = _finite_numeric(values)
+    return numeric.where(numeric >= 0)
+
+
+def _ratio_minus_one(
     numerator: pd.Series,
     denominator: pd.Series,
 ) -> pd.Series:
-    return (numerator / denominator - 1.0).where((numerator > 0) & (denominator > 0))
+    return numerator / denominator - 1.0
 
 
-def _ratio_minus_one_series(
-    numerator: pd.Series,
-    denominator: pd.Series,
-) -> pd.Series:
-    return (numerator / denominator - 1.0).where(denominator > 0)
-
-
-def _positive_window(
+def _complete_window(
     history: pd.DataFrame,
     columns: tuple[str, ...],
     window: int,
 ) -> tuple[pd.DataFrame, dict[str, pd.Series], pd.Series]:
-    window_frame = history.groupby("symbol", sort=False).tail(window).copy()
-    values = {column: _numeric(window_frame[column]) for column in columns}
-    valid_rows = pd.Series(True, index=window_frame.index)
+    frame = history.groupby("symbol", sort=False).tail(window).copy()
+    values = {column: frame[column] for column in columns}
+    valid_rows = pd.Series(True, index=frame.index)
     for column_values in values.values():
-        valid_rows &= column_values.notna() & (column_values > 0)
-    valid_by_symbol = valid_rows.groupby(window_frame["symbol"]).all()
-    valid_by_symbol &= window_frame.groupby("symbol").size().eq(window)
-    return window_frame, values, valid_by_symbol
+        valid_rows &= column_values.notna()
+    valid = valid_rows.groupby(frame["symbol"]).all()
+    valid &= frame.groupby("symbol").size().eq(window)
+    return frame, values, valid
 
 
-def _latest_positive_by_symbol(
+def _latest_by_symbol(
     history: pd.DataFrame,
     column: str,
 ) -> pd.Series:
-    window_frame, values, valid = _positive_window(history, (column,), 1)
-    latest = pd.Series(values[column].to_numpy(), index=window_frame["symbol"])
+    frame, values, valid = _complete_window(history, (column,), 1)
+    latest = values[column].groupby(frame["symbol"]).last()
     return latest.where(valid)
 
 
 def _max_drawdown_by_symbol(history: pd.DataFrame, window: int) -> pd.Series:
-    frame, values, valid = _positive_window(history, ("qfq_close",), window)
+    frame, values, valid = _complete_window(history, ("qfq_close",), window)
     symbols = frame["symbol"]
     close = values["qfq_close"]
     drawdown = close / close.groupby(symbols).cummax() - 1.0
@@ -263,33 +257,36 @@ def _max_drawdown_by_symbol(history: pd.DataFrame, window: int) -> pd.Series:
 
 
 def _volatility_by_symbol(history: pd.DataFrame, window: int) -> pd.Series:
-    frame, values, valid = _positive_window(history, ("qfq_close",), window + 1)
+    frame, values, valid = _complete_window(history, ("qfq_close",), window + 1)
     symbols = frame["symbol"]
     returns = values["qfq_close"].groupby(symbols).pct_change(fill_method=None)
-    return returns.groupby(symbols).std().where(valid)
+    return returns.groupby(symbols).std(ddof=1).where(valid)
 
 
 def _distance_to_high_by_symbol(
     history: pd.DataFrame,
     window: int,
 ) -> pd.Series:
-    frame, values, valid = _positive_window(history, ("qfq_high",), window)
+    frame, values, valid = _complete_window(history, ("qfq_high",), window)
     high_max = values["qfq_high"].groupby(frame["symbol"]).max()
-    latest_close = _latest_positive_by_symbol(history, "qfq_close")
+    latest_close = _latest_by_symbol(history, "qfq_close")
     return (latest_close / high_max - 1.0).where(valid & latest_close.notna())
 
 
-def _mean_positive_by_symbol(
+def _mean_non_negative_by_symbol(
     history: pd.DataFrame,
     column: str,
     window: int,
 ) -> pd.Series:
-    frame, values, valid = _positive_window(history, (column,), window)
-    return values[column].groupby(frame["symbol"]).mean().where(valid)
+    frame = history.groupby("symbol", sort=False).tail(window).copy()
+    values = _non_negative(frame[column])
+    valid = values.notna().groupby(frame["symbol"]).all()
+    valid &= frame.groupby("symbol").size().eq(window)
+    return values.groupby(frame["symbol"]).mean().where(valid)
 
 
 def _return_by_symbol(history: pd.DataFrame, window: int) -> pd.Series:
-    frame, values, valid = _positive_window(history, ("qfq_close",), window)
+    frame, values, valid = _complete_window(history, ("qfq_close",), window + 1)
     close = values["qfq_close"]
     symbols = frame["symbol"]
     first = close.groupby(symbols).first()
@@ -301,7 +298,7 @@ def _position_in_range_by_symbol(
     history: pd.DataFrame,
     window: int,
 ) -> pd.Series:
-    frame, values, valid = _positive_window(
+    frame, values, valid = _complete_window(
         history,
         ("qfq_high", "qfq_low"),
         window,
@@ -309,98 +306,8 @@ def _position_in_range_by_symbol(
     symbols = frame["symbol"]
     high_max = values["qfq_high"].groupby(symbols).max()
     low_min = values["qfq_low"].groupby(symbols).min()
-    latest_close = _latest_positive_by_symbol(history, "qfq_close")
+    latest_close = _latest_by_symbol(history, "qfq_close")
     width = high_max - low_min
     return ((latest_close - low_min) / width).where(
         valid & latest_close.notna() & (width > 0)
     )
-
-
-def _read_history(
-    *,
-    access: Access,
-    pm: PathManager,
-    processed_version: str,
-    trade_date: str,
-    lookback: int,
-    daily_basic_lookback: int | None = None,
-) -> pa.Table:
-    dates = access.recent_trade_dates(
-        end_date=trade_date,
-        sessions=lookback + 1,
-    )
-
-    daily_tables = []
-    adj_tables = []
-    for date in dates:
-        daily_tables.append(
-            _read_processed_columns(
-                pm=pm,
-                dataset_name="daily_bar",
-                version=processed_version,
-                trade_date=date,
-                columns=_DAILY_BAR_INPUT_COLUMNS,
-            )
-        )
-        adj_tables.append(
-            _read_processed_columns(
-                pm=pm,
-                dataset_name="adj_factor",
-                version=processed_version,
-                trade_date=date,
-                columns=_ADJ_FACTOR_INPUT_COLUMNS,
-            )
-        )
-
-    daily = pa.concat_tables(daily_tables)
-    adj = pa.concat_tables(adj_tables)
-
-    daily_df = daily.to_pandas()
-    adj_df = adj.to_pandas()
-    merged = daily_df.merge(adj_df, on=["symbol", "trade_date"], how="left")
-    if daily_basic_lookback is not None:
-        basic_dates = dates[:-1][-daily_basic_lookback:]
-        basic_tables = [
-            _read_processed_columns(
-                pm=pm,
-                dataset_name="daily_basic",
-                version=processed_version,
-                trade_date=date,
-                columns=_DAILY_BASIC_INPUT_COLUMNS,
-            )
-            for date in basic_dates
-        ]
-        if basic_tables:
-            daily_basic = pa.concat_tables(basic_tables)
-            basic_df = daily_basic.to_pandas()
-        else:
-            basic_df = pd.DataFrame(columns=["symbol", "trade_date", "turnover_rate"])
-        merged = merged.merge(basic_df, on=["symbol", "trade_date"], how="left")
-    return pa.Table.from_pandas(merged, preserve_index=False)
-
-
-def _read_processed_columns(
-    *,
-    pm: PathManager,
-    dataset_name: str,
-    version: str,
-    trade_date: str,
-    columns: tuple[str, ...],
-) -> pa.Table:
-    path = pm.processed_data(
-        dataset_name=dataset_name,
-        version=version,
-        trade_date=trade_date,
-    )
-    loaded = meta.require(
-        pm=pm,
-        meta_path=pm.processed_meta(
-            dataset_name=dataset_name,
-            version=version,
-            trade_date=trade_date,
-        ),
-        expected_payload_path=path,
-    )
-    table = pq.ParquetFile(loaded.payload_path).read()
-    table_ops.require_columns(table, columns, who=dataset_name)
-    return table.select(columns)

@@ -35,7 +35,13 @@ def test_loader_consumes_the_supplied_window_without_calendar_resolution(
             trade_date=trade_date,
         )
         feature_path.parent.mkdir(parents=True, exist_ok=True)
-        pd.DataFrame({"factor": [float(index)]}).to_parquet(
+        pd.DataFrame(
+            {
+                "symbol": ["600000"],
+                "trade_date": [trade_date],
+                "factor": [float(index)],
+            }
+        ).to_parquet(
             feature_path,
             index=False,
         )
@@ -47,7 +53,13 @@ def test_loader_consumes_the_supplied_window_without_calendar_resolution(
             trade_date=trade_date,
         )
         label_path.parent.mkdir(parents=True, exist_ok=True)
-        pd.DataFrame({"target": [index / 10]}).to_parquet(
+        pd.DataFrame(
+            {
+                "symbol": ["600000"],
+                "trade_date": [trade_date],
+                "target": [index / 10],
+            }
+        ).to_parquet(
             label_path,
             index=False,
         )

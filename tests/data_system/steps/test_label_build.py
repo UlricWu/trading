@@ -20,87 +20,100 @@ from src.utils.path import PathManager
 
 
 class _LabelBuilder:
-    key_columns = ("symbol", "trade_date")
-    output_columns = ("short", "long")
+    label_column = "y_rank_return"
 
-    def __init__(self) -> None:
-        self.read_dates: tuple[str, ...] | None = None
+    def __init__(self, lookahead: int) -> None:
+        self.lookahead = lookahead
+        self.build_dates: tuple[str, ...] | None = None
 
-    def target_lookahead(self, label_column: str) -> int:
-        return {"short": 1, "long": 2}[label_column]
-
-    def read_input(
+    def build(
         self,
         *,
         access: Access,
-        pm: PathManager,
-        processed_version: str,
         trade_dates: Sequence[str],
     ) -> pa.Table:
         assert access is not None
-        assert processed_version == "v1"
-        self.read_dates = tuple(trade_dates)
-        return pa.table({"value": [1]})
-
-    def build_partition(
-        self,
-        table: pa.Table,
-    ) -> pa.Table:
-        return pa.table({"label": [1.0]})
+        self.build_dates = tuple(trade_dates)
+        return pa.table({"label": [float(self.lookahead)]})
 
 
-def test_label_step_owns_lookahead_and_uses_the_first_date_as_identity(
+def test_label_step_runs_each_single_maturity_set_independently(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    builder = _LabelBuilder()
+    builders = {
+        "daily_close_return_rank_d1": _LabelBuilder(1),
+        "daily_close_return_rank_d3": _LabelBuilder(3),
+        "daily_close_return_rank_d5": _LabelBuilder(5),
+    }
     resolutions: list[tuple[str, str]] = []
 
     def get_builder(label_set: str, version: str) -> _LabelBuilder:
         resolutions.append((label_set, version))
-        return builder
+        return builders[label_set]
 
     monkeypatch.setattr(label_module, "get_label_builder", get_builder)
     path_manager = PathManager(tmp_path)
-    input_dates = ("2026-07-16", "2026-07-17", "2026-07-20")
+    windows = {
+        2: ["2026-07-17", "2026-07-20"],
+        4: ["2026-07-15", "2026-07-16", "2026-07-17", "2026-07-20"],
+        6: [
+            "2026-07-13",
+            "2026-07-14",
+            "2026-07-15",
+            "2026-07-16",
+            "2026-07-17",
+            "2026-07-20",
+        ],
+    }
     access = Mock(spec=Access)
-    access.recent_trade_dates.return_value = list(input_dates)
+    access.recent_trade_dates.side_effect = lambda *, end_date, sessions: windows[
+        sessions
+    ]
     step = LabelBuildStep(
         pm=path_manager,
         access=access,
-        processed_version="v1",
-        label_sets={"forward_rank": LabelSetConfig(enabled=True, version="v1")},
+        label_sets={
+            label_set: LabelSetConfig(enabled=True, version="v1")
+            for label_set in builders
+        },
     )
 
-    step.run(
-        DataContext(
-            start="2026-07-20",
-            end="2026-07-20",
-            trade_dates=("2026-07-20",),
-        )
+    context = DataContext(
+        start="2026-07-20",
+        end="2026-07-20",
+        trade_dates=("2026-07-20",),
     )
+    assert step.run(context) is context
+    assert step.run(context) is context
 
-    output_path = path_manager.label_data(
-        label_set="forward_rank",
-        version="v1",
-        trade_date="2026-07-16",
-    )
-    meta.require(
-        pm=path_manager,
-        meta_path=path_manager.label_meta(
-            label_set="forward_rank",
+    expected_targets = {
+        "daily_close_return_rank_d1": "2026-07-17",
+        "daily_close_return_rank_d3": "2026-07-15",
+        "daily_close_return_rank_d5": "2026-07-13",
+    }
+    for label_set, target_date in expected_targets.items():
+        output_path = path_manager.label_data(
+            label_set=label_set,
             version="v1",
-            trade_date="2026-07-16",
-        ),
-        expected_payload_path=output_path,
-    )
-    assert resolutions == [("forward_rank", "v1")]
-    access.recent_trade_dates.assert_called_once_with(
-        end_date="2026-07-20",
-        sessions=3,
-    )
-    assert builder.read_dates == input_dates
-    assert pq.read_table(output_path).to_pydict() == {"label": [1.0]}
+            trade_date=target_date,
+        )
+        meta.require(
+            pm=path_manager,
+            meta_path=path_manager.label_meta(
+                label_set=label_set,
+                version="v1",
+                trade_date=target_date,
+            ),
+            expected_payload_path=output_path,
+        )
+        assert pq.read_table(output_path).to_pydict() == {
+            "label": [float(builders[label_set].lookahead)]
+        }
+    assert resolutions == [(label_set, "v1") for label_set in builders]
+    assert access.recent_trade_dates.call_count == 6
+    for label_set, builder in builders.items():
+        assert builder.build_dates == tuple(windows[builder.lookahead + 1])
 
 
 def test_label_step_rejects_an_unknown_identity_at_construction(
@@ -110,6 +123,5 @@ def test_label_step_rejects_an_unknown_identity_at_construction(
         LabelBuildStep(
             pm=PathManager(tmp_path),
             access=Mock(spec=Access),
-            processed_version="v1",
             label_sets={"unknown": LabelSetConfig(enabled=True, version="v1")},
         )

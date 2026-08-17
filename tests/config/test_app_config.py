@@ -116,3 +116,11 @@ def test_formal_base_config_declares_only_level2_file_sources(
         source.broker == "level2_ftp" and source.group == "offline_level2"
         for source in config.data.sources.values()
     )
+    assert tuple(config.data.label_sets) == (
+        "daily_close_return_rank_d1",
+        "daily_close_return_rank_d3",
+        "daily_close_return_rank_d5",
+    )
+    assert all(label.enabled for label in config.data.label_sets.values())
+    assert config.model.dataset.label_set == "daily_close_return_rank_d1"
+    assert config.model.dataset.label_column == "y_rank_return"

@@ -101,7 +101,12 @@ def run_offline_training(
         model_config.dataset.label_set,
         model_config.dataset.label_version,
     )
-    eval_offset = label_builder.target_lookahead(model_config.dataset.label_column)
+    if model_config.dataset.label_column != label_builder.label_column:
+        raise ValueError(
+            f"label set {model_config.dataset.label_set!r} exposes only "
+            f"label_column={label_builder.label_column!r}"
+        )
+    eval_offset = label_builder.lookahead
     access = Access(pm=path_manager, processed_version=PROCESSED_VERSION)
     open_dates = access.trade_dates(
         start_date=submission.start,

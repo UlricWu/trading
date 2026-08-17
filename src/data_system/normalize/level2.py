@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import date, time
 from pathlib import Path
 from types import MappingProxyType
 from typing import Literal
@@ -20,12 +21,14 @@ from src.utils import table_ops
 from src.utils.csv7z_batch_source import open_csv7z_batches
 from src.utils.datetime_utils import DateTimeUtils
 
-_TRADE_SCHEMA = pa.schema(
+_PARSED_TRADE_SCHEMA = pa.schema(
     [
         ("symbol", pa.string()),
         ("ts_utc", pa.int64()),
         ("event", pa.string()),
         ("order_id", pa.int64()),
+        ("main_seq", pa.int64()),
+        ("sub_seq", pa.int64()),
         ("side", pa.string()),
         ("price", pa.float64()),
         ("volume", pa.int64()),
@@ -45,14 +48,13 @@ class Level2TradeSpec:
             output="sz_trade",
             exchange="sz",
             symbol_field="SecurityID",
-            time_field="TradeTime",
+            time_field="TickTime",
             event_field="ExecType",
             event_mapping={"1": "TRADE", "2": "CANCEL"},
             price_field="TradePrice",
             volume_field="TradeVolume",
             side_field=None,
             side_mapping=None,
-            id_field="SubSeq",
             buy_no_field="BuyNo",
             sell_no_field="SellNo",
         )
@@ -69,7 +71,6 @@ class Level2TradeSpec:
     volume_field: str
     side_field: str | None
     side_mapping: Mapping[str, str] | None
-    id_field: str
     buy_no_field: str | None
     sell_no_field: str | None
 
@@ -94,14 +95,13 @@ _TRADE_SPECS: Mapping[tuple[str, str], Level2TradeSpec] = MappingProxyType(
             output="sh_trade",
             exchange="sh",
             symbol_field="SecurityID",
-            time_field="TradeTime",
+            time_field="TickTime",
             event_field="TickType",
             event_mapping={"T": "TRADE"},
             price_field="Price",
             volume_field="Volume",
             side_field="Side",
             side_mapping={"1": "B", "2": "S"},
-            id_field="SubSeq",
             buy_no_field="BuyNo",
             sell_no_field="SellNo",
         ),
@@ -110,14 +110,13 @@ _TRADE_SPECS: Mapping[tuple[str, str], Level2TradeSpec] = MappingProxyType(
             output="sz_trade",
             exchange="sz",
             symbol_field="SecurityID",
-            time_field="TradeTime",
+            time_field="TickTime",
             event_field="ExecType",
             event_mapping={"1": "TRADE", "2": "CANCEL"},
             price_field="TradePrice",
             volume_field="TradeVolume",
             side_field=None,
             side_mapping=None,
-            id_field="SubSeq",
             buy_no_field="BuyNo",
             sell_no_field="SellNo",
         ),
@@ -151,6 +150,10 @@ def normalize_level2(
             f"raw_object={raw_object!r}, output={target_name!r}"
         )
     logs.info(f"Level-2 route resolved; spec={spec}")
+    trade_date = DateTimeUtils.require_system_date(
+        trade_date,
+        field_name="trade_date",
+    )
 
     parsed_batches: list[pa.Table] = []
     nonempty_batch_count = 0
@@ -161,7 +164,11 @@ def normalize_level2(
         for record_batch in record_batches:
             raw_table = pa.Table.from_batches([record_batch])
             raw_row_count += raw_table.num_rows
-            parsed_table = parse_level2_trade_batch(raw_table, spec=spec)
+            parsed_table = parse_level2_trade_batch(
+                raw_table,
+                spec=spec,
+                trade_date=trade_date,
+            )
             if parsed_table.num_rows == 0:
                 continue
 
@@ -199,6 +206,7 @@ def parse_level2_trade_batch(
     table: pa.Table,
     *,
     spec: Level2TradeSpec,
+    trade_date: str,
 ) -> pa.Table:
     """Parse and filter one source batch into normalized Level-2 trades.
 
@@ -208,31 +216,39 @@ def parse_level2_trade_batch(
             output="sh_trade",
             exchange="sh",
             symbol_field="SecurityID",
-            time_field="TradeTime",
+            time_field="TickTime",
             event_field="TickType",
             event_mapping={"T": "TRADE"},
             price_field="Price",
             volume_field="Volume",
             side_field="Side",
             side_mapping={"1": "B", "2": "S"},
-            id_field="SubSeq",
             buy_no_field="BuyNo",
             sell_no_field="SellNo",
         )
-        trades = parse_level2_trade_batch(raw_table, spec=spec)
+        trades = parse_level2_trade_batch(
+            raw_table,
+            spec=spec,
+            trade_date="2026-07-27",
+        )
     """
     if table.num_rows == 0:
         return pa.table(
-            {field.name: pa.array([], type=field.type) for field in _TRADE_SCHEMA}
+            {
+                field.name: pa.array([], type=field.type)
+                for field in _PARSED_TRADE_SCHEMA
+            }
         )
 
     required_fields = (
+        "TradeTime",
         spec.symbol_field,
         spec.time_field,
         spec.event_field,
         spec.price_field,
         spec.volume_field,
-        spec.id_field,
+        "MainSeq",
+        "SubSeq",
         *((spec.side_field,) if spec.side_field and spec.side_mapping else ()),
         *((spec.buy_no_field,) if spec.buy_no_field else ()),
         *((spec.sell_no_field,) if spec.sell_no_field else ()),
@@ -242,6 +258,7 @@ def parse_level2_trade_batch(
         required_fields,
         who=f"Level-2 {spec.exchange} trade",
     )
+    _require_trade_time_date(table["TradeTime"], trade_date=trade_date)
 
     event = _map_values_or_null(
         table[spec.event_field],
@@ -265,19 +282,27 @@ def parse_level2_trade_batch(
         if spec.sell_no_field
         else pa.repeat(pa.scalar(0, type=pa.int64()), table.num_rows)
     )
+    main_seq = pc.cast(table["MainSeq"], pa.int64())
+    sub_seq = pc.cast(table["SubSeq"], pa.int64())
     normalized = pa.table(
         {
             "symbol": table[spec.symbol_field],
-            "ts_utc": _trade_time_to_utc_epoch_us(table[spec.time_field]),
+            "ts_utc": _exchange_time_to_utc_epoch_us(
+                table[spec.time_field],
+                trade_date=trade_date,
+                exchange=spec.exchange,
+            ),
             "event": event,
-            "order_id": pc.cast(table[spec.id_field], pa.int64()),
+            "order_id": sub_seq,
+            "main_seq": main_seq,
+            "sub_seq": sub_seq,
             "side": side,
             "price": pc.cast(table[spec.price_field], pa.float64()),
             "volume": pc.cast(table[spec.volume_field], pa.int64()),
             "buy_no": pc.cast(buy_no, pa.int64()),
             "sell_no": pc.cast(sell_no, pa.int64()),
         }
-    ).cast(_TRADE_SCHEMA)
+    ).cast(_PARSED_TRADE_SCHEMA)
 
     valid_trade = pc.and_(
         pc.equal(normalized["event"], pa.scalar("TRADE", type=pa.string())),
@@ -331,7 +356,7 @@ def build_processed_level2_trade_day(
 def _build_symbol_index(table: pa.Table) -> tuple[pa.Table, dict[str, range]]:
     table_ops.require_columns(
         table,
-        ("symbol", "ts_utc"),
+        ("symbol", "ts_utc", "main_seq", "sub_seq"),
         who="Level-2 symbol index",
     )
     table_ops.require_nonempty_strings(
@@ -358,12 +383,29 @@ def _build_symbol_index(table: pa.Table) -> tuple[pa.Table, dict[str, range]]:
             f"Level-2 symbol index has invalid ts_utc type: {timestamp.type}"
         )
 
+    for sequence_column in ("main_seq", "sub_seq"):
+        sequence = table[sequence_column]
+        if not pa.types.is_integer(sequence.type):
+            raise TypeError(
+                f"Level-2 symbol index has invalid {sequence_column} type: "
+                f"{sequence.type}"
+            )
+        if sequence.null_count:
+            raise ValueError(
+                f"Level-2 symbol index {sequence_column} must not contain null"
+            )
+
     row_count = table.num_rows
     logs.info(f"Level-2 sort started; rows={row_count}")
     sorted_table = table.take(
         pc.sort_indices(
             table,
-            sort_keys=[("symbol", "ascending"), ("ts_utc", "ascending")],
+            sort_keys=[
+                ("symbol", "ascending"),
+                ("ts_utc", "ascending"),
+                ("main_seq", "ascending"),
+                ("sub_seq", "ascending"),
+            ],
         )
     )
     logs.info(f"Level-2 sort done; rows={row_count}")
@@ -426,55 +468,97 @@ def _enrich_symbol_trades(table: pa.Table) -> pa.Table:
     )
 
 
-def _trade_time_to_utc_epoch_us(
+def _require_trade_time_date(
     values: pa.Array | pa.ChunkedArray,
-) -> pa.Array | pa.ChunkedArray:
+    *,
+    trade_date: str,
+) -> None:
     if not pa.types.is_string(values.type):
         raise TypeError("TradeTime must be a string column")
     if values.null_count:
         raise ValueError("TradeTime must not contain null values")
 
-    valid_format = pc.match_substring_regex(
+    raw_dates = pc.utf8_slice_codeunits(values, start=0, stop=10)
+    if pc.any(pc.not_equal(raw_dates, pa.scalar(trade_date))).as_py():
+        raise ValueError(f"TradeTime date must match trade_date={trade_date}")
+
+
+def _exchange_time_to_utc_epoch_us(
+    values: pa.Array | pa.ChunkedArray,
+    *,
+    trade_date: str,
+    exchange: Literal["sh", "sz"],
+) -> pa.Array | pa.ChunkedArray:
+    source_name = f"{exchange.upper()} TickTime"
+    if not pa.types.is_string(values.type):
+        raise TypeError(f"{source_name} must be a string column")
+    if values.null_count:
+        raise ValueError(f"{source_name} must not contain null values")
+
+    source_width = 8 if exchange == "sh" else 9
+    precision = "HHMMSScc" if exchange == "sh" else "HHMMSSsss"
+    valid_digits = pc.match_substring_regex(
         values,
-        r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{1,6}$",
+        rf"^\d{{1,{source_width}}}$",
     )
-    if pc.any(pc.invert(valid_format)).as_py():
+    if pc.any(pc.invert(valid_digits)).as_py():
         raise ValueError(
-            "TradeTime must use YYYY-MM-DD HH:MM:SS with 1-6 fractional digits"
+            f"{source_name} must contain 1-{source_width} digits as {precision}"
         )
 
-    split = pc.split_pattern(values, ".")
-    second_values = pc.list_element(split, 0)
-    fraction_values = pc.list_element(split, 1)
-    options = pc.StrptimeOptions(
-        format="%Y-%m-%d %H:%M:%S",
-        unit="us",
-    )
-    try:
-        local_seconds = pc.strptime(second_values, options=options)
-        normalized_seconds = pc.utf8_slice_codeunits(
-            pc.strftime(
-                local_seconds,
-                format="%Y-%m-%d %H:%M:%S",
-            ),
-            start=0,
-            stop=19,
+    canonical_time = pc.utf8_lpad(values, source_width, "0")
+    if exchange == "sh":
+        canonical_time = pc.binary_join_element_wise(
+            canonical_time,
+            pa.scalar("0"),
+            pa.scalar(""),
         )
-        if pc.any(pc.not_equal(second_values, normalized_seconds)).as_py():
-            raise ValueError("TradeTime contains an invalid calendar time")
-        utc_seconds = pc.assume_timezone(
-            local_seconds,
-            DateTimeUtils.MARKET_TIMEZONE.key,
-        )
-    except pa.ArrowInvalid as exc:
-        raise ValueError("TradeTime contains an invalid calendar time") from exc
 
-    epoch_us = pc.cast(utc_seconds, pa.int64())
-    fraction_us = pc.cast(
-        pc.utf8_rpad(fraction_values, 6, "0"),
+    hour = pc.cast(
+        pc.utf8_slice_codeunits(canonical_time, start=0, stop=2),
         pa.int64(),
     )
-    return pc.add(epoch_us, fraction_us)
+    minute = pc.cast(
+        pc.utf8_slice_codeunits(canonical_time, start=2, stop=4),
+        pa.int64(),
+    )
+    second = pc.cast(
+        pc.utf8_slice_codeunits(canonical_time, start=4, stop=6),
+        pa.int64(),
+    )
+    millisecond = pc.cast(
+        pc.utf8_slice_codeunits(canonical_time, start=6, stop=9),
+        pa.int64(),
+    )
+    invalid_clock = pc.or_(
+        pc.greater(hour, pa.scalar(23, pa.int64())),
+        pc.or_(
+            pc.greater(minute, pa.scalar(59, pa.int64())),
+            pc.greater(second, pa.scalar(59, pa.int64())),
+        ),
+    )
+    if pc.any(invalid_clock).as_py():
+        raise ValueError(f"{source_name} contains an invalid wall-clock time")
+
+    seconds_since_midnight = pc.add(
+        pc.add(
+            pc.multiply(hour, pa.scalar(3_600, pa.int64())),
+            pc.multiply(minute, pa.scalar(60, pa.int64())),
+        ),
+        second,
+    )
+    offset_us = pc.add(
+        pc.multiply(
+            seconds_since_midnight,
+            pa.scalar(1_000_000, pa.int64()),
+        ),
+        pc.multiply(millisecond, pa.scalar(1_000, pa.int64())),
+    )
+    midnight_utc_us = DateTimeUtils.local_time_to_utc_epoch_us(
+        time(0, 0),
+        date.fromisoformat(trade_date),
+    )
+    return pc.add(pa.scalar(midnight_utc_us, pa.int64()), offset_us)
 
 
 def _map_values_or_null(

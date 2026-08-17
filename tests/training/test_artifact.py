@@ -167,6 +167,32 @@ def test_report_loader_rejects_params_fields_outside_the_exact_schema(
         load_training_report_inputs(pm=pm, experiment_name=_EXPERIMENT)
 
 
+@pytest.mark.parametrize(
+    ("field_name", "invalid_value"),
+    [("experiment_id", 1), ("label_lookahead", "1")],
+)
+def test_report_loader_rejects_invalid_param_field_types(
+    tmp_path: Path,
+    field_name: str,
+    invalid_value: object,
+) -> None:
+    pm = PathManager(tmp_path)
+    persist_training_artifacts(
+        pm=pm,
+        experiment_name=_EXPERIMENT,
+        params=_params(),
+        metrics={"ic@2026-07-20": 0.1},
+        inference_model=_inference_model(),
+    )
+    params_path = pm.experiment_training_params(experiment_name=_EXPERIMENT)
+    payload = json.loads(params_path.read_text())
+    payload[field_name] = invalid_value
+    params_path.write_text(json.dumps(payload))
+
+    with pytest.raises(TypeError, match=field_name):
+        load_training_report_inputs(pm=pm, experiment_name=_EXPERIMENT)
+
+
 def test_report_loader_distinguishes_missing_and_corrupt_json(tmp_path: Path) -> None:
     pm = PathManager(tmp_path)
     params_path = pm.experiment_training_params(experiment_name=_EXPERIMENT)
@@ -186,7 +212,12 @@ def test_report_loader_distinguishes_missing_and_corrupt_json(tmp_path: Path) ->
 
 @pytest.mark.parametrize(
     "metrics",
-    [{"loss": 0.1}, {"ic@2026-02-30": 0.1}, {"ic@2026-07-20": np.nan}],
+    [
+        {"loss": 0.1},
+        {"ic@2026/07/20": 0.1},
+        {"ic@2026-02-30": 0.1},
+        {"ic@2026-07-20": np.nan},
+    ],
 )
 def test_persist_rejects_metrics_outside_the_exact_schema(
     tmp_path: Path,

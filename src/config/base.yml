@@ -50,11 +50,15 @@ data:
       version: "v1"
 
   label_sets:
-    daily_t1_net_excess_rank:
+    daily_close_return_rank_d1:
       enabled: true
       version: "v1"
 
-    daily_forward_excess_rank:
+    daily_close_return_rank_d3:
+      enabled: true
+      version: "v1"
+
+    daily_close_return_rank_d5:
       enabled: true
       version: "v1"
 
@@ -85,14 +89,14 @@ model:
     feature_set: "tushare_daily_basic"
     feature_version: "v1"
     feature_columns:
-      - "f_d_return"
-      - "f_d_gap"
+      - "f_d_close_return_1d"
+      - "f_d_open_gap_1d"
       - "f_d_log_amount"
       - "f_d_max_drawdown_20d_asof_tminus1"
-      - "f_d_volatility_60d_asof_tminus1"
-      - "f_d_ret_5d_asof_tminus1"
-      - "f_d_turnover_mean_20d_asof_tminus1"
+      - "f_d_close_volatility_60d_asof_tminus1"
+      - "f_d_close_return_5d_asof_tminus1"
+      - "f_d_turnover_rate_mean_20d_asof_tminus1"
 
-    label_set: "daily_t1_net_excess_rank"
+    label_set: "daily_close_return_rank_d1"
     label_version: "v1"
-    label_column: "y_rank_net_excess_return"
+    label_column: "y_rank_return"

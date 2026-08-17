@@ -36,6 +36,7 @@ def test_daily_bars_reads_full_object_and_requested_symbol_order(
         pd.DataFrame(
             {
                 "symbol": ["000001", "600000", "000002"],
+                "trade_date": [trade_date, trade_date, trade_date],
                 "close": [12.0, 20.0, 8.0],
             }
         ),
@@ -53,7 +54,7 @@ def test_daily_bars_reads_full_object_and_requested_symbol_order(
     assert selected["symbol"].tolist() == ["600000", "000001"]
     assert selected["close"].tolist() == [20.0, 12.0]
     assert empty.empty
-    assert empty.columns.tolist() == ["symbol", "close"]
+    assert empty.columns.tolist() == ["symbol", "trade_date", "close"]
 
 
 def test_daily_bars_rejects_missing_object_and_invalid_symbol_request(
@@ -70,7 +71,7 @@ def test_daily_bars_rejects_missing_object_and_invalid_symbol_request(
         pm,
         trade_date,
         "daily_bar",
-        pd.DataFrame({"symbol": ["000001"]}),
+        pd.DataFrame({"symbol": ["000001"], "trade_date": [trade_date]}),
     )
     with pytest.raises(TypeError, match="sequence"):
         access.daily_bars(trade_date=trade_date, symbols="000001")
@@ -83,6 +84,79 @@ def test_daily_bars_rejects_missing_object_and_invalid_symbol_request(
         )
     with pytest.raises(KeyError, match="600000"):
         access.daily_bars(trade_date=trade_date, symbols=["600000"])
+
+
+def test_named_daily_objects_validate_identity_and_project_owned_columns(
+    tmp_path: Path,
+) -> None:
+    pm = PathManager(tmp_path)
+    trade_date = "2026-05-06"
+    _write_processed_frame(
+        pm,
+        trade_date,
+        "adj_factor",
+        pd.DataFrame(
+            {
+                "symbol": ["000001", "600000"],
+                "trade_date": [trade_date, trade_date],
+                "adj_factor": [1.2, 3.4],
+                "unused": [1, 2],
+            }
+        ),
+    )
+    _write_processed_frame(
+        pm,
+        trade_date,
+        "daily_basic",
+        pd.DataFrame(
+            {
+                "symbol": ["000001", "600000"],
+                "trade_date": [trade_date, trade_date],
+                "turnover_rate": [0.0, 2.5],
+                "unused": [1, 2],
+            }
+        ),
+    )
+    access = Access(pm=pm, processed_version="v1")
+
+    factors = access.adjustment_factors(
+        trade_date=trade_date,
+        symbols=("600000", "000001"),
+    )
+    turnover = access.turnover_rates(trade_date=trade_date)
+
+    assert factors.to_dict("list") == {
+        "symbol": ["600000", "000001"],
+        "trade_date": [trade_date, trade_date],
+        "adj_factor": [3.4, 1.2],
+    }
+    assert turnover.to_dict("list") == {
+        "symbol": ["000001", "600000"],
+        "trade_date": [trade_date, trade_date],
+        "turnover_rate": [0.0, 2.5],
+    }
+
+
+def test_named_daily_objects_reject_partition_identity_mismatch(
+    tmp_path: Path,
+) -> None:
+    pm = PathManager(tmp_path)
+    trade_date = "2026-05-06"
+    _write_processed_frame(
+        pm,
+        trade_date,
+        "adj_factor",
+        pd.DataFrame(
+            {
+                "symbol": ["000001"],
+                "trade_date": ["2026-05-05"],
+                "adj_factor": [1.0],
+            }
+        ),
+    )
+
+    with pytest.raises(ValueError, match="must equal requested date"):
+        Access(pm=pm, processed_version="v1").adjustment_factors(trade_date=trade_date)
 
 
 def test_trade_dates_read_annual_calendar_objects_in_ascending_order(

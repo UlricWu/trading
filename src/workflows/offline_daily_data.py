@@ -120,13 +120,11 @@ def run_offline_data(
         FeatureBuildStep(
             pm=path_manager,
             access=access,
-            processed_version=PROCESSED_VERSION,
             feature_sets=feature_sets,
         ),
         LabelBuildStep(
             pm=path_manager,
             access=access,
-            processed_version=PROCESSED_VERSION,
             label_sets=label_sets,
         ),
     )

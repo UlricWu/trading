@@ -6,11 +6,10 @@ from __future__ import annotations
 import json
 import math
 import pickle
-import re
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, fields
-from datetime import date
 from pathlib import Path
+from typing import cast
 
 import joblib
 
@@ -18,8 +17,6 @@ from src.training.inference_model import InferenceModel
 from src.utils.datetime_utils import DateTimeUtils
 from src.utils.filesystem import FileSystem
 from src.utils.path import PathManager
-
-_IC_KEY = re.compile(r"^ic@(\d{4}-\d{2}-\d{2})$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,7 +59,9 @@ class TrainingParams:
             ("label_version", self.label_version),
             ("label_column", self.label_column),
         ):
-            if not isinstance(value, str) or not value:
+            if not isinstance(value, str):
+                raise TypeError(f"{field_name} must be a string")
+            if not value:
                 raise ValueError(f"{field_name} must be a non-empty string")
         DateTimeUtils.require_system_date(self.asof_day, field_name="asof_day")
 
@@ -73,11 +72,11 @@ class TrainingParams:
             raise ValueError("feature_names must contain non-empty strings")
         if len(feature_names) != len(set(feature_names)):
             raise ValueError("feature_names must be unique")
-        if (
-            isinstance(self.label_lookahead, bool)
-            or not isinstance(self.label_lookahead, int)
-            or self.label_lookahead < 0
+        if isinstance(self.label_lookahead, bool) or not isinstance(
+            self.label_lookahead, int
         ):
+            raise TypeError("label_lookahead must be an int")
+        if self.label_lookahead < 0:
             raise ValueError("label_lookahead must be a non-negative int")
         object.__setattr__(self, "feature_names", feature_names)
 
@@ -200,28 +199,18 @@ def _parse_training_params(payload: Mapping[str, object]) -> TrainingParams:
     feature_names = payload["feature_names"]
     if not isinstance(feature_names, list):
         raise TypeError("training params feature_names must be a list")
-    label_lookahead = payload["label_lookahead"]
-    if isinstance(label_lookahead, bool) or not isinstance(label_lookahead, int):
-        raise TypeError("training params label_lookahead must be an int")
     return TrainingParams(
-        experiment_id=_required_string(payload, "experiment_id"),
-        model_group=_required_string(payload, "model_group"),
-        asof_day=_required_string(payload, "asof_day"),
-        feature_set=_required_string(payload, "feature_set"),
-        feature_version=_required_string(payload, "feature_version"),
+        experiment_id=cast(str, payload["experiment_id"]),
+        model_group=cast(str, payload["model_group"]),
+        asof_day=cast(str, payload["asof_day"]),
+        feature_set=cast(str, payload["feature_set"]),
+        feature_version=cast(str, payload["feature_version"]),
         feature_names=tuple(feature_names),
-        label_set=_required_string(payload, "label_set"),
-        label_version=_required_string(payload, "label_version"),
-        label_column=_required_string(payload, "label_column"),
-        label_lookahead=label_lookahead,
+        label_set=cast(str, payload["label_set"]),
+        label_version=cast(str, payload["label_version"]),
+        label_column=cast(str, payload["label_column"]),
+        label_lookahead=cast(int, payload["label_lookahead"]),
     )
-
-
-def _required_string(payload: Mapping[str, object], key: str) -> str:
-    value = payload[key]
-    if not isinstance(value, str):
-        raise TypeError(f"training params {key} must be a string")
-    return value
 
 
 def _validated_training_metrics(
@@ -233,13 +222,13 @@ def _validated_training_metrics(
     for key, raw_value in metrics.items():
         if not isinstance(key, str):
             raise TypeError("training metric keys must be strings")
-        match = _IC_KEY.fullmatch(key)
-        if match is None:
+        metric_date = key.removeprefix("ic@")
+        if metric_date == key:
             raise ValueError(f"invalid training metric key: {key!r}")
-        try:
-            date.fromisoformat(match.group(1))
-        except ValueError as exc:
-            raise ValueError(f"invalid training metric date: {key}") from exc
+        DateTimeUtils.require_system_date(
+            metric_date,
+            field_name=f"training metric {key!r} date",
+        )
         if isinstance(raw_value, bool) or not isinstance(raw_value, int | float):
             raise TypeError(f"training metric {key} must be a finite number")
         value = float(raw_value)
