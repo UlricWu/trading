@@ -171,16 +171,21 @@ experiments/<experiment_name>/
 ```text
 experiments/<experiment_name>/
 ├── training/
-│   ├── preprocess.pkl
-│   ├── model.pkl
 │   ├── params.json
-│   └── metrics.json
+│   ├── metrics.json
+│   └── inference.pkl
 └── report/
     └── training_report.html
 ```
 
-`model.pkl` 与 `preprocess.pkl` 必须属于同一次 training experiment；模型文件单独不构成
-完整推理资产。
+`inference.pkl` 是一个已经可用的 `InferenceModel`，同时包含原始预测模型、唯一的已拟合
+预处理对象及 feature set/version 身份。预处理对象同时拥有实际训练列顺序、拟合状态和唯一
+的 `transform` 实现；不存在独立的 `model.pkl` 或 `preprocess.pkl`。
+
+Training artifact publish 依次原子写入 `params.json`、`metrics.json`，最后原子发布
+`inference.pkl`。`inference.pkl` 存在且可加载只表示推理资产已经就绪；它不表示 report
+成功，也不表示整个 workflow 成功。报告只读取经过同一 schema 边界校验的 params 与
+metrics。
 
 当前 backtest experiment 暂时只正式保留：
 

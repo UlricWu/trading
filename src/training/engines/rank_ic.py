@@ -4,19 +4,15 @@
 from __future__ import annotations
 
 import math
-import re
 import statistics
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import date
 
+import numpy as np
 import pandas as pd
 from scipy.stats import spearmanr
 
-from src.training.inference_model import PredictionModel
-from src.utils import table_ops
-
-_IC_KEY = re.compile(r"^ic@(\d{4}-\d{2}-\d{2})$")
+from src.training.inference_model import InferenceModel
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,7 +75,7 @@ class RankICSummary:
 
 def evaluate_rank_ic(
     *,
-    model: PredictionModel,
+    model: InferenceModel,
     eval_X: pd.DataFrame,
     eval_y: pd.Series,
 ) -> float:
@@ -92,44 +88,38 @@ def evaluate_rank_ic(
             eval_y=eval_y,
         )
     """
-    table_ops.require_nonempty(eval_X, who="Rank IC eval_X")
     if len(eval_X) != len(eval_y):
         raise RuntimeError("Rank IC eval_X / eval_y length mismatch")
     if not eval_X.index.equals(eval_y.index):
         raise RuntimeError("Rank IC eval_X / eval_y index mismatch")
-    predictions = model.predict(eval_X.values)
-    rank_ic, _ = spearmanr(predictions, eval_y.values)
-    return float(rank_ic)
+    if tuple(eval_X.columns) != model.feature_names:
+        raise ValueError(
+            "Rank IC feature columns must match fitted feature_names exactly"
+        )
+
+    keep_rows, predictions = model.predict(
+        eval_X.to_numpy(dtype=float, na_value=np.nan, copy=True)
+    )
+    labels = eval_y.to_numpy(dtype=float, na_value=np.nan, copy=True)[keep_rows]
+    if labels.shape[0] < 2:
+        raise RuntimeError("Rank IC requires at least two retained evaluation rows")
+    if not np.isfinite(labels).all():
+        raise ValueError("Rank IC labels must be finite")
+
+    rank_ic, _ = spearmanr(predictions, labels)
+    value = float(rank_ic)
+    if not math.isfinite(value):
+        raise RuntimeError("Rank IC must be finite")
+    return value
 
 
-def build_rank_ic_rows(metrics: Mapping[str, object]) -> tuple[RankICRow, ...]:
-    """Parse persisted metrics into an ordered Rank IC series.
+def build_rank_ic_rows(metrics: Mapping[str, float]) -> tuple[RankICRow, ...]:
+    """Build an ordered Rank IC series from validated artifact metrics.
 
     Example:
         rows = build_rank_ic_rows({"ic@2026-07-20": 0.1})
     """
-    pairs: list[tuple[str, float]] = []
-    for key, raw_value in metrics.items():
-        match = _IC_KEY.fullmatch(str(key))
-        if match is None:
-            continue
-
-        eval_date = match.group(1)
-        try:
-            date.fromisoformat(eval_date)
-        except ValueError as exc:
-            raise ValueError(f"invalid training metric date: {key}") from exc
-        if isinstance(raw_value, bool) or not isinstance(raw_value, int | float):
-            raise TypeError(f"training metric {key} must be a finite number")
-        value = float(raw_value)
-        if not math.isfinite(value):
-            raise ValueError(f"training metric {key} must be a finite number")
-        pairs.append((eval_date, value))
-
-    if not pairs:
-        raise ValueError("training metrics must contain ic@YYYY-MM-DD values")
-
-    pairs.sort(key=lambda item: item[0])
+    pairs = sorted((key.removeprefix("ic@"), value) for key, value in metrics.items())
     values = [value for _, value in pairs]
     rolling_5 = _rolling_means(values, 5)
     rolling_20 = _rolling_means(values, 20)

@@ -96,9 +96,3 @@ model:
     label_set: "daily_t1_net_excess_rank"
     label_version: "v1"
     label_column: "y_rank_net_excess_return"
-
-    drop_na: true
-
-    adjustment:
-      method: "raw"
-      dataset_name: 'adj_factor'

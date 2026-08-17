@@ -8,7 +8,7 @@ from pathlib import Path
 import pandas as pd
 
 from src.access import meta
-from src.config.model_config import AdjustmentRefDataConfig, FeatureLabelConfig
+from src.config.model_config import FeatureLabelConfig
 from src.training.steps.dataset_build import DatasetBuildStep
 from src.utils.path import PathManager
 
@@ -24,10 +24,6 @@ def test_loader_consumes_the_supplied_window_without_calendar_resolution(
         label_version="v1",
         feature_columns=["factor"],
         label_column="target",
-        adjustment=AdjustmentRefDataConfig(
-            method="raw",
-            dataset_name="adj_factor",
-        ),
     )
     for index, trade_date in enumerate(
         ("2026-07-01", "2026-07-02", "2026-07-03"),
@@ -60,7 +56,6 @@ def test_loader_consumes_the_supplied_window_without_calendar_resolution(
     loader = DatasetBuildStep(
         pm=path_manager,
         dataset_cfg=dataset_config,
-        processed_version="v1",
     )
 
     (train_X, train_y), (eval_X, eval_y) = loader.load(

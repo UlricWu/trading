@@ -25,7 +25,7 @@ from src.trading.portfolio.constructors.topk_hysteresis import TopKHysteresisCon
 from src.trading.risk.engine import NoOpRiskManager
 from src.trading.signal.diagnostics import BasicSignalDiagnostics
 from src.trading.signal.model import ModelSignalProvider
-from src.training.artifact import resolve_model_artifact
+from src.training.artifact import load_inference_model
 from src.utils.path import PathManager
 
 
@@ -73,11 +73,10 @@ def build_components(
         )
     """
 
-    artifact = resolve_model_artifact(
+    inference_model = load_inference_model(
         pm=pm,
         experiment_name=model_experiment,
     )
-    inference_model = artifact.build_inference_model()
 
     constructor = build_portfolio_constructor(strategy)
     signal = ModelSignalProvider(
@@ -109,18 +108,18 @@ def build_components(
         f"ready "
         f"mode={mode.value} "
         f"signal={type(signal).__name__} "
-        f"feature_set={artifact.feature_set} "
-        f"feature_version={artifact.feature_version} "
-        f"feature_count={len(artifact.feature_names)} "
+        f"feature_set={inference_model.feature_set} "
+        f"feature_version={inference_model.feature_version} "
+        f"feature_count={len(inference_model.feature_names)} "
         f"constructor={type(constructor).__name__} "
         f"constructor_params={_constructor_log_params(constructor)} "
         f"execution={type(execution).__name__}"
     )
     return Components(
         signal=signal,
-        feature_set=artifact.feature_set,
-        feature_version=artifact.feature_version,
-        feature_names=tuple(artifact.feature_names),
+        feature_set=inference_model.feature_set,
+        feature_version=inference_model.feature_version,
+        feature_names=inference_model.feature_names,
         constructor=constructor,
         risk=NoOpRiskManager(),
         execution=execution,

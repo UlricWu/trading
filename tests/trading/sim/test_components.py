@@ -29,18 +29,17 @@ def test_mode_selects_fixed_execution_and_noop_risk(
     uses_ideal_execution: bool,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    artifact = SimpleNamespace(
+    inference_model = SimpleNamespace(
         feature_set="features",
         feature_version="v1",
         feature_names=("factor",),
-        build_inference_model=Mock(return_value=object()),
     )
-    resolve_artifact = Mock(return_value=artifact)
+    load_model = Mock(return_value=inference_model)
     constructor = object()
     monkeypatch.setattr(
         components_module,
-        "resolve_model_artifact",
-        resolve_artifact,
+        "load_inference_model",
+        load_model,
     )
     monkeypatch.setattr(
         components_module,
@@ -110,7 +109,7 @@ def test_mode_selects_fixed_execution_and_noop_risk(
         pm=Mock(spec=PathManager),
     )
 
-    resolve_artifact.assert_called_once_with(
+    load_model.assert_called_once_with(
         pm=ANY,
         experiment_name="training-runtime",
     )

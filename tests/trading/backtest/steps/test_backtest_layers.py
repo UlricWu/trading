@@ -48,7 +48,7 @@ def test_signal_uses_the_signal_date_for_prices_universe_and_features(
     kernel.run.return_value = [bar]
     monkeypatch.setattr(layers, "BacktestKernel", Mock(return_value=kernel))
     signal_provider = Mock()
-    signal_provider.scores.return_value = {"000001": 0.8}
+    signal_provider.scores.return_value = {}
     path_manager = Mock(spec=PathManager)
     operation = layers.SignalStep(
         access=access,
@@ -88,7 +88,8 @@ def test_signal_uses_the_signal_date_for_prices_universe_and_features(
         feature_names=("factor",),
     )
     assert result.raw_prices == {"000001": 10.0}
-    assert result.scores == {"000001": 0.8}
+    assert result.scores == {}
+    assert result.skipped_symbols == ("000001",)
 
 
 def test_portfolio_result_has_one_pre_risk_target_fact(
@@ -103,6 +104,7 @@ def test_portfolio_result_has_one_pre_risk_target_fact(
         bar=SimpleNamespace(ts_us=1),
         scores={"000001": 0.8},
         raw_prices={"000001": 10.0},
+        skipped_symbols=("000002",),
     )
 
     result = layers.PortfolioStep(
@@ -116,5 +118,6 @@ def test_portfolio_result_has_one_pre_risk_target_fact(
         raw_targets={"000001": 100},
         positions=state.portfolio_state.positions,
         current_raw_prices={"000001": 10.0},
+        hold_symbols=("000002",),
         max_positions=None,
     )

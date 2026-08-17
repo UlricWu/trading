@@ -267,12 +267,8 @@ def test_experiment_paths_are_exact_and_experiment_scoped(tmp_path: Path) -> Non
     assert pm.experiment_backtest_dir(experiment_name=experiment_name) == backtest_dir
     assert pm.experiment_report_dir(experiment_name=experiment_name) == report_dir
     assert (
-        pm.experiment_training_preprocess(experiment_name=experiment_name)
-        == training_dir / "preprocess.pkl"
-    )
-    assert (
-        pm.experiment_training_model(experiment_name=experiment_name)
-        == training_dir / "model.pkl"
+        pm.experiment_training_inference(experiment_name=experiment_name)
+        == training_dir / "inference.pkl"
     )
     assert (
         pm.experiment_training_params(experiment_name=experiment_name)

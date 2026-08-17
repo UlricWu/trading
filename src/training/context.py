@@ -7,8 +7,8 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-from src.training.artifact import PreprocessArtifact
-from src.training.inference_model import PredictionModel
+from src.training.engines.preprocessing import FittedPreprocessor
+from src.training.inference_model import InferenceModel
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,5 +45,5 @@ class TrainingContext:
     train_y: pd.Series | None = None
     eval_X: pd.DataFrame | None = None
     eval_y: pd.Series | None = None
-    preprocess: PreprocessArtifact | None = None
-    model: PredictionModel | None = None
+    preprocess: FittedPreprocessor | None = None
+    model: InferenceModel | None = None

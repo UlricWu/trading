@@ -1,8 +1,8 @@
 # filepath: src/trading/engines/replay.py
 from __future__ import annotations
 
-from collections.abc import Mapping
 import math
+from collections.abc import Collection, Mapping
 
 
 def make_executable_targets(
@@ -10,9 +10,20 @@ def make_executable_targets(
     raw_targets: Mapping[str, int],
     positions: Mapping[str, int],
     current_raw_prices: Mapping[str, float],
+    hold_symbols: Collection[str],
     max_positions: int | None = None,
 ) -> dict[str, int]:
-    """Adapt constructor targets to symbols executable on the current day."""
+    """Keep unavailable holdings and adapt the remaining executable targets.
+
+    Example:
+        targets = make_executable_targets(
+            raw_targets={},
+            positions={"600000": 100},
+            current_raw_prices={"600000": 10.0},
+            hold_symbols={"600000"},
+            max_positions=1,
+        )
+    """
     executable = {
         str(symbol): _require_nonnegative_quantity(qty, label="raw target")
         for symbol, qty in raw_targets.items()
@@ -24,6 +35,7 @@ def make_executable_targets(
     if max_positions is not None and max_positions < 0:
         raise ValueError("max_positions must be non-negative or None")
     priced_symbols = {str(symbol) for symbol in current_raw_prices}
+    held_without_score = {str(symbol) for symbol in hold_symbols}
     locked_symbols: set[str] = set()
 
     for symbol, qty in normalized_positions.items():
@@ -31,7 +43,7 @@ def make_executable_targets(
         current_qty = int(qty)
         if current_qty <= 0:
             continue
-        if sym not in priced_symbols:
+        if sym in held_without_score or sym not in priced_symbols:
             executable[sym] = current_qty
             locked_symbols.add(sym)
             continue

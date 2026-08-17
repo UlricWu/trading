@@ -189,10 +189,17 @@ Data workflow 保留 started 和 finished 业务日志；其他两个 workflow �
 Training runtime 范围只来自 `TrainingSubmission`。Model group 只来自 `ModelConfig.group`，
 workflow 通过 `training.models` 的显式不可变 catalog 取得 trainer，不在 Step 内按名称分支；
 当前 catalog 支持 `sgd_regression`。`group` 必须非空；未登记名称在 experiment identity、
-Access 与 Instrumentation 之前抛 `ValueError`。配置中的 feature/label version 继续选择研究
-制品；processed adjustment refdata 固定读取 `v1`，其 version 不是配置项。既有
-`params.json` schema 将本次配置选择记录为 `model_group`，并继续记录
-`adjustment_refdata.version="v1"`。
+Access 与 Instrumentation 之前抛 `ValueError`。配置必须显式选择非空、有序且不重复的
+`feature_columns`；不存在“空列表表示全部列”。实际训练 DataFrame 的列及顺序进入已拟合
+预处理对象，成为 `feature_names` 的唯一权威；`params.json` 只投影该事实。
+
+Feature producer 及其 feature set/version 拥有价格口径。Training、evaluation、artifact
+loader 与 backtest 都只消费同一 feature set/version，不读取复权因子，也不再做 raw/qfq/hfq
+转换。当前 `tushare_daily_basic/v1` producer 以输出日作为 qfq as-of；其他价格口径必须用
+不同的 feature set/version 表达，不能成为模型运行时开关。该 producer 从固定 processed
+`adj_factor/v1` 读取因子；对象或必需列缺失时由 Meta/table 边界直接失败，symbol 缺少唯一
+as-of 行时由 qfq 边界以 `ValueError` 失败。非数值或非正因子按价格复权 owner 产生 NaN
+feature，再由所选 fitted preprocessing 处理，不在模型层补因子或回退日期。
 
 Label builder 的 `target_lookahead(label_column)` 是 `eval_offset` 的唯一来源。Workflow
 通过 Access 读取请求闭区间正式交易日，然后由纯 schedule resolver 产生：
@@ -208,16 +215,36 @@ TrainingWindow(train_dates: tuple[str, ...], eval_date: str)
 - 最终没有 window 时在 Instrumentation 前抛 `ValueError`。
 
 Schedule 不保存可从 `train_dates` 派生的 start/end/asof，也不重复查询或重新验证 Access
-提供的日期。Dataset loader 直接消费完整 `train_dates` 和 `eval_date`，读取 feature、label
-及需要的 adjustment Meta/payload，并保留既有 price adjustment、列选择、无穷转缺失、
-drop-na 和索引一致性语义。
+提供的日期。Dataset loader 直接消费完整 `train_dates` 和 `eval_date`，读取所选 feature 与
+label，要求两者索引一致，只删除 label 为 NaN 的行，并保留 feature NaN 交给预处理。Missing
+只表示 NaN；正负无穷是无效输入，必须在 dataset 或 preprocessing 边界以 `ValueError`
+失败，不得转换成 NaN、填充值或零。
 
-Workflow 以 `per_window_steps` 显式声明 dataset load → train-only preprocess fit 与 eval
-transform → catalog-selected fresh model train → Rank IC，并以 `final_steps` 声明 artifact
-persist → report。Preprocess 处理后训练集为空时在该 provider 失败；trainer 只保留一次
-有限值和 X/y 长度校验。Training step 将每个 IC 写入
-`metrics[f"ic@{eval_date}"]`，最终持久化最后一个 window 的 model/preprocess、全部 IC、
-既有 params schema，再由 persisted JSON 直接生成报告。公共返回值为 `None`。
+一个具体的 `FittedPreprocessor` 同时拥有实际训练列、拟合状态和唯一的 `transform` 实现。
+`constant` 使用配置给出的有限数；`mean` 与 `median` 只从训练行拟合，全 NaN 列必须失败，
+不得自动回落为 `0.0`；`drop` 跳过任一 feature 为 NaN 的整行，并由 `transform` 同时返回
+原输入长度的布尔保留 mask 和保留行的转换结果。训练侧 fit 后也调用这个 `transform`，按
+mask 同步选择 label；evaluation 与 runtime 不另写预处理逻辑。
+
+Workflow 以 `per_window_steps` 显式声明 dataset load → train-only preprocess fit/transform →
+catalog-selected fresh model train 并构造就绪 `InferenceModel` → 由同一个
+`InferenceModel.predict` 执行 Rank IC，并以 `final_steps` 声明 artifact persist → report。
+训练行全部被 drop 时 preprocessing 失败；评估保留不足两行或 Rank IC 非有限值时 evaluation
+以 `RuntimeError` 失败。Training step 只写有限的 `metrics[f"ic@{eval_date}"]`。
+
+最终 training artifact 精确为 `params.json`、`metrics.json` 和 `inference.pkl`。Params schema
+只包含：
+
+```text
+experiment_id, model_group, asof_day,
+feature_set, feature_version, feature_names,
+label_set, label_version, label_column, label_lookahead
+```
+
+Metrics 必须是非空的有限数映射，key 精确匹配 `ic@YYYY-MM-DD`。Persist 依次原子发布 params、
+metrics，并最后原子发布包含原始模型与 `FittedPreprocessor` 的就绪 `InferenceModel`；不存在
+独立 model/preprocess 文件。Report 与其他 reader 共用 artifact owner 的 JSON/schema loader。
+公共返回值为 `None`。
 
 ## Backtest workflow
 
@@ -240,6 +267,12 @@ execution_eval, full_backtest              -> ExecutionOrchestrator
 
 Simulated execution 的 slippage 固定为 `5.0` bp；risk 固定为 `NoOpRiskManager`，均不是
 配置项或 fallback。
+
+Component builder 直接加载所选 training experiment 的 `inference.pkl`。推理中的
+`missing.method="drop"` 对所有请求 symbol 使用同一个 fitted transform：被跳过的 symbol
+当天没有 score；所有 symbol 都被跳过仍是成功的“无信号”日。未持有的跳过 symbol 不产生
+新仓位；已持有的跳过 symbol 保持原数量，并占用 portfolio 的持仓容量，不得因缺少 score
+隐式生成清仓目标。
 
 `BacktestState` 只保存跨 timing 持续的 portfolio、ledger、equity、signal/target tape、五类
 evaluation frame、bar/signal count、last mark prices 和 trade dates。它构造后立即可用，不含

@@ -45,10 +45,6 @@ model:
     label_version: v1
     feature_columns: [factor]
     label_column: target
-    drop_na: true
-    adjustment:
-      method: raw
-      dataset_name: adj_factor
 backtest:
   init_cash: 200000
   min_listing_calendar_days: 120

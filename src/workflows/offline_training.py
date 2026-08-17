@@ -116,12 +116,13 @@ def run_offline_training(
         DatasetBuildStep(
             pm=path_manager,
             dataset_cfg=model_config.dataset,
-            processed_version=PROCESSED_VERSION,
         ),
         PreprocessStep(model_config.preprocessing),
         ModelTrainStep(
             trainer=trainer,
             model_params=model_config.model_params,
+            feature_set=model_config.dataset.feature_set,
+            feature_version=model_config.dataset.feature_version,
         ),
         ICEvaluateStep(),
     )
@@ -133,7 +134,6 @@ def run_offline_training(
             model_group=model_config.group,
             dataset_cfg=model_config.dataset,
             label_lookahead=eval_offset,
-            processed_version=PROCESSED_VERSION,
         ),
         ReportStep(
             pm=path_manager,

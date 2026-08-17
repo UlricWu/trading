@@ -23,7 +23,6 @@ class DatasetBuildStep:
         loader = DatasetBuildStep(
             pm=path_manager,
             dataset_cfg=model_config.dataset,
-            processed_version="v1",
         )
         train, evaluation = loader.load(
             train_dates=("2026-07-17", "2026-07-20"),
@@ -36,7 +35,6 @@ class DatasetBuildStep:
         *,
         pm: PathManager,
         dataset_cfg: FeatureLabelConfig,
-        processed_version: str,
     ) -> None:
         """Bind formal storage and dataset identities.
 
@@ -44,12 +42,10 @@ class DatasetBuildStep:
             loader = DatasetBuildStep(
                 pm=path_manager,
                 dataset_cfg=model_config.dataset,
-                processed_version="v1",
             )
         """
         self._pm = pm
         self._dataset_cfg = dataset_cfg
-        self._processed_version = processed_version
 
     def load(
         self,
@@ -145,33 +141,9 @@ class DatasetBuildStep:
         )
         label_frame = pq.ParquetFile(loaded_label.payload_path).read().to_pandas()
 
-        adjustment_frame = None
-        if dataset_cfg.adjustment.method != "raw":
-            adjustment_path = self._pm.processed_data(
-                dataset_name=dataset_cfg.adjustment.dataset_name,
-                version=self._processed_version,
-                trade_date=trade_date,
-            )
-            loaded_adjustment = meta.require(
-                pm=self._pm,
-                meta_path=self._pm.processed_meta(
-                    dataset_name=dataset_cfg.adjustment.dataset_name,
-                    version=self._processed_version,
-                    trade_date=trade_date,
-                ),
-                expected_payload_path=adjustment_path,
-            )
-            adjustment_frame = (
-                pq.ParquetFile(loaded_adjustment.payload_path).read().to_pandas()
-            )
-
         return build_daily_training_dataset(
             feature_frame=feature_frame,
             label_frame=label_frame,
             feature_columns=dataset_cfg.feature_columns,
             label_column=dataset_cfg.label_column,
-            drop_na=dataset_cfg.drop_na,
-            adjustment=dataset_cfg.adjustment.method,
-            adjustment_refdata_frame=adjustment_frame,
-            asof_date=trade_date,
         )

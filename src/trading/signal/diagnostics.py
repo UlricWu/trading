@@ -1,45 +1,81 @@
 # filepath: src/trading/signal/diagnostics.py
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Protocol
 
 import numpy as np
 
 from src import logs
+from src.training.inference_model import InferenceModel
 from src.utils.datetime_utils import DateTimeUtils
 
 
-class FeatureNamedModel(Protocol):
-    feature_names: Sequence[str]
-
-
 class SignalDiagnostics(Protocol):
+    """Observe raw feature and scored-row facts without changing them.
+
+    Example:
+        diagnostics = BasicSignalDiagnostics(log_daily_only=False)
+        diagnostics.on_after_predict(
+            ts_us=1,
+            scores={"600000": 0.2},
+            requested_count=2,
+            skipped_count=1,
+        )
+    """
+
     def on_before_predict(
         self,
         *,
         ts_us: int,
         features: np.ndarray,
-        model: FeatureNamedModel,
-    ) -> None: ...
+        model: InferenceModel,
+    ) -> None:
+        """Observe the raw requested feature matrix.
+
+        Example:
+            diagnostics.on_before_predict(
+                ts_us=1,
+                features=np.array([[1.0]]),
+                model=inference_model,
+            )
+        """
+        ...
 
     def on_after_predict(
         self,
         *,
         ts_us: int,
         scores: Mapping[str, float],
-    ) -> None: ...
+        requested_count: int,
+        skipped_count: int,
+    ) -> None:
+        """Observe requested, scored, and skipped row counts.
+
+        Example:
+            diagnostics.on_after_predict(
+                ts_us=1,
+                scores={"600000": 0.2},
+                requested_count=2,
+                skipped_count=1,
+            )
+        """
+        ...
 
 
 @dataclass(slots=True)
 class BasicSignalDiagnostics:
-    """
-    Pure diagnostic observer (matrix version)
+    """Log raw missingness and prediction distributions without mutation.
 
-    - no dependency on InferenceModel internals
-    - no mutation
-    - no trading semantics
+    Example:
+        diagnostics = BasicSignalDiagnostics(log_daily_only=False)
+        diagnostics.on_after_predict(
+            ts_us=1,
+            scores={"600000": 0.2},
+            requested_count=1,
+            skipped_count=0,
+        )
     """
 
     log_daily_only: bool = True
@@ -47,32 +83,34 @@ class BasicSignalDiagnostics:
     _last_feature_logged_date: str | None = None
     _last_score_logged_date: str | None = None
 
-    # ==========================================================
-    # Before predict
-    # ==========================================================
-
     def on_before_predict(
         self,
         *,
         ts_us: int,
         features: np.ndarray,
-        model: FeatureNamedModel,
+        model: InferenceModel,
     ) -> None:
+        """Log NaN distribution for one requested feature matrix.
+
+        Example:
+            diagnostics.on_before_predict(
+                ts_us=1,
+                features=np.array([[float("nan")]]),
+                model=inference_model,
+            )
+        """
 
         if not self._should_log(channel="feature", ts_us=ts_us):
             return
 
-        if features is None or features.size == 0:
+        if features.size == 0:
             return
 
         feature_names = model.feature_names
-        if not feature_names:
-            return
-
         X = features
         n_syms, n_feats = X.shape
 
-        mask = ~np.isfinite(X)
+        mask = np.isnan(X)
         total_missing = int(mask.sum())
         total = n_syms * n_feats
         missing_ratio = total_missing / float(total) if total else 0.0
@@ -100,21 +138,33 @@ class BasicSignalDiagnostics:
             f"top_missing_feats={top_str}"
         )
 
-    # ==========================================================
-    # After predict
-    # ==========================================================
-
     def on_after_predict(
         self,
         *,
         ts_us: int,
         scores: Mapping[str, float],
+        requested_count: int,
+        skipped_count: int,
     ) -> None:
+        """Log row counts and the retained finite-score distribution.
+
+        Example:
+            diagnostics.on_after_predict(
+                ts_us=1,
+                scores={"600000": 0.2},
+                requested_count=2,
+                skipped_count=1,
+            )
+        """
 
         if not self._should_log(channel="score", ts_us=ts_us):
             return
 
         if not scores:
+            logs.info(
+                f"ts_us={ts_us} requested={requested_count} scored=0 "
+                f"skipped={skipped_count}"
+            )
             return
 
         arr = np.asarray(list(scores.values()), dtype=float)
@@ -128,6 +178,9 @@ class BasicSignalDiagnostics:
         )
         logs.info(
             f"ts_us={ts_us} "
+            f"requested={requested_count} "
+            f"scored={len(scores)} "
+            f"skipped={skipped_count} "
             f"n={arr.size} "
             f"finite_n={finite.size} "
             f"min={finite.min():.6f} "
@@ -138,10 +191,6 @@ class BasicSignalDiagnostics:
             f"max={finite.max():.6f}"
             f"{threshold_fields}"
         )
-
-    # ==========================================================
-    # Internal
-    # ==========================================================
 
     def _should_log(self, *, channel: str, ts_us: int) -> bool:
         if not self.log_daily_only:

@@ -9,27 +9,12 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from html import escape
 
+from src.training.artifact import TrainingParams
 from src.training.engines.rank_ic import (
     RankICRow,
     RankICSummary,
     build_rank_ic_rows,
     summarize_rank_ic,
-)
-
-_REQUIRED_PARAMS = (
-    "experiment_name",
-    "experiment_id",
-    "model_group",
-    "asof_day",
-    "created_at",
-    "feature_set",
-    "feature_version",
-    "feature_names",
-    "label_set",
-    "label_version",
-    "label_column",
-    "label_lookahead",
-    "price_adjustment",
 )
 
 
@@ -48,40 +33,22 @@ class TrainingReport:
     summary: RankICSummary
 
 
-@dataclass(frozen=True, slots=True)
-class _TrainingReportParams:
-    experiment_name: str
-    experiment_id: str
-    model_group: str
-    asof_day: str
-    created_at: str
-    feature_set: str
-    feature_version: str
-    feature_names: tuple[str, ...]
-    label_set: str
-    label_version: str
-    label_column: str
-    label_lookahead: int
-    price_adjustment: str
-
-
 def build_training_report(
     *,
     experiment_name: str,
-    params_payload: Mapping[str, object],
-    metrics_payload: Mapping[str, object],
+    params: TrainingParams,
+    metrics: Mapping[str, float],
 ) -> TrainingReport:
-    """Build training report HTML from persisted JSON-compatible objects.
+    """Build training report HTML from validated persisted inputs.
 
     Example:
         report = build_training_report(
             experiment_name="training_2026-07-01_2026-07-20_run-1",
-            params_payload=params,
-            metrics_payload={"ic@2026-07-20": 0.1},
+            params=params,
+            metrics={"ic@2026-07-20": 0.1},
         )
     """
-    params = _parse_params(params_payload)
-    rows = build_rank_ic_rows(metrics_payload)
+    rows = build_rank_ic_rows(metrics)
     summary = summarize_rank_ic(rows)
     return TrainingReport(
         html=_render_html(
@@ -94,47 +61,10 @@ def build_training_report(
     )
 
 
-def _parse_params(params: Mapping[str, object]) -> _TrainingReportParams:
-    missing = [key for key in _REQUIRED_PARAMS if key not in params]
-    if missing:
-        raise ValueError(f"training params missing required fields: {missing}")
-    feature_names_raw = params["feature_names"]
-    if (
-        not isinstance(feature_names_raw, list)
-        or not feature_names_raw
-        or any(not isinstance(name, str) or not name for name in feature_names_raw)
-    ):
-        raise ValueError("training params feature_names must be non-empty strings")
-    label_lookahead = params["label_lookahead"]
-    if (
-        isinstance(label_lookahead, bool)
-        or not isinstance(label_lookahead, int)
-        or label_lookahead < 0
-    ):
-        raise ValueError("training params label_lookahead must be non-negative")
-    string_values = {
-        key: _required_string(params, key)
-        for key in _REQUIRED_PARAMS
-        if key not in {"feature_names", "label_lookahead"}
-    }
-    return _TrainingReportParams(
-        **string_values,
-        feature_names=tuple(feature_names_raw),
-        label_lookahead=label_lookahead,
-    )
-
-
-def _required_string(params: Mapping[str, object], key: str) -> str:
-    value = params[key]
-    if not isinstance(value, str) or not value:
-        raise ValueError(f"training params {key} must be a non-empty string")
-    return value
-
-
 def _render_html(
     *,
     experiment_name: str,
-    params: _TrainingReportParams,
+    params: TrainingParams,
     summary: RankICSummary,
     rows: Sequence[RankICRow],
 ) -> str:
@@ -144,13 +74,11 @@ def _render_html(
             ("experiment_id", params.experiment_id),
             ("model_group", params.model_group),
             ("asof_day", params.asof_day),
-            ("created_at", params.created_at),
             ("feature_set", f"{params.feature_set} / {params.feature_version}"),
             ("feature_names", _format_value(params.feature_names)),
             ("label_set", f"{params.label_set} / {params.label_version}"),
             ("label_column", params.label_column),
             ("label_lookahead", params.label_lookahead),
-            ("price_adjustment", params.price_adjustment),
         )
     )
     summary_rows = _table_rows(

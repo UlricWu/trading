@@ -6,7 +6,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from src.config.model_config import ModelConfig
+from src.config.model_config import MissingConfig, ModelConfig
 
 
 def _model_payload() -> dict[str, object]:
@@ -24,39 +24,54 @@ def _model_payload() -> dict[str, object]:
             "label_version": "v1",
             "feature_columns": ["factor"],
             "label_column": "target",
-            "drop_na": True,
-            "adjustment": {
-                "method": "raw",
-                "dataset_name": "adj_factor",
-            },
         },
     }
 
 
-def test_model_config_uses_no_preprocessing_or_adjustment_version_selector() -> None:
+def test_model_config_uses_explicit_ordered_feature_columns() -> None:
     config = ModelConfig.model_validate(_model_payload())
 
     assert config.group == "sgd_regression"
+    assert config.dataset.feature_columns == ["factor"]
     assert not hasattr(config.preprocessing, "version")
-    assert not hasattr(config.dataset.adjustment, "version")
+    assert not hasattr(config.dataset, "adjustment")
+    assert not hasattr(config.dataset, "drop_na")
 
 
-@pytest.mark.parametrize("field_owner", ["preprocessing", "adjustment"])
-def test_model_config_rejects_removed_version_fields(field_owner: str) -> None:
+@pytest.mark.parametrize("removed_field", ["adjustment", "drop_na"])
+def test_model_config_rejects_removed_dataset_fields(removed_field: str) -> None:
     payload = _model_payload()
-    if field_owner == "preprocessing":
-        preprocessing = payload["preprocessing"]
-        assert isinstance(preprocessing, dict)
-        preprocessing["version"] = "v1"
-    else:
-        dataset = payload["dataset"]
-        assert isinstance(dataset, dict)
-        adjustment = dataset["adjustment"]
-        assert isinstance(adjustment, dict)
-        adjustment["version"] = "v1"
+    dataset = payload["dataset"]
+    assert isinstance(dataset, dict)
+    dataset[removed_field] = (
+        {"method": "raw", "dataset_name": "adj_factor"}
+        if removed_field == "adjustment"
+        else True
+    )
 
     with pytest.raises(ValidationError):
         ModelConfig.model_validate(payload)
+
+
+@pytest.mark.parametrize("feature_columns", [[], ["factor", "factor"], [""]])
+def test_model_config_rejects_ambiguous_feature_identity(
+    feature_columns: list[str],
+) -> None:
+    payload = _model_payload()
+    dataset = payload["dataset"]
+    assert isinstance(dataset, dict)
+    dataset["feature_columns"] = feature_columns
+
+    with pytest.raises(ValidationError):
+        ModelConfig.model_validate(payload)
+
+
+@pytest.mark.parametrize("fill_value", [float("nan"), float("inf"), True])
+def test_constant_missing_fill_requires_an_explicit_finite_number(
+    fill_value: object,
+) -> None:
+    with pytest.raises(ValidationError):
+        MissingConfig(method="constant", fill_value=fill_value)  # type: ignore[arg-type]
 
 
 def test_model_config_requires_explicit_nonempty_group() -> None:

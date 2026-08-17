@@ -3,11 +3,9 @@
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
-
 from src import logs
 from src.observability.log_format import format_log_json
+from src.training.artifact import load_training_report_inputs
 from src.training.context import TrainingContext
 from src.training.engines.report import build_training_report
 from src.utils.filesystem import FileSystem
@@ -43,22 +41,14 @@ class ReportStep:
         Example:
             reported_context = step.run(persisted_context)
         """
-        params = _load_json_object(
-            self._pm.experiment_training_params(
-                experiment_name=self._experiment_name,
-            ),
-            label="training params",
-        )
-        metrics = _load_json_object(
-            self._pm.experiment_training_metrics(
-                experiment_name=self._experiment_name,
-            ),
-            label="training metrics",
+        params, metrics = load_training_report_inputs(
+            pm=self._pm,
+            experiment_name=self._experiment_name,
         )
         report = build_training_report(
             experiment_name=self._experiment_name,
-            params_payload=params,
-            metrics_payload=metrics,
+            params=params,
+            metrics=metrics,
         )
         report_path = self._pm.experiment_training_report(
             experiment_name=self._experiment_name,
@@ -69,15 +59,3 @@ class ReportStep:
             f"{format_log_json('rank_ic_summary', report.summary)}"
         )
         return context
-
-
-def _load_json_object(path: Path, *, label: str) -> dict[str, object]:
-    if not path.is_file():
-        raise FileNotFoundError(f"{label} not found: {path}")
-    try:
-        payload: object = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"invalid {label} JSON: {path}") from exc
-    if not isinstance(payload, dict):
-        raise TypeError(f"{label} must be a JSON object")
-    return {str(key): value for key, value in payload.items()}

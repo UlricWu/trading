@@ -3,8 +3,8 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 import re
+from pathlib import Path
 from typing import Final
 
 from src.utils.datetime_utils import DateTimeUtils
@@ -341,17 +341,17 @@ class PathManager:
         """Return the report artifact directory for one experiment."""
         return self.experiment_dir(experiment_name=experiment_name) / "report"
 
-    def experiment_training_preprocess(self, *, experiment_name: str) -> Path:
-        """Return one training experiment's preprocessing artifact path."""
+    def experiment_training_inference(self, *, experiment_name: str) -> Path:
+        """Return one training experiment's ready inference asset path.
+
+        Example:
+            path = pm.experiment_training_inference(
+                experiment_name="training_2026-07-01_2026-07-20_run-1"
+            )
+        """
         return (
             self.experiment_training_dir(experiment_name=experiment_name)
-            / "preprocess.pkl"
-        )
-
-    def experiment_training_model(self, *, experiment_name: str) -> Path:
-        """Return one training experiment's model artifact path."""
-        return (
-            self.experiment_training_dir(experiment_name=experiment_name) / "model.pkl"
+            / "inference.pkl"
         )
 
     def experiment_training_params(self, *, experiment_name: str) -> Path:

@@ -1,31 +1,25 @@
 # filepath: src/training/steps/preprocess.py
-"""Fit train-owned preprocessing and transform one evaluation partition."""
+"""Fit preprocessing on training rows and transform those rows once."""
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 
 from src import logs
 from src.config.model_config import PreprocessingConfig
-from src.training.artifact import PreprocessArtifact
 from src.training.context import TrainingContext
-from src.training.engines.preprocessing import (
-    apply_preprocessing,
-    fit_preprocessing,
-)
-from src.utils import table_ops
+from src.training.engines.preprocessing import FittedPreprocessor
 
 
 class PreprocessStep:
-    """Apply one preprocessing config with no shared workflow context.
+    """Fit and apply one training-owned preprocessing object.
 
     Example:
         preprocess = PreprocessStep(model_config.preprocessing)
-        prepared = preprocess(
+        train_X, train_y, fitted = preprocess(
             train_X=train_X,
             train_y=train_y,
-            eval_X=eval_X,
-            eval_y=eval_y,
         )
     """
 
@@ -42,73 +36,50 @@ class PreprocessStep:
         *,
         train_X: pd.DataFrame,
         train_y: pd.Series,
-        eval_X: pd.DataFrame,
-        eval_y: pd.Series,
-    ) -> tuple[
-        pd.DataFrame,
-        pd.Series,
-        pd.DataFrame,
-        pd.Series,
-        PreprocessArtifact,
-    ]:
-        """Return aligned train/eval partitions and the fitted artifact.
+    ) -> tuple[pd.DataFrame, pd.Series, FittedPreprocessor]:
+        """Return aligned retained training rows and their fitted preprocessor.
 
         Example:
-            train_X, train_y, eval_X, eval_y, artifact = preprocess(
+            train_X, train_y, fitted = preprocess(
                 train_X=train_X,
                 train_y=train_y,
-                eval_X=eval_X,
-                eval_y=eval_y,
             )
         """
-        processed_train_X, artifact = fit_preprocessing(
+        if len(train_X) != len(train_y) or not train_X.index.equals(train_y.index):
+            raise RuntimeError("PreprocessStep train_X / train_y index mismatch")
+
+        fitted = FittedPreprocessor.fit(
             train_X=train_X,
             config=self._preprocessing_cfg,
         )
-        table_ops.require_nonempty(
-            processed_train_X,
-            who="PreprocessStep train_X",
+        keep_rows, values = fitted.transform(
+            train_X.to_numpy(dtype=float, na_value=np.nan, copy=True)
         )
-        processed_train_y = train_y.loc[processed_train_X.index]
-        processed_eval_X = apply_preprocessing(
-            X=eval_X,
-            artifact=artifact,
+        if values.shape[0] == 0:
+            raise ValueError("PreprocessStep retained no training rows")
+
+        processed_X = pd.DataFrame(
+            values,
+            index=train_X.index[keep_rows],
+            columns=fitted.feature_names,
         )
-        processed_eval_y = eval_y.loc[processed_eval_X.index]
+        processed_y = train_y.iloc[np.flatnonzero(keep_rows)].copy()
         logs.info(
-            f"train_rows={len(processed_train_X)} eval_rows={len(processed_eval_X)}"
+            f"train_rows={len(train_X)} retained_rows={len(processed_X)} "
+            f"skipped_rows={len(train_X) - len(processed_X)}"
         )
-        return (
-            processed_train_X,
-            processed_train_y,
-            processed_eval_X,
-            processed_eval_y,
-            artifact,
-        )
+        return processed_X, processed_y, fitted
 
     def run(self, context: TrainingContext) -> TrainingContext:
-        """Preprocess the loaded Context partitions and attach the artifact.
+        """Preprocess the Context training partition and attach fitted state.
 
         Example:
             next_context = preprocess.run(loaded_context)
         """
-        if (
-            context.train_X is None
-            or context.train_y is None
-            or context.eval_X is None
-            or context.eval_y is None
-        ):
-            raise RuntimeError("PreprocessStep requires loaded dataset partitions")
-        (
-            context.train_X,
-            context.train_y,
-            context.eval_X,
-            context.eval_y,
-            context.preprocess,
-        ) = self(
+        if context.train_X is None or context.train_y is None:
+            raise RuntimeError("PreprocessStep requires loaded training data")
+        context.train_X, context.train_y, context.preprocess = self(
             train_X=context.train_X,
             train_y=context.train_y,
-            eval_X=context.eval_X,
-            eval_y=context.eval_y,
         )
         return context

@@ -1,107 +1,140 @@
 # filepath: src/training/engines/preprocessing.py
-"""Fit and apply train-owned missing-value preprocessing."""
+"""Own fitted missing-value state and the only feature transform."""
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from typing import Literal, Self
+
+import numpy as np
 import pandas as pd
 
-from src.config.model_config import MissingConfig, PreprocessingConfig
-from src.training.artifact import PreprocessArtifact
+from src.config.model_config import PreprocessingConfig
 from src.utils import table_ops
 
 
-def fit_preprocessing(
-    *,
-    train_X: pd.DataFrame,
-    config: PreprocessingConfig,
-) -> tuple[pd.DataFrame, PreprocessArtifact]:
-    """Fit missing-value parameters on training features only.
+@dataclass(frozen=True, slots=True)
+class FittedPreprocessor:
+    """Contain fitted missing-value state and transform feature rows.
 
     Example:
-        transformed, artifact = fit_preprocessing(
-            train_X=pd.DataFrame({"factor": [1.0, None]}),
+        preprocessor = FittedPreprocessor.fit(
+            train_X=pd.DataFrame({"factor": [1.0, float("nan")]}),
             config=PreprocessingConfig(),
         )
-    """
-    transformed, fill_values = _fit_missing(train_X.copy(), config.missing)
-    artifact = PreprocessArtifact(
-        feature_columns=transformed.columns.tolist(),
-        missing_method=config.missing.method,
-        fill_values=fill_values,
-    )
-    return transformed, artifact
-
-
-def apply_preprocessing(
-    *,
-    X: pd.DataFrame,
-    artifact: PreprocessArtifact,
-) -> pd.DataFrame:
-    """Apply one fitted preprocessing artifact to feature rows.
-
-    Example:
-        transformed = apply_preprocessing(
-            X=pd.DataFrame({"factor": [None]}),
-            artifact=artifact,
+        keep_rows, values = preprocessor.transform(
+            np.array([[float("nan")]], dtype=float)
         )
     """
-    transformed = X.reindex(columns=list(artifact.feature_columns)).copy()
-    return _apply_missing(transformed, artifact)
 
+    feature_names: tuple[str, ...]
+    missing_method: Literal["constant", "mean", "median", "drop"]
+    fill_values: tuple[float, ...] = ()
 
-def _fit_missing(
-    X: pd.DataFrame,
-    config: MissingConfig,
-) -> tuple[pd.DataFrame, dict[str, float]]:
-    if config.method == "drop":
-        return X.dropna(axis=0, how="any"), {}
+    def __post_init__(self) -> None:
+        names = tuple(self.feature_names)
+        if not names or any(not isinstance(name, str) or not name for name in names):
+            raise ValueError("feature_names must contain non-empty strings")
+        if len(names) != len(set(names)):
+            raise ValueError("feature_names must be unique")
+        if self.missing_method not in {"constant", "mean", "median", "drop"}:
+            raise ValueError(f"unsupported missing_method: {self.missing_method!r}")
 
-    fill_values = _fill_values(X, config)
-    return X.fillna(value=fill_values), fill_values
+        fill_values = tuple(float(value) for value in self.fill_values)
+        expected_fill_count = 0 if self.missing_method == "drop" else len(names)
+        if len(fill_values) != expected_fill_count:
+            raise ValueError(
+                "fill_values count must be zero for drop and match feature_names "
+                "otherwise"
+            )
+        if not np.isfinite(np.asarray(fill_values, dtype=float)).all():
+            raise ValueError("fill_values must be finite")
+        object.__setattr__(self, "feature_names", names)
+        object.__setattr__(self, "fill_values", fill_values)
 
+    @classmethod
+    def fit(
+        cls,
+        *,
+        train_X: pd.DataFrame,
+        config: PreprocessingConfig,
+    ) -> Self:
+        """Fit missing-value state from the actual ordered training columns.
 
-def _apply_missing(X: pd.DataFrame, artifact: PreprocessArtifact) -> pd.DataFrame:
-    if artifact.missing_method == "drop":
-        return X.dropna(axis=0, how="any")
+        Example:
+            preprocessor = FittedPreprocessor.fit(
+                train_X=pd.DataFrame({"factor": [1.0, 3.0, float("nan")]}),
+                config=PreprocessingConfig(
+                    missing=MissingConfig(method="mean")
+                ),
+            )
+        """
+        table_ops.require_nonempty(train_X, who="preprocessing train_X")
+        feature_names = tuple(train_X.columns)
+        if any(not isinstance(name, str) or not name for name in feature_names):
+            raise ValueError("preprocessing feature columns must be non-empty strings")
+        if len(feature_names) != len(set(feature_names)):
+            raise ValueError("preprocessing feature columns must be unique")
 
-    transformed = X.fillna(value=dict(artifact.fill_values))
-    if len(transformed.columns) > 0:
-        table_ops.require_non_null(
-            transformed,
-            tuple(transformed.columns),
-            who="training preprocessing output",
+        values = train_X.to_numpy(dtype=float, na_value=np.nan, copy=True)
+        if np.isinf(values).any():
+            raise ValueError("preprocessing input must not contain infinity")
+
+        method = config.missing.method
+        if method == "drop":
+            return cls(feature_names=feature_names, missing_method=method)
+        if method == "constant":
+            fill_value = config.missing.fill_value
+            if fill_value is None:
+                raise ValueError("missing.fill_value is required for constant fill")
+            fill_values = np.full(values.shape[1], fill_value, dtype=float)
+        else:
+            all_missing = np.isnan(values).all(axis=0)
+            if all_missing.any():
+                columns = [
+                    feature_names[index]
+                    for index in np.flatnonzero(all_missing).tolist()
+                ]
+                raise ValueError(
+                    f"missing.method={method!r} cannot fit all-missing columns: "
+                    f"{columns}"
+                )
+            fill_values = (
+                np.nanmean(values, axis=0)
+                if method == "mean"
+                else np.nanmedian(values, axis=0)
+            )
+        return cls(
+            feature_names=feature_names,
+            missing_method=method,
+            fill_values=tuple(float(value) for value in fill_values),
         )
-    return transformed
 
+    def transform(self, values: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """Return retained-row identity and transformed retained rows.
 
-def _fill_values(X: pd.DataFrame, config: MissingConfig) -> dict[str, float]:
-    if any(not isinstance(column, str) for column in X.columns):
-        raise ValueError("preprocessing feature columns must be strings")
+        Example:
+            keep_rows, transformed = preprocessor.transform(
+                np.array([[1.0], [float("nan")]], dtype=float)
+            )
+        """
+        raw = np.asarray(values)
+        if raw.ndim != 2 or raw.shape[1] != len(self.feature_names):
+            raise ValueError(
+                "preprocessing input shape must be "
+                f"(*, {len(self.feature_names)}); got={raw.shape}"
+            )
+        transformed = raw.astype(float, copy=True)
+        if np.isinf(transformed).any():
+            raise ValueError("preprocessing input must not contain infinity")
 
-    if config.method == "constant":
-        if config.fill_value is None:
-            raise ValueError("missing.fill_value is required for constant fill")
-        return {column: float(config.fill_value) for column in X.columns}
+        if self.missing_method == "drop":
+            keep_rows = ~np.isnan(transformed).any(axis=1)
+            return keep_rows, transformed[keep_rows]
 
-    numeric_columns = X.select_dtypes(include=["number"]).columns
-    numeric_column_set = set(numeric_columns)
-    non_numeric_missing = [
-        column
-        for column in X.columns[X.isna().any()]
-        if column not in numeric_column_set
-    ]
-    if non_numeric_missing:
-        raise ValueError(
-            f"missing.method={config.method!r} requires numeric missing columns; "
-            f"non_numeric_missing={non_numeric_missing}"
-        )
-
-    if config.method == "mean":
-        values = X[numeric_columns].mean(axis=0)
-    elif config.method == "median":
-        values = X[numeric_columns].median(axis=0)
-    else:
-        raise ValueError(f"unknown missing.method: {config.method}")
-
-    values = values.fillna(0.0)
-    return {str(column): float(value) for column, value in values.items()}
+        keep_rows = np.ones(transformed.shape[0], dtype=bool)
+        missing_rows, missing_columns = np.where(np.isnan(transformed))
+        if missing_rows.size:
+            fill_values = np.asarray(self.fill_values, dtype=float)
+            transformed[missing_rows, missing_columns] = fill_values[missing_columns]
+        return keep_rows, transformed

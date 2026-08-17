@@ -48,7 +48,7 @@ from src.utils.path import PathManager
 
 @dataclass(frozen=True, slots=True)
 class SignalResult:
-    """Carry one timing's bar, prices, and scores.
+    """Carry one timing's bar, prices, scores, and skipped symbol identities.
 
     Example:
         trade_date = signal_result.bar.trade_date
@@ -58,6 +58,7 @@ class SignalResult:
     bars_count: int
     raw_prices: dict[str, float]
     scores: dict[str, float]
+    skipped_symbols: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,7 +161,7 @@ class SignalStep:
         timing: BacktestTiming,
         state: BacktestState,
     ) -> SignalResult:
-        """Return the single executable bar, raw prices, and scores.
+        """Return one bar with raw prices, scored rows, and skipped symbols.
 
         Example:
             result = operation(timing, state)
@@ -213,13 +214,18 @@ class SignalStep:
             data_view=bar.data_view,
             symbols=signal_symbols,
         )
-        if not scores:
-            raise RuntimeError(f"[SignalStep] no scores generated for {trade_date}")
+        score_map = dict(scores)
+        scored_symbols = set(score_map)
         return SignalResult(
             bar=bar,
             bars_count=len(bars),
             raw_prices=raw_prices,
-            scores=dict(scores),
+            scores=score_map,
+            skipped_symbols=tuple(
+                str(symbol)
+                for symbol in signal_symbols
+                if str(symbol) not in scored_symbols
+            ),
         )
 
     def run(self, context: BacktestContext) -> BacktestContext:
@@ -403,6 +409,7 @@ class PortfolioStep:
             raw_targets=targets,
             positions=state.portfolio_state.positions,
             current_raw_prices=signal.raw_prices,
+            hold_symbols=signal.skipped_symbols,
             max_positions=self._target_capacity,
         )
         return PortfolioResult(targets=dict(executable))
