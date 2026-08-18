@@ -1,57 +1,49 @@
 # filepath: src/training/context.py
+"""Per-window Context for ordered offline training Steps."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Protocol
 
-import numpy as np
 import pandas as pd
 
-from src.pipeline.artifact import ModelArtifact, PreprocessArtifact
-from src.utils.path import PathManager
+from src.training.engines.preprocessing import FittedPreprocessor
+from src.training.inference_model import InferenceModel
 
 
-class PredictionModel(Protocol):
-    """The model behavior consumed after a training update."""
+@dataclass(frozen=True, slots=True)
+class TrainingWindow:
+    """Identify complete training dates and one evaluation date.
 
-    def predict(self, values: np.ndarray) -> np.ndarray: ...
+    Example:
+        window = TrainingWindow(
+            train_dates=("2026-07-17", "2026-07-20"),
+            eval_date="2026-07-21",
+        )
+    """
 
-
-@dataclass(slots=True)
-class ModelState:
-    model: PredictionModel
-    asof_day: str
-    update_count: int
-    warm_start: bool
+    train_dates: tuple[str, ...]
+    eval_date: str
 
 
 @dataclass(slots=True)
 class TrainingContext:
+    """Carry only values shared by Steps for one training window.
+
+    Example:
+        context = TrainingContext(
+            window=TrainingWindow(
+                train_dates=("2026-07-17", "2026-07-20"),
+                eval_date="2026-07-21",
+            )
+        )
     """
-    Runtime context for one formal training experiment run.
 
-    The workflow creates this context from accepted job identity. The pipeline
-    only mutates the current date fields and passes the context through steps.
-    """
-
-    pm: PathManager
-    experiment_name: str
-
-    train_start_date: str = ""
-    train_end_date: str = ""
-    eval_start_date: str = ""
-    eval_end_date: str = ""
-
-    trade_date: str = ""
-    eval_date: str = ""
-
+    window: TrainingWindow
+    metrics: dict[str, float] = field(default_factory=dict)
     train_X: pd.DataFrame | None = None
     train_y: pd.Series | None = None
     eval_X: pd.DataFrame | None = None
     eval_y: pd.Series | None = None
-    eval_pred: np.ndarray | None = None
-
-    preprocess_artifact: PreprocessArtifact | None = None
-    model_state: ModelState | None = None
-    metrics: dict[str, float] = field(default_factory=dict)
-    model_artifact: ModelArtifact | None = None
+    preprocess: FittedPreprocessor | None = None
+    model: InferenceModel | None = None

@@ -12,269 +12,369 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from src.access import meta
+from src.utils import table_ops
 from src.utils.datetime_utils import DateTimeUtils
 from src.utils.path import PathManager
 
-__all__ = ("Slice",)
+__all__ = ("Access",)
 
 
-class Slice:
-    """Research-facing view of one formal processed market-data date."""
+class Access:
+    """Provide table-independent access to one processed market-data version.
+
+    Example:
+        from pathlib import Path
+
+        from src.access import Access
+        from src.utils.path import PathManager
+
+        pm = PathManager(Path("/absolute/path/to/formal-storage"))
+        access = Access(pm=pm, processed_version="v1")
+        symbols = access.universe(
+            trade_date="2026-05-06",
+            min_listing_calendar_days=20,
+        )
+        bars = access.daily_bars(
+            trade_date="2026-05-06",
+            symbols=symbols,
+        )
+    """
 
     _LEVEL2_DATASETS: ClassVar[tuple[str, ...]] = ("sh_trade", "sz_trade")
 
     def __init__(
         self,
         pm: PathManager,
-        trade_date: str,
         *,
-        version: str,
+        processed_version: str,
     ) -> None:
-        """Bind one storage layout, processed version, and trade date."""
-        self._pm = pm
-        self._trade_date = DateTimeUtils.require_system_date(
-            trade_date,
-            field_name="trade_date",
-        )
-        self._version = PathManager.require_safe_basename(version, "version")
+        """Bind one formal storage layout and processed data version.
 
-    def trade_dates(self, *, start_date: str) -> list[str]:
-        """Return formal daily-bar dates from `start_date` through this slice."""
+        Example:
+            access = Access(pm=pm, processed_version="v1")
+        """
+        self._pm = pm
+        self._processed_version = PathManager.require_safe_basename(
+            processed_version,
+            "processed_version",
+        )
+
+    def trade_dates(
+        self,
+        *,
+        start_date: str,
+        end_date: str,
+    ) -> list[str]:
+        """Return formal open dates in the complete calendar interval.
+
+        Example:
+            for trade_date in access.trade_dates(
+                start_date="2026-05-01",
+                end_date="2026-05-31",
+            ):
+                bars = access.daily_bars(trade_date=trade_date)
+        """
         validated_start = DateTimeUtils.require_system_date(
             start_date,
             field_name="start_date",
         )
-        if validated_start > self._trade_date:
+        validated_end = DateTimeUtils.require_system_date(
+            end_date,
+            field_name="end_date",
+        )
+        if validated_start > validated_end:
             raise ValueError(
-                f"invalid date range: start={validated_start}, end={self._trade_date}"
+                f"invalid date range: start={validated_start}, end={validated_end}"
             )
 
-        dates = self._daily_bar_meta_dates(start_date=validated_start)
-        for trade_date in dates:
-            self._load_processed_meta(
-                trade_date=trade_date,
-                dataset_name="daily_bar",
+        trade_dates: list[str] = []
+        for calendar_year in range(
+            int(validated_start[:4]),
+            int(validated_end[:4]) + 1,
+        ):
+            calendar = self._read_calendar_year(calendar_year)
+            requested_rows = calendar["trade_date"].between(
+                validated_start,
+                validated_end,
             )
-        return dates
+            trade_dates.extend(
+                calendar.loc[
+                    requested_rows & calendar["is_open"],
+                    "trade_date",
+                ].tolist()
+            )
+        return sorted(trade_dates)
 
-    def recent_trade_dates(self, *, sessions: int) -> list[str]:
-        """Return the latest formal sessions ending at this slice date."""
+    def recent_trade_dates(
+        self,
+        *,
+        end_date: str,
+        sessions: int,
+    ) -> list[str]:
+        """Return the latest formal sessions ending at the requested date.
+
+        Example:
+            history_dates = access.recent_trade_dates(
+                end_date="2026-05-29",
+                sessions=20,
+            )
+        """
+        validated_end = DateTimeUtils.require_system_date(
+            end_date,
+            field_name="end_date",
+        )
         if not isinstance(sessions, int) or isinstance(sessions, bool):
             raise TypeError("sessions must be an int")
         if sessions <= 0:
             raise ValueError("sessions must be positive")
-        dates = self._daily_bar_meta_dates(start_date=None)
-        if self._trade_date not in dates:
+
+        version_dir = self._pm.processed_version_dir(
+            dataset_name="trade_calendar",
+            version=self._processed_version,
+        )
+        if not version_dir.is_dir():
             raise FileNotFoundError(
-                f"formal daily_bar is unavailable: trade_date={self._trade_date}"
-            )
-        if len(dates) < sessions:
-            raise RuntimeError(
-                f"insufficient daily_bar history: "
-                f"trade_date={self._trade_date}, required={sessions}, "
-                f"available={len(dates)}"
+                f"formal trade-calendar version is unavailable: {version_dir}"
             )
 
-        selected = dates[-sessions:]
-        for trade_date in selected:
-            self._load_processed_meta(
-                trade_date=trade_date,
-                dataset_name="daily_bar",
-            )
-        return selected
+        partition_prefix = "year="
+        calendar_years: list[int] = []
+        for partition_dir in version_dir.iterdir():
+            if (
+                not partition_dir.is_dir()
+                or not partition_dir.name.startswith(partition_prefix)
+                or not (partition_dir / "meta.json").is_file()
+            ):
+                continue
+            year_text = partition_dir.name.removeprefix(partition_prefix)
+            if len(year_text) == 4 and year_text.isdigit():
+                calendar_year = int(year_text)
+                if calendar_year <= int(validated_end[:4]):
+                    calendar_years.append(calendar_year)
 
-    def daily(
+        end_year = int(validated_end[:4])
+        if end_year not in calendar_years:
+            raise FileNotFoundError(
+                f"formal trade calendar is unavailable: trade_date={validated_end}"
+            )
+
+        selected: list[str] = []
+        for calendar_year in range(end_year, min(calendar_years) - 1, -1):
+            calendar = self._read_calendar_year(calendar_year)
+            if calendar_year == end_year:
+                calendar = calendar.loc[calendar["trade_date"] <= validated_end]
+            open_dates = sorted(
+                calendar.loc[calendar["is_open"], "trade_date"].tolist()
+            )
+            if calendar_year == end_year and validated_end not in open_dates:
+                raise ValueError(
+                    f"end_date is not a formal trade date: end_date={validated_end}"
+                )
+
+            missing_sessions = sessions - len(selected)
+            selected = open_dates[-missing_sessions:] + selected
+            if len(selected) == sessions:
+                return selected
+
+        raise RuntimeError(
+            f"insufficient trade-calendar history: "
+            f"trade_date={validated_end}, required={sessions}, "
+            f"available={len(selected)}"
+        )
+
+    def universe(
         self,
-        dataset_name: str,
         *,
+        trade_date: str,
+        min_listing_calendar_days: int,
+    ) -> tuple[str, ...]:
+        """Return the filtered daily-bar universe in canonical symbol order.
+
+        Example:
+            symbols = access.universe(
+                trade_date="2026-05-06",
+                min_listing_calendar_days=20,
+            )
+            bars = access.daily_bars(
+                trade_date="2026-05-06",
+                symbols=symbols,
+            )
+        """
+        validated_date = DateTimeUtils.require_system_date(
+            trade_date,
+            field_name="trade_date",
+        )
+        _require_non_negative_int(
+            min_listing_calendar_days,
+            field_name="min_listing_calendar_days",
+        )
+        daily_bars = self._read_processed_frame(
+            trade_date=validated_date,
+            dataset_name="daily_bar",
+        )
+        symbols = _unique_data_symbols(
+            daily_bars,
+            dataset_name="daily_bar",
+        )
+        return self._filter_universe_symbols(
+            symbols=symbols,
+            trade_date=validated_date,
+            min_listing_calendar_days=min_listing_calendar_days,
+        )
+
+    def level2_universe(
+        self,
+        *,
+        trade_date: str,
+        min_listing_calendar_days: int,
+    ) -> tuple[str, ...]:
+        """Return filtered symbols with complete Level-2 data for one date.
+
+        Example:
+            symbols = access.level2_universe(
+                trade_date="2026-05-06",
+                min_listing_calendar_days=20,
+            )
+            selected_trades = access.trades(
+                trade_date="2026-05-06",
+                symbols=symbols[:100],
+            )
+        """
+        validated_date = DateTimeUtils.require_system_date(
+            trade_date,
+            field_name="trade_date",
+        )
+        _require_non_negative_int(
+            min_listing_calendar_days,
+            field_name="min_listing_calendar_days",
+        )
+        symbols = [
+            symbol
+            for symbol_slices in self._load_level2_index(
+                trade_date=validated_date
+            ).values()
+            for symbol in symbol_slices
+        ]
+        return self._filter_universe_symbols(
+            symbols=symbols,
+            trade_date=validated_date,
+            min_listing_calendar_days=min_listing_calendar_days,
+        )
+
+    def daily_bars(
+        self,
+        *,
+        trade_date: str,
         symbols: Sequence[str] | None = None,
     ) -> pd.DataFrame:
-        """Return one formal daily dataset, optionally ordered by symbol."""
+        """Return formal daily bars, optionally in requested symbol order.
+
+        Example:
+            all_bars = access.daily_bars(trade_date="2026-05-06")
+            selected_bars = access.daily_bars(
+                trade_date="2026-05-06",
+                symbols=("000001", "600000"),
+            )
+        """
+        validated_date = DateTimeUtils.require_system_date(
+            trade_date,
+            field_name="trade_date",
+        )
         requested_symbols = None
         if symbols is not None:
             requested_symbols = _validated_symbols(symbols)
 
-        frame = self._read_daily_dataset(
-            trade_date=self._trade_date,
-            dataset_name=dataset_name,
-        )
-        if requested_symbols is None:
-            return frame
-
-        available_symbols = _unique_data_symbols(
-            frame,
-            dataset_name=dataset_name,
-        )
-        missing_symbols = set(requested_symbols) - set(available_symbols)
-        if missing_symbols:
-            raise KeyError(
-                f"symbols not found in {dataset_name}: {sorted(missing_symbols)}"
-            )
-
-        if not requested_symbols:
-            return frame.iloc[0:0].copy()
-
-        return (
-            frame.set_index("symbol", drop=False)
-            .loc[requested_symbols]
-            .reset_index(drop=True)
+        return self._read_daily_object(
+            trade_date=validated_date,
+            dataset_name="daily_bar",
+            required_columns=("symbol", "trade_date"),
+            symbols=requested_symbols,
         )
 
-    def daily_window(
-        self,
-        dataset_name: str,
-        *,
-        sessions: int,
-    ) -> dict[str, pd.DataFrame]:
-        """Return complete daily objects for an ascending formal-date window."""
-        trade_dates = self.recent_trade_dates(sessions=sessions)
-        return {
-            trade_date: self._read_daily_dataset(
-                trade_date=trade_date,
-                dataset_name=dataset_name,
-            )
-            for trade_date in trade_dates
-        }
-
-    def stock_universe(
+    def adjustment_factors(
         self,
         *,
-        min_list_calendar_days: int,
-        exclude_st_sessions: int,
-        exclude_suspended: bool,
-    ) -> list[str]:
-        """Return the filtered daily stock universe in daily-bar order."""
-        _require_non_negative_int(
-            min_list_calendar_days,
-            field_name="min_list_calendar_days",
+        trade_date: str,
+        symbols: Sequence[str] | None = None,
+    ) -> pd.DataFrame:
+        """Return formal daily adjustment factors in requested symbol order.
+
+        Example:
+            factors = access.adjustment_factors(
+                trade_date="2026-05-06",
+                symbols=("000001", "600000"),
+            )
+        """
+        validated_date = DateTimeUtils.require_system_date(
+            trade_date,
+            field_name="trade_date",
         )
-        _require_non_negative_int(
-            exclude_st_sessions,
-            field_name="exclude_st_sessions",
+        requested_symbols = None
+        if symbols is not None:
+            requested_symbols = _validated_symbols(symbols)
+        columns = ("symbol", "trade_date", "adj_factor")
+        frame = self._read_daily_object(
+            trade_date=validated_date,
+            dataset_name="adj_factor",
+            required_columns=columns,
+            symbols=requested_symbols,
         )
-        if type(exclude_suspended) is not bool:
-            raise TypeError("exclude_suspended must be a bool")
+        return frame.loc[:, list(columns)].copy()
 
-        daily_bar = self.daily("daily_bar")
-        symbols = _unique_data_symbols(daily_bar, dataset_name="daily_bar")
+    def turnover_rates(
+        self,
+        *,
+        trade_date: str,
+        symbols: Sequence[str] | None = None,
+    ) -> pd.DataFrame:
+        """Return formal daily turnover rates in requested symbol order.
 
-        if min_list_calendar_days > 0:
-            stock_basic = self.daily("stock_basic")
-            _require_columns(
-                stock_basic,
-                ("symbol", "list_date"),
-                dataset_name="stock_basic",
+        Example:
+            turnover = access.turnover_rates(
+                trade_date="2026-05-06",
+                symbols=("000001", "600000"),
             )
-            listed_symbols = _unique_data_symbols(
-                stock_basic,
-                dataset_name="stock_basic",
-            )
-            missing_symbols = set(symbols) - set(listed_symbols)
-            if missing_symbols:
-                raise KeyError(
-                    "daily_bar symbols not found in stock_basic: "
-                    f"{sorted(missing_symbols)}"
-                )
-
-            list_date_by_symbol = dict(
-                zip(
-                    listed_symbols,
-                    stock_basic["list_date"].tolist(),
-                    strict=True,
-                )
-            )
-            minimum_list_date = DateTimeUtils.days_before(
-                self._trade_date,
-                min_list_calendar_days,
-                field_name="trade_date",
-            )
-            symbols = [
-                symbol
-                for symbol in symbols
-                if DateTimeUtils.require_system_date(
-                    list_date_by_symbol[symbol],
-                    field_name=f"stock_basic.list_date[{symbol}]",
-                )
-                <= minimum_list_date
-            ]
-
-        if exclude_st_sessions > 0:
-            recent_st_symbols: set[str] = set()
-            for trade_date in self.recent_trade_dates(
-                sessions=exclude_st_sessions,
-            ):
-                stock_st = self._read_daily_dataset(
-                    trade_date=trade_date,
-                    dataset_name="stock_st",
-                )
-                recent_st_symbols.update(
-                    _unique_data_symbols(
-                        stock_st,
-                        dataset_name=f"stock_st[{trade_date}]",
-                    )
-                )
-            symbols = [symbol for symbol in symbols if symbol not in recent_st_symbols]
-
-        if exclude_suspended:
-            suspend_d = self.daily("suspend_d")
-            suspended_symbols = set(
-                _unique_data_symbols(
-                    suspend_d,
-                    dataset_name="suspend_d",
-                )
-            )
-            symbols = [symbol for symbol in symbols if symbol not in suspended_symbols]
-
-        return symbols
-
-    def closed_limit_up_symbols(self) -> list[str]:
-        """Return symbols whose provider status is closed limit-up."""
-        daily_basic = self.daily("daily_basic")
-        _require_columns(
-            daily_basic,
-            ("symbol", "limit_status"),
+        """
+        validated_date = DateTimeUtils.require_system_date(
+            trade_date,
+            field_name="trade_date",
+        )
+        requested_symbols = None
+        if symbols is not None:
+            requested_symbols = _validated_symbols(symbols)
+        columns = ("symbol", "trade_date", "turnover_rate")
+        frame = self._read_daily_object(
+            trade_date=validated_date,
             dataset_name="daily_basic",
+            required_columns=columns,
+            symbols=requested_symbols,
         )
-        symbols = _unique_data_symbols(
-            daily_basic,
-            dataset_name="daily_basic",
+        return frame.loc[:, list(columns)].copy()
+
+    def trades(
+        self,
+        *,
+        trade_date: str,
+        symbols: Sequence[str],
+    ) -> dict[str, pa.Table]:
+        """Return requested Level-2 trades in request order.
+
+        Example:
+            trades_by_symbol = access.trades(
+                trade_date="2026-05-06",
+                symbols=("600000", "000001"),
+            )
+            sh_trades = trades_by_symbol["600000"]
+        """
+        validated_date = DateTimeUtils.require_system_date(
+            trade_date,
+            field_name="trade_date",
         )
-        limit_status = daily_basic["limit_status"]
-        if (
-            not pd.api.types.is_integer_dtype(limit_status.dtype)
-            or pd.api.types.is_bool_dtype(limit_status.dtype)
-            or limit_status.isna().any()
-            or not limit_status.isin(range(7)).all()
-        ):
-            raise ValueError(
-                "daily_basic.limit_status must contain non-null integers in 0..6"
-            )
-
-        return [
-            symbol
-            for symbol, status in zip(
-                symbols,
-                limit_status.tolist(),
-                strict=True,
-            )
-            if status in (2, 3)
-        ]
-
-    def level2_symbols(self) -> list[str]:
-        """Return symbols with complete Level-2 slices for this trade date."""
-        return [
-            symbol
-            for symbol_slices in self._load_level2_index().values()
-            for symbol in symbol_slices
-        ]
-
-    def level2(self, symbols: Sequence[str]) -> dict[str, pa.Table]:
-        """Return requested Level-2 symbol slices in request order."""
         requested_symbols = _validated_symbols(symbols)
         if not requested_symbols:
             return {}
 
-        level2_index = self._load_level2_index()
+        level2_index = self._load_level2_index(trade_date=validated_date)
         path_by_symbol = {
             symbol: output_path
             for output_path, symbol_slices in level2_index.items()
@@ -282,7 +382,9 @@ class Slice:
         }
         missing_symbols = set(requested_symbols) - set(path_by_symbol)
         if missing_symbols:
-            raise KeyError(f"symbols not found in Level-2: {sorted(missing_symbols)}")
+            raise KeyError(
+                f"symbols not found in Level-2 trades: {sorted(missing_symbols)}"
+            )
 
         slices_by_path: dict[Path, dict[str, range]] = {}
         for symbol in requested_symbols:
@@ -334,54 +436,142 @@ class Slice:
 
         return {symbol: tables[symbol] for symbol in requested_symbols}
 
-    def _read_daily_dataset(
+    def _filter_universe_symbols(
+        self,
+        *,
+        symbols: Sequence[str],
+        trade_date: str,
+        min_listing_calendar_days: int,
+    ) -> tuple[str, ...]:
+        selected_symbols = list(symbols)
+        if min_listing_calendar_days > 0:
+            stock_basic = self._read_processed_frame(
+                trade_date=trade_date,
+                dataset_name="stock_basic",
+            )
+            table_ops.require_columns(
+                stock_basic,
+                ("symbol", "list_date"),
+                who="stock_basic",
+            )
+            minimum_list_date = DateTimeUtils.days_before(
+                trade_date,
+                min_listing_calendar_days,
+                field_name="trade_date",
+            )
+            list_dates = stock_basic["list_date"]
+            listing_eligible_symbols = set(
+                stock_basic.loc[
+                    list_dates.notna() & list_dates.le(minimum_list_date),
+                    "symbol",
+                ].tolist()
+            )
+            selected_symbols = [
+                symbol
+                for symbol in selected_symbols
+                if symbol in listing_eligible_symbols
+            ]
+
+        stock_st = self._read_processed_frame(
+            trade_date=trade_date,
+            dataset_name="stock_st",
+        )
+        st_symbols = set(
+            _unique_data_symbols(
+                stock_st,
+                dataset_name="stock_st",
+            )
+        )
+        suspend_d = self._read_processed_frame(
+            trade_date=trade_date,
+            dataset_name="suspend_d",
+        )
+        suspended_symbols = set(
+            _unique_data_symbols(
+                suspend_d,
+                dataset_name="suspend_d",
+            )
+        )
+        return tuple(
+            sorted(
+                symbol
+                for symbol in selected_symbols
+                if symbol not in st_symbols and symbol not in suspended_symbols
+            )
+        )
+
+    def _read_processed_frame(
         self,
         *,
         trade_date: str,
         dataset_name: str,
     ) -> pd.DataFrame:
-        """Read one formal daily processed payload."""
         loaded = self._load_processed_meta(
             trade_date=trade_date,
             dataset_name=dataset_name,
         )
         return pq.ParquetFile(loaded.payload_path).read().to_pandas()
 
-    def _daily_bar_meta_dates(
+    def _read_daily_object(
         self,
         *,
-        start_date: str | None,
-    ) -> list[str]:
-        """Return dates with committed daily-bar Meta through this slice."""
-        version_dir = self._pm.processed_version_dir(
-            dataset_name="daily_bar",
-            version=self._version,
+        trade_date: str,
+        dataset_name: str,
+        required_columns: Sequence[str],
+        symbols: Sequence[str] | None,
+    ) -> pd.DataFrame:
+        frame = self._read_processed_frame(
+            trade_date=trade_date,
+            dataset_name=dataset_name,
         )
-        if not version_dir.is_dir():
-            raise FileNotFoundError(
-                f"daily_bar version directory is unavailable: {version_dir}"
+        table_ops.require_columns(frame, required_columns, who=dataset_name)
+        available_symbols = _unique_data_symbols(
+            frame,
+            dataset_name=dataset_name,
+        )
+        table_ops.require_nonempty_strings(
+            frame,
+            ("trade_date",),
+            who=dataset_name,
+        )
+        if not frame["trade_date"].eq(trade_date).all():
+            raise ValueError(
+                f"{dataset_name}.trade_date must equal requested date: "
+                f"trade_date={trade_date}"
             )
+        if symbols is None:
+            return frame
 
-        meta_dates: list[str] = []
-        partition_prefix = "trade_date="
-        for partition_dir in version_dir.iterdir():
-            if not partition_dir.is_dir() or not partition_dir.name.startswith(
-                partition_prefix
-            ):
-                continue
-            if not (partition_dir / "meta.json").is_file():
-                continue
-            trade_date = DateTimeUtils.require_system_date(
-                partition_dir.name.removeprefix(partition_prefix),
-                field_name="daily_bar partition trade_date",
+        missing_symbols = set(symbols) - set(available_symbols)
+        if missing_symbols:
+            raise KeyError(
+                f"symbols not found in {dataset_name}: {sorted(missing_symbols)}"
             )
-            if trade_date > self._trade_date:
-                continue
-            if start_date is not None and trade_date < start_date:
-                continue
-            meta_dates.append(trade_date)
+        if not symbols:
+            return frame.iloc[0:0].copy()
+        return (
+            frame.set_index("symbol", drop=False)
+            .loc[list(symbols)]
+            .reset_index(drop=True)
+        )
 
-        return sorted(meta_dates)
+    def _read_calendar_year(self, calendar_year: int) -> pd.DataFrame:
+        meta_path = self._pm.processed_year_meta(
+            dataset_name="trade_calendar",
+            version=self._processed_version,
+            calendar_year=calendar_year,
+        )
+        output_path = self._pm.processed_year_data(
+            dataset_name="trade_calendar",
+            version=self._processed_version,
+            calendar_year=calendar_year,
+        )
+        loaded = meta.require(
+            pm=self._pm,
+            meta_path=meta_path,
+            expected_payload_path=output_path,
+        )
+        return pq.ParquetFile(loaded.payload_path).read().to_pandas()
 
     def _load_processed_meta(
         self,
@@ -389,44 +579,39 @@ class Slice:
         trade_date: str,
         dataset_name: str,
     ) -> meta.MetaRecord:
-        """Return one required formal processed object."""
         meta_path = self._pm.processed_meta(
             dataset_name=dataset_name,
-            version=self._version,
+            version=self._processed_version,
             trade_date=trade_date,
         )
         output_path = self._pm.processed_data(
             dataset_name=dataset_name,
-            version=self._version,
+            version=self._processed_version,
             trade_date=trade_date,
         )
-        loaded = meta.load(
+        return meta.require(
+            pm=self._pm,
             meta_path=meta_path,
-            storage_root=self._pm.storage_root,
             expected_payload_path=output_path,
         )
-        if loaded is None:
-            raise FileNotFoundError(
-                f"formal processed dataset is unavailable: "
-                f"dataset={dataset_name}, trade_date={trade_date}, "
-                f"meta_path={meta_path}"
-            )
-        return loaded
 
-    def _load_level2_index(self) -> dict[Path, Mapping[str, range]]:
-        """Return validated Level-2 indexes grouped by payload."""
+    def _load_level2_index(
+        self,
+        *,
+        trade_date: str,
+    ) -> dict[Path, Mapping[str, range]]:
         level2_index: dict[Path, Mapping[str, range]] = {}
         seen_symbols: set[str] = set()
         for dataset_name in self._LEVEL2_DATASETS:
             loaded = self._load_processed_meta(
-                trade_date=self._trade_date,
+                trade_date=trade_date,
                 dataset_name=dataset_name,
             )
             if loaded.symbol_slices is None:
                 raise RuntimeError(
                     f"Level-2 Meta has no symbol_slices: "
-                    f"trade_date={self._trade_date}, "
-                    f"dataset={dataset_name}, payload={loaded.payload_path}"
+                    f"trade_date={trade_date}, dataset={dataset_name}, "
+                    f"payload={loaded.payload_path}"
                 )
 
             parquet_file = pq.ParquetFile(loaded.payload_path)
@@ -442,17 +627,14 @@ class Slice:
             if duplicates:
                 raise RuntimeError(
                     f"duplicate Level-2 symbols across datasets: "
-                    f"trade_date={self._trade_date}, "
-                    f"symbols={sorted(duplicates)}"
+                    f"trade_date={trade_date}, symbols={sorted(duplicates)}"
                 )
             seen_symbols.update(loaded.symbol_slices)
             level2_index[loaded.payload_path] = loaded.symbol_slices
-
         return level2_index
 
 
 def _validated_symbols(symbols: Sequence[str]) -> list[str]:
-    """Copy and validate one public symbol request."""
     if isinstance(symbols, str):
         raise TypeError("symbols must be a sequence of six-digit strings")
 
@@ -469,25 +651,12 @@ def _validated_symbols(symbols: Sequence[str]) -> list[str]:
     return requested_symbols
 
 
-def _require_columns(
-    frame: pd.DataFrame,
-    columns: Sequence[str],
-    *,
-    dataset_name: str,
-) -> None:
-    """Reject a processed dataset missing required Access fields."""
-    missing_columns = [column for column in columns if column not in frame.columns]
-    if missing_columns:
-        raise ValueError(f"{dataset_name} missing required columns: {missing_columns}")
-
-
 def _unique_data_symbols(
     frame: pd.DataFrame,
     *,
     dataset_name: str,
 ) -> list[str]:
-    """Return a validated unique processed symbol column."""
-    _require_columns(frame, ("symbol",), dataset_name=dataset_name)
+    table_ops.require_nonempty_strings(frame, ("symbol",), who=dataset_name)
     symbols = frame["symbol"].tolist()
     invalid_symbols = [
         symbol
@@ -498,13 +667,11 @@ def _unique_data_symbols(
         raise ValueError(
             f"{dataset_name}.symbol must contain six-digit strings: {invalid_symbols!r}"
         )
-    if len(symbols) != len(set(symbols)):
-        raise RuntimeError(f"{dataset_name} contains duplicate symbol identities")
+    table_ops.require_unique(frame, ("symbol",), who=dataset_name)
     return symbols
 
 
 def _require_non_negative_int(value: int, *, field_name: str) -> None:
-    """Validate an explicit non-negative integer policy."""
     if not isinstance(value, int) or isinstance(value, bool):
         raise TypeError(f"{field_name} must be an int")
     if value < 0:

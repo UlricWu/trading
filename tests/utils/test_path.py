@@ -139,6 +139,48 @@ def test_raw_and_staging_paths_preserve_source_native_identity(
     assert not staging_partition.exists()
 
 
+def test_trade_calendar_paths_use_annual_partitions(tmp_path: Path) -> None:
+    storage_root = tmp_path / "storage"
+    storage_root.mkdir()
+    pm = PathManager(storage_root)
+    raw_partition = (
+        storage_root
+        / "raw"
+        / "tushare"
+        / "trade_calendar"
+        / "year=2026"
+    )
+    processed_partition = (
+        storage_root
+        / "processed"
+        / "trade_calendar"
+        / "v1"
+        / "year=2026"
+    )
+
+    assert pm.raw_year_payload(
+        broker="tushare",
+        source_name="trade_calendar",
+        calendar_year=2026,
+        payload_file="data.parquet",
+    ) == raw_partition / "data.parquet"
+    assert pm.raw_year_meta(
+        broker="tushare",
+        source_name="trade_calendar",
+        calendar_year=2026,
+    ) == raw_partition / "meta.json"
+    assert pm.processed_year_data(
+        dataset_name="trade_calendar",
+        version="v1",
+        calendar_year=2026,
+    ) == processed_partition / "data.parquet"
+    assert pm.processed_year_meta(
+        dataset_name="trade_calendar",
+        version="v1",
+        calendar_year=2026,
+    ) == processed_partition / "meta.json"
+
+
 def test_formal_dataset_paths_use_canonical_partition_files(tmp_path: Path) -> None:
     storage_root = tmp_path / "storage"
     storage_root.mkdir()
@@ -225,12 +267,8 @@ def test_experiment_paths_are_exact_and_experiment_scoped(tmp_path: Path) -> Non
     assert pm.experiment_backtest_dir(experiment_name=experiment_name) == backtest_dir
     assert pm.experiment_report_dir(experiment_name=experiment_name) == report_dir
     assert (
-        pm.experiment_training_preprocess(experiment_name=experiment_name)
-        == training_dir / "preprocess.pkl"
-    )
-    assert (
-        pm.experiment_training_model(experiment_name=experiment_name)
-        == training_dir / "model.pkl"
+        pm.experiment_training_inference(experiment_name=experiment_name)
+        == training_dir / "inference.pkl"
     )
     assert (
         pm.experiment_training_params(experiment_name=experiment_name)
@@ -379,4 +417,21 @@ def test_trade_dates_must_be_canonical_calendar_dates(
             feature_set="l2_microstructure",
             version="v1",
             trade_date=bad_trade_date,
+        )
+
+
+@pytest.mark.parametrize("bad_year", [True, 0, 10000, "2026"])
+def test_calendar_years_must_be_canonical_integers(
+    tmp_path: Path,
+    bad_year: object,
+) -> None:
+    storage_root = tmp_path / "storage"
+    storage_root.mkdir()
+    pm = PathManager(storage_root)
+
+    with pytest.raises((TypeError, ValueError)):
+        pm.processed_year_data(
+            dataset_name="trade_calendar",
+            version="v1",
+            calendar_year=bad_year,  # type: ignore[arg-type]
         )

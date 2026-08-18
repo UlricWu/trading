@@ -8,27 +8,19 @@ data:
   # - 声明即默认可用，不承担本次运行的启停选择
   # ----------------------------------
   brokers:
-    tushare:
-      normalize_profile: "v1"
+    tushare: {}
     level2_ftp:
-      normalize_profile: "v1"
       remote_root: "level2"
       ftp_backend: "ftplib"
 
 
   # ----------------------------------
   # Sources (RAW OBJECT / OUTPUT DECLARATION)
-  # - use_broker_sources 表示从 broker 支持集展开普通 source
-  # - 普通 source 的 raw_object 是 broker 能识别的源端对象名
-  # - 普通 source 的 outputs 是系统内部 processed dataset 名；[] 表示 raw-only
+  # - Tushare 结构化 source 由 TushareBroker 的 Python manifest 固定拥有
+  # - 此处只声明 Level-2 文件 source 到 processed output 的映射
+  # - outputs=[] 表示 raw-only
   # ----------------------------------
   sources:
-    tushare:
-      enabled: true
-      broker: "tushare"
-      group: "offline_standard"
-      use_broker_sources: true
-
     sh_stock_ordertrade: # source_name
       enabled: true
       broker: "level2_ftp"
@@ -56,49 +48,35 @@ data:
     tushare_daily_basic:
       enabled: true
       version: "v1"
-      group: "offline_standard"
 
   label_sets:
-    daily_t1_net_excess_rank:
+    daily_close_return_rank_d1:
       enabled: true
       version: "v1"
-      group: "offline_standard"
 
-    daily_forward_excess_rank:
+    daily_close_return_rank_d3:
       enabled: true
       version: "v1"
-      group: "offline_standard"
+
+    daily_close_return_rank_d5:
+      enabled: true
+      version: "v1"
 
 # ==================================================
 # Backtest System
-# - Runtime backtest_mode, model experiment and strategy are required by backtest.
-# - static config must not provide a default model.
-# - base strategy keeps AppConfig valid; backtest replaces the complete object.
-# - Universe policy is explicit; symbols are resolved from Access per signal date.
+# - Runtime mode, model experiment and strategy belong to BacktestSubmission.
+# - Minimum listing age is explicit; Access always excludes current ST and suspension.
 # ==================================================
 backtest:
-  name: "rf_alpha_v1"
-  backtest_mode: "full_backtest"
-
-  dates:
-    - "2025-11-17"
-    - "2025-11-18"
-
-  strategy:
-    type: "threshold"
-    params:
-      threshold: 0.5
-      target_quantity: 100
-
   init_cash: 200000
-  min_list_calendar_days: 120
-  exclude_st_sessions: 20
-  exclude_suspended: true
+  min_listing_calendar_days: 120
 # ==================================================
 # Model / Training System
 # - Runtime range and experiment identity are CLI inputs.
+# - Model group is selected explicitly from the training model catalog.
 # ==================================================
 model:
+  group: "sgd_regression"
   model_params:
     alpha: 0.0005
     l1_ratio: 0.0
@@ -111,21 +89,14 @@ model:
     feature_set: "tushare_daily_basic"
     feature_version: "v1"
     feature_columns:
-      - "f_d_return"
-      - "f_d_gap"
+      - "f_d_close_return_1d"
+      - "f_d_open_gap_1d"
       - "f_d_log_amount"
       - "f_d_max_drawdown_20d_asof_tminus1"
-      - "f_d_volatility_60d_asof_tminus1"
-      - "f_d_ret_5d_asof_tminus1"
-      - "f_d_turnover_mean_20d_asof_tminus1"
+      - "f_d_close_volatility_60d_asof_tminus1"
+      - "f_d_close_return_5d_asof_tminus1"
+      - "f_d_turnover_rate_mean_20d_asof_tminus1"
 
-    label_set: "daily_t1_net_excess_rank"
+    label_set: "daily_close_return_rank_d1"
     label_version: "v1"
-    label_column: "y_rank_net_excess_return"
-
-    drop_na: true
-
-    adjustment:
-      method: "raw"
-      dataset_name: 'adj_factor'
-      version: 'v1'
+    label_column: "y_rank_return"

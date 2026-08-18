@@ -16,7 +16,6 @@ from src.jobs.requests import (
     TrainingSubmission,
 )
 from src.jobs.runtime import (
-    DataJobScope,
     JobNotFoundError,
     JobRuntime,
     JobSnapshot,
@@ -34,9 +33,10 @@ class _StubRuntime:
         snapshots: list[JobSnapshot] = []
         for submission in submissions:
             job_id = f"00000000-0000-4000-8000-{len(self.jobs) + 1:012d}"
-            if isinstance(submission, DataSubmission):
-                scope = DataJobScope(date=submission.date)
-            elif isinstance(submission, (TrainingSubmission, BacktestSubmission)):
+            if isinstance(
+                submission,
+                (DataSubmission, TrainingSubmission, BacktestSubmission),
+            ):
                 scope = RangeJobScope(
                     start=submission.start,
                     end=submission.end,
@@ -96,7 +96,7 @@ def test_route_map_contains_only_the_confirmed_endpoints() -> None:
     }
 
 
-def test_data_range_returns_independent_jobs_and_only_public_fields() -> None:
+def test_data_range_returns_one_job_and_only_public_fields() -> None:
     runtime = _StubRuntime()
     app = create_app(cast(JobRuntime, runtime))
     app.config["TESTING"] = True
@@ -114,8 +114,7 @@ def test_data_range_returns_independent_jobs_and_only_public_fields() -> None:
     payload = response.get_json()
     assert set(payload) == {"jobs"}
     assert [job["scope"] for job in payload["jobs"]] == [
-        {"date": "2026-07-20"},
-        {"date": "2026-07-21"},
+        {"start": "2026-07-20", "end": "2026-07-21"},
     ]
     assert set(payload["jobs"][0]) == {
         "job_id",
@@ -211,3 +210,51 @@ def test_missing_job_response_does_not_echo_requested_identifier() -> None:
         }
     }
     assert identifier not in response.get_data(as_text=True)
+
+
+def test_job_runtime_failure_does_not_change_health_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class ClosedRuntime(_StubRuntime):
+        def submit(
+            self,
+            submissions: Sequence[JobSubmission],
+        ) -> list[JobSnapshot]:
+            raise RuntimeError("job runtime is closed")
+
+    monkeypatch.setenv("ENV", "test")
+    monkeypatch.setenv("MINQUANT_RELEASE_REF", "release/auto-release")
+    monkeypatch.setenv(
+        "MINQUANT_COMMIT_SHA",
+        "0123456789abcdef0123456789abcdef01234567",
+    )
+    app = create_app(cast(JobRuntime, ClosedRuntime()))
+    monkeypatch.setenv("ENV", "prod")
+    monkeypatch.setenv("MINQUANT_RELEASE_REF", "master")
+    monkeypatch.setenv("MINQUANT_COMMIT_SHA", "f" * 40)
+    client = app.test_client()
+
+    failed_submission = client.post(
+        "/jobs",
+        json={
+            "kind": "data-standard",
+            "start": "2026-07-20",
+            "end": "2026-07-20",
+        },
+    )
+    health = client.get("/health")
+
+    assert failed_submission.status_code == 500
+    assert failed_submission.get_json() == {
+        "error": {
+            "code": "internal_error",
+            "message": "internal server error",
+        }
+    }
+    assert health.status_code == 200
+    assert health.get_json() == {
+        "ok": True,
+        "environment": "test",
+        "release_ref": "release/auto-release",
+        "commit_sha": "0123456789abcdef0123456789abcdef01234567",
+    }

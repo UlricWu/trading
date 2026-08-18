@@ -1,4 +1,6 @@
 # filepath: src/training/inference_model.py
+"""Define the ready-to-use prediction object shared by every runtime."""
+
 from __future__ import annotations
 
 from collections.abc import Sequence
@@ -7,78 +9,95 @@ from typing import Protocol, runtime_checkable
 
 import numpy as np
 
+from src.training.engines.preprocessing import FittedPreprocessor
+
 
 @runtime_checkable
 class PredictionModel(Protocol):
-    def predict(self, values: np.ndarray) -> np.ndarray | Sequence[float]: ...
+    """Expose the raw model operation needed by fitted inference.
 
+    Example:
+        model: PredictionModel = SGDRegressor().fit(
+            np.array([[0.0], [1.0]]),
+            np.array([0.0, 1.0]),
+        )
+        predictions = model.predict(np.array([[0.5]]))
+    """
 
-@runtime_checkable
-class Preprocessor(Protocol):
-    feature_columns: Sequence[str]
+    def predict(self, values: np.ndarray) -> np.ndarray | Sequence[float]:
+        """Predict one value for each transformed row.
 
-    def transform(self, values: np.ndarray) -> np.ndarray: ...
+        Example:
+            predictions = model.predict(np.array([[0.5]], dtype=float))
+        """
+        ...
 
 
 @dataclass(frozen=True, slots=True)
 class InferenceModel:
-    """
-    Pure inference engine (NO diagnostics)
+    """Own one raw model and its fitted preprocessing operation.
 
-    Responsibilities:
-        - enforce preprocess
-        - call model.predict
+    Example:
+        preprocessor = FittedPreprocessor(
+            feature_names=("factor",),
+            missing_method="constant",
+            fill_values=(0.0,),
+        )
+        inference_model = InferenceModel(
+            model=SGDRegressor().fit(
+                np.array([[0.0], [1.0]]),
+                np.array([0.0, 1.0]),
+            ),
+            preprocess=preprocessor,
+            feature_set="daily",
+            feature_version="v1",
+        )
+        keep_rows, predictions = inference_model.predict(
+            np.array([[float("nan")]], dtype=float)
+        )
     """
 
     model: PredictionModel
-    preprocess: Preprocessor
-    feature_names: Sequence[str]
+    preprocess: FittedPreprocessor
     feature_set: str
     feature_version: str
-    label_lookahead: int
 
     def __post_init__(self) -> None:
-        names = tuple(self.feature_names)
-        if not names or any(
-            not isinstance(name, str) or not name for name in names
-        ):
-            raise ValueError("feature_names must contain non-empty strings")
-        if len(names) != len(set(names)):
-            raise ValueError("feature_names must be unique")
-        object.__setattr__(self, "feature_names", names)
+        if not isinstance(self.model, PredictionModel):
+            raise TypeError("model must expose predict(values)")
+        if not isinstance(self.preprocess, FittedPreprocessor):
+            raise TypeError("preprocess must be a FittedPreprocessor")
         if not isinstance(self.feature_set, str) or not self.feature_set:
             raise ValueError("feature_set must be a non-empty string")
         if not isinstance(self.feature_version, str) or not self.feature_version:
             raise ValueError("feature_version must be a non-empty string")
-        if (
-            isinstance(self.label_lookahead, bool)
-            or not isinstance(self.label_lookahead, int)
-            or self.label_lookahead < 0
-        ):
-            raise ValueError("label_lookahead must be a non-negative int")
 
-    def predict(self, X_raw: np.ndarray) -> np.ndarray:
-        """
-        Args:
-            X_raw: shape (n_symbols, n_features)
+    @property
+    def feature_names(self) -> tuple[str, ...]:
+        """Return the actual ordered columns fitted during training.
 
-        Returns:
-            np.ndarray shape (n_symbols,)
+        Example:
+            names = inference_model.feature_names
         """
-        if X_raw.ndim != 2 or X_raw.shape[1] != len(self.feature_names):
-            raise ValueError(
-                f"inference input shape must be (*, {len(self.feature_names)}); "
-                f"got={X_raw.shape}"
+        return self.preprocess.feature_names
+
+    def predict(self, raw_values: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """Transform raw rows once and predict only retained rows.
+
+        Example:
+            keep_rows, predictions = inference_model.predict(
+                np.array([[1.0], [float("nan")]], dtype=float)
             )
-        if X_raw.shape[0] == 0:
-            return np.empty(0, dtype=float)
+        """
+        keep_rows, transformed = self.preprocess.transform(raw_values)
+        if transformed.shape[0] == 0:
+            return keep_rows, np.empty(0, dtype=float)
 
-        Xp = self.preprocess.transform(X_raw)
-        predictions = np.asarray(self.model.predict(Xp), dtype=float)
-        if predictions.ndim != 1 or predictions.shape[0] != X_raw.shape[0]:
+        predictions = np.asarray(self.model.predict(transformed), dtype=float)
+        if predictions.ndim != 1 or predictions.shape[0] != transformed.shape[0]:
             raise RuntimeError(
-                "model predictions must be one-dimensional and preserve input rows"
+                "model predictions must be one-dimensional and match retained rows"
             )
         if not np.isfinite(predictions).all():
             raise RuntimeError("model predictions must be finite")
-        return predictions
+        return keep_rows, predictions

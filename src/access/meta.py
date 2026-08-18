@@ -12,7 +12,7 @@ from types import MappingProxyType
 from src.utils.filesystem import FileSystem
 from src.utils.path import PathManager
 
-__all__ = ("MetaRecord", "load", "write")
+__all__ = ("MetaRecord", "commit", "find", "require")
 
 _REQUIRED_FIELDS = frozenset({"payload", "size_bytes"})
 _OPTIONAL_FIELDS = frozenset({"upstream", "symbol_slices"})
@@ -20,9 +20,13 @@ _OPTIONAL_FIELDS = frozenset({"upstream", "symbol_slices"})
 
 @dataclass(frozen=True, slots=True)
 class MetaRecord:
-    """One object-side Meta record.
+    """One verified object-side Meta record.
 
     `upstream` is `(storage-relative Meta path, recorded payload size)`.
+
+    Example:
+        record = require(pm=pm, meta_path=meta_path)
+        payload_path = record.payload_path
     """
 
     payload_path: Path
@@ -39,14 +43,25 @@ class MetaRecord:
             )
 
 
-def load(
+def find(
     *,
+    pm: PathManager,
     meta_path: Path,
-    storage_root: Path,
     expected_payload_path: Path | None = None,
 ) -> MetaRecord | None:
-    """Return verified metadata, or `None` when `meta.json` is absent."""
-    root = _resolve_storage_root(storage_root)
+    """Return verified metadata, or `None` when `meta.json` is absent.
+
+    Producers use this before deciding whether an object needs to be built:
+
+    Example:
+        existing = find(
+            pm=pm,
+            meta_path=meta_path,
+            expected_payload_path=payload_path,
+        )
+        needs_build = existing is None
+    """
+    root = pm.storage_root
     expected_path = None
     if expected_payload_path is not None:
         expected_path = _resolve_storage_path(
@@ -68,15 +83,54 @@ def load(
     return record
 
 
-def write(
+def require(
     *,
+    pm: PathManager,
+    meta_path: Path,
+    expected_payload_path: Path | None = None,
+) -> MetaRecord:
+    """Return one required verified object-side Meta record.
+
+    Consumers use the returned payload path instead of trusting a path alone:
+
+    Example:
+        record = require(
+            pm=pm,
+            meta_path=meta_path,
+            expected_payload_path=payload_path,
+        )
+        table = pq.read_table(record.payload_path)
+    """
+    record = find(
+        pm=pm,
+        meta_path=meta_path,
+        expected_payload_path=expected_payload_path,
+    )
+    if record is None:
+        raise FileNotFoundError(f"required Meta is unavailable: {meta_path}")
+    return record
+
+
+def commit(
+    *,
+    pm: PathManager,
     payload_path: Path,
-    storage_root: Path,
     upstream_meta_path: Path | None = None,
     symbol_slices: Mapping[str, range] | None = None,
 ) -> None:
-    """Write Meta for an existing payload and optional direct relationships."""
-    root = _resolve_storage_root(storage_root)
+    """Commit Meta for an existing payload and optional direct relationships.
+
+    The payload must be completely written before this call:
+
+    Example:
+        pq.write_table(table, payload_path)
+        commit(
+            pm=pm,
+            payload_path=payload_path,
+            upstream_meta_path=raw_meta_path,
+        )
+    """
+    root = pm.storage_root
     resolved_payload = _resolve_storage_path(
         payload_path,
         storage_root=root,
@@ -327,17 +381,6 @@ def _require_non_negative_int(
     if not isinstance(value, int) or isinstance(value, bool) or value < 0:
         raise RuntimeError(f"{field_name} must be a non-negative integer: {context}")
     return value
-
-
-def _resolve_storage_root(storage_root: Path) -> Path:
-    if not isinstance(storage_root, Path):
-        raise TypeError("storage_root must be a pathlib.Path")
-    if not storage_root.is_absolute():
-        raise ValueError("storage_root must be an absolute path")
-    resolved = storage_root.resolve(strict=True)
-    if not resolved.is_dir():
-        raise NotADirectoryError(resolved)
-    return resolved
 
 
 def _resolve_meta_path(

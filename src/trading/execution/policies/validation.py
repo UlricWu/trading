@@ -5,7 +5,6 @@ import math
 from dataclasses import dataclass
 
 from src.trading.core.events import OrderIntent
-from src.pipeline.phase import TRADING
 
 
 @dataclass(frozen=True, slots=True)
@@ -16,16 +15,24 @@ class ValidationResult:
 
 
 class AShareOrderValidation:
-    """
-    Validate A-share order targets before execution.
+    """Validate A-share order targets after the trade gate admits a bar.
 
     Hard constraints:
-    - phase must be TRADING
     - qty positive
     - lot-size compliant
     - BUY cash check
     - SELL long-only + optional T+1 (validator can enforce or rely on clipping policy)
     - price finite/positive
+
+    Example:
+        validator = AShareOrderValidation()
+        result = validator.validate(
+            intent=intent,
+            price=10.0,
+            cash=10_000.0,
+            current_position=0,
+            t1_sellable=0,
+        )
     """
     def __init__(
         self,
@@ -48,15 +55,22 @@ class AShareOrderValidation:
         self,
         *,
         intent: OrderIntent,
-        phase: int | None,
         price: float | None,
         cash: float,
         current_position: int,
         t1_sellable: int | None,
     ) -> ValidationResult:
-        if phase != TRADING:
-            return ValidationResult(ok=False, reason="PHASE_NOT_TRADING")
+        """Return the institutional validation result for one order intent.
 
+        Example:
+            result = validator.validate(
+                intent=intent,
+                price=10.0,
+                cash=10_000.0,
+                current_position=0,
+                t1_sellable=0,
+            )
+        """
         if isinstance(intent.qty, bool) or not isinstance(intent.qty, int):
             raise TypeError("intent.qty must be an int")
         qty = intent.qty

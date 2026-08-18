@@ -1,11 +1,37 @@
 # 技术栈决策
 
 - **状态**：强制执行
-- **适用范围**：项目日志实现、单文件 Parquet 物理写入，以及 Level-2 source-native
-  `.csv.7z` raw payload 的 ingest、读取、归一化和转换流程。
+- **适用范围**：Python 依赖与运行环境、项目日志实现、Instrumentation 公共调用形式、
+  单文件 Parquet 物理写入，以及 Level-2 source-native `.csv.7z` raw payload 的 ingest、
+  读取、归一化和转换流程。
 - **用途**：记录已经明确选定的技术栈、生产约束及其决策依据。改变本文中的技术
   选型或约束前，必须先更新本文并补充新的验证依据。
 - **规范词**：本文中的“必须”“不得”“仅”均为硬约束，不表示建议。
+
+## Python 依赖与运行环境
+
+### Owner 边界
+
+本节拥有 Python 依赖声明、完整解析基线和环境管理工具的技术选型。测试部署的目标路径、
+运行时身份、构建顺序、切换和回滚由 [`release_workflow.md`](release_workflow.md) 拥有；
+各依赖的业务用途和版本约束仍由对应领域 owner 拥有。
+
+### 工具与权威输入
+
+- `pyproject.toml` 是 Python 版本范围、直接依赖和可选依赖的声明 owner；`uv.lock` 是完整
+  解析结果。仓库自有开发、测试和部署入口必须使用 uv 创建或同步 Python 环境。
+- Anaconda、Conda、Mamba 及其 environment manifest 不是本项目的依赖或环境 owner；
+  仓库自有入口不得要求或调用这些工具。正式入口也不得通过裸 `pip install` 修改环境，
+  使实际依赖脱离 `uv.lock`。
+- 有意修改依赖时，必须在同一可审查修改中更新 `pyproject.toml` 和 `uv.lock`。CI 与部署
+  只能检查和消费已提交的 lock，不得现场解析并回写另一份依赖结果。
+- Python 必须满足 `pyproject.toml` 的 3.13 约束。部署时不得自动下载或隐式切换解释器；
+  目标机必须预先提供 uv 可发现的 Python 3.13。
+
+测试部署可以共享 uv 下载缓存，但不得让不同运行时身份修改同一个 Python 环境。相同
+`uv.lock`、Python 精确身份和固定安装 profile 可以复用同一只读依赖环境；任一输入不同
+时必须使用不同环境。部署依赖环境不得安装当前项目本身，服务通过目标 release 的
+`PYTHONPATH` 加载仓库代码，使依赖环境的复用不绑定某个 commit。
 
 ## 日志技术栈
 
@@ -19,19 +45,55 @@ Loguru 是项目明确选定的日志技术栈。项目自有日志实现必须�
 服务运行始终写入这个文件，不按时间或大小轮转，也不自动清理历史文件；启动文件已
 存在时必须失败，不得追加。API 请求日志属于 system log，不得另建 API file sink。
 System log 不得记录请求 payload、strategy、子进程 argv 或子进程 traceback。
+项目自有日志消息不得添加方括号组件 prefix；消息必须直接以动作或状态开头，并保留
+用于检索和聚合的稳定 `key=value` 上下文。
 
-每个 job 的日志是该 job 子进程的完整 stdout/stderr 输出。每次 job 启动时，
-`JobRuntime` 必须只读取一次 `Asia/Shanghai` 时间，该时间同时确定 `job.started_at` 和
-`logs/jobs/YYYY-MM-DD/<job_id>.log`。`JobRuntime` 必须以独占创建模式打开该路径，并
-拥有文件关闭、子进程重定向和 wait/reap 的完整生命周期；该文件不是 Loguru file
-sink。子进程沿用 Loguru stderr 输出，由 `JobRuntime` 捕获到 job 文件；不得再让 LOG
-模块或 job 子进程打开同一个 job 文件。Job 业务 traceback 只进入 job 文件，system log
-只记录带 `job_id` 的生命周期摘要；runtime 自身的文件、进程或线程启动失败属于 system
-log。尚未启动即取消的 Job 不得创建 job log。历史 job log 不自动清理。
+每个 job 的日志包含文件身份首行及该 job 子进程的完整 stdout/stderr 输出。每次 job
+启动时，`JobRuntime` 必须只读取一次 `Asia/Shanghai` 时间，该时间同时确定
+`job.started_at` 和 `logs/jobs/YYYY-MM-DD/<job_id>.log`。`JobRuntime` 必须以独占创建
+模式打开该路径，并在启动子进程前以 UTF-8 写入 `log_file=<job_id>.log` 作为独占第一
+行，随后从第二行起写入该子进程的完整 stdout/stderr 输出。`JobRuntime` 拥有文件关闭、
+子进程重定向和 wait/reap 的完整生命周期；该文件不是 Loguru file sink。子进程沿用
+Loguru stderr 输出，由 `JobRuntime` 捕获到 job 文件；不得再让 LOG 模块或 job 子进程
+打开同一个 job 文件。Job 业务 traceback 只进入 job 文件，system log 只记录带
+`job_id` 的生命周期摘要；runtime 自身的文件、进程或线程启动失败属于 system log。
+尚未启动即取消的 Job 不得创建 job log。历史 job log 不自动清理或回写。
 
-CLI 不拥有 start/done 日志；offline workflow/pipeline 拥有业务运行日志。API 不提供
+CLI 不拥有 start/done 日志；offline workflow 拥有业务运行日志。API 不提供
 job log endpoint，不得扫描日志目录，也不得把内部文件路径、异常 repr 或 traceback
 写入 Job JSON。
+
+## Instrumentation 公共调用形式
+
+### Owner 边界
+
+本节只拥有 `Instrumentation` 将单次计时表达为具名 `measure(...)` 方法、而不是
+`__call__` 的公共接口决策。测量时机、step label、累计规则、异常传播和 timeline 输出
+继续由 [`docs/offline_workflow_contract.md`](../offline_workflow_contract.md) 拥有。
+
+### 接口决策
+
+单次计时必须显式调用：
+
+```python
+result = instrumentation.measure(
+    operation_name,
+    operation,
+    *args,
+    **kwargs,
+)
+```
+
+`Instrumentation` 不得实现 `__call__` 作为该方法的替代入口或别名。该对象拥有一个
+workflow 作用域内的累计状态和 context-manager 生命周期，并不表示一个已经绑定的单一
+operation；因此把实例本身设计为 callable 会错误表达其对象语义。`measure` 在调用处
+直接说明“调用并计时、累计”的可观察副作用，同时保持 operation label、被调用 callable
+及其参数彼此显式。若写成 `instrumentation(...)`，调用语法本身无法区分测量、执行、
+记录或装饰等可能含义。
+
+`__call__` 只适合实例本身语义上就是一个 callable 的类型。为同一计时行为同时提供
+`measure(...)` 和 `__call__(...)` 不增加能力，却会产生两个等价公共入口及相应的文档、
+类型、测试和兼容责任，因此不保留别名。
 
 ## 单文件 Parquet 物理写入
 
@@ -193,8 +255,8 @@ staging 到 raw 的复制不属于 FTP transport；`Level2Broker` 在下载完�
 `550`、空目录或期望文件不存在翻译为 `None`。认证、连接、timeout、size、同名多匹配、
 写入或最终 size mismatch 必须失败。
 
-FTP transport 和进度日志分别使用 `[Level2Broker]`、`[FTP]` 或 `[DownloadProgress]`
-prefix，可以记录日期、文件名、backend、size 和进度，不得记录密码、token 或完整凭证。
+FTP transport 和进度日志直接以动作或状态开头，可以记录日期、文件名、backend、size
+和进度，不得记录密码、token 或完整凭证。
 Broker 测试拥有文件选择、续传、staging/raw 发布、no-data、失败和 session 释放边界；
 `DownloadProgress` 测试拥有间隔、百分比、速度、ETA、未知总量、单位和参数拒绝边界。
 
@@ -253,6 +315,65 @@ nan
 除上述精确 token 外，不得在该低层 reader 中自行 trim、大小写折叠、数值转换或新增
 其他 null 别名。业务字段类型、范围和跨字段约束必须由下游 source adapter 的正式
 schema owner 校验；低层 reader 不得根据样本内容推断业务类型。
+
+### `MainSeq`、`SubSeq` 排序决策的 raw 证据
+
+本节只记录技术选型依据。`MainSeq`、`SubSeq` 的正式 processed 字段和排序语义由
+[`docs/data/level2_normalization.md`](../data/level2_normalization.md) 拥有；以下观察不得
+被解释为日级完整性契约、发布门槛或 Access 校验责任。
+
+2026-08-18 对本机 `/Users/ulric/data/raw/level2_ftp` 下现存 9 个 source-native archive
+做了逐行全量扫描，不是抽样。扫描对象是三个交易日各自的
+`SH_Stock_OrderTrade.csv.7z`、`SZ_Order.csv.7z`、`SZ_Trade.csv.7z`，精确输入路径为：
+
+```text
+SH_Stock_OrderTrade/trade_date={2026-05-06,2026-07-14,2026-07-15}/SH_Stock_OrderTrade.csv.7z
+SZ_Order/trade_date={2026-05-06,2026-07-14,2026-07-15}/SZ_Order.csv.7z
+SZ_Trade/trade_date={2026-05-06,2026-07-14,2026-07-15}/SZ_Trade.csv.7z
+```
+
+扫描直接流式读取 archive 的精确 CSV member；对每个 `(raw object, MainSeq)` 统计 raw
+行序转移，对同日对象联合统计 `(MainSeq, SubSeq)` 交集、计数、观测最小值、观测最大值
+和位图覆盖。输入行数如下：
+
+| trade date | `SH_Stock_OrderTrade` | `SZ_Order` | `SZ_Trade` | 合计 |
+|---|---:|---:|---:|---:|
+| `2026-05-06` | 228,065,634 | 177,926,057 | 161,787,963 | 567,779,654 |
+| `2026-07-14` | 253,001,384 | 179,134,131 | 163,172,942 | 595,308,457 |
+| `2026-07-15` | 222,489,909 | 173,204,909 | 157,367,952 | 553,062,770 |
+| 合计 | 703,556,927 | 530,265,097 | 482,328,857 | 1,716,150,881 |
+
+三个交易日的观察结果一致：
+
+- 9 个 archive 中 `MainSeq`、`SubSeq` 的 null、零值和负值均为 0；每个 raw object 内
+  `(MainSeq, SubSeq)` 重复数均为 0，同一 `MainSeq` 按 raw 行序出现的 `SubSeq` 相等或
+  下降次数均为 0。
+- SH 每日观测到的 `MainSeq` 都是 `{1,2,3,4,5,6,20}`；SZ 每日观测到的 `MainSeq`
+  都是 `{2011..2015,2021..2025,2031..2035}`。三个样本日内 SH 与 SZ 的 MainSeq 集合
+  不相交。
+- 66 个已观测 `(trade date, MainSeq)` 都以 `SubSeq=1` 开始。SH 每个 MainSeq 在单一
+  `SH_Stock_OrderTrade` 文件中覆盖观测区间 `1..N`；SZ 单个 Order 或 Trade 文件各自
+  有空洞，但同日 `SZ_Order ∪ SZ_Trade` 覆盖观测区间 `1..N`，两个文件的 key 交集为 0。
+- 各日观测到的终止序号范围为：SH `2026-05-06` 的 `N=57,273..42,488,250`、
+  `2026-07-14` 的 `N=31,406..46,199,246`、`2026-07-15` 的
+  `N=36,579..41,803,175`；SZ 对应为 `N=2,478,277..60,164,539`、
+  `N=1,927,339..57,474,245`、`N=1,964,925..55,317,513`。这里的 `N` 只是文件内
+  观测最大值，不是 broker 声明的应有末尾。
+- SZ Order/Trade 跨文件相邻序号共 484,325,559 次，证明两个对象在同一 MainSeq 中
+  交错；SH 不同 `TickType` 间的相邻序号共 319,192,590 次，证明 S/A/D/T 使用同一
+  通道序列。三个交易日所有 MainSeq 在午间前后都继续递增，没有观察到重置。
+- 每个交易日同一 `SecurityID` 跨多个 `MainSeq` 的观测数为 0；这只是当前输入事实，
+  不提升为证券到通道的长期映射契约。
+- SH 按 `SubSeq` 接收顺序观察到 `TickTime` 回退 19,334 次。例如
+  `MainSeq=1, SubSeq=933, TickTime=9250004` 后出现
+  `SubSeq=934, TickTime=9150220`。因此事件时间与 broker 通道接收顺序是两个不同维度，
+  不能互相替代。
+
+这些结果支持把 `MainSeq`、`SubSeq` 保留为 processed 的通道排序字段，并用它们替代
+无法表达 broker 语义的 raw 文件行位置。它们不能证明文件末尾之后没有事件，也不能发现
+整个未出现的 MainSeq；broker 提供的是最终版本文件，没有可请求的更准确 raw 版本。
+因此生产链路不得根据起始值、连续性或三个对象的联合覆盖拒绝发布 processed，也不得为此
+额外扫描 raw-only 的 `SZ_Order`。
 
 ## 选择 `7zz` 作为主链路 CLI 的依据
 

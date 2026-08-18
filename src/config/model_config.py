@@ -6,38 +6,56 @@ from typing import Literal, Self
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
-class AdjustmentRefDataConfig(BaseModel):
-    """Formal processed refdata input selected by `model.dataset`."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    method: Literal["raw", "qfq", "hfq"] = "raw"
-    dataset_name: str
-    version: str
-
-
 class FeatureLabelConfig(BaseModel):
-    """Formal feature/label input selection parsed from `model.dataset`."""
+    """Formal feature/label input selection parsed from `model.dataset`.
+
+    Example:
+        config = FeatureLabelConfig(
+            feature_set="daily",
+            feature_version="v1",
+            label_set="rank",
+            label_version="v1",
+            feature_columns=["momentum"],
+            label_column="target",
+        )
+    """
 
     model_config = ConfigDict(extra="forbid")
 
-    feature_set: str
-    feature_version: str
-    label_set: str
-    label_version: str
-    feature_columns: list[str]
-    label_column: str
-    drop_na: bool = True
-    adjustment: AdjustmentRefDataConfig
+    feature_set: str = Field(min_length=1)
+    feature_version: str = Field(min_length=1)
+    label_set: str = Field(min_length=1)
+    label_version: str = Field(min_length=1)
+    feature_columns: list[str] = Field(min_length=1)
+    label_column: str = Field(min_length=1)
+
+    @field_validator("feature_columns")
+    @classmethod
+    def _validate_feature_columns(cls, value: list[str]) -> list[str]:
+        if any(not column for column in value):
+            raise ValueError(
+                "model.dataset.feature_columns must not contain empty names"
+            )
+        if len(value) != len(set(value)):
+            raise ValueError("model.dataset.feature_columns must be unique")
+        return value
 
 
 class MissingConfig(BaseModel):
-    """Missing-value handling selected by `model.preprocessing.missing`."""
+    """Missing-value handling selected by `model.preprocessing.missing`.
+
+    Example:
+        config = MissingConfig(method="constant", fill_value=0.0)
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     method: Literal["constant", "mean", "median", "drop"] = "constant"
-    fill_value: float | None = None
+    fill_value: float | None = Field(
+        default=None,
+        strict=True,
+        allow_inf_nan=False,
+    )
 
     @model_validator(mode="after")
     def _validate_fill_value(self) -> Self:
@@ -52,31 +70,36 @@ class MissingConfig(BaseModel):
 
 
 class PreprocessingConfig(BaseModel):
-    """Model-input preprocessing parsed from `model.preprocessing`."""
+    """Model-input preprocessing parsed from `model.preprocessing`.
+
+    Example:
+        config = PreprocessingConfig(
+            missing=MissingConfig(method="constant", fill_value=0.0)
+        )
+    """
 
     model_config = ConfigDict(extra="forbid")
 
-    version: str = "v1"
     missing: MissingConfig = Field(
         default_factory=lambda: MissingConfig(method="constant", fill_value=0.0)
     )
 
 
 class ModelConfig(BaseModel):
-    """Training model definition parsed from the `model` config section."""
+    """Training model definition parsed from the `model` config section.
+
+    Example:
+        config = ModelConfig(
+            group="sgd_regression",
+            dataset=feature_label_config,
+            train_window_days=30,
+        )
+    """
 
     model_config = ConfigDict(extra="forbid")
 
+    group: str = Field(min_length=1)
     model_params: dict[str, object] = Field(default_factory=dict)
-    train_window_days: int = 252
+    train_window_days: int = Field(default=252, ge=0, strict=True)
     preprocessing: PreprocessingConfig = Field(default_factory=PreprocessingConfig)
     dataset: FeatureLabelConfig
-
-    @field_validator("train_window_days", mode="before")
-    @classmethod
-    def _validate_train_window_days(cls, value: object) -> int:
-        if isinstance(value, bool) or not isinstance(value, int):
-            raise ValueError("model.train_window_days must be an int")
-        if value < 0:
-            raise ValueError("model.train_window_days must be >= 0")
-        return value

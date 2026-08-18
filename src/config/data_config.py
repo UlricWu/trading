@@ -1,5 +1,5 @@
 # filepath: src/config/data_config.py
-"""Pydantic section models for the docs/data.md `data` configuration."""
+"""Pydantic models for `docs/data/source_contract.md` data configuration."""
 
 from __future__ import annotations
 
@@ -10,63 +10,89 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class DownloadBackend(str, Enum):
-    """Supported FTP download backends."""
+    """Supported FTP download backends.
+
+    Example:
+        backend = DownloadBackend.FTPLIB
+    """
 
     FTPLIB = "ftplib"
 
 
 class BrokerConfig(BaseModel):
-    """External raw fetch capability declaration loaded from `data.brokers`."""
+    """External raw fetch capability declaration loaded from `data.brokers`.
+
+    Example:
+        config = BrokerConfig(remote_root="level2", ftp_backend="ftplib")
+    """
 
     model_config = ConfigDict(extra="forbid")
 
-    normalize_profile: str | None = None
     remote_root: str | None = None
     ftp_backend: DownloadBackend | None = None
 
 
 class SourceConfig(BaseModel):
-    """Source execution unit or broker source expansion directive."""
+    """Describe one complete source execution unit.
+
+    Example:
+        config = SourceConfig(
+            enabled=True,
+            broker="level2_ftp",
+            group="offline_level2",
+            raw_object="SZ_Trade",
+            outputs=["sz_trade"],
+        )
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool
     broker: str
     group: str
-    raw_object: str | None = None
-    outputs: list[str] | None = None
-    use_broker_sources: bool = False
+    raw_object: str
+    outputs: list[str]
 
 
 class FeatureSetConfig(BaseModel):
-    """Feature set declaration loaded from `data.feature_sets`."""
+    """Feature set declaration loaded from `data.feature_sets`.
+
+    Example:
+        config = FeatureSetConfig(enabled=True, version="v1")
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool = False
     version: str
-    group: str
 
 
 class LabelSetConfig(BaseModel):
-    """Label set declaration loaded from `data.label_sets`."""
+    """Label set declaration loaded from `data.label_sets`.
+
+    Example:
+        config = LabelSetConfig(enabled=True, version="v1")
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool = False
     version: str
-    group: str
 
 
 class DataConfig(BaseModel):
-    """Data configuration schema for docs/data.md broker and source declarations."""
+    """Validate broker, source, feature, and label declarations.
+
+    Example:
+        config = DataConfig()
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     # Static broker capability declarations; declared brokers are usable by default.
     brokers: dict[str, BrokerConfig] = Field(default_factory=dict)
 
-    # Static source declarations; entries may be ordinary sources or expansion directives.
+    # Explicit file-backed source declarations; Tushare sources are code-owned.
     sources: dict[str, SourceConfig] = Field(default_factory=dict)
 
     # Static feature/label declarations; each set is inactive until enabled.
@@ -94,21 +120,18 @@ class DataConfig(BaseModel):
                     f"data.sources.{source_name}.broker is not declared: "
                     f"{source.broker}"
                 )
-            if source.use_broker_sources:
-                if source.raw_object is not None or source.outputs is not None:
-                    raise ValueError(
-                        f"data.sources.{source_name} broker expansion must not "
-                        "declare raw_object or outputs"
-                    )
-                continue
-
             if not source.raw_object:
                 raise ValueError(
-                    f"data.sources.{source_name}.raw_object is required"
+                    f"data.sources.{source_name}.raw_object must be non-empty"
                 )
-            if source.outputs is None:
+            if source.broker != "level2_ftp":
                 raise ValueError(
-                    f"data.sources.{source_name}.outputs must be explicit"
+                    f"data.sources.{source_name}.broker must be 'level2_ftp'; "
+                    "Tushare source selection is code-owned"
+                )
+            if source.group != "offline_level2":
+                raise ValueError(
+                    f"data.sources.{source_name}.group must be 'offline_level2'"
                 )
             if any(not output for output in source.outputs):
                 raise ValueError(
@@ -120,12 +143,6 @@ class DataConfig(BaseModel):
                 )
             if not source.enabled:
                 continue
-            broker = self.brokers[source.broker]
-            if source.outputs and not broker.normalize_profile:
-                raise ValueError(
-                    f"data.brokers.{source.broker}.normalize_profile is required "
-                    f"by source {source_name}"
-                )
             group_outputs = outputs_by_group.setdefault(source.group, set())
             overlap = group_outputs.intersection(source.outputs)
             if overlap:

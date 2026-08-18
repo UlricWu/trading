@@ -22,18 +22,32 @@ Job、队列和状态都只存在于当前服务进程；服务重启不恢复�
 Flask 进程运行，多个 worker 进程会形成彼此独立且不一致的队列，因此不受支持。
 
 `GET /jobs/<job_id>` 对已知 Job 返回当前 Job object 和 `200`。`GET /health` 固定返回
-`200 {"ok":true}`。
+`200` 和以下精确字段：
+
+```json
+{
+  "ok": true,
+  "environment": "test",
+  "release_ref": "release/auto-release",
+  "commit_sha": "0123456789abcdef0123456789abcdef01234567"
+}
+```
+
+`environment`、`release_ref` 和 `commit_sha` 在 Flask app 创建时分别读取进程变量 `ENV`、
+`MINQUANT_RELEASE_REF` 和 `MINQUANT_COMMIT_SHA`，并在该进程生命周期内保持不变。未提供时
+分别使用 `dev`、`workspace` 和 `workspace`，只表示本地工作区运行；测试部署必须显式注入
+并校验上例对应的环境、release ref 和目标完整 SHA。Health 只证明当前 API 进程可响应及
+其 release identity，不探测 FTP、Tushare、数据对象或尚未提交的 Job 依赖。
 
 ## POST `/jobs`
 
 请求 body 必须是 JSON object，`kind` 是唯一判别字段，额外字段必须拒绝：
 
 - `data-standard`、`data-level2`
-  - 单日形式必须提供 `date`。
-  - 范围形式必须同时提供 `start` 与 `end`。
-  - 两种形式互斥；日期必须是规范 `YYYY-MM-DD`，且 `start <= end`。
-  - 范围按自然日升序、包含首尾地原子展开为一天一个独立 Job。周末及无数据日期不在
-    HTTP 层过滤；workflow 无数据时通过退出码 `75` 产生 `SKIPPED`。
+  - 必须且只允许提供 `start` 与 `end`。
+  - 日期必须是规范 `YYYY-MM-DD`，且 `start <= end`。
+  - 完整闭区间是一个 workflow 执行单位，因此只创建一个 Job。单日使用
+    `start == end`。
 - `train`
   - 必须且只允许提供 `start` 与 `end`。
   - 完整范围是一个 workflow 执行单位，因此只创建一个 Job。
@@ -42,9 +56,8 @@ Flask 进程运行，多个 worker 进程会形成彼此独立且不一致的队
   - 字段业务语义与 CLI 同名参数一致。
   - 完整范围是一个 workflow 执行单位，因此只创建一个 Job。
 
-一个 Job 对应一个最小 workflow 执行单位，不要求一个 HTTP 请求只对应一个 Job。整个
-请求必须先完成字段和业务参数构造，再一次性加入 FIFO；任一字段无效时不得创建任何
-Job、ID、日志或子进程。
+一个 Job 对应一个完整 workflow 执行单位；每个有效请求只创建一个 Job。请求必须先完成
+字段和业务参数构造，再加入 FIFO；任一字段无效时不得创建任何 Job、ID、日志或子进程。
 
 成功固定返回：
 
@@ -57,9 +70,8 @@ Job、ID、日志或子进程。
 ## 请求构造与 CLI 子进程
 
 HTTP 和 CLI 必须共同使用 `src.jobs.requests` 构造完整、可直接消费的 data、training
-或 backtest submission；HTTP 层只拥有 JSON object 形状、`kind` allowlist、每种 kind
-的字段 allowlist 和 data 单日/范围形式选择，不得复制日期、mode、model experiment 或
-strategy 的业务校验。
+或 backtest submission；HTTP 层只拥有 JSON object 形状、`kind` allowlist 和每种 kind
+的字段 allowlist，不得复制日期、mode、model experiment 或 strategy 的业务校验。
 
 Job 子进程必须使用当前服务的 Python 解释器执行 `-m src.cli`，不得调用 PATH 中的
 `python`。Data Job 的 UUID 只标识 Job；training 和 backtest 必须将同一个完整 Job UUID
@@ -73,13 +85,7 @@ Job JSON 必须且只包含：
 job_id, kind, scope, status, submitted_at, started_at, finished_at
 ```
 
-`scope` 只表达该 Job 的执行单位：
-
-```json
-{"date": "YYYY-MM-DD"}
-```
-
-或：
+`scope` 只表达该 Job 的完整执行单位：
 
 ```json
 {"start": "YYYY-MM-DD", "end": "YYYY-MM-DD"}
@@ -116,6 +122,10 @@ CANCELLED
 - 子进程启动前的 runtime failure 进入 `FAILED`，`started_at` 保持 `null`，
   `finished_at` 被设置。
 - 子进程退出码 `0`、`75` 和其他值分别产生 `SUCCESS`、`SKIPPED` 和 `FAILED`。
+- Standard 或 Level-2 Data 的任一正式交易日 fact 缺失时，workflow 失败，CLI 子进程退出
+  非零，Job 因而进入 `FAILED`；Data workflow 不产生退出码 `75`。
+- Training 没有可执行 window 或 backtest 没有相邻 timing 时，workflow 以
+  `ValueError` 失败，CLI 子进程退出非零，Job 因而进入 `FAILED`；不得改成 `SKIPPED`。
 - `PENDING` 取消直接进入 `CANCELLED`，不创建 job log 或子进程。
 - `RUNNING` 取消进入 `CANCELLING`；只有进程组退出并完成 wait/reap 后才进入
   `CANCELLED`。

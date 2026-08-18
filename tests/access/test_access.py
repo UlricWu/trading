@@ -1,5 +1,5 @@
 # filepath: tests/access/test_access.py
-"""Behavior tests for the user-facing Slice access boundary."""
+"""Behavior tests for the public Access boundary."""
 
 from __future__ import annotations
 
@@ -12,23 +12,19 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
+from src.access import Access, meta
 from src.access import access as access_module
-from src.access import meta
-from src.access.access import Slice
 from src.utils.path import PathManager
 
 
-def test_slice_requires_canonical_trade_date(tmp_path: Path) -> None:
+def test_access_requires_safe_processed_version(tmp_path: Path) -> None:
     pm = PathManager(tmp_path)
 
-    with pytest.raises(ValueError, match="YYYY-MM-DD"):
-        Slice(pm, "20260506", version="v1")
-
-    with pytest.raises(TypeError, match="must be a str"):
-        Slice(pm, cast(str, 20260506), version="v1")
+    with pytest.raises(ValueError, match="processed_version"):
+        Access(pm=pm, processed_version="../v1")
 
 
-def test_daily_reads_full_object_and_requested_symbol_order(
+def test_daily_bars_reads_full_object_and_requested_symbol_order(
     tmp_path: Path,
 ) -> None:
     pm = PathManager(tmp_path)
@@ -40,170 +36,218 @@ def test_daily_reads_full_object_and_requested_symbol_order(
         pd.DataFrame(
             {
                 "symbol": ["000001", "600000", "000002"],
+                "trade_date": [trade_date, trade_date, trade_date],
                 "close": [12.0, 20.0, 8.0],
             }
         ),
     )
-    market_slice = Slice(pm, trade_date, version="v1")
+    access = Access(pm=pm, processed_version="v1")
 
-    complete = market_slice.daily("daily_bar")
-    selected = market_slice.daily(
-        "daily_bar",
+    complete = access.daily_bars(trade_date=trade_date)
+    selected = access.daily_bars(
+        trade_date=trade_date,
         symbols=["600000", "000001"],
     )
-    empty = market_slice.daily("daily_bar", symbols=())
+    empty = access.daily_bars(trade_date=trade_date, symbols=())
 
     assert complete["symbol"].tolist() == ["000001", "600000", "000002"]
     assert selected["symbol"].tolist() == ["600000", "000001"]
     assert selected["close"].tolist() == [20.0, 12.0]
     assert empty.empty
-    assert empty.columns.tolist() == ["symbol", "close"]
+    assert empty.columns.tolist() == ["symbol", "trade_date", "close"]
 
 
-def test_daily_rejects_missing_dataset_and_invalid_symbol_request(
+def test_daily_bars_rejects_missing_object_and_invalid_symbol_request(
     tmp_path: Path,
 ) -> None:
     pm = PathManager(tmp_path)
+    access = Access(pm=pm, processed_version="v1")
     trade_date = "2026-05-06"
+
+    with pytest.raises(FileNotFoundError, match="required Meta"):
+        access.daily_bars(trade_date=trade_date)
+
     _write_processed_frame(
         pm,
         trade_date,
         "daily_bar",
-        pd.DataFrame({"symbol": ["000001"]}),
+        pd.DataFrame({"symbol": ["000001"], "trade_date": [trade_date]}),
     )
-    market_slice = Slice(pm, trade_date, version="v1")
-
-    with pytest.raises(FileNotFoundError, match="unknown"):
-        market_slice.daily("unknown")
     with pytest.raises(TypeError, match="sequence"):
-        market_slice.daily("daily_bar", symbols="000001")
+        access.daily_bars(trade_date=trade_date, symbols="000001")
     with pytest.raises(ValueError, match="six-digit"):
-        market_slice.daily("daily_bar", symbols=["1"])
+        access.daily_bars(trade_date=trade_date, symbols=["1"])
     with pytest.raises(ValueError, match="unique"):
-        market_slice.daily("daily_bar", symbols=["000001", "000001"])
+        access.daily_bars(
+            trade_date=trade_date,
+            symbols=["000001", "000001"],
+        )
     with pytest.raises(KeyError, match="600000"):
-        market_slice.daily("daily_bar", symbols=["600000"])
+        access.daily_bars(trade_date=trade_date, symbols=["600000"])
 
 
-def test_daily_rejects_missing_object_and_duplicate_data_identity(
+def test_named_daily_objects_validate_identity_and_project_owned_columns(
     tmp_path: Path,
 ) -> None:
     pm = PathManager(tmp_path)
     trade_date = "2026-05-06"
-    market_slice = Slice(pm, trade_date, version="v1")
+    _write_processed_frame(
+        pm,
+        trade_date,
+        "adj_factor",
+        pd.DataFrame(
+            {
+                "symbol": ["000001", "600000"],
+                "trade_date": [trade_date, trade_date],
+                "adj_factor": [1.2, 3.4],
+                "unused": [1, 2],
+            }
+        ),
+    )
+    _write_processed_frame(
+        pm,
+        trade_date,
+        "daily_basic",
+        pd.DataFrame(
+            {
+                "symbol": ["000001", "600000"],
+                "trade_date": [trade_date, trade_date],
+                "turnover_rate": [0.0, 2.5],
+                "unused": [1, 2],
+            }
+        ),
+    )
+    access = Access(pm=pm, processed_version="v1")
 
-    with pytest.raises(FileNotFoundError, match="daily_bar"):
-        market_slice.daily("daily_bar")
+    factors = access.adjustment_factors(
+        trade_date=trade_date,
+        symbols=("600000", "000001"),
+    )
+    turnover = access.turnover_rates(trade_date=trade_date)
 
+    assert factors.to_dict("list") == {
+        "symbol": ["600000", "000001"],
+        "trade_date": [trade_date, trade_date],
+        "adj_factor": [3.4, 1.2],
+    }
+    assert turnover.to_dict("list") == {
+        "symbol": ["000001", "600000"],
+        "trade_date": [trade_date, trade_date],
+        "turnover_rate": [0.0, 2.5],
+    }
+
+
+def test_named_daily_objects_reject_partition_identity_mismatch(
+    tmp_path: Path,
+) -> None:
+    pm = PathManager(tmp_path)
+    trade_date = "2026-05-06"
+    _write_processed_frame(
+        pm,
+        trade_date,
+        "adj_factor",
+        pd.DataFrame(
+            {
+                "symbol": ["000001"],
+                "trade_date": ["2026-05-05"],
+                "adj_factor": [1.0],
+            }
+        ),
+    )
+
+    with pytest.raises(ValueError, match="must equal requested date"):
+        Access(pm=pm, processed_version="v1").adjustment_factors(trade_date=trade_date)
+
+
+def test_trade_dates_read_annual_calendar_objects_in_ascending_order(
+    tmp_path: Path,
+) -> None:
+    pm = PathManager(tmp_path)
+    _write_calendar_year(
+        pm,
+        2025,
+        pd.DataFrame(
+            {
+                "trade_date": ["2025-12-30", "2025-12-31"],
+                "is_open": [False, True],
+            }
+        ),
+    )
+    _write_calendar_year(
+        pm,
+        2026,
+        pd.DataFrame(
+            {
+                "trade_date": ["2026-01-01", "2026-01-02", "2026-01-03"],
+                "is_open": [False, True, True],
+            }
+        ),
+    )
+
+    access = Access(pm=pm, processed_version="v1")
+
+    assert access.trade_dates(
+        start_date="2025-12-30",
+        end_date="2026-01-03",
+    ) == [
+        "2025-12-31",
+        "2026-01-02",
+        "2026-01-03",
+    ]
+    assert access.recent_trade_dates(
+        end_date="2026-01-03",
+        sessions=3,
+    ) == [
+        "2025-12-31",
+        "2026-01-02",
+        "2026-01-03",
+    ]
+
+
+def test_trade_dates_requires_every_requested_calendar_year(tmp_path: Path) -> None:
+    pm = PathManager(tmp_path)
+    _write_calendar_year(
+        pm,
+        2025,
+        pd.DataFrame(
+            {
+                "trade_date": ["2025-12-31"],
+                "is_open": [True],
+            }
+        ),
+    )
+
+    with pytest.raises(FileNotFoundError, match="required Meta"):
+        Access(pm=pm, processed_version="v1").trade_dates(
+            start_date="2025-12-31",
+            end_date="2026-01-01",
+        )
+
+
+def test_universe_applies_listing_st_and_suspension_filters(
+    tmp_path: Path,
+) -> None:
+    pm = PathManager(tmp_path)
+    trade_date = "2026-05-06"
     _write_processed_frame(
         pm,
         trade_date,
         "daily_bar",
-        pd.DataFrame({"symbol": ["000001", "000001"]}),
+        pd.DataFrame(
+            {
+                "symbol": [
+                    "600000",
+                    "000004",
+                    "000003",
+                    "000002",
+                    "000001",
+                ]
+            }
+        ),
     )
-    with pytest.raises(RuntimeError, match="duplicate symbol"):
-        market_slice.daily("daily_bar", symbols=["000001"])
-
-
-def test_trade_dates_and_daily_window_use_ascending_formal_sessions(
-    tmp_path: Path,
-) -> None:
-    pm = PathManager(tmp_path)
-    for trade_date in ("2026-05-04", "2026-05-05", "2026-05-06"):
-        _write_processed_frame(
-            pm,
-            trade_date,
-            "daily_bar",
-            pd.DataFrame({"symbol": ["000001"]}),
-        )
-        _write_processed_frame(
-            pm,
-            trade_date,
-            "daily_basic",
-            pd.DataFrame(
-                {
-                    "symbol": ["000001"],
-                    "limit_status": [0],
-                }
-            ),
-        )
-
-    payload_only = pm.processed_data(
-        dataset_name="daily_bar",
-        version="v1",
-        trade_date="2026-05-03",
-    )
-    payload_only.parent.mkdir(parents=True)
-    pd.DataFrame({"symbol": ["000001"]}).to_parquet(payload_only, index=False)
-
-    market_slice = Slice(pm, "2026-05-06", version="v1")
-
-    assert market_slice.trade_dates(start_date="2026-05-03") == [
-        "2026-05-04",
-        "2026-05-05",
-        "2026-05-06",
-    ]
-    assert market_slice.recent_trade_dates(sessions=2) == [
-        "2026-05-05",
-        "2026-05-06",
-    ]
-    assert list(market_slice.daily_window("daily_basic", sessions=2)) == [
-        "2026-05-05",
-        "2026-05-06",
-    ]
-
-
-def test_daily_window_fails_when_any_selected_object_is_missing(
-    tmp_path: Path,
-) -> None:
-    pm = PathManager(tmp_path)
-    for trade_date in ("2026-05-05", "2026-05-06"):
-        _write_processed_frame(
-            pm,
-            trade_date,
-            "daily_bar",
-            pd.DataFrame({"symbol": ["000001"]}),
-        )
     _write_processed_frame(
         pm,
-        "2026-05-06",
-        "daily_basic",
-        pd.DataFrame({"symbol": ["000001"], "limit_status": [0]}),
-    )
-
-    with pytest.raises(FileNotFoundError, match="daily_basic"):
-        Slice(pm, "2026-05-06", version="v1").daily_window(
-            "daily_basic",
-            sessions=2,
-        )
-
-
-def test_stock_universe_applies_explicit_filters_in_daily_bar_order(
-    tmp_path: Path,
-) -> None:
-    pm = PathManager(tmp_path)
-    trade_dates = ("2026-05-04", "2026-05-05", "2026-05-06")
-    for trade_date in trade_dates:
-        _write_processed_frame(
-            pm,
-            trade_date,
-            "daily_bar",
-            pd.DataFrame(
-                {
-                    "symbol": [
-                        "000001",
-                        "000002",
-                        "000003",
-                        "000004",
-                        "000005",
-                    ]
-                }
-            ),
-        )
-
-    _write_processed_frame(
-        pm,
-        "2026-05-06",
+        trade_date,
         "stock_basic",
         pd.DataFrame(
             {
@@ -212,53 +256,40 @@ def test_stock_universe_applies_explicit_filters_in_daily_bar_order(
                     "000002",
                     "000003",
                     "000004",
-                    "000005",
+                    "600000",
                 ],
                 "list_date": [
                     "2000-01-01",
                     "2000-01-01",
                     "2000-01-01",
-                    "2000-01-01",
                     "2026-04-20",
+                    "2000-01-01",
                 ],
             }
         ),
     )
     _write_processed_frame(
         pm,
-        "2026-05-04",
+        trade_date,
         "stock_st",
         pd.DataFrame({"symbol": ["000002"]}),
     )
     _write_processed_frame(
         pm,
-        "2026-05-05",
-        "stock_st",
-        _empty_symbol_frame(),
-    )
-    _write_processed_frame(
-        pm,
-        "2026-05-06",
-        "stock_st",
+        trade_date,
+        "suspend_d",
         pd.DataFrame({"symbol": ["000003"]}),
     )
-    _write_processed_frame(
-        pm,
-        "2026-05-06",
-        "suspend_d",
-        pd.DataFrame({"symbol": ["000004"]}),
+
+    symbols = Access(pm=pm, processed_version="v1").universe(
+        trade_date=trade_date,
+        min_listing_calendar_days=30,
     )
 
-    symbols = Slice(pm, "2026-05-06", version="v1").stock_universe(
-        min_list_calendar_days=30,
-        exclude_st_sessions=3,
-        exclude_suspended=True,
-    )
-
-    assert symbols == ["000001"]
+    assert symbols == ("000001", "600000")
 
 
-def test_stock_universe_zero_policies_do_not_require_filter_objects(
+def test_universe_zero_listing_days_does_not_require_stock_basic(
     tmp_path: Path,
 ) -> None:
     pm = PathManager(tmp_path)
@@ -267,19 +298,17 @@ def test_stock_universe_zero_policies_do_not_require_filter_objects(
         pm,
         trade_date,
         "daily_bar",
-        pd.DataFrame({"symbol": ["000002", "000001"]}),
+        pd.DataFrame({"symbol": ["600000", "000001"]}),
     )
+    _write_empty_universe_exclusions(pm=pm, trade_date=trade_date)
 
-    assert Slice(pm, trade_date, version="v1").stock_universe(
-        min_list_calendar_days=0,
-        exclude_st_sessions=0,
-        exclude_suspended=False,
-    ) == ["000002", "000001"]
+    assert Access(pm=pm, processed_version="v1").universe(
+        trade_date=trade_date,
+        min_listing_calendar_days=0,
+    ) == ("000001", "600000")
 
 
-def test_stock_universe_includes_exact_listing_age_boundary(
-    tmp_path: Path,
-) -> None:
+def test_universe_includes_exact_listing_age_boundary(tmp_path: Path) -> None:
     pm = PathManager(tmp_path)
     trade_date = "2026-05-06"
     _write_processed_frame(
@@ -299,15 +328,45 @@ def test_stock_universe_includes_exact_listing_age_boundary(
             }
         ),
     )
+    _write_empty_universe_exclusions(pm=pm, trade_date=trade_date)
 
-    assert Slice(pm, trade_date, version="v1").stock_universe(
-        min_list_calendar_days=30,
-        exclude_st_sessions=0,
-        exclude_suspended=False,
-    ) == ["000001"]
+    assert Access(pm=pm, processed_version="v1").universe(
+        trade_date=trade_date,
+        min_listing_calendar_days=30,
+    ) == ("000001",)
 
 
-def test_stock_universe_rejects_incomplete_st_history(tmp_path: Path) -> None:
+def test_universe_excludes_missing_and_null_listing_dates(tmp_path: Path) -> None:
+    pm = PathManager(tmp_path)
+    trade_date = "2026-05-06"
+    _write_processed_frame(
+        pm,
+        trade_date,
+        "daily_bar",
+        pd.DataFrame({"symbol": ["000001", "000002", "000003"]}),
+    )
+    _write_processed_frame(
+        pm,
+        trade_date,
+        "stock_basic",
+        pd.DataFrame(
+            {
+                "symbol": ["000001", "000002"],
+                "list_date": ["2000-01-01", None],
+            }
+        ),
+    )
+    _write_empty_universe_exclusions(pm=pm, trade_date=trade_date)
+
+    assert Access(pm=pm, processed_version="v1").universe(
+        trade_date=trade_date,
+        min_listing_calendar_days=30,
+    ) == ("000001",)
+
+
+def test_universe_requires_current_st_and_suspension_objects(
+    tmp_path: Path,
+) -> None:
     pm = PathManager(tmp_path)
     trade_date = "2026-05-06"
     _write_processed_frame(
@@ -316,80 +375,40 @@ def test_stock_universe_rejects_incomplete_st_history(tmp_path: Path) -> None:
         "daily_bar",
         pd.DataFrame({"symbol": ["000001"]}),
     )
-
-    with pytest.raises(RuntimeError, match="insufficient daily_bar history"):
-        Slice(pm, trade_date, version="v1").stock_universe(
-            min_list_calendar_days=0,
-            exclude_st_sessions=2,
-            exclude_suspended=False,
-        )
-
-
-def test_stock_universe_rejects_missing_required_st_object(
-    tmp_path: Path,
-) -> None:
-    pm = PathManager(tmp_path)
-    for trade_date in ("2026-05-05", "2026-05-06"):
-        _write_processed_frame(
-            pm,
-            trade_date,
-            "daily_bar",
-            pd.DataFrame({"symbol": ["000001"]}),
-        )
     _write_processed_frame(
         pm,
-        "2026-05-06",
-        "stock_st",
+        trade_date,
+        "suspend_d",
         _empty_symbol_frame(),
     )
 
-    with pytest.raises(FileNotFoundError, match="stock_st"):
-        Slice(pm, "2026-05-06", version="v1").stock_universe(
-            min_list_calendar_days=0,
-            exclude_st_sessions=2,
-            exclude_suspended=False,
+    with pytest.raises(FileNotFoundError, match="required Meta"):
+        Access(pm=pm, processed_version="v1").universe(
+            trade_date=trade_date,
+            min_listing_calendar_days=0,
         )
 
 
 @pytest.mark.parametrize(
-    ("keyword", "value", "error_type"),
-    [
-        ("min_list_calendar_days", True, TypeError),
-        ("min_list_calendar_days", -1, ValueError),
-        ("exclude_st_sessions", True, TypeError),
-        ("exclude_st_sessions", -1, ValueError),
-        ("exclude_suspended", 1, TypeError),
-    ],
+    ("value", "error_type"),
+    [(True, TypeError), (-1, ValueError)],
 )
-def test_stock_universe_rejects_invalid_policy_values(
+def test_universe_rejects_invalid_listing_days(
     tmp_path: Path,
-    keyword: str,
     value: object,
     error_type: type[Exception],
 ) -> None:
-    values: dict[str, object] = {
-        "min_list_calendar_days": 0,
-        "exclude_st_sessions": 0,
-        "exclude_suspended": False,
-    }
-    values[keyword] = value
-
     with pytest.raises(error_type):
-        Slice(
-            PathManager(tmp_path),
-            "2026-05-06",
-            version="v1",
-        ).stock_universe(
-            min_list_calendar_days=cast(
-                int,
-                values["min_list_calendar_days"],
-            ),
-            exclude_st_sessions=cast(int, values["exclude_st_sessions"]),
-            exclude_suspended=cast(bool, values["exclude_suspended"]),
+        Access(
+            pm=PathManager(tmp_path),
+            processed_version="v1",
+        ).universe(
+            trade_date="2026-05-06",
+            min_listing_calendar_days=cast(int, value),
         )
 
 
-def test_closed_limit_up_symbols_includes_regular_and_one_price_limit_up(
+def test_level2_universe_uses_level2_base_and_canonical_order(
     tmp_path: Path,
 ) -> None:
     pm = PathManager(tmp_path)
@@ -397,84 +416,56 @@ def test_closed_limit_up_symbols_includes_regular_and_one_price_limit_up(
     _write_processed_frame(
         pm,
         trade_date,
-        "daily_basic",
-        pd.DataFrame(
-            {
-                "symbol": [
-                    "000001",
-                    "000002",
-                    "000003",
-                    "000004",
-                    "000005",
-                    "000006",
-                    "000007",
-                ],
-                "limit_status": pd.Series(range(7), dtype="int64"),
-            }
-        ),
+        "daily_bar",
+        pd.DataFrame({"symbol": ["000001"]}),
     )
-
-    assert Slice(pm, trade_date, version="v1").closed_limit_up_symbols() == [
-        "000003",
-        "000004",
-    ]
-
-
-@pytest.mark.parametrize(
-    "limit_status",
-    [
-        pd.Series([2.0], dtype="float64"),
-        pd.Series(["2"], dtype="object"),
-        pd.Series([7], dtype="int64"),
-        pd.Series([None], dtype="Int64"),
-        pd.Series([True], dtype="bool"),
-    ],
-)
-def test_closed_limit_up_symbols_rejects_invalid_status(
-    tmp_path: Path,
-    limit_status: pd.Series,
-) -> None:
-    pm = PathManager(tmp_path)
-    trade_date = "2026-05-06"
+    _write_level2_row_group_fixture(pm=pm, trade_date=trade_date)
     _write_processed_frame(
         pm,
         trade_date,
-        "daily_basic",
+        "stock_basic",
         pd.DataFrame(
             {
-                "symbol": ["000001"],
-                "limit_status": limit_status,
+                "symbol": ["000001", "600000", "600001"],
+                "list_date": ["2000-01-01", "2000-01-01", None],
             }
         ),
     )
+    _write_processed_frame(
+        pm,
+        trade_date,
+        "stock_st",
+        pd.DataFrame({"symbol": ["600000"]}),
+    )
+    _write_processed_frame(
+        pm,
+        trade_date,
+        "suspend_d",
+        pd.DataFrame({"symbol": ["600002"]}),
+    )
 
-    with pytest.raises(ValueError, match="limit_status"):
-        Slice(pm, trade_date, version="v1").closed_limit_up_symbols()
+    assert Access(pm=pm, processed_version="v1").level2_universe(
+        trade_date=trade_date,
+        min_listing_calendar_days=20,
+    ) == ("000001",)
 
 
-def test_level2_symbols_and_reads_preserve_requested_order(
-    tmp_path: Path,
-) -> None:
+def test_trades_preserve_requested_order(tmp_path: Path) -> None:
     pm = PathManager(tmp_path)
     trade_date = "2026-05-06"
     _write_level2_row_group_fixture(pm=pm, trade_date=trade_date)
-    market_slice = Slice(pm, trade_date, version="v1")
 
-    assert market_slice.level2_symbols() == [
-        "600000",
-        "600001",
-        "600002",
-        "000001",
-    ]
-
-    tables = market_slice.level2(["000001", "600001"])
+    tables = Access(pm=pm, processed_version="v1").trades(
+        trade_date=trade_date,
+        symbols=["000001", "600001"],
+    )
 
     assert list(tables) == ["000001", "600001"]
     assert tables["000001"]["price"].to_pylist() == [40.0]
     assert tables["600001"]["price"].to_pylist() == [20.0]
 
 
-def test_level2_reads_only_overlapping_row_groups(
+def test_trades_read_only_overlapping_row_groups(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -498,7 +489,10 @@ def test_level2_reads_only_overlapping_row_groups(
 
     monkeypatch.setattr(access_module.pq, "ParquetFile", SpyParquetFile)
 
-    tables = Slice(pm, trade_date, version="v1").level2(["600001"])
+    tables = Access(pm=pm, processed_version="v1").trades(
+        trade_date=trade_date,
+        symbols=["600001"],
+    )
 
     assert tables["600001"]["price"].to_pylist() == [20.0]
     assert read_row_group_calls == [
@@ -513,15 +507,17 @@ def test_level2_reads_only_overlapping_row_groups(
     ]
 
 
-def test_level2_empty_request_does_not_require_level2_objects(
+def test_empty_trade_request_does_not_require_level2_objects(
     tmp_path: Path,
 ) -> None:
     assert (
-        Slice(
-            PathManager(tmp_path),
-            "2026-05-06",
-            version="v1",
-        ).level2(())
+        Access(
+            pm=PathManager(tmp_path),
+            processed_version="v1",
+        ).trades(
+            trade_date="2026-05-06",
+            symbols=(),
+        )
         == {}
     )
 
@@ -529,13 +525,20 @@ def test_level2_empty_request_does_not_require_level2_objects(
 def test_level2_rejects_missing_meta_and_missing_symbol(tmp_path: Path) -> None:
     pm = PathManager(tmp_path)
     trade_date = "2026-05-06"
+    access = Access(pm=pm, processed_version="v1")
 
-    with pytest.raises(FileNotFoundError, match="unavailable"):
-        Slice(pm, trade_date, version="v1").level2_symbols()
+    with pytest.raises(FileNotFoundError, match="required Meta"):
+        access.level2_universe(
+            trade_date=trade_date,
+            min_listing_calendar_days=0,
+        )
 
     _write_level2_row_group_fixture(pm=pm, trade_date=trade_date)
     with pytest.raises(KeyError, match="300001"):
-        Slice(pm, trade_date, version="v1").level2(["300001"])
+        access.trades(
+            trade_date=trade_date,
+            symbols=["300001"],
+        )
 
 
 def test_level2_rejects_incomplete_parquet_coverage(tmp_path: Path) -> None:
@@ -557,7 +560,10 @@ def test_level2_rejects_incomplete_parquet_coverage(tmp_path: Path) -> None:
     )
 
     with pytest.raises(RuntimeError, match="do not cover parquet rows"):
-        Slice(pm, trade_date, version="v1").level2(["600000"])
+        Access(pm=pm, processed_version="v1").trades(
+            trade_date=trade_date,
+            symbols=["600000"],
+        )
 
 
 def test_level2_rejects_cross_dataset_symbol_collision(tmp_path: Path) -> None:
@@ -573,11 +579,33 @@ def test_level2_rejects_cross_dataset_symbol_collision(tmp_path: Path) -> None:
         )
 
     with pytest.raises(RuntimeError, match="duplicate Level-2 symbol"):
-        Slice(pm, trade_date, version="v1").level2_symbols()
+        Access(pm=pm, processed_version="v1").trades(
+            trade_date=trade_date,
+            symbols=["000001"],
+        )
 
 
 def _empty_symbol_frame() -> pd.DataFrame:
     return pd.DataFrame({"symbol": pd.Series([], dtype="object")})
+
+
+def _write_empty_universe_exclusions(
+    *,
+    pm: PathManager,
+    trade_date: str,
+) -> None:
+    _write_processed_frame(
+        pm,
+        trade_date,
+        "stock_st",
+        _empty_symbol_frame(),
+    )
+    _write_processed_frame(
+        pm,
+        trade_date,
+        "suspend_d",
+        _empty_symbol_frame(),
+    )
 
 
 def _write_level2_row_group_fixture(
@@ -631,9 +659,27 @@ def _write_processed_frame(
     )
     path.parent.mkdir(parents=True, exist_ok=True)
     frame.to_parquet(path, index=False)
-    meta.write(
+    meta.commit(
+        pm=pm,
         payload_path=path,
-        storage_root=pm.storage_root,
+    )
+
+
+def _write_calendar_year(
+    pm: PathManager,
+    calendar_year: int,
+    frame: pd.DataFrame,
+) -> None:
+    path = pm.processed_year_data(
+        dataset_name="trade_calendar",
+        version="v1",
+        calendar_year=calendar_year,
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    frame.to_parquet(path, index=False)
+    meta.commit(
+        pm=pm,
+        payload_path=path,
     )
 
 
@@ -656,8 +702,8 @@ def _write_l2_object(
         path,
         row_group_size=row_group_size,
     )
-    meta.write(
+    meta.commit(
+        pm=pm,
         payload_path=path,
-        storage_root=pm.storage_root,
         symbol_slices=symbol_slices,
     )

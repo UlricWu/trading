@@ -1,153 +1,198 @@
 # Access 契约
 
 - **状态**：正式 owner
-- **适用范围**：`src/access/access.py::Slice` 的正式 processed 市场数据读取、
-  可用交易日、日频窗口、股票 universe、收盘涨停和 Level-2 symbol slice。
+- **适用范围**：`src/access/access.py::Access` 的正式 processed 市场数据读取、
+  可用交易日、日频行情/复权因子/换手率、日频 universe、Level-2 universe 和 Level-2
+  symbol 读取。
 
 ## 身份与职责
 
-`Slice` 表示一个确定的 `(storage_root, processed version, trade_date)` 研究读取视图。
-`trade_date` 必须是规范的 `YYYY-MM-DD`；processed version 必须由调用方显式提供。
-同一个 `Slice` 的所有读取使用这一个版本，并以绑定日期作为单日查询日或窗口
-`end_date`。
+`Access` 表示一个确定的 `(storage_root, processed version)` 市场数据访问能力。
+processed version 必须由 composition root 显式提供；offline data、training 和 backtest
+composition root 固定使用 `v1`，配置和 submission 不选择版本。每次 workflow 从自己的
+唯一 `PathManager` 创建一个 Access，不接受调用方另传可能绑定其他 storage root 的
+Access。所有查询日期由 public 方法显式接收，并且必须是规范的 `YYYY-MM-DD`。
 
-Access 负责把正式 processed 对象直接提供成研究可用的数据，并集中拥有跨日期选择。
-Meta 负责证明一个存储对象已经提交且 payload 可用。Access 的每次对象读取都必须先通过
-同目录 Meta；仅有 `data.parquet` 不构成可用对象。
+Access 负责把正式 processed 市场对象提供成不暴露 dataset、broker、路径和 Meta 的具名
+研究能力。Meta 负责证明一个存储对象已经提交且 payload 可用。Access 的每次对象读取都
+必须先通过同目录 Meta；仅有 `data.parquet` 不构成可用对象。
 
 ## Public API
 
 ```python
-class Slice:
+class Access:
     def __init__(
         self,
         pm: PathManager,
-        trade_date: str,
         *,
-        version: str,
+        processed_version: str,
     ) -> None: ...
 
-    def trade_dates(self, *, start_date: str) -> list[str]: ...
-
-    def recent_trade_dates(self, *, sessions: int) -> list[str]: ...
-
-    def daily(
+    def trade_dates(
         self,
-        dataset_name: str,
         *,
+        start_date: str,
+        end_date: str,
+    ) -> list[str]: ...
+
+    def recent_trade_dates(
+        self,
+        *,
+        end_date: str,
+        sessions: int,
+    ) -> list[str]: ...
+
+    def universe(
+        self,
+        *,
+        trade_date: str,
+        min_listing_calendar_days: int,
+    ) -> tuple[str, ...]: ...
+
+    def level2_universe(
+        self,
+        *,
+        trade_date: str,
+        min_listing_calendar_days: int,
+    ) -> tuple[str, ...]: ...
+
+    def daily_bars(
+        self,
+        *,
+        trade_date: str,
         symbols: Sequence[str] | None = None,
     ) -> pd.DataFrame: ...
 
-    def daily_window(
-        self,
-        dataset_name: str,
-        *,
-        sessions: int,
-    ) -> dict[str, pd.DataFrame]: ...
-
-    def stock_universe(
+    def adjustment_factors(
         self,
         *,
-        min_list_calendar_days: int,
-        exclude_st_sessions: int,
-        exclude_suspended: bool,
-    ) -> list[str]: ...
+        trade_date: str,
+        symbols: Sequence[str] | None = None,
+    ) -> pd.DataFrame: ...
 
-    def closed_limit_up_symbols(self) -> list[str]: ...
+    def turnover_rates(
+        self,
+        *,
+        trade_date: str,
+        symbols: Sequence[str] | None = None,
+    ) -> pd.DataFrame: ...
 
-    def level2_symbols(self) -> list[str]: ...
-
-    def level2(self, symbols: Sequence[str]) -> dict[str, pa.Table]: ...
+    def trades(
+        self,
+        *,
+        trade_date: str,
+        symbols: Sequence[str],
+    ) -> dict[str, pa.Table]: ...
 ```
 
-`dataset_name` 是正式存储中的 processed dataset identity；Access 不维护第二份 dataset
-allowlist。非法路径段由 `PathManager` 拒绝。
+Access 不提供接收 `dataset_name` 的 public 方法，也不提供任意路径或任意表读取。
 
-`daily()` 返回一个 `pandas.DataFrame`。`symbols=None` 返回当日完整对象；显式 symbol
-序列返回按请求顺序排列的行；空序列返回保留列的空表。请求 symbol 必须是唯一的六位数字
-字符串。
+## 正式交易日与日频对象
 
-## 可用交易日与窗口
-
-一个实际可用交易日定义为：同一 processed version 下存在且能够通过 Meta 校验的正式
-`daily_bar` 对象。目录或 payload 单独存在不算可用。
-
-`trade_dates(start_date=S)` 返回闭区间 `[S, trade_date]` 内的可用交易日，按日期升序。
-它不推断休市日，也不维护另一份交易日历。
-
-`recent_trade_dates(sessions=N)` 返回截至并包含当前 `trade_date` 的最近 `N` 个实际可用
-交易日，按日期升序。`N` 必须为正整数；当前 `trade_date` 不可用或历史不足 `N` 日时
-整体失败。
-
-`daily_window(dataset_name, sessions=N)` 先按上述规则确定日期，再读取每个日期的目标
-对象。返回值按升序插入日期键。任何一个已选交易日的目标对象缺失或无效时，整个查询
-失败，不返回部分结果。
-
-## 股票 universe
-
-基础 universe 是当日 `daily_bar` 中唯一 `symbol` 的原始顺序。`daily_bar` 属于股票日线
-source，不再使用 Level-2 的 SecurityID 代码段规则重复判断证券类型。
-
-三个过滤参数都是调用策略，必须由调用方显式提供；Access 不提供隐藏默认值。
-
-### 上市天数
-
-`min_list_calendar_days=0` 表示不执行上市天数过滤。正整数 `N` 保留满足下式的股票：
+`daily_bars()` 返回正式 `daily_bar`。`symbols=None` 返回当日完整对象；显式 symbol
+序列返回按请求顺序排列的行；空序列返回保留列的空表。请求 symbol 必须是唯一的六位
+数字字符串。`adjustment_factors()` 和 `turnover_rates()` 使用相同选择规则，并分别返回
+精确列：
 
 ```text
-trade_date - stock_basic.list_date >= N 个自然日
+symbol, trade_date, adj_factor
+symbol, trade_date, turnover_rate
 ```
 
-上市当日为第 `0` 天。`stock_basic.list_date` 必须是规范 `YYYY-MM-DD`。过滤启用时，
-任一基础 universe symbol 缺少 `stock_basic` 记录或 `list_date` 非法都必须失败。
+三个方法都要求底层对象包含所需列、`symbol` 是唯一六位数字字符串，并且每行
+`trade_date` 精确等于请求日期。Access 保证对象 identity 与请求选择已经可直接消费，
+不解释价格、因子或换手率数值的 feature/label 有效性。该数值语义由对应 producer owner
+拥有。
 
-### 近期 ST
+正式交易日只由指定 processed version 下按自然年分区的 `trade_calendar` 对象定义；其中
+`is_open=true` 表示正式交易日，`is_open=false` 表示休市。日历对象 schema、Tushare
+权威边界与 `daily_bar` 的职责边界由
+[`docs/data/source_contract.md`](../data/source_contract.md) 所有。
 
-`exclude_st_sessions=0` 表示不执行 ST 过滤。正整数 `N` 使用截至并包含当前
-`trade_date` 的最近 `N` 个实际可用交易日：
+`trade_dates(start_date=S, end_date=E)` 要求闭区间 `[S, E]` 涉及的每个年度日历对象都
+存在，返回范围内 `is_open=true` 的日期并按日期升序。缺少任一年度对象必须失败；Access
+不重复检查 source 已保证的日期完整性、唯一性、范围和字段值域。
+
+`recent_trade_dates(end_date=E, sessions=N)` 要求 `E` 是正式交易日，并返回截至且包含
+`E` 的最近 `N` 个正式交易日，按日期升序。该方法从 `E` 所在年度开始按需向前读取连续
+年度对象；`N` 必须为正整数，`E` 休市、年度对象断档或历史不足时整体失败。
+
+## Universe
+
+`universe(T, N)` 的基础集合是当日正式 daily bars 中的唯一 symbol：
 
 ```text
-recent_st(T, N) = union(stock_st(D) for D in recent_trade_dates(T, N))
+daily_base(T) = symbols(valid daily bars at T)
 ```
 
-历史不足 `N` 日或任一必要 `stock_st` 对象缺失时必须整体失败。`stock_st` 的所有行都
-表示风险警示股票；Access 不解析名称，也不区分 `ST` 与 `*ST`。
-
-### 停牌
-
-`exclude_suspended=true` 时移除当日 `suspend_d` 中的 symbol；为 `false` 时不读取该
-对象。必要对象缺失必须失败，不得用成交量或 `daily_bar` 缺失推断停牌。
-
-所有过滤只删除基础 universe 中的 symbol，不改变剩余 symbol 的顺序。
-
-## 收盘涨停
-
-`closed_limit_up_symbols()` 返回当日 `daily_basic.limit_status` 为 `2` 或 `3` 的
-symbol，保持 `daily_basic` 原始顺序：
+`level2_universe(T, N)` 的基础集合是当日全部必要正式 Level-2 对象 Meta 中
+`symbol_slices` keys 的并集：
 
 ```text
-2 = 收盘涨停，不含一字涨停
-3 = 一字涨停
+level2_base(T)
+  = union(symbol_slices of every required valid Level-2 object at T)
 ```
 
-`daily_basic.limit_status` 必须是 `0..6` 的非空整数。缺列、重复 symbol 或非法状态必须
-失败。当前不定义 `closed_limit_down`、盘中触板、炸板、开盘涨停或涨跌停价计算。
+`level2_base` 不与 `daily_base` 求交。当前必要 Level-2 对象固定为上海 trades 与深圳
+trades；任一对象缺失或无效时整体失败，不能返回部分市场。
 
-## Level-2
+两种 universe 对各自基础集合应用相同过滤：
 
-当前 Level-2 对象固定为 `sh_trade` 和 `sz_trade`。各对象的 symbol slice identity 和
-覆盖不变量由 `docs/data/level2_normalization.md` 拥有。
+```text
+universe(T, N)
+  = listing_eligible(daily_base(T), T, N)
+  - symbols(valid stock_st(T))
+  - symbols(valid suspend_d(T))
 
-Access 加载两张对象的 Meta，验证 slice 覆盖 Parquet 总行数，并拒绝跨对象重复
-symbol。`level2()` 只读取与请求 slice 相交的 row groups，再按 Meta 的全局行区间裁出
-每个 symbol 的表。空请求返回空字典且不读取对象。
+level2_universe(T, N)
+  = listing_eligible(level2_base(T), T, N)
+  - symbols(valid stock_st(T))
+  - symbols(valid suspend_d(T))
+```
+
+`stock_st` 和 `suspend_d` 是事件集合。有效空对象表示当日没有对应排除项；Meta 或
+payload 缺失表示 universe 不能产生，必须失败。过滤只删除基础集合中的 symbol。
+
+两种 universe 都是当日相关正式对象提交后的观察集合，不表示盘前可知集合。返回值按
+symbol 升序排列，不继承底层 payload 的物理行顺序。
+
+### 上市自然日
+
+`min_listing_calendar_days=N` 必须是非负整数，并由调用方显式提供。
+
+`N=0` 表示不执行上市天数过滤，也不读取 `stock_basic`。正整数 `N` 保留在
+`stock_basic` 中存在非 null `list_date` 且满足下式的 symbol：
+
+```text
+T - stock_basic.list_date(symbol) >= N 个自然日
+```
+
+上市当日为第 `0` 天，恰好满 `N` 个自然日时保留。基础集合 symbol 缺少 `stock_basic`
+记录或 `list_date=null` 时不满足上市天数条件。Access 信任 Tushare 对象的记录集合，不
+跨 source 检查覆盖关系，也不解释 null 的源端业务含义。
+
+当前 universe 不包含历史 ST 冷却、涨跌停、成交额、流动性、市值、行业或其他策略筛选。
+
+## Level-2 trades
+
+各正式 Level-2 对象的 symbol slice identity 和覆盖不变量由
+`docs/data/level2_normalization.md` 拥有。
+
+Access 加载全部必要对象的 Meta，验证 slice 覆盖 Parquet 总行数，并拒绝跨对象重复
+symbol。`trades()` 只读取与显式请求 slice 相交的 row groups，再按 Meta 的全局行区间
+裁出每个 symbol 的表。返回字典保持请求顺序；空请求返回空字典且不读取对象。
+
+调用方通过 `level2_universe()` 取得研究集合后，可以把其中需要研究的有限 symbols
+传给 `trades()`。`trades()` 不重复执行 universe 的上市、ST 或停牌过滤；请求 symbol
+没有正式 Level-2 slice 时，整个请求失败，不返回部分结果。
 
 ## 错误归属
 
-- 非法日期、版本、路径段、窗口大小、请求 symbol 和 universe 参数在 public 边界以
+- 非法日期、版本、窗口大小、请求 symbol 和上市自然日参数在 public 边界以
   `TypeError` 或 `ValueError` 失败。
 - 必要 Meta、payload 或直接 upstream 文件缺失时，在首次消费该对象的边界以
   `FileNotFoundError` 失败。
+- 请求 symbol 没有对应正式行或 Level-2 slice 时以 `KeyError` 失败。
 - 已存在但无效的 Meta、payload identity、直接 upstream identity、symbol slice、数据
   identity 或字段值以 `RuntimeError` 或该方法已定义的字段 `ValueError` 失败。
 - Access 和 Meta 不记录日志；调用它们的 workflow/step 拥有运行日志。
@@ -155,6 +200,6 @@ symbol。`level2()` 只读取与请求 slice 相交的 row groups，再按 Meta 
 
 ## 非目标
 
-Access 不拥有 source 获取、normalize、特征计算、信号、交易规则模型、交易日预测、
-DataFrame 通用变换、旧 API 兼容或跨日期隐式状态。Meta 不建立领域模型、递归 lineage、
-hash identity 或并发事务。
+Access 不拥有 source 获取、normalize、feature、label、信号、交易规则模型、交易日
+预测、涨跌停查询、任意 DataFrame 变换、旧 API 兼容或跨日期隐式状态。Meta 不建立
+领域模型、递归 lineage、hash identity 或并发事务。

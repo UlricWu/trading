@@ -43,8 +43,7 @@ def _round_down_lot(qty: int, lot_size: int) -> int:
 
 @dataclass(frozen=True, slots=True)
 class ExecutionOrchestrator:
-    """
-    Orchestrate validation, clipping, venue execution, and settlement.
+    """Orchestrate validation, clipping, venue execution, and settlement.
 
     Pipeline:
       targets (ideal) -> intents (delta) -> clip (institution) -> validate -> venue -> fills -> settlement
@@ -52,6 +51,22 @@ class ExecutionOrchestrator:
     Contract:
     - single entry point for institutional world
     - portfolio constructor never sees T+1/limits/cash problems
+
+    Example:
+        orchestrator = ExecutionOrchestrator(
+            clip_policy=clip_policy,
+            validator=validator,
+            cost_model=cost_model,
+            venue=venue,
+            settlement=settlement,
+        )
+        fills = orchestrator.execute_targets(
+            ts_us=1,
+            targets={"600000": 100},
+            data_view=view,
+            state=state,
+            ledger=ledger,
+        )
     """
     clip_policy: AShareTargetClippingPolicy
     validator: AShareOrderValidation
@@ -70,6 +85,17 @@ class ExecutionOrchestrator:
         forced_close: bool = False,
         ignore_t1_forced_close: bool = True,
     ) -> list[FillEvent]:
+        """Execute target positions against the supplied observable facts.
+
+        Example:
+            fills = orchestrator.execute_targets(
+                ts_us=1,
+                targets={"600000": 100},
+                data_view=view,
+                state=state,
+                ledger=ledger,
+            )
+        """
         ts_us = int(ts_us)
         fills: list[FillEvent] = []
 
@@ -115,7 +141,6 @@ class ExecutionOrchestrator:
             t1_sellable = int(state.t1_sellable(sym))
 
             limits = _optional_limits(data_view, sym)
-            phase = data_view.get_phase(sym)
 
             # forced close (backtest only) may ignore T+1
             effective_t1 = t1_sellable
@@ -155,7 +180,6 @@ class ExecutionOrchestrator:
             # validate
             vr = self.validator.validate(
                 intent=intent,
-                phase=phase,
                 price=float(px),
                 cash=available_cash if side == Side.BUY else float(state.cash),
                 current_position=cur_pos,
@@ -204,7 +228,6 @@ class ExecutionOrchestrator:
                     )
                     vr = self.validator.validate(
                         intent=intent,
-                        phase=phase,
                         price=float(px),
                         cash=available_cash,
                         current_position=cur_pos,

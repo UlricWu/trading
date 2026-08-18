@@ -3,8 +3,8 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 import re
+from pathlib import Path
 from typing import Final
 
 from src.utils.datetime_utils import DateTimeUtils
@@ -85,6 +85,55 @@ class PathManager:
             / "meta.json"
         )
 
+    def raw_year_payload(
+        self,
+        *,
+        broker: str,
+        source_name: str,
+        calendar_year: int,
+        payload_file: str,
+    ) -> Path:
+        """Return a source-native payload path for one annual partition.
+
+        Example:
+            payload = pm.raw_year_payload(
+                broker="tushare",
+                source_name="trade_calendar",
+                calendar_year=2026,
+                payload_file="data.parquet",
+            )
+        """
+        return self._raw_year_partition(
+            broker=broker,
+            source_name=source_name,
+            calendar_year=calendar_year,
+        ) / self.require_safe_basename(payload_file, "payload_file")
+
+    def raw_year_meta(
+        self,
+        *,
+        broker: str,
+        source_name: str,
+        calendar_year: int,
+    ) -> Path:
+        """Return object-side metadata for one annual raw partition.
+
+        Example:
+            meta_path = pm.raw_year_meta(
+                broker="tushare",
+                source_name="trade_calendar",
+                calendar_year=2026,
+            )
+        """
+        return (
+            self._raw_year_partition(
+                broker=broker,
+                source_name=source_name,
+                calendar_year=calendar_year,
+            )
+            / "meta.json"
+        )
+
     def staging_payload(
         self,
         *,
@@ -147,6 +196,56 @@ class PathManager:
                 dataset_name=dataset_name,
                 version=version,
                 trade_date=trade_date,
+            )
+            / "meta.json"
+        )
+
+    def processed_year_data(
+        self,
+        *,
+        dataset_name: str,
+        version: str,
+        calendar_year: int,
+    ) -> Path:
+        """Return the canonical payload path for one annual processed object.
+
+        Example:
+            payload = pm.processed_year_data(
+                dataset_name="trade_calendar",
+                version="v1",
+                calendar_year=2026,
+            )
+        """
+        return (
+            self._processed_year_partition(
+                dataset_name=dataset_name,
+                version=version,
+                calendar_year=calendar_year,
+            )
+            / "data.parquet"
+        )
+
+    def processed_year_meta(
+        self,
+        *,
+        dataset_name: str,
+        version: str,
+        calendar_year: int,
+    ) -> Path:
+        """Return object-side metadata for one annual processed object.
+
+        Example:
+            meta_path = pm.processed_year_meta(
+                dataset_name="trade_calendar",
+                version="v1",
+                calendar_year=2026,
+            )
+        """
+        return (
+            self._processed_year_partition(
+                dataset_name=dataset_name,
+                version=version,
+                calendar_year=calendar_year,
             )
             / "meta.json"
         )
@@ -242,17 +341,17 @@ class PathManager:
         """Return the report artifact directory for one experiment."""
         return self.experiment_dir(experiment_name=experiment_name) / "report"
 
-    def experiment_training_preprocess(self, *, experiment_name: str) -> Path:
-        """Return one training experiment's preprocessing artifact path."""
+    def experiment_training_inference(self, *, experiment_name: str) -> Path:
+        """Return one training experiment's ready inference asset path.
+
+        Example:
+            path = pm.experiment_training_inference(
+                experiment_name="training_2026-07-01_2026-07-20_run-1"
+            )
+        """
         return (
             self.experiment_training_dir(experiment_name=experiment_name)
-            / "preprocess.pkl"
-        )
-
-    def experiment_training_model(self, *, experiment_name: str) -> Path:
-        """Return one training experiment's model artifact path."""
-        return (
-            self.experiment_training_dir(experiment_name=experiment_name) / "model.pkl"
+            / "inference.pkl"
         )
 
     def experiment_training_params(self, *, experiment_name: str) -> Path:
@@ -317,6 +416,33 @@ class PathManager:
             version=version,
         ) / self._trade_date_partition(trade_date)
 
+    def _raw_year_partition(
+        self,
+        *,
+        broker: str,
+        source_name: str,
+        calendar_year: int,
+    ) -> Path:
+        return (
+            self._root
+            / "raw"
+            / self.require_safe_basename(broker, "broker")
+            / self.require_safe_basename(source_name, "source_name")
+            / self._year_partition(calendar_year)
+        )
+
+    def _processed_year_partition(
+        self,
+        *,
+        dataset_name: str,
+        version: str,
+        calendar_year: int,
+    ) -> Path:
+        return self.processed_version_dir(
+            dataset_name=dataset_name,
+            version=version,
+        ) / self._year_partition(calendar_year)
+
     def _feature_partition(
         self,
         *,
@@ -376,3 +502,11 @@ class PathManager:
             field_name="trade_date",
         )
         return f"trade_date={validated_trade_date}"
+
+    @staticmethod
+    def _year_partition(calendar_year: int) -> str:
+        if not isinstance(calendar_year, int) or isinstance(calendar_year, bool):
+            raise TypeError("calendar_year must be an int")
+        if not 1 <= calendar_year <= 9999:
+            raise ValueError("calendar_year must be between 1 and 9999")
+        return f"year={calendar_year:04d}"

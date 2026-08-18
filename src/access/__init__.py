@@ -1,3 +1,6 @@
 # filepath: src/access/__init__.py
-"""Access helpers for verified object metadata and slice reads."""
+"""Public market-data access boundary."""
 
+from src.access.access import Access
+
+__all__ = ("Access",)

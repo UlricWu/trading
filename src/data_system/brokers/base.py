@@ -1,5 +1,5 @@
 # filepath: src/data_system/brokers/base.py
-"""Minimal broker protocol for `docs/data.md` raw object ingestion."""
+"""Minimal broker protocol for source-native raw object ingestion."""
 
 from __future__ import annotations
 
@@ -20,24 +20,23 @@ class DownloadPlan:
 
 
 class BrokerAdapter(Protocol):
-    """Protocol for pluggable raw source adapters owned by `docs/data.md`."""
+    """Implement source fetching owned by `docs/data/source_contract.md`.
+
+    Example:
+        fetched = adapter.fetch(record=download_plan, pm=path_manager)
+    """
 
     name: ClassVar[str]
-
-    @classmethod
-    def supported_source_names(cls) -> tuple[str, ...]:
-        """Return broker-supported source names for source expansion."""
-        ...
 
     def __init__(self, *, app_cfg: AppConfig) -> None:
         """Initialize the adapter from application configuration."""
         ...
 
     def fetch(
-            self,
-            *,
-            record: DownloadPlan,
-            pm: PathManager,
+        self,
+        *,
+        record: DownloadPlan,
+        pm: PathManager,
     ) -> DownloadPlan | None:
         """
         Materialize one source-native raw payload file for ingest archival.

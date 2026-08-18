@@ -1,78 +1,37 @@
 # filepath: src/config/app_config.py
-import yaml
+from __future__ import annotations
+
+import os
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel
-from dotenv import load_dotenv
-import os
+import yaml
+from dotenv import dotenv_values
+from pydantic import BaseModel, ConfigDict
 
+from .backtest_config import BacktestConfig
 from .data_config import DataConfig
 from .model_config import ModelConfig
 from .secret_config import SecretConfig
-from .backtest_config import BacktestConfig
-from src import logs
 
-_ATOMIC_OVERRIDE_PATHS = frozenset(
-    {
-        ("backtest", "strategy"),
-    }
-)
-
-
-def project_root() -> str:
-    """
-    返回项目根目录（基于当前文件位置推导）:
-    src/config/app_config.py → src/config → src → project_root
-    """
-    return os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))
-
-
-def load_env_auto(root: str) -> None:
-    """
-    根据环境变量 ENV 自动加载不同 .env 文件
-    - ENV=dev → .env.dev
-    - ENV=prod → .env.prod
-    - 默认 ENV=dev
-    """
-    env = os.getenv("ENV", "dev").lower()
-
-    env_file_map = {
-        "dev": ".env.dev",
-        "prod": ".env.prod",
-        "test": ".env.test",
-    }
-
-    if env not in env_file_map:
-        raise ValueError(
-            f"Unknown ENV={env}, expected one of {list(env_file_map.keys())}"
-        )
-
-    env_file = env_file_map[env]
-    env_path = os.path.join(root, env_file)
-
-    if not os.path.exists(env_path):
-        raise FileNotFoundError(f"Env file not found: {env_path}")
-
-    logs.info(f"[AppConfig] loaded_environment env={env} file={env_file}")
-    load_dotenv(env_path)
-
-
-class EnvConfig(BaseModel):
-    name: Literal["dev", "test", "prod"]
-
-
-class StorageConfig(BaseModel):
-    root: Path
+_CONFIG_SECTIONS = ("data", "model", "backtest")
+_ENVIRONMENTS = ("dev", "test", "prod")
 
 
 class AppConfig(BaseModel):
-    """Application config loader boundary: env, storage, secrets, and section schemas."""
+    """Provide one validated snapshot of every application configuration section.
 
-    env: EnvConfig
+    Example:
+        config = AppConfig.load()
+        model_config = config.model
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    environment: Literal["dev", "test", "prod"]
+    storage_root: Path
     secret: SecretConfig
-    storage: StorageConfig
     data: DataConfig
     model: ModelConfig
     backtest: BacktestConfig
@@ -81,77 +40,72 @@ class AppConfig(BaseModel):
     def load(
         cls,
         *,
-        path: str | None = None,
         override: Mapping[str, object] | None = None,
-    ) -> "AppConfig":
-        """Load YAML, inject env-owned fields, then apply the optional override."""
-        root = project_root()
-        env = os.getenv("ENV", "dev").lower()
+    ) -> AppConfig:
+        """Load the formal environment and YAML config, then validate one snapshot.
 
-        load_env_auto(root)
+        Example:
+            config = AppConfig.load(
+                override={"model": {"train_window_days": 60}}
+            )
+            model_config = config.model
+        """
+        environment = os.getenv("ENV", "dev").lower()
+        if environment not in _ENVIRONMENTS:
+            raise ValueError(
+                f"Unknown ENV={environment}, expected one of {list(_ENVIRONMENTS)}"
+            )
 
-        # 1) Load YAML base
-        if path is None:
-            path = os.path.join(root, "src/config/base.yml")
+        module_path = Path(__file__).resolve()
+        env_path = module_path.parents[2] / f".env.{environment}"
+        if not env_path.is_file():
+            raise FileNotFoundError(f"Env file not found: {env_path}")
+        env_values = dotenv_values(env_path)
 
-        with Path(path).open("r", encoding="utf-8") as file:
-            raw = yaml.safe_load(file)
-        if not isinstance(raw, dict):
+        with module_path.with_name("base.yml").open("r", encoding="utf-8") as file:
+            document = yaml.safe_load(file)
+        if not isinstance(document, dict):
             raise ValueError("application config must be a YAML object")
 
-        raw["env"] = {"name": env}
-        raw["storage"] = {"root": Path(os.environ["ZERO_STORAGE_ROOT"])}
-
-        # 2) Inject secret from env
-        raw["secret"] = {
-            "ftp_host": _env_str("FTP_HOST"),
-            "ftp_port": _env_int("FTP_PORT"),
-            "ftp_user": _env_str("FTP_USER"),
-            "ftp_password": _env_str("FTP_PASSWORD"),
-            "tushare_token": _env_str("TUSHARE_TOKEN"),
-            "tushare_gateway": _env_str("TUSHARE_GATEWAY"),
-            "ad_host": _env_str("AD_HOST"),
-            "ad_port": _env_int("AD_PORT"),
-            "ad_user": _env_str("AD_USERNAME"),
-            "ad_password": _env_str("AD_PASSWORD"),
+        sections = {
+            name: document[name] for name in _CONFIG_SECTIONS if name in document
         }
+        if override is not None:
+            invalid_roots = [name for name in override if name not in _CONFIG_SECTIONS]
+            if invalid_roots:
+                raise ValueError(
+                    "override may only contain data, model, or backtest; "
+                    f"got={invalid_roots!r}"
+                )
+            sections = _deep_merge(sections, override)
 
-        # 3) Apply override (if any)
-        if override:
-            raw = _deep_merge(raw, override)
-
-        return cls(**raw)
-
-
-def _env_str(name: str, default: str = "") -> str:
-    val = os.getenv(name)
-    return val if val is not None else default
-
-
-def _env_int(name: str) -> int | None:
-    val = os.getenv(name)
-    if val is None or val == "":
-        return None
-    return int(val)
+        return cls.model_validate(
+            {
+                "environment": environment,
+                "storage_root": Path(os.environ["ZERO_STORAGE_ROOT"]),
+                "secret": {
+                    "ftp_host": env_values.get("FTP_HOST"),
+                    "ftp_port": env_values.get("FTP_PORT"),
+                    "ftp_user": env_values.get("FTP_USER"),
+                    "ftp_password": env_values.get("FTP_PASSWORD"),
+                    "tushare_token": env_values.get("TUSHARE_TOKEN"),
+                    "tushare_gateway": env_values.get("TUSHARE_GATEWAY"),
+                },
+                **sections,
+            }
+        )
 
 
 def _deep_merge(
     base: Mapping[str, object],
     override: Mapping[str, object],
-    *,
-    path: tuple[str, ...] = (),
 ) -> dict[str, object]:
-    """
-    Recursively merge override into base (immutable), with atomic path support.
-    """
+    """Recursively merge mappings and replace every non-mapping value."""
     out = dict(base)
-    for k, v in override.items():
-        current_path = (*path, k)
-        if current_path in _ATOMIC_OVERRIDE_PATHS:
-            out[k] = v
-            continue
-        if k in out and isinstance(out[k], dict) and isinstance(v, dict):
-            out[k] = _deep_merge(out[k], v, path=current_path)
+    for key, value in override.items():
+        base_value = out.get(key)
+        if isinstance(base_value, Mapping) and isinstance(value, Mapping):
+            out[key] = _deep_merge(base_value, value)
         else:
-            out[k] = v
+            out[key] = value
     return out

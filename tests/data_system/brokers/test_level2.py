@@ -374,7 +374,7 @@ def test_level2_broker_accepts_a_control_timeout_after_the_full_payload(
 
     assert downloaded_plan is not None
     assert logger.warning_messages == [
-        "[FTP] control response timed out after full payload; "
+        "control response timed out after full payload; "
         "remote_file=SZ_Trade.csv.7z"
     ]
 

@@ -19,14 +19,25 @@ class ReportingBundle:
 
     The current report boundary is intentionally small: read summary metrics
     from `backtest/metrics.json`, render its top-level key/value pairs, and
-    write `report/backtest_report.html`. This class does not read pipeline
+    write `report/backtest_report.html`. This class does not read runtime
     context, scan detail Parquet artifacts, or write CSV artifacts.
+
+    Example:
+        report_path = ReportingBundle(pm=path_manager).run(
+            experiment_name="backtest_2026-07-01_2026-07-20_run-1",
+        )
     """
 
     pm: PathManager
 
     def run(self, *, experiment_name: str) -> Path:
-        """Generate `backtest_report.html` for one experiment."""
+        """Generate `backtest_report.html` for one experiment.
+
+        Example:
+            report_path = ReportingBundle(pm=path_manager).run(
+                experiment_name="backtest_2026-07-01_2026-07-20_run-1",
+            )
+        """
         metrics_path = self.pm.experiment_backtest_metrics(
             experiment_name=experiment_name,
         )
@@ -41,7 +52,7 @@ class ReportingBundle:
         )
         FileSystem.write_bytes_atomic(report_path, html.encode("utf-8"))
         logs.info(
-            f"[Report] saved path={report_path}\n"
+            f"saved path={report_path}\n"
             f"{format_log_json('backtest_metrics', metrics)}"
         )
         return report_path

@@ -12,72 +12,57 @@ from typer.testing import CliRunner
 
 from src import cli
 from src.config.backtest_config import BacktestMode
-from src.data_system.pipeline import DataRunStatus
 from src.utils.path import PathManager
 
 
 @pytest.mark.parametrize(
-    ("command", "workflow_name"),
+    ("command", "expected_kind"),
     [
-        ("data-standard", "run_offline_standard_data"),
-        ("data-level2", "run_offline_level2_data"),
+        ("data-standard", "data-standard"),
+        ("data-level2", "data-level2"),
     ],
 )
-def test_data_command_calls_only_its_fixed_workflow(
+def test_data_command_passes_one_validated_range_submission(
     command: str,
-    workflow_name: str,
+    expected_kind: str,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    config = SimpleNamespace(storage=SimpleNamespace(root=tmp_path))
-    selected_workflow = Mock(return_value=DataRunStatus.SUCCESS)
-    other_workflow = Mock(return_value=DataRunStatus.SUCCESS)
-    other_name = (
-        "run_offline_level2_data"
-        if workflow_name == "run_offline_standard_data"
-        else "run_offline_standard_data"
-    )
+    config = SimpleNamespace(storage_root=tmp_path)
+    workflow = Mock()
     monkeypatch.setattr(cli.AppConfig, "load", Mock(return_value=config))
-    monkeypatch.setattr(cli, workflow_name, selected_workflow)
-    monkeypatch.setattr(cli, other_name, other_workflow)
+    monkeypatch.setattr(cli, "run_offline_data", workflow)
 
-    result = CliRunner().invoke(cli.app, [command, "2026-07-20"])
+    result = CliRunner().invoke(
+        cli.app,
+        [
+            command,
+            "--start",
+            "2026-07-01",
+            "--end",
+            "2026-07-20",
+        ],
+    )
 
     assert result.exit_code == 0, result.output
-    selected_workflow.assert_called_once()
-    arguments = selected_workflow.call_args.kwargs
-    assert arguments["trade_date"] == "2026-07-20"
-    assert isinstance(arguments["path_manager"], PathManager)
-    other_workflow.assert_not_called()
+    submission = workflow.call_args.kwargs["submission"]
+    assert submission.kind == expected_kind
+    assert submission.start == "2026-07-01"
+    assert submission.end == "2026-07-20"
+    assert isinstance(workflow.call_args.kwargs["path_manager"], PathManager)
 
 
-def test_data_skip_maps_to_exit_code_75(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    config = SimpleNamespace(storage=SimpleNamespace(root=tmp_path))
-    monkeypatch.setattr(cli.AppConfig, "load", Mock(return_value=config))
-    monkeypatch.setattr(
-        cli,
-        "run_offline_standard_data",
-        Mock(return_value=DataRunStatus.SKIPPED),
-    )
-
-    result = CliRunner().invoke(cli.app, ["data-standard", "2026-07-20"])
-
-    assert result.exit_code == 75
-
-
-def test_train_uses_base_model_config_and_validated_identity(
+def test_train_passes_base_model_config_and_complete_submission(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     model_config = object()
-    config = SimpleNamespace(
-        storage=SimpleNamespace(root=tmp_path),
-        model=model_config,
+    load_config = Mock(
+        return_value=SimpleNamespace(
+            storage_root=tmp_path,
+            model=model_config,
+        )
     )
-    load_config = Mock(return_value=config)
     run_training = Mock()
     monkeypatch.setattr(cli.AppConfig, "load", load_config)
     monkeypatch.setattr(cli, "run_offline_training", run_training)
@@ -99,22 +84,23 @@ def test_train_uses_base_model_config_and_validated_identity(
     load_config.assert_called_once_with()
     arguments = run_training.call_args.kwargs
     assert arguments["model_config"] is model_config
-    assert isinstance(arguments["path_manager"], PathManager)
+    assert arguments["submission"].start == "2026-07-01"
+    assert arguments["submission"].end == "2026-07-20"
     assert arguments["experiment_id"] == "run-1"
-    assert arguments["start_date"] == "2026-07-01"
-    assert arguments["end_date"] == "2026-07-20"
+    assert isinstance(arguments["path_manager"], PathManager)
 
 
-def test_backtest_applies_only_the_confirmed_overrides(
+def test_backtest_loads_static_config_without_runtime_override(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     backtest_config = object()
-    config = SimpleNamespace(
-        storage=SimpleNamespace(root=tmp_path),
-        backtest=backtest_config,
+    load_config = Mock(
+        return_value=SimpleNamespace(
+            storage_root=tmp_path,
+            backtest=backtest_config,
+        )
     )
-    load_config = Mock(return_value=config)
     run_backtest = Mock()
     monkeypatch.setattr(cli.AppConfig, "load", load_config)
     monkeypatch.setattr(cli, "run_daily_alpha_backtest", run_backtest)
@@ -139,30 +125,90 @@ def test_backtest_applies_only_the_confirmed_overrides(
     )
 
     assert result.exit_code == 0, result.output
-    load_config.assert_called_once_with(
-        override={
-            "backtest": {
-                "backtest_mode": "full_backtest",
-                "model": {"name": "training-1"},
-                "strategy": {
-                    "type": "threshold",
-                    "params": {"threshold": 0.5, "target_quantity": 100},
-                },
-            }
-        }
-    )
+    load_config.assert_called_once_with()
     arguments = run_backtest.call_args.kwargs
+    submission = arguments["submission"]
     assert arguments["backtest_config"] is backtest_config
-    assert isinstance(arguments["path_manager"], PathManager)
+    assert submission.mode is BacktestMode.FULL_BACKTEST
+    assert submission.model_experiment == "training-1"
+    assert submission.strategy.params.target_quantity == 100
     assert arguments["experiment_id"] == "run-1"
-    assert arguments["start_date"] == "2026-07-01"
-    assert arguments["end_date"] == "2026-07-20"
+    assert isinstance(arguments["path_manager"], PathManager)
+
+
+@pytest.mark.parametrize(
+    ("arguments", "workflow_name"),
+    [
+        (
+            [
+                "train",
+                "--start",
+                "2026-07-01",
+                "--end",
+                "2026-07-02",
+                "--experiment-id",
+                "run-1",
+            ],
+            "run_offline_training",
+        ),
+        (
+            [
+                "backtest",
+                "--mode",
+                "full_backtest",
+                "--start",
+                "2026-07-01",
+                "--end",
+                "2026-07-02",
+                "--experiment-id",
+                "run-1",
+                "--model-experiment",
+                "training-1",
+                "--strategy-json",
+                '{"type":"threshold","params":{"threshold":0.5}}',
+            ],
+            "run_daily_alpha_backtest",
+        ),
+    ],
+)
+def test_empty_runtime_schedule_propagates_as_exit_code_1(
+    arguments: list[str],
+    workflow_name: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        cli.AppConfig,
+        "load",
+        Mock(
+            return_value=SimpleNamespace(
+                storage_root=tmp_path,
+                model=object(),
+                backtest=object(),
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        cli,
+        workflow_name,
+        Mock(side_effect=ValueError("empty schedule")),
+    )
+
+    result = CliRunner().invoke(cli.app, arguments)
+
+    assert result.exit_code == 1
 
 
 @pytest.mark.parametrize(
     "arguments",
     [
-        ["data-standard", "2026-02-30"],
+        [
+            "data-standard",
+            "--start",
+            "2026-02-30",
+            "--end",
+            "2026-03-01",
+        ],
         [
             "train",
             "--start",
@@ -195,21 +241,6 @@ def test_backtest_applies_only_the_confirmed_overrides(
             "../training-1",
             "--strategy-json",
             '{"type":"threshold","params":{"threshold":0.5}}',
-        ],
-        [
-            "backtest",
-            "--mode",
-            "full_backtest",
-            "--start",
-            "2026-07-01",
-            "--end",
-            "2026-07-20",
-            "--experiment-id",
-            "run-1",
-            "--model-experiment",
-            "training-1",
-            "--strategy-json",
-            '{"type":"threshold","params":{"qty":100}}',
         ],
     ],
 )

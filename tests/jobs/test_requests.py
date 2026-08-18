@@ -17,7 +17,7 @@ from src.jobs.requests import (
 )
 
 
-def test_data_range_expands_to_independent_natural_days() -> None:
+def test_data_range_creates_one_atomic_submission() -> None:
     submissions = parse_job_request(
         {
             "kind": "data-standard",
@@ -27,9 +27,11 @@ def test_data_range_expands_to_independent_natural_days() -> None:
     )
 
     assert submissions == [
-        DataSubmission(kind="data-standard", date="2026-07-18"),
-        DataSubmission(kind="data-standard", date="2026-07-19"),
-        DataSubmission(kind="data-standard", date="2026-07-20"),
+        DataSubmission(
+            kind="data-standard",
+            start="2026-07-18",
+            end="2026-07-20",
+        ),
     ]
 
 
@@ -42,9 +44,7 @@ def test_training_range_creates_one_submission() -> None:
         }
     )
 
-    assert submissions == [
-        TrainingSubmission(start="2026-07-01", end="2026-07-20")
-    ]
+    assert submissions == [TrainingSubmission(start="2026-07-01", end="2026-07-20")]
 
 
 def test_backtest_command_uses_job_id_as_experiment_id() -> None:
@@ -70,9 +70,7 @@ def test_backtest_command_uses_job_id_as_experiment_id() -> None:
     )
 
     experiment_index = command.index("--experiment-id")
-    assert command[experiment_index + 1] == (
-        "00000000-0000-4000-8000-000000000001"
-    )
+    assert command[experiment_index + 1] == ("00000000-0000-4000-8000-000000000001")
     assert command[:4] == (
         "/candidate/python",
         "-m",

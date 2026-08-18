@@ -1,0 +1,211 @@
+# filepath: tests/data_system/steps/test_fact_materialize.py
+"""Behavior tests for range fact materialization."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import cast
+from unittest.mock import Mock
+
+import pyarrow as pa
+import pytest
+
+from src.access import meta
+from src.config.app_config import AppConfig
+from src.config.data_config import SourceConfig
+from src.data_system.brokers.base import BrokerAdapter, DownloadPlan
+from src.data_system.context import DataContext
+from src.data_system.normalize import NormalizeOutput
+from src.data_system.steps import fact_materialize as fact_module
+from src.data_system.steps.fact_materialize import FactMaterializeStep
+from src.utils.path import PathManager
+
+
+def _source(raw_object: str, *, outputs: list[str] | None = None) -> SourceConfig:
+    return SourceConfig(
+        enabled=True,
+        broker="broker",
+        group="offline_standard",
+        raw_object=raw_object,
+        outputs=outputs if outputs is not None else [raw_object],
+    )
+
+
+def _context(*trade_dates: str) -> DataContext:
+    return DataContext(
+        start=trade_dates[0],
+        end=trade_dates[-1],
+        trade_dates=trade_dates,
+    )
+
+
+def test_fact_step_attempts_every_source_then_rejects_partial_availability(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path_manager = Mock(spec=PathManager)
+    path_manager.raw_meta.side_effect = [object(), object()]
+    path_manager.raw_payload.return_value = object()
+    adapter = Mock(spec=BrokerAdapter)
+    adapter.fetch.side_effect = [
+        None,
+        DownloadPlan(
+            source_name="available",
+            trade_date="2026-07-20",
+            broker="broker",
+            raw_object="available",
+        ),
+    ]
+    adapter_class = Mock(return_value=adapter)
+    monkeypatch.setattr(fact_module.meta, "find", Mock(return_value=None))
+    commit = Mock()
+    monkeypatch.setattr(fact_module.meta, "commit", commit)
+    step = FactMaterializeStep(
+        app_config=cast("AppConfig", object()),
+        path_manager=path_manager,
+        sources={
+            "missing": _source("missing"),
+            "available": _source("available"),
+        },
+        broker_classes=cast(
+            "dict[str, type[BrokerAdapter]]",
+            {"broker": adapter_class},
+        ),
+        normalize_operations={"broker": Mock()},
+        processed_version="v1",
+        adapter_cache={},
+    )
+
+    with pytest.raises(RuntimeError, match="only partially available"):
+        step.run(_context("2026-07-20"))
+
+    assert adapter.fetch.call_count == 2
+    adapter_class.assert_called_once()
+    commit.assert_called_once()
+
+
+def test_fact_step_reports_all_wholly_missing_dates_without_normalizing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path_manager = Mock(spec=PathManager)
+    adapter = Mock(spec=BrokerAdapter)
+    adapter.fetch.return_value = None
+    adapter_class = Mock(return_value=adapter)
+    normalize = Mock()
+    monkeypatch.setattr(fact_module.meta, "find", Mock(return_value=None))
+    step = FactMaterializeStep(
+        app_config=cast("AppConfig", object()),
+        path_manager=path_manager,
+        sources={"bars": _source("bars")},
+        broker_classes=cast(
+            "dict[str, type[BrokerAdapter]]",
+            {"broker": adapter_class},
+        ),
+        normalize_operations={"broker": normalize},
+        processed_version="v1",
+        adapter_cache={},
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match=r"missing_dates=\['2026-07-20', '2026-07-21'\]",
+    ):
+        step.run(_context("2026-07-20", "2026-07-21"))
+
+    assert [
+        call.kwargs["record"].trade_date for call in adapter.fetch.call_args_list
+    ] == ["2026-07-20", "2026-07-21"]
+    adapter_class.assert_called_once()
+    normalize.assert_not_called()
+
+
+def test_fact_step_raw_meta_hit_does_not_construct_a_broker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path_manager = Mock(spec=PathManager)
+    adapter_class = Mock()
+    monkeypatch.setattr(fact_module.meta, "find", Mock(return_value=object()))
+    step = FactMaterializeStep(
+        app_config=cast("AppConfig", object()),
+        path_manager=path_manager,
+        sources={"bars": _source("bars", outputs=[])},
+        broker_classes=cast(
+            "dict[str, type[BrokerAdapter]]",
+            {"broker": adapter_class},
+        ),
+        normalize_operations={},
+        processed_version="v1",
+        adapter_cache={},
+    )
+    context = _context("2026-07-20")
+
+    assert step.run(context) is context
+    adapter_class.assert_not_called()
+
+
+def test_fact_step_uses_matching_staging_payload_for_normalization(
+    tmp_path: Path,
+) -> None:
+    path_manager = PathManager(tmp_path)
+    trade_date = "2026-05-01"
+    raw_path = path_manager.raw_payload(
+        broker="broker",
+        source_name="source",
+        trade_date=trade_date,
+        payload_file="source.csv.7z",
+    )
+    raw_path.parent.mkdir(parents=True)
+    raw_path.write_bytes(b"same-size")
+    meta.commit(pm=path_manager, payload_path=raw_path)
+    staging_path = path_manager.staging_payload(
+        broker="broker",
+        source_name="source",
+        trade_date=trade_date,
+        payload_file=raw_path.name,
+    )
+    staging_path.parent.mkdir(parents=True)
+    staging_path.write_bytes(b"same-size")
+    selected_inputs: list[Path] = []
+
+    def normalize_operation(
+        *,
+        input_file: Path,
+        output_name: Path,
+        raw_object: str,
+        target_name: str,
+        trade_date: str,
+    ) -> NormalizeOutput:
+        selected_inputs.append(input_file)
+        return NormalizeOutput(table=pa.table({"value": [1]}))
+
+    step = FactMaterializeStep(
+        app_config=cast("AppConfig", object()),
+        path_manager=path_manager,
+        sources={"source": _source("raw_object", outputs=["output"])},
+        broker_classes=cast(
+            "dict[str, type[BrokerAdapter]]",
+            {"broker": Mock()},
+        ),
+        normalize_operations={"broker": normalize_operation},
+        processed_version="v1",
+        adapter_cache={},
+    )
+
+    step.run(_context(trade_date))
+
+    assert selected_inputs == [staging_path]
+
+
+def test_fact_step_rejects_unbound_normalizer_before_date_io(tmp_path: Path) -> None:
+    with pytest.raises(KeyError, match="not bound"):
+        FactMaterializeStep(
+            app_config=cast("AppConfig", object()),
+            path_manager=PathManager(tmp_path),
+            sources={"source": _source("source")},
+            broker_classes=cast(
+                "dict[str, type[BrokerAdapter]]",
+                {"broker": Mock()},
+            ),
+            normalize_operations={},
+            processed_version="v1",
+            adapter_cache={},
+        )

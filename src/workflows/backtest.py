@@ -1,22 +1,16 @@
 # filepath: src/workflows/backtest.py
-"""daily_alpha `/jobs backtest` workflow."""
+"""Compose one daily-alpha backtest execution."""
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from typing import Protocol
-
-from src.access.access import Slice
+from src.access import Access
 from src.config.backtest_config import BacktestConfig
+from src.jobs.requests import BacktestSubmission
 from src.observability.instrumentation import Instrumentation
-from src.pipeline.step import PipelineStep
-from src.trading.backtest.timing import BacktestTiming, resolve_backtest_timing
-from src.trading.core.equity import EquityCurve
-from src.trading.core.ledger import ExecutionLedger
-from src.trading.core.tape import SignalTape, TargetTape
-from src.trading.pipeline.context import TradingContext
-from src.trading.pipeline.pipeline import TradingPipeline
-from src.trading.pipeline.steps.backtest_layers import (
+from src.pipeline import PipelineStep
+from src.trading.backtest.context import BacktestContext, BacktestState
+from src.trading.backtest.pipeline import BacktestPipeline
+from src.trading.backtest.steps.backtest_layers import (
     AccountingStep,
     ExecutionEvalStep,
     FullBacktestStep,
@@ -26,147 +20,90 @@ from src.trading.pipeline.steps.backtest_layers import (
     SignalStep,
     TradableAlphaEvalStep,
 )
-from src.trading.pipeline.steps.metrics_persist import MetricsPersistStep
-from src.trading.pipeline.steps.report import ReportStep
-from src.trading.portfolio.state import PortfolioState
+from src.trading.backtest.steps.metrics_persist import MetricsPersistStep
+from src.trading.backtest.steps.report import ReportStep
+from src.trading.backtest.timing import resolve_backtest_timing
 from src.trading.sim import components as sim_components
 from src.utils.path import PathManager
-
-
-class TradeCalendar(Protocol):
-    """Provide available backtest dates for one requested range."""
-
-    def __call__(
-        self,
-        *,
-        pm: PathManager,
-        start_date: str,
-        end_date: str,
-    ) -> Sequence[str]: ...
-
-
-class TimingResolver(Protocol):
-    """Resolve ordered open dates into backtest timing rows."""
-
-    def __call__(
-        self,
-        *,
-        open_dates: Sequence[str],
-    ) -> list[BacktestTiming]: ...
-
-
-def build_backtest_experiment_name(
-    *,
-    start_date: str,
-    end_date: str,
-    experiment_id: str,
-) -> str:
-    """Return the `/jobs backtest` artifact namespace for one accepted range."""
-    return f"backtest_{start_date}_{end_date}_{experiment_id}"
-
-
-def build_backtest_schedule(
-    *,
-    path_manager: PathManager,
-    start_date: str,
-    end_date: str,
-    calendar_fn: TradeCalendar | None = None,
-    timing_fn: TimingResolver = resolve_backtest_timing,
-) -> list[BacktestTiming]:
-    """Resolve one daily_alpha date range into pipeline timing rows."""
-    open_dates: Sequence[str]
-    if calendar_fn is None:
-        open_dates = Slice(
-            pm=path_manager,
-            trade_date=end_date,
-            version="v1",
-        ).trade_dates(start_date=start_date)
-    else:
-        open_dates = calendar_fn(
-            pm=path_manager,
-            start_date=start_date,
-            end_date=end_date,
-        )
-    return timing_fn(open_dates=open_dates)
+from src.workflows import PROCESSED_VERSION, require_new_experiment
 
 
 def run_daily_alpha_backtest(
     *,
     backtest_config: BacktestConfig,
     path_manager: PathManager,
+    submission: BacktestSubmission,
     experiment_id: str,
-    start_date: str,
-    end_date: str,
-) -> TradingContext:
-    """
-    Run one `/jobs backtest` daily_alpha range through the configured mode.
+) -> None:
+    """Run one accepted daily-alpha backtest submission.
 
-    The CLI has already written its overrides into ``backtest_config``. The
-    workflow therefore reads one authoritative config and derives the
-    experiment namespace from the accepted job identity.
+    Example:
+        run_daily_alpha_backtest(
+            backtest_config=backtest_config,
+            path_manager=path_manager,
+            submission=backtest_submission,
+            experiment_id="run-1",
+        )
     """
-    instrumentation = Instrumentation()
-    experiment_name = build_backtest_experiment_name(
-        start_date=start_date,
-        end_date=end_date,
+    experiment_name = require_new_experiment(
+        path_manager=path_manager,
+        kind="backtest",
+        start_date=submission.start,
+        end_date=submission.end,
         experiment_id=experiment_id,
     )
-    experiment_dir = path_manager.experiment_dir(experiment_name=experiment_name)
-    if experiment_dir.exists():
-        raise FileExistsError(f"experiment already exists: {experiment_name}")
-
-    backtest_timings = build_backtest_schedule(
-        path_manager=path_manager,
-        start_date=start_date,
-        end_date=end_date,
+    access = Access(pm=path_manager, processed_version=PROCESSED_VERSION)
+    open_dates = access.trade_dates(
+        start_date=submission.start,
+        end_date=submission.end,
     )
+    timings = resolve_backtest_timing(open_dates=open_dates)
+    if not timings:
+        raise ValueError("[BacktestWorkflow] backtest timings are required")
 
-    backtest_components = sim_components.build_components(
-        mode=backtest_config.backtest_mode,
+    components = sim_components.build_components(
+        mode=submission.mode,
+        model_experiment=submission.model_experiment,
+        strategy=submission.strategy,
         cfg=backtest_config,
         pm=path_manager,
     )
-
-    trading_context = TradingContext(
-        pm=path_manager,
-        cfg=backtest_config,
-        experiment_name=experiment_name,
-        portfolio_state=PortfolioState(
-            initial_cash=float(backtest_config.init_cash),
-            cash=float(backtest_config.init_cash),
-        ),
-        execution_ledger=ExecutionLedger(),
-        equity_curve=EquityCurve(),
-        signal_tape=SignalTape(),
-        target_tape=TargetTape(),
-    )
-
-    per_timing_steps: list[PipelineStep[TradingContext]] = [
+    per_timing_steps: tuple[PipelineStep[BacktestContext], ...] = (
         SignalStep(
-            signal=backtest_components.signal,
-            feature_set=backtest_components.feature_set,
-            feature_version=backtest_components.feature_version,
-            feature_names=backtest_components.feature_names,
+            access=access,
+            pm=path_manager,
+            min_listing_calendar_days=backtest_config.min_listing_calendar_days,
+            signal=components.signal,
+            feature_set=components.feature_set,
+            feature_version=components.feature_version,
+            feature_names=components.feature_names,
         ),
-        SignalEvalStep(),
+        SignalEvalStep(access=access),
         TradableAlphaEvalStep(),
         PortfolioStep(
-            constructor=backtest_components.constructor,
-            target_capacity=backtest_components.target_capacity,
+            constructor=components.constructor,
+            target_capacity=components.target_capacity,
         ),
-        RiskEvalStep(risk=backtest_components.risk),
-        ExecutionEvalStep(execution=backtest_components.execution),
+        RiskEvalStep(risk=components.risk),
+        ExecutionEvalStep(execution=components.execution),
         AccountingStep(),
         FullBacktestStep(),
-    ]
-    final_steps: list[PipelineStep[TradingContext]] = [
-        MetricsPersistStep(),
-        ReportStep(),
-    ]
-
-    return TradingPipeline(
-        backtest_timings=backtest_timings,
+    )
+    final_steps: tuple[PipelineStep[BacktestContext], ...] = (
+        MetricsPersistStep(
+            pm=path_manager,
+            experiment_name=experiment_name,
+        ),
+        ReportStep(
+            pm=path_manager,
+            experiment_name=experiment_name,
+        ),
+    )
+    state = BacktestState.initial(initial_cash=backtest_config.init_cash)
+    pipeline = BacktestPipeline(
+        timings=timings,
         per_timing_steps=per_timing_steps,
         final_steps=final_steps,
-        inst=instrumentation,
-    ).run(trading_context)
+        instrumentation=Instrumentation(experiment_name),
+    )
+    pipeline.run(state)

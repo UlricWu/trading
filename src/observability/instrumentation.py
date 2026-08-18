@@ -1,64 +1,94 @@
 # filepath: src/observability/instrumentation.py
 from __future__ import annotations
 
-from collections import OrderedDict
-from collections.abc import Iterator
-from contextlib import contextmanager
-from dataclasses import dataclass, field
+import time
+from collections.abc import Callable
+from types import TracebackType
+from typing import Literal, ParamSpec, Self, TypeVar
 
 from src import logs
-from src.observability.context import InstrumentationContext
-from src.observability.metrics import MetricRecorder
-from src.observability.progress import ProgressReporter
-from src.observability.timeline_reporter import TimelineReporter
-from src.observability.timer import Timer
+
+_Parameters = ParamSpec("_Parameters")
+_ResultT = TypeVar("_ResultT")
 
 
-@dataclass(slots=True)
 class Instrumentation:
-    """Leaf-only runtime timing with explicit parent-scope suppression."""
+    """Measure and report accumulated named-operation runtimes.
 
-    enabled: bool = True
-    progress: ProgressReporter = field(init=False)
-    metrics: MetricRecorder = field(init=False)
-    context: InstrumentationContext = field(init=False)
-    timeline: OrderedDict[str, float] = field(init=False)
-    _timer: Timer = field(init=False)
+    Example:
+        with Instrumentation("training_2026-07") as instrumentation:
+            result = instrumentation.measure("DatasetBuildStep", load, window)
+    """
 
-    def __post_init__(self) -> None:
-        self.progress = ProgressReporter(enabled=self.enabled)
-        self._timer = Timer(enabled=self.enabled)
-        self.metrics = MetricRecorder(enabled=self.enabled)
-        self.context = InstrumentationContext()
-        self.timeline = OrderedDict()
+    def __init__(self, scope_name: str) -> None:
+        """Create an empty timeline for one workflow execution.
 
-    @contextmanager
-    def timer(self, name: str, *, record: bool = True) -> Iterator[None]:
-        if not self.enabled:
-            yield
-            return
+        Example:
+            instrumentation = Instrumentation("2026-07-20")
+        """
+        self._scope_name = scope_name
+        self._total_seconds_by_step: dict[str, float] = {}
+        self._runs_by_step: dict[str, int] = {}
 
-        self._timer.start(name)
-        logs.info(f"[Timer] started name={name}")
+    def __enter__(self) -> Self:
+        """Return this instrumentation for one workflow execution.
+
+        Example:
+            with Instrumentation("2026-07-20") as instrumentation:
+                instrumentation.measure("CalendarMaterializeStep", step.run, context)
+        """
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> Literal[False]:
+        """Report the timeline and preserve any workflow exception.
+
+        Example:
+            with Instrumentation("2026-07-20"):
+                pass
+        """
+        logs.info(f"===== Pipeline timeline for {self._scope_name} =====")
+        total_seconds = 0.0
+        for name, elapsed_seconds in self._total_seconds_by_step.items():
+            runs = self._runs_by_step[name]
+            average_seconds = elapsed_seconds / runs
+            logs.info(
+                f"{name:<35} {elapsed_seconds:>8.3f}s "
+                f"avg={average_seconds:.3f}s runs={runs}"
+            )
+            total_seconds += elapsed_seconds
+        logs.info(f"{'Total':<35} {total_seconds:>8.3f}s")
+        logs.info(f"{'=' * 43}")
+        return False
+
+    def measure(
+        self,
+        operation_name: str,
+        operation: Callable[_Parameters, _ResultT],
+        *args: _Parameters.args,
+        **kwargs: _Parameters.kwargs,
+    ) -> _ResultT:
+        """Call one operation and include its elapsed time in the timeline.
+
+        Example:
+            result = instrumentation.measure(
+                "CalendarMaterializeStep",
+                step.run,
+                context,
+            )
+        """
+        started_at = time.perf_counter()
         try:
-            yield
+            return operation(*args, **kwargs)
         finally:
-            elapsed_seconds = self._timer.end(name)
-            if record:
-                self.timeline[name] = (
-                    self.timeline.get(name, 0.0) + elapsed_seconds
-                )
-
-    def generate_timeline_report(self, scope_name: str) -> None:
-        TimelineReporter(self.timeline, scope_name).report()
-
-
-class NoOpInstrumentation:
-    """Instrumentation implementation with no observable side effects."""
-
-    @contextmanager
-    def timer(self, name: str, *, record: bool = True) -> Iterator[None]:
-        yield
-
-    def generate_timeline_report(self, scope_name: str) -> None:
-        return None
+            elapsed_seconds = time.perf_counter() - started_at
+            self._total_seconds_by_step[operation_name] = (
+                self._total_seconds_by_step.get(operation_name, 0.0) + elapsed_seconds
+            )
+            self._runs_by_step[operation_name] = (
+                self._runs_by_step.get(operation_name, 0) + 1
+            )

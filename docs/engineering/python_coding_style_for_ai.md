@@ -2175,17 +2175,22 @@ def _add_score_in_place(owned_frame: pd.DataFrame) -> None:
 
 ---
 
-## PY-025 注释和 docstring 必须解释契约、原因或不变量
+## PY-025 public API 必须给出具体调用示例
 
 ### 触发条件
 
 新增、修改或保留注释、docstring、TODO、FIXME、弃用说明或 owner doc 引用时触发。
+
+public API 如果只有功能摘要和类型签名，调用者仍然不知道如何构造对象、组合参数或消费
+返回值，必须转而阅读实现并猜测调用关系。这表示公开契约不完整；具体调用示例不是可选
+说明，而是 public API docstring 的组成部分。
 
 ### 必须判断的语义
 
 必须判断文字是否解释：
 
 - 调用契约；
+- public API 的最小实际调用方式；
 - 非显然业务原因；
 - owner doc 来源；
 - 单位、边界或副作用；
@@ -2195,6 +2200,14 @@ def _add_score_in_place(owned_frame: pd.DataFrame) -> None:
 ### 必须执行
 
 - public API 的非显然契约必须写入 docstring 或类型模型。
+- 每个新增或修改的 public class、function 和 method 都必须在自身 docstring 中提供
+  `Example:`，展示至少一次使用当前真实 API 名称和参数的具体调用。
+- public class 的示例必须展示构造；其主要用途是调用方法时，还必须至少展示一条正常
+  方法调用链。public method 的示例必须出现该方法自身的调用，可以复用 class docstring
+  已说明的实例变量。
+- 示例必须表达最小成功路径；返回值需要继续消费才能说明用途时，必须展示该消费关系。
+  不得用签名复述、纯文字“调用此方法”、不存在的 helper、旧 API 或与实现无关的伪代码
+  代替具体调用。
 - 注释必须解释“为什么”或“不变量”，不得复述代码。
 - TODO/FIXME 必须包含 owner、触发条件或删除条件；无 owner 的占位 TODO 不得保留。
 - 代码变化后必须同步更新注释。
@@ -2227,6 +2240,23 @@ for order in orders:
 # result = legacy_calculate(frame)
 ```
 
+不构成 public API 调用示例：
+
+```python
+def universe(
+    self,
+    *,
+    trade_date: str,
+) -> tuple[str, ...]:
+    """Return the universe.
+
+    Example:
+        Call this method to get symbols.
+        symbols = build_symbols()
+    """
+    ...
+```
+
 ### 正例
 
 ```python
@@ -2248,6 +2278,40 @@ def calculate_forward_return(
     ...
 ```
 
+public API 的最小具体调用示例：
+
+```python
+class Access:
+    """Read one processed market-data version.
+
+    Example:
+        pm = PathManager(Path("/absolute/path/to/formal-storage"))
+        access = Access(pm=pm, processed_version="v1")
+        symbols = access.universe(
+            trade_date="2026-05-06",
+            min_listing_calendar_days=20,
+        )
+    """
+```
+
+```python
+def universe(
+    self,
+    *,
+    trade_date: str,
+    min_listing_calendar_days: int,
+) -> tuple[str, ...]:
+    """Return the filtered daily-bar universe.
+
+    Example:
+        symbols = access.universe(
+            trade_date="2026-05-06",
+            min_listing_calendar_days=20,
+        )
+    """
+    ...
+```
+
 有退出条件的临时兼容说明：
 
 ```python
@@ -2262,6 +2326,7 @@ legacy_name = payload.get("feature_name")
 - 搜索被注释掉的代码、TODO 和 FIXME。
 - 检查注释中的路径、版本、字段和公式是否仍与实现一致。
 - 检查非显然 public 契约是否由类型、docstring 或 owner doc 引用表达。
+- 检查每个新增或修改的 public API 都有使用真实名称和参数的具体调用示例。
 
 ---
 
@@ -2503,7 +2568,7 @@ rg -n 'def _write_table|_write_table\(' src tests
 [ ] [PY-022] Repository 只承担持久化语义。
 [ ] [PY-023] 数值热路径批量化；保留循环具有真实顺序依赖。
 [ ] [PY-024] DataFrame ownership 和赋值明确。
-[ ] [PY-025] 注释解释契约、原因或不变量；无注释掉的旧代码。
+[ ] [PY-025] public API 有具体调用示例；注释解释契约、原因或不变量；无注释掉的旧代码。
 [ ] [PY-026] 测试可重复，且 pytest 文件镜像唯一源码模块的目录与文件名。
 [ ] [PY-027] 已运行并准确报告 formatter、linter、type checker 和 tests。
 ```

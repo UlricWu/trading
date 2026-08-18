@@ -8,7 +8,11 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class BacktestMode(str, Enum):
-    """Fixed daily_alpha five-layer backtest modes accepted by config."""
+    """Fixed daily-alpha backtest modes accepted by a submission.
+
+    Example:
+        mode = BacktestMode.FULL_BACKTEST
+    """
 
     SIGNAL_EVAL = "signal_eval"
     TRADABLE_ALPHA_EVAL = "tradable_alpha_eval"
@@ -17,20 +21,12 @@ class BacktestMode(str, Enum):
     FULL_BACKTEST = "full_backtest"
 
 
-class BacktestModelRef(BaseModel):
-    """
-    Reference to a training experiment artifact consumed by mode builders.
-
-    `name` is the training experiment namespace under `experiments/{name}/`.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    name: str
-
-
 class ThresholdStrategyParams(BaseModel):
-    """Validated parameters for the threshold portfolio constructor."""
+    """Validated parameters for the threshold portfolio constructor.
+
+    Example:
+        params = ThresholdStrategyParams(threshold=0.5)
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -39,7 +35,14 @@ class ThresholdStrategyParams(BaseModel):
 
 
 class ThresholdStrategyConfig(BaseModel):
-    """Select the threshold portfolio constructor and its parameters."""
+    """Select the threshold portfolio constructor and its parameters.
+
+    Example:
+        strategy = ThresholdStrategyConfig(
+            type="threshold",
+            params=ThresholdStrategyParams(threshold=0.5),
+        )
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -48,7 +51,15 @@ class ThresholdStrategyConfig(BaseModel):
 
 
 class TopKHysteresisStrategyParams(BaseModel):
-    """Validated parameters for the top-k hysteresis constructor."""
+    """Validated parameters for the top-k hysteresis constructor.
+
+    Example:
+        params = TopKHysteresisStrategyParams(
+            max_positions=10,
+            entry_threshold=0.5,
+            exit_threshold=0.2,
+        )
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -67,7 +78,18 @@ class TopKHysteresisStrategyParams(BaseModel):
 
 
 class TopKHysteresisStrategyConfig(BaseModel):
-    """Select the top-k hysteresis constructor and its parameters."""
+    """Select the top-k hysteresis constructor and its parameters.
+
+    Example:
+        strategy = TopKHysteresisStrategyConfig(
+            type="topk_hysteresis",
+            params=TopKHysteresisStrategyParams(
+                max_positions=10,
+                entry_threshold=0.5,
+                exit_threshold=0.2,
+            ),
+        )
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -82,24 +104,16 @@ StrategyConfig: TypeAlias = Annotated[
 
 
 class BacktestConfig(BaseModel):
-    """
-    Minimal daily_alpha backtest config parsed by AppConfig.
+    """Provide static settings shared by all daily-alpha submissions.
 
-    `backtest_mode` selects a named backtest component profile. Workflow steps
-    do not read this value; it is interpreted only by the component builder.
-    Universe policy is explicit and is forwarded unchanged to Access.
+    Example:
+        config = BacktestConfig(
+            init_cash=200_000,
+            min_listing_calendar_days=120,
+        )
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    name: str
-    dates: list[str]
-
-    strategy: StrategyConfig
-
-    model: BacktestModelRef | None = None
     init_cash: int
-    backtest_mode: BacktestMode
-    min_list_calendar_days: int = Field(ge=0, strict=True)
-    exclude_st_sessions: int = Field(ge=0, strict=True)
-    exclude_suspended: bool = Field(strict=True)
+    min_listing_calendar_days: int = Field(ge=0, strict=True)

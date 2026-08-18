@@ -7,7 +7,7 @@ import ftplib
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import cast
+from typing import ClassVar, cast
 
 from src import logs
 from src.config.app_config import AppConfig
@@ -46,19 +46,25 @@ class Level2Broker:
     downloads it to staging, copies it into the formal raw path, and returns a
     ``DownloadPlan`` for metadata commit. Archive handling follows
     ``docs/engineering/technology_stack_decisions.md``.
+
+    Example:
+        broker = Level2Broker(app_cfg=AppConfig.load())
     """
 
-    name = "level2_ftp"
+    name: ClassVar[str] = "level2_ftp"
 
     def __init__(self, *, app_cfg: AppConfig) -> None:
-        """Load FTP connection settings and backend selection from AppConfig."""
-        self._cfg = app_cfg
-        broker_cfg = self._cfg.data.brokers[self.name]
+        """Load validated FTP settings and backend selection from AppConfig.
+
+        Example:
+            broker = Level2Broker(app_cfg=AppConfig.load())
+        """
+        broker_cfg = app_cfg.data.brokers[self.name]
         self._endpoint = FtpEndpoint(
-            host=self._cfg.secret.ftp_host,
-            port=self._cfg.secret.ftp_port or 21,
-            user=self._cfg.secret.ftp_user,
-            password=self._cfg.secret.ftp_password,
+            host=app_cfg.secret.ftp_host,
+            port=app_cfg.secret.ftp_port,
+            user=app_cfg.secret.ftp_user,
+            password=app_cfg.secret.ftp_password,
             remote_root=cast(str, broker_cfg.remote_root),
         )
         self._backend = cast(DownloadBackend, broker_cfg.ftp_backend)
@@ -139,7 +145,7 @@ class Level2Broker:
                 )
 
             logs.info(
-                f"[Level2Broker] download_start "
+                f"download_start "
                 f"remote_size={FileSystem.format_size(remote_size)} "
                 f"trade_date={trade_date} "
                 f"file={remote_file} "
@@ -239,7 +245,7 @@ class Level2Broker:
                         if FileSystem.get_file_size(part_file) != remote_size_bytes:
                             raise
                         logs.warning(
-                            f"[FTP] control response timed out after full payload; "
+                            f"control response timed out after full payload; "
                             f"remote_file={remote_file}"
                         )
                     else:

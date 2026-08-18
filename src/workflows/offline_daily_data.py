@@ -1,177 +1,144 @@
 # filepath: src/workflows/offline_daily_data.py
-"""Assemble and execute the two fixed offline data workflows."""
+"""Execute the fixed range-based offline data workflow."""
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from typing import Protocol
-
 from src import logs
+from src.access import Access
 from src.config.app_config import AppConfig
-from src.config.data_config import DataConfig, SourceConfig
-from src.data_system.brokers.bootstrap import build_broker_registry
+from src.config.data_config import SourceConfig
+from src.data_system.brokers.base import BrokerAdapter
+from src.data_system.brokers.catalog import BROKER_ADAPTER_CLASSES
+from src.data_system.brokers.level2 import Level2Broker
+from src.data_system.brokers.tushare import TushareBroker
 from src.data_system.context import DataContext
-from src.data_system.pipeline import DataPipeline, DataRunStatus
-from src.data_system.steps.fact_ingest_step import FactIngestStep
-from src.data_system.steps.fact_normalize_step import FactNormalizeStep
-from src.data_system.steps.feature_build_step import FeatureBuildStep
-from src.data_system.steps.label_build_step import LabelBuildStep
+from src.data_system.normalize.level2 import normalize_level2
+from src.data_system.normalize.tushare import normalize_tushare
+from src.data_system.pipeline import DataPipeline
+from src.data_system.steps.calendar_materialize import CalendarMaterializeStep
+from src.data_system.steps.fact_materialize import FactMaterializeStep
+from src.data_system.steps.feature_build import FeatureBuildStep
+from src.data_system.steps.label_build import LabelBuildStep
+from src.jobs.requests import DataSubmission
 from src.observability.instrumentation import Instrumentation
-from src.pipeline.step import PipelineStep
+from src.pipeline import PipelineStep
 from src.utils.path import PathManager
-
+from src.workflows import PROCESSED_VERSION
 
 OFFLINE_STANDARD = "offline_standard"
 OFFLINE_LEVEL2 = "offline_level2"
-OFFLINE_STANDARD_FEATURE_SETS = frozenset({"tushare_daily_basic"})
-OFFLINE_STANDARD_LABEL_SETS = frozenset(
-    {
-        "daily_t1_net_excess_rank",
-        "daily_forward_excess_rank",
-    }
-)
 
 
-class SourceNameRegistry(Protocol):
-    """Expose broker-native source names used during config expansion."""
-
-    def supported_source_names(self, name: str) -> tuple[str, ...]:
-        """Return the source names supported by one broker."""
-        ...
-
-
-def select_offline_data_config(
-    *,
-    app_config: AppConfig,
-    group: str,
-    broker_registry: SourceNameRegistry,
-) -> AppConfig:
-    """Return the selected config for one fixed offline data workflow."""
-    if group not in {OFFLINE_STANDARD, OFFLINE_LEVEL2}:
-        raise ValueError(f"unsupported offline data group: {group}")
-
-    selected_sources: dict[str, SourceConfig] = {}
-    for source_name, source_config in app_config.data.sources.items():
-        if source_config.group != group:
-            continue
-        if not source_config.enabled:
-            logs.warning(
-                f"[OfflineData] skip source={source_name} group={group} "
-                f"broker={source_config.broker} reason=source disabled"
-            )
-            continue
-
-        effective_sources: Sequence[tuple[str, SourceConfig]]
-        if source_config.use_broker_sources:
-            effective_sources = tuple(
-                (
-                    dataset_name,
-                    SourceConfig(
-                        enabled=True,
-                        broker=source_config.broker,
-                        group=group,
-                        raw_object=dataset_name,
-                        outputs=[dataset_name],
-                    ),
-                )
-                for dataset_name in broker_registry.supported_source_names(
-                    source_config.broker
-                )
-            )
-        else:
-            effective_sources = ((source_name, source_config),)
-
-        for effective_name, effective_config in effective_sources:
-            if effective_name in selected_sources:
-                raise ValueError(
-                    "offline data group produced duplicate effective source "
-                    f"name: {effective_name!r}"
-                )
-            selected_sources[effective_name] = effective_config
-
-    if not selected_sources:
-        raise ValueError(f"offline data group '{group}' has no effective sources")
-
-    selected_data = DataConfig(
-        brokers=app_config.data.brokers,
-        sources=selected_sources,
-        feature_sets={
-            name: feature_config
-            for name, feature_config in app_config.data.feature_sets.items()
-            if feature_config.enabled and feature_config.group == group
-        },
-        label_sets={
-            name: label_config
-            for name, label_config in app_config.data.label_sets.items()
-            if label_config.enabled and label_config.group == group
-        },
-    )
-    return app_config.model_copy(update={"data": selected_data}, deep=True)
-
-
-def run_offline_standard_data(
+def run_offline_data(
     *,
     app_config: AppConfig,
     path_manager: PathManager,
-    trade_date: str,
-) -> DataRunStatus:
-    """Run the fixed standard ingest, normalize, feature, and label flow."""
-    broker_registry = build_broker_registry()
-    selected_config = select_offline_data_config(
-        app_config=app_config,
-        group=OFFLINE_STANDARD,
-        broker_registry=broker_registry,
-    )
-    instrumentation = Instrumentation()
-    steps: list[PipelineStep[DataContext]] = [
-        FactIngestStep(
-            app_cfg=selected_config,
-            inst=instrumentation,
-            broker_registry=broker_registry,
+    submission: DataSubmission,
+) -> None:
+    """Materialize one complete Standard or Level-2 data range.
+
+    Example:
+        run_offline_data(
+            app_config=app_config,
+            path_manager=path_manager,
+            submission=DataSubmission(
+                kind="data-standard",
+                start="2026-07-01",
+                end="2026-07-20",
+            ),
+        )
+    """
+    if submission.kind not in ("data-standard", "data-level2"):
+        raise ValueError(
+            "run_offline_data requires kind='data-standard' or 'data-level2'"
+        )
+    calendar_source_name = "trade_calendar"
+    tushare_source_names = TushareBroker.active_source_names()
+    if calendar_source_name not in tushare_source_names:
+        raise ValueError("Tushare active manifest requires trade_calendar")
+
+    if submission.kind == "data-standard":
+        fact_sources = {
+            source_name: SourceConfig(
+                enabled=True,
+                broker=TushareBroker.name,
+                group=OFFLINE_STANDARD,
+                raw_object=source_name,
+                outputs=[source_name],
+            )
+            for source_name in tushare_source_names
+            if source_name != calendar_source_name
+        }
+        feature_sets = {
+            name: config
+            for name, config in app_config.data.feature_sets.items()
+            if config.enabled
+        }
+        label_sets = {
+            name: config
+            for name, config in app_config.data.label_sets.items()
+            if config.enabled
+        }
+    else:
+        fact_sources = {}
+        for source_name, source_config in app_config.data.sources.items():
+            if not source_config.enabled:
+                logs.warning(
+                    f"skip source={source_name} group={OFFLINE_LEVEL2} "
+                    f"broker={source_config.broker} reason=source_disabled"
+                )
+                continue
+            fact_sources[source_name] = source_config
+        feature_sets = {}
+        label_sets = {}
+
+    if not fact_sources:
+        raise ValueError(f"offline data kind '{submission.kind}' has no fact sources")
+
+    access = Access(pm=path_manager, processed_version=PROCESSED_VERSION)
+    adapter_cache: dict[str, BrokerAdapter] = {}
+    steps: tuple[PipelineStep[DataContext], ...] = (
+        CalendarMaterializeStep(
+            app_config=app_config,
+            path_manager=path_manager,
+            access=access,
+            processed_version=PROCESSED_VERSION,
+            adapter_cache=adapter_cache,
         ),
-        FactNormalizeStep(app_cfg=selected_config, inst=instrumentation),
+        FactMaterializeStep(
+            app_config=app_config,
+            path_manager=path_manager,
+            sources=fact_sources,
+            broker_classes=BROKER_ADAPTER_CLASSES,
+            normalize_operations={
+                TushareBroker.name: normalize_tushare,
+                Level2Broker.name: normalize_level2,
+            },
+            processed_version=PROCESSED_VERSION,
+            adapter_cache=adapter_cache,
+        ),
         FeatureBuildStep(
-            app_cfg=selected_config,
-            inst=instrumentation,
-            allowed_sets=OFFLINE_STANDARD_FEATURE_SETS,
+            pm=path_manager,
+            access=access,
+            feature_sets=feature_sets,
         ),
         LabelBuildStep(
-            app_cfg=selected_config,
-            inst=instrumentation,
-            allowed_sets=OFFLINE_STANDARD_LABEL_SETS,
+            pm=path_manager,
+            access=access,
+            label_sets=label_sets,
         ),
-    ]
-    return DataPipeline(
-        steps=steps,
-        pm=path_manager,
-        inst=instrumentation,
-    ).run(trade_date)
-
-
-def run_offline_level2_data(
-    *,
-    app_config: AppConfig,
-    path_manager: PathManager,
-    trade_date: str,
-) -> DataRunStatus:
-    """Run the fixed Level-2 ingest and normalize flow."""
-    broker_registry = build_broker_registry()
-    selected_config = select_offline_data_config(
-        app_config=app_config,
-        group=OFFLINE_LEVEL2,
-        broker_registry=broker_registry,
     )
-    instrumentation = Instrumentation()
-    steps: list[PipelineStep[DataContext]] = [
-        FactIngestStep(
-            app_cfg=selected_config,
-            inst=instrumentation,
-            broker_registry=broker_registry,
-        ),
-        FactNormalizeStep(app_cfg=selected_config, inst=instrumentation),
-    ]
-    return DataPipeline(
+    instrumentation = Instrumentation(
+        f"{submission.kind}_{submission.start}_{submission.end}"
+    )
+    pipeline = DataPipeline(
         steps=steps,
-        pm=path_manager,
-        inst=instrumentation,
-    ).run(trade_date)
+        instrumentation=instrumentation,
+    )
+    logs.info(
+        f"started kind={submission.kind} start={submission.start} end={submission.end}"
+    )
+    pipeline.run(DataContext(start=submission.start, end=submission.end))
+    logs.info(
+        f"finished kind={submission.kind} start={submission.start} end={submission.end}"
+    )

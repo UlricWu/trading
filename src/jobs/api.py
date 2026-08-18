@@ -11,13 +11,11 @@ from werkzeug.exceptions import BadRequest, HTTPException, UnsupportedMediaType
 from src import logs
 from src.jobs.requests import InvalidJobRequest, parse_job_request
 from src.jobs.runtime import (
-    DataJobScope,
     JobNotCancellableError,
     JobNotFoundError,
     JobRuntime,
     JobSnapshot,
     JobStatus,
-    RangeJobScope,
 )
 from src.utils.datetime_utils import DateTimeUtils
 from src.utils.logger import configure_system_logging
@@ -33,9 +31,6 @@ def create_app(job_runtime: JobRuntime) -> Flask:
 
     - ``POST /jobs`` accepts exactly one JSON object:
 
-      - Data single day:
-        ``{"kind": "data-standard", "date": "YYYY-MM-DD"}``, or the same
-        object with ``kind`` set to ``"data-level2"``.
       - Data range:
         ``{"kind": "data-standard", "start": "YYYY-MM-DD",
         "end": "YYYY-MM-DD"}``, or the same object with ``kind`` set to
@@ -52,25 +47,32 @@ def create_app(job_runtime: JobRuntime) -> Flask:
       ``execution_eval``, ``risk_eval``, or ``full_backtest``. ``STRATEGY``
       must match the configured threshold or top-k hysteresis strategy
       schema. Dates are canonical, ranges require ``start <= end``, and extra
-      fields are rejected. A data range creates one Job per natural day;
-      training and backtest each create one full-range Job.
+      fields are rejected. Every request creates one full-range Job; a data
+      single day uses the same value for ``start`` and ``end``.
 
     - ``GET /jobs/<job_id>`` accepts the Job ID as a path value.
     - ``POST /jobs/<job_id>/cancel`` accepts the Job ID as a path value.
-    - ``GET /health`` accepts no input.
+    - ``GET /health`` accepts no input and reports the process release identity.
+
+    Example:
+        with JobRuntime(Path("logs/jobs")) as job_runtime:
+            flask_app = create_app(job_runtime)
     """
     flask_app = Flask(__name__, static_folder=None)
+    health_environment = os.environ.get("ENV") or "dev"
+    health_release_ref = os.environ.get("MINQUANT_RELEASE_REF") or "workspace"
+    health_commit_sha = os.environ.get("MINQUANT_COMMIT_SHA") or "workspace"
 
     @flask_app.before_request
     def log_request() -> None:
         g.request_started_at = time.monotonic()
-        logs.info(f"[HTTP] request method={request.method} path={request.path}")
+        logs.info(f"request method={request.method} path={request.path}")
 
     @flask_app.after_request
     def log_response(response: Response) -> Response:
         duration_seconds = time.monotonic() - g.request_started_at
         logs.info(
-            f"[HTTP] response method={request.method} path={request.path} "
+            f"response method={request.method} path={request.path} "
             f"status={response.status_code} duration_s={duration_seconds:.6f}"
         )
         return response
@@ -113,7 +115,7 @@ def create_app(job_runtime: JobRuntime) -> Flask:
     @flask_app.errorhandler(Exception)
     def handle_internal_error(error: Exception) -> HttpResponse:
         logs.opt(exception=error).error(
-            f"[HTTP] internal_error method={request.method} path={request.path}"
+            f"internal_error method={request.method} path={request.path}"
         )
         return _error_response(
             code="internal_error",
@@ -146,26 +148,26 @@ def create_app(job_runtime: JobRuntime) -> Flask:
 
     @flask_app.get("/health")
     def health() -> Response:
-        return jsonify({"ok": True})
+        return jsonify(
+            {
+                "ok": True,
+                "environment": health_environment,
+                "release_ref": health_release_ref,
+                "commit_sha": health_commit_sha,
+            }
+        )
 
     return flask_app
 
 
 def _job_to_json(job: JobSnapshot) -> dict[str, object]:
-    if isinstance(job.scope, DataJobScope):
-        scope: dict[str, str] = {"date": job.scope.date}
-    elif isinstance(job.scope, RangeJobScope):
-        scope = {
-            "start": job.scope.start,
-            "end": job.scope.end,
-        }
-    else:
-        raise TypeError("unknown job scope type")
-
     return {
         "job_id": job.job_id,
         "kind": job.kind,
-        "scope": scope,
+        "scope": {
+            "start": job.scope.start,
+            "end": job.scope.end,
+        },
         "status": job.status.value,
         "submitted_at": job.submitted_at,
         "started_at": job.started_at,
@@ -190,12 +192,16 @@ def _error_response(
 
 
 def main() -> None:
-    """Run one single-process Flask service and own its runtime shutdown."""
+    """Run one single-process Flask service and own its runtime shutdown.
+
+    Example:
+        main()
+    """
     started_at = DateTimeUtils.now()
     system_log_file = Path("logs") / "system" / f"{started_at:%Y-%m-%d-%H-%M-%S.%f}.log"
     configure_system_logging(system_log_file)
     pid = os.getpid()
-    logs.info(f"[SYSTEM] api.start pid={pid} started_at={started_at.isoformat()}")
+    logs.info(f"api.start pid={pid} started_at={started_at.isoformat()}")
 
     try:
         with JobRuntime() as job_runtime:
@@ -207,8 +213,11 @@ def main() -> None:
                 use_reloader=False,
                 threaded=True,
             )
+    except Exception:
+        logs.exception(f"api.failed pid={pid}")
+        raise
     finally:
-        logs.info(f"[SYSTEM] api.stop pid={pid}")
+        logs.info(f"api.stop pid={pid}")
         logs.complete()
         logs.remove()
 

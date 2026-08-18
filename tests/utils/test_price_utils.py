@@ -1,6 +1,7 @@
 # filepath: tests/utils/test_price_utils.py
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -71,10 +72,73 @@ def test_apply_asof_price_adjustment_invalid_factor_outputs_null() -> None:
     assert out["qfq_close"].iloc[1] == pytest.approx(10.0)
 
 
+def test_apply_asof_price_adjustment_hfq_outputs_only_positive_finite_prices() -> None:
+    frame = pd.DataFrame(
+        {
+            "close": [np.inf, 10.0, 1e308, 1e-308, 10.0],
+            "adj_factor": [1.0, np.inf, 1e308, 1e-308, 2.0],
+        }
+    )
+
+    adjusted = apply_asof_price_adjustment(
+        frame,
+        adjustment="hfq",
+        asof_date="2026-01-02",
+        price_columns=("close",),
+    )
+
+    assert adjusted["close"].isna().tolist() == [True, True, True, True, False]
+    assert adjusted["close"].iloc[-1] == pytest.approx(20.0)
+
+
+def test_apply_asof_price_adjustment_qfq_nulls_nonfinite_scale() -> None:
+    frame = pd.DataFrame(
+        {
+            "symbol": ["000001", "000001"],
+            "trade_date": ["2026-01-01", "2026-01-02"],
+            "close": [10.0, 10.0],
+            "adj_factor": [np.inf, 1.0],
+        }
+    )
+
+    adjusted = apply_asof_price_adjustment(
+        frame,
+        adjustment="qfq",
+        asof_date="2026-01-02",
+        price_columns=("close",),
+    )
+
+    assert pd.isna(adjusted["close"].iloc[0])
+    assert adjusted["close"].iloc[1] == pytest.approx(10.0)
+
+
+def test_apply_asof_price_adjustment_qfq_rejects_negative_factor_ratio() -> None:
+    frame = pd.DataFrame(
+        {
+            "symbol": ["000001", "000001"],
+            "trade_date": ["2026-01-01", "2026-01-02"],
+            "close": [10.0, 10.0],
+            "adj_factor": [-1.0, -2.0],
+        }
+    )
+
+    adjusted = apply_asof_price_adjustment(
+        frame,
+        adjustment="qfq",
+        asof_date="2026-01-02",
+        price_columns=("close",),
+    )
+
+    assert adjusted["close"].isna().all()
+
+
 def test_apply_asof_price_adjustment_requires_requested_price_columns() -> None:
     frame = pd.DataFrame({"close": [10.0]})
 
-    with pytest.raises(ValueError, match=r"missing price columns.*open"):
+    with pytest.raises(
+        ValueError,
+        match=r"price adjustment: columns must exist exactly once: \['open'\]",
+    ):
         apply_asof_price_adjustment(
             frame,
             adjustment="raw",
@@ -129,17 +193,16 @@ def test_apply_asof_price_adjustment_requires_every_qfq_anchor() -> None:
 
 
 @pytest.mark.parametrize(
-    ("trade_date", "error_type"),
+    "trade_date",
     [
-        (20260102, TypeError),
-        (None, ValueError),
-        ("2026-01-02 ", ValueError),
-        ("2026-02-30", ValueError),
+        20260102,
+        None,
+        "2026-01-02 ",
+        "2026-02-30",
     ],
 )
 def test_apply_asof_price_adjustment_validates_qfq_trade_date_column(
     trade_date: object,
-    error_type: type[Exception],
 ) -> None:
     frame = pd.DataFrame(
         {
@@ -150,7 +213,7 @@ def test_apply_asof_price_adjustment_validates_qfq_trade_date_column(
         }
     )
 
-    with pytest.raises(error_type, match="column 'trade_date'"):
+    with pytest.raises(ValueError, match="trade_date"):
         apply_asof_price_adjustment(
             frame,
             adjustment="qfq",
