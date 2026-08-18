@@ -102,8 +102,16 @@ def test_formal_base_config_declares_only_level2_file_sources(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    monkeypatch.setenv("ENV", "dev")
-    monkeypatch.setenv("ZERO_STORAGE_ROOT", str(tmp_path))
+    formal_base_document = (
+        Path(app_config_module.__file__)
+        .with_name("base.yml")
+        .read_text(encoding="utf-8")
+    )
+    _install_environment(tmp_path=tmp_path, monkeypatch=monkeypatch)
+    Path(app_config_module.__file__).with_name("base.yml").write_text(
+        formal_base_document,
+        encoding="utf-8",
+    )
 
     config = AppConfig.load()
 
