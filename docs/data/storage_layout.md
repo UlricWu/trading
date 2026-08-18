@@ -151,6 +151,39 @@ producer 必须先发布 payload，再原子写入 `meta.json`；该顺序不构
 `meta.json`。三个操作都接收已经绑定正式 storage root 的 `PathManager`，不建立第二个
 root 身份。Meta 不记录日志。
 
+## Raw Meta 一次性迁移
+
+随代码版本交付的 `scripts/migrate_raw_meta.py` 是旧 raw Meta 到当前 Meta schema 的
+一次性人工迁移入口，不属于 `python -m src.cli`、HTTP Job API、定时任务或日常 offline
+data workflow。调用方必须显式提供已存在的绝对 `storage_root`；默认只执行完整预检，
+只有显式 `--apply` 才允许发布：
+
+```text
+python -m scripts.migrate_raw_meta --storage-root /absolute/storage/root
+python -m scripts.migrate_raw_meta --storage-root /absolute/storage/root --apply
+```
+
+迁移只扫描 `raw/` 下已经存在 `meta.json` 的正式单日分区和 `trade_calendar` 年度分区。
+Meta 缺失仍表示对象尚未产出，脚本不得根据孤立 payload 创建 Meta。当前 `require()` 已
+通过的对象必须跳过。当前校验失败的对象只有同时满足以下条件才是 migratable：
+
+- 旧 Meta 仍是无重复 key 的 JSON object，包含 string `payload` 和非负 integer
+  `size_bytes`，且不包含 raw 不适用的 `upstream` 或 `symbol_slices`；
+- `payload` 是旧 Meta 同目录下唯一的非 Meta sibling，是非 symlink 普通文件；
+- payload basename、正式 raw 分区路径和实际文件字节数与旧 Meta 记录完全一致。
+
+旧 Meta 可以包含已由当前 schema 删除的其他顶层字段；迁移只使用上述 payload identity，
+不得把旧字段带入当前 Meta。JSON 损坏、identity 字段缺失或无效、payload 变化、额外
+sibling、symlink 或非正式 raw 路径都属于 blocked，不得被重建掩盖。预检存在任一
+blocked 对象时，`--apply` 不写任何 Meta 并以非零退出。
+
+Apply 对每个 migratable payload 调用当前 `meta.commit()` 原子替换同目录 Meta，并立即以
+`meta.require(expected_payload_path=...)` 终验；脚本不修改 payload。单个 Meta 原子发布，
+整批迁移不是多文件事务；执行期间必须停止会写 raw 的 producer。脚本可重复运行，已经
+完成的对象在后续运行中作为 current 跳过；运行输出必须分别汇总 current、migratable、
+migrated 和 blocked 数量。该入口不自动接入 release 或 deploy，旧版本能否读取迁移后的
+Meta 必须在实际部署迁移前单独确认。
+
 ## Experiments
 
 `experiments/` 保存一次研究运行的当前正式现场。当前只有彼此独立的 training experiment

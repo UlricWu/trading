@@ -22,7 +22,22 @@ Job、队列和状态都只存在于当前服务进程；服务重启不恢复�
 Flask 进程运行，多个 worker 进程会形成彼此独立且不一致的队列，因此不受支持。
 
 `GET /jobs/<job_id>` 对已知 Job 返回当前 Job object 和 `200`。`GET /health` 固定返回
-`200 {"ok":true}`。
+`200` 和以下精确字段：
+
+```json
+{
+  "ok": true,
+  "environment": "test",
+  "release_ref": "release/auto-release",
+  "commit_sha": "0123456789abcdef0123456789abcdef01234567"
+}
+```
+
+`environment`、`release_ref` 和 `commit_sha` 在 Flask app 创建时分别读取进程变量 `ENV`、
+`MINQUANT_RELEASE_REF` 和 `MINQUANT_COMMIT_SHA`，并在该进程生命周期内保持不变。未提供时
+分别使用 `dev`、`workspace` 和 `workspace`，只表示本地工作区运行；测试部署必须显式注入
+并校验上例对应的环境、release ref 和目标完整 SHA。Health 只证明当前 API 进程可响应及
+其 release identity，不探测 FTP、Tushare、数据对象或尚未提交的 Job 依赖。
 
 ## POST `/jobs`
 

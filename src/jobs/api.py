@@ -52,13 +52,16 @@ def create_app(job_runtime: JobRuntime) -> Flask:
 
     - ``GET /jobs/<job_id>`` accepts the Job ID as a path value.
     - ``POST /jobs/<job_id>/cancel`` accepts the Job ID as a path value.
-    - ``GET /health`` accepts no input.
+    - ``GET /health`` accepts no input and reports the process release identity.
 
     Example:
         with JobRuntime(Path("logs/jobs")) as job_runtime:
             flask_app = create_app(job_runtime)
     """
     flask_app = Flask(__name__, static_folder=None)
+    health_environment = os.environ.get("ENV") or "dev"
+    health_release_ref = os.environ.get("MINQUANT_RELEASE_REF") or "workspace"
+    health_commit_sha = os.environ.get("MINQUANT_COMMIT_SHA") or "workspace"
 
     @flask_app.before_request
     def log_request() -> None:
@@ -145,7 +148,14 @@ def create_app(job_runtime: JobRuntime) -> Flask:
 
     @flask_app.get("/health")
     def health() -> Response:
-        return jsonify({"ok": True})
+        return jsonify(
+            {
+                "ok": True,
+                "environment": health_environment,
+                "release_ref": health_release_ref,
+                "commit_sha": health_commit_sha,
+            }
+        )
 
     return flask_app
 

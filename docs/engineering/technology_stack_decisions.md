@@ -1,11 +1,37 @@
 # 技术栈决策
 
 - **状态**：强制执行
-- **适用范围**：项目日志实现、Instrumentation 公共调用形式、单文件 Parquet 物理写入，
-  以及 Level-2 source-native `.csv.7z` raw payload 的 ingest、读取、归一化和转换流程。
+- **适用范围**：Python 依赖与运行环境、项目日志实现、Instrumentation 公共调用形式、
+  单文件 Parquet 物理写入，以及 Level-2 source-native `.csv.7z` raw payload 的 ingest、
+  读取、归一化和转换流程。
 - **用途**：记录已经明确选定的技术栈、生产约束及其决策依据。改变本文中的技术
   选型或约束前，必须先更新本文并补充新的验证依据。
 - **规范词**：本文中的“必须”“不得”“仅”均为硬约束，不表示建议。
+
+## Python 依赖与运行环境
+
+### Owner 边界
+
+本节拥有 Python 依赖声明、完整解析基线和环境管理工具的技术选型。测试部署的目标路径、
+运行时身份、构建顺序、切换和回滚由 [`release_workflow.md`](release_workflow.md) 拥有；
+各依赖的业务用途和版本约束仍由对应领域 owner 拥有。
+
+### 工具与权威输入
+
+- `pyproject.toml` 是 Python 版本范围、直接依赖和可选依赖的声明 owner；`uv.lock` 是完整
+  解析结果。仓库自有开发、测试和部署入口必须使用 uv 创建或同步 Python 环境。
+- Anaconda、Conda、Mamba 及其 environment manifest 不是本项目的依赖或环境 owner；
+  仓库自有入口不得要求或调用这些工具。正式入口也不得通过裸 `pip install` 修改环境，
+  使实际依赖脱离 `uv.lock`。
+- 有意修改依赖时，必须在同一可审查修改中更新 `pyproject.toml` 和 `uv.lock`。CI 与部署
+  只能检查和消费已提交的 lock，不得现场解析并回写另一份依赖结果。
+- Python 必须满足 `pyproject.toml` 的 3.13 约束。部署时不得自动下载或隐式切换解释器；
+  目标机必须预先提供 uv 可发现的 Python 3.13。
+
+测试部署可以共享 uv 下载缓存，但不得让不同运行时身份修改同一个 Python 环境。相同
+`uv.lock`、Python 精确身份和固定安装 profile 可以复用同一只读依赖环境；任一输入不同
+时必须使用不同环境。部署依赖环境不得安装当前项目本身，服务通过目标 release 的
+`PYTHONPATH` 加载仓库代码，使依赖环境的复用不绑定某个 commit。
 
 ## 日志技术栈
 

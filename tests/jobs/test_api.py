@@ -212,7 +212,9 @@ def test_missing_job_response_does_not_echo_requested_identifier() -> None:
     assert identifier not in response.get_data(as_text=True)
 
 
-def test_job_runtime_failure_does_not_change_health_response() -> None:
+def test_job_runtime_failure_does_not_change_health_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     class ClosedRuntime(_StubRuntime):
         def submit(
             self,
@@ -220,7 +222,16 @@ def test_job_runtime_failure_does_not_change_health_response() -> None:
         ) -> list[JobSnapshot]:
             raise RuntimeError("job runtime is closed")
 
+    monkeypatch.setenv("ENV", "test")
+    monkeypatch.setenv("MINQUANT_RELEASE_REF", "release/auto-release")
+    monkeypatch.setenv(
+        "MINQUANT_COMMIT_SHA",
+        "0123456789abcdef0123456789abcdef01234567",
+    )
     app = create_app(cast(JobRuntime, ClosedRuntime()))
+    monkeypatch.setenv("ENV", "prod")
+    monkeypatch.setenv("MINQUANT_RELEASE_REF", "master")
+    monkeypatch.setenv("MINQUANT_COMMIT_SHA", "f" * 40)
     client = app.test_client()
 
     failed_submission = client.post(
@@ -241,4 +252,9 @@ def test_job_runtime_failure_does_not_change_health_response() -> None:
         }
     }
     assert health.status_code == 200
-    assert health.get_json() == {"ok": True}
+    assert health.get_json() == {
+        "ok": True,
+        "environment": "test",
+        "release_ref": "release/auto-release",
+        "commit_sha": "0123456789abcdef0123456789abcdef01234567",
+    }

@@ -2,21 +2,19 @@
 set -Eeuo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONDA_ENV="${MINQUANT_CONDA_ENV:-dev}"
+PYTHON_BIN="${REPO_ROOT}/.venv/bin/python"
 SESSION="${MINQUANT_API_SESSION:-minquant_api}"
 API_URL="http://127.0.0.1:5050"
+DEPLOY_ENVIRONMENT="${ENV:-dev}"
+RELEASE_REF="${MINQUANT_RELEASE_REF:-workspace}"
+COMMIT_SHA="${MINQUANT_COMMIT_SHA:-}"
 
-# -------- 2. Env --------
-export PYTHONPATH=$(pwd)
-export ZERO_STORAGE_ROOT="${HOME}/data"
+if [[ -z "$COMMIT_SHA" ]]; then
+    COMMIT_SHA="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo workspace)"
+fi
 
-require_command() {
-    local command_name="$1"
-    if ! command -v "$command_name" >/dev/null 2>&1; then
-        echo "missing required command: $command_name" >&2
-        exit 127
-    fi
-}
+export PYTHONPATH="$REPO_ROOT"
+export ZERO_STORAGE_ROOT="${ZERO_STORAGE_ROOT:-${HOME}/data}"
 
 find_seven_zip() {
     local command_name
@@ -29,8 +27,14 @@ find_seven_zip() {
     return 1
 }
 
-require_command conda
-require_command tmux
+if [[ ! -x "$PYTHON_BIN" ]]; then
+    echo "project Python interpreter is missing or not executable: $PYTHON_BIN" >&2
+    exit 127
+fi
+if ! command -v tmux >/dev/null 2>&1; then
+    echo "missing required command: tmux" >&2
+    exit 127
+fi
 
 if tmux has-session -t "$SESSION" 2>/dev/null; then
     echo "API tmux session already exists: $SESSION" >&2
@@ -42,9 +46,14 @@ if ! find_seven_zip >/dev/null; then
 fi
 
 printf -v launch_command \
-    'cd %q && exec conda run -n %q python -m src.jobs.api' \
+    'cd %q && exec env ENV=%q MINQUANT_RELEASE_REF=%q MINQUANT_COMMIT_SHA=%q PYTHONPATH=%q ZERO_STORAGE_ROOT=%q %q -m src.jobs.api' \
     "$REPO_ROOT" \
-    "$CONDA_ENV"
+    "$DEPLOY_ENVIRONMENT" \
+    "$RELEASE_REF" \
+    "$COMMIT_SHA" \
+    "$PYTHONPATH" \
+    "$ZERO_STORAGE_ROOT" \
+    "$PYTHON_BIN"
 tmux new-session -d -s "$SESSION" "$launch_command"
 
 echo "API process launched in tmux session: $SESSION"
