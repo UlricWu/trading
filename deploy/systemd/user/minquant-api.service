@@ -1,0 +1,19 @@
+[Unit]
+Description=MinQuant test inference API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/wsw/app/code
+Environment=ENV=test
+Environment=MINQUANT_RELEASE_REF=release/auto-release
+Environment=PYTHONPATH=/home/wsw/app/code
+Environment=ZERO_STORAGE_ROOT=/home/wsw/app/data
+EnvironmentFile=/home/wsw/app/deploy/api-release.env
+ExecStart=/home/wsw/app/code/.venv/bin/python -m src.jobs.api
+Restart=on-failure
+RestartSec=3s
+
+[Install]
+WantedBy=default.target
