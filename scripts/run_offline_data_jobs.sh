@@ -8,17 +8,12 @@ API_BASE_URL="${MINQUANT_API_BASE_URL:-http://127.0.0.1:5050}"
 API_BASE_URL="${API_BASE_URL%/}"
 HEALTH_URL="${MINQUANT_API_HEALTH_URL:-${API_BASE_URL}/health}"
 JOBS_URL="${MINQUANT_API_JOBS_URL:-${API_BASE_URL}/jobs}"
-API_SESSION="${MINQUANT_API_SESSION:-minquant_api}"
-START_SCRIPT="${MINQUANT_START_SCRIPT:-${REPO_ROOT}/start.sh}"
-STATUS_SCRIPT="${MINQUANT_STATUS_SCRIPT:-${REPO_ROOT}/status.sh}"
 PYTHON_BIN="${REPO_ROOT}/.venv/bin/python"
 STORAGE_ROOT="${ZERO_STORAGE_ROOT:-}"
 LOCK_FILE="${MINQUANT_OFFLINE_DATA_LOCK_FILE:-${REPO_ROOT}/logs/cron/offline_data_jobs.lock}"
 POST_MAX_TIME="${MINQUANT_CRON_POST_MAX_TIME:-30}"
 GET_MAX_TIME="${MINQUANT_CRON_GET_MAX_TIME:-10}"
 POLL_SLEEP="${MINQUANT_CRON_POLL_SLEEP:-5}"
-STARTUP_TIMEOUT="${MINQUANT_CRON_STARTUP_TIMEOUT:-60}"
-STARTUP_SLEEP="${MINQUANT_CRON_STARTUP_SLEEP:-2}"
 JOB_DATE="${MINQUANT_OFFLINE_DATA_DATE:-}"
 ENVIRONMENT="test"
 RELEASE_REF="release/auto-release"
@@ -82,56 +77,23 @@ except (TypeError, ValueError):
 }
 
 health_ok() {
-    MINQUANT_API_SESSION="$API_SESSION" \
-    MINQUANT_API_HEALTH_URL="$HEALTH_URL" \
-    MINQUANT_EXPECTED_ENVIRONMENT="$ENVIRONMENT" \
-    MINQUANT_EXPECTED_RELEASE_REF="$RELEASE_REF" \
-    MINQUANT_EXPECTED_COMMIT_SHA="$COMMIT_SHA" \
-        "$STATUS_SCRIPT" >/dev/null 2>&1
-}
-
-api_session_exists() {
-    tmux has-session -t "$API_SESSION" 2>/dev/null
-}
-
-wait_for_health() {
-    local deadline=$((SECONDS + STARTUP_TIMEOUT))
-
-    until health_ok; do
-        if (( SECONDS >= deadline )); then
-            log "Flask API health check did not recover: $HEALTH_URL"
-            return 1
-        fi
-        sleep "$STARTUP_SLEEP"
-    done
-}
-
-ensure_flask_api() {
-    if health_ok; then
-        log "Flask API health check OK: $HEALTH_URL"
-        return 0
+    local response
+    if ! response="$(curl -fsS --max-time "$GET_MAX_TIME" "$HEALTH_URL")"; then
+        return 1
     fi
+    printf '%s' "$response" | "$PYTHON_BIN" -c '
+import json
+import sys
 
-    if api_session_exists; then
-        log "tmux session '$API_SESSION' exists; waiting for Flask health"
-    else
-        log "Flask API is not running; starting with $START_SCRIPT"
-        if ! (
-            cd "$REPO_ROOT"
-            ENV="$ENVIRONMENT" \
-            MINQUANT_RELEASE_REF="$RELEASE_REF" \
-            MINQUANT_COMMIT_SHA="$COMMIT_SHA" \
-            MINQUANT_API_SESSION="$API_SESSION" \
-            ZERO_STORAGE_ROOT="$STORAGE_ROOT" \
-                "$START_SCRIPT"
-        ); then
-            log "Flask API failed to start"
-            return 1
-        fi
-    fi
-
-    wait_for_health
-    log "Flask API health check OK after startup: $HEALTH_URL"
+payload = json.load(sys.stdin)
+expected = {
+    "ok": True,
+    "environment": "test",
+    "release_ref": "release/auto-release",
+    "commit_sha": sys.argv[1],
+}
+raise SystemExit(0 if payload == expected else 1)
+' "$COMMIT_SHA"
 }
 
 submit_data_job() {
@@ -289,21 +251,15 @@ main() {
         log "run_offline_data_jobs.sh does not accept positional arguments"
         return 2
     fi
-    for required_command in curl flock git sleep tmux; do
+    for required_command in curl flock git sleep; do
         require_command "$required_command"
     done
     require_positive_integer MINQUANT_CRON_POST_MAX_TIME "$POST_MAX_TIME"
     require_positive_integer MINQUANT_CRON_GET_MAX_TIME "$GET_MAX_TIME"
-    require_positive_integer MINQUANT_CRON_STARTUP_TIMEOUT "$STARTUP_TIMEOUT"
     require_non_negative_integer MINQUANT_CRON_POLL_SLEEP "$POLL_SLEEP"
-    require_non_negative_integer MINQUANT_CRON_STARTUP_SLEEP "$STARTUP_SLEEP"
     if [[ ! -x "$PYTHON_BIN" ]]; then
         log "project Python interpreter is missing or not executable: $PYTHON_BIN"
         return 127
-    fi
-    if [[ ! -x "$START_SCRIPT" || ! -x "$STATUS_SCRIPT" ]]; then
-        log "start.sh and status.sh must be executable under the project root"
-        return 66
     fi
     if [[ "$STORAGE_ROOT" != /* || ! -d "$STORAGE_ROOT" ]]; then
         log "ZERO_STORAGE_ROOT must be an existing absolute directory: $STORAGE_ROOT"
@@ -326,7 +282,11 @@ main() {
         return 66
     fi
     validate_job_date
-    ensure_flask_api
+    if ! health_ok; then
+        log "systemd-managed API is unavailable or has the wrong release identity: $HEALTH_URL"
+        return 1
+    fi
+    log "systemd-managed API health check OK: $HEALTH_URL"
     if ! run_data_job "data-standard"; then
         failed=1
     fi
