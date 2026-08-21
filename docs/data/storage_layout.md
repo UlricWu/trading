@@ -163,19 +163,26 @@ python -m scripts.migrate_raw_meta --storage-root /absolute/storage/root
 python -m scripts.migrate_raw_meta --storage-root /absolute/storage/root --apply
 ```
 
-迁移只扫描 `raw/` 下已经存在 `meta.json` 的正式单日分区和 `trade_calendar` 年度分区。
-Meta 缺失仍表示对象尚未产出，脚本不得根据孤立 payload 创建 Meta。当前 `require()` 已
-通过的对象必须跳过。当前校验失败的对象只有同时满足以下条件才是 migratable：
+迁移只扫描 `raw/` 下已经存在 `meta.json` 的单日分区和 `trade_calendar` 年度分区。
+扫描单日分区包括旧项目遗留的 `trade_calendar/trade_date=YYYY-MM-DD`；迁移这种 Meta
+只统一其 object-side schema，不改变 payload 或分区，也不使该旧布局成为当前正式日历
+对象。Meta 缺失仍表示对象尚未产出，脚本不得根据孤立 payload 创建 Meta。当前
+`require()` 已通过的对象必须跳过。当前校验失败的对象只有同时满足以下条件才是
+migratable：
 
-- 旧 Meta 仍是无重复 key 的 JSON object，包含 string `payload` 和非负 integer
-  `size_bytes`，且不包含 raw 不适用的 `upstream` 或 `symbol_slices`；
-- `payload` 是旧 Meta 同目录下唯一的非 Meta sibling，是非 symlink 普通文件；
-- payload basename、正式 raw 分区路径和实际文件字节数与旧 Meta 记录完全一致。
+- 旧 Meta 仍是无重复 key 的 JSON object，`version` 精确为 `V1.0`，`upstreams` 是空
+  array，且不包含 raw 不适用的当前字段 `upstream` 或 `symbol_slices`；
+- `output` 是 object，包含 string `path`；`output.fingerprint` 是 object，包含非负
+  integer `size`；
+- `output.path` 是规范化的绝对 POSIX path。旧 storage root 前缀可以与当前 root 不同，
+  但从 `raw/` 开始的完整相对路径必须与当前 Meta 分区和 payload basename 完全一致；
+- 该 payload 是旧 Meta 同目录下唯一的非 Meta sibling，是非 symlink 普通文件，实际
+  文件字节数与 `output.fingerprint.size` 完全一致。
 
-旧 Meta 可以包含已由当前 schema 删除的其他顶层字段；迁移只使用上述 payload identity，
-不得把旧字段带入当前 Meta。JSON 损坏、identity 字段缺失或无效、payload 变化、额外
-sibling、symlink 或非正式 raw 路径都属于 blocked，不得被重建掩盖。预检存在任一
-blocked 对象时，`--apply` 不写任何 Meta 并以非零退出。
+旧 Meta 可以包含不参与 identity 的其他字段；迁移只使用上述 payload identity，不得把
+旧字段带入当前 Meta。JSON 损坏、identity 字段缺失或无效、payload 变化、额外 sibling、
+symlink 或非上述 raw 路径都属于 blocked，不得被重建掩盖。预检存在任一 blocked 对象
+时，`--apply` 不写任何 Meta 并以非零退出。
 
 Apply 对每个 migratable payload 调用当前 `meta.commit()` 原子替换同目录 Meta，并立即以
 `meta.require(expected_payload_path=...)` 终验；脚本不修改 payload。单个 Meta 原子发布，
