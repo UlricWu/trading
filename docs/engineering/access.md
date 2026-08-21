@@ -119,18 +119,27 @@ symbol, trade_date, turnover_rate
 
 ## Universe
 
-`universe(T, N)` 的基础集合是当日正式 daily bars 中的唯一 symbol：
+当日正式 `stock_basic` 是源端 `bak_basic(T)` 产生的历史日股票列表，其唯一 symbol 定义
+当日历史股票成员集合：
 
 ```text
-daily_base(T) = symbols(valid daily bars at T)
+historical_base(T) = symbols(valid stock_basic at T)
+```
+
+`universe(T, N)` 的基础集合是当日正式 daily bars 与历史股票成员集合的交集：
+
+```text
+daily_base(T)
+  = symbols(valid daily bars at T) ∩ historical_base(T)
 ```
 
 `level2_universe(T, N)` 的基础集合是当日全部必要正式 Level-2 对象 Meta 中
-`symbol_slices` keys 的并集：
+`symbol_slices` keys 的并集与历史股票成员集合的交集：
 
 ```text
 level2_base(T)
   = union(symbol_slices of every required valid Level-2 object at T)
+    ∩ historical_base(T)
 ```
 
 `level2_base` 不与 `daily_base` 求交。当前必要 Level-2 对象固定为上海 trades 与深圳
@@ -160,16 +169,17 @@ symbol 升序排列，不继承底层 payload 的物理行顺序。
 
 `min_listing_calendar_days=N` 必须是非负整数，并由调用方显式提供。
 
-`N=0` 表示不执行上市天数过滤，也不读取 `stock_basic`。正整数 `N` 保留在
-`stock_basic` 中存在非 null `list_date` 且满足下式的 symbol：
+两种 universe 始终要求当日正式 `stock_basic`，因为其记录集合定义
+`historical_base(T)`。`N=0` 表示保留其中全部成员且不检查 `list_date`。正整数 `N` 只保留
+存在非 null `list_date` 且满足下式的成员：
 
 ```text
 T - stock_basic.list_date(symbol) >= N 个自然日
 ```
 
-上市当日为第 `0` 天，恰好满 `N` 个自然日时保留。基础集合 symbol 缺少 `stock_basic`
-记录或 `list_date=null` 时不满足上市天数条件。Access 信任 Tushare 对象的记录集合，不
-跨 source 检查覆盖关系，也不解释 null 的源端业务含义。
+上市当日为第 `0` 天，恰好满 `N` 个自然日时保留。`list_date=null` 时不满足正整数上市
+天数条件。Access 信任 Tushare 对象的记录集合，不要求它与 daily bars 或 Level-2 source
+具有相同覆盖，也不解释 null 的源端业务含义。
 
 当前 universe 不包含历史 ST 冷却、涨跌停、成交额、流动性、市值、行业或其他策略筛选。
 

@@ -2301,7 +2301,7 @@ def universe(
     trade_date: str,
     min_listing_calendar_days: int,
 ) -> tuple[str, ...]:
-    """Return the filtered daily-bar universe.
+    """Return historical-list members with daily bars.
 
     Example:
         symbols = access.universe(

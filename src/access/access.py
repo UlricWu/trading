@@ -188,7 +188,7 @@ class Access:
         trade_date: str,
         min_listing_calendar_days: int,
     ) -> tuple[str, ...]:
-        """Return the filtered daily-bar universe in canonical symbol order.
+        """Return historical-list members with daily bars in canonical order.
 
         Example:
             symbols = access.universe(
@@ -228,7 +228,7 @@ class Access:
         trade_date: str,
         min_listing_calendar_days: int,
     ) -> tuple[str, ...]:
-        """Return filtered symbols with complete Level-2 data for one date.
+        """Return historical-list members with complete Level-2 data.
 
         Example:
             symbols = access.level2_universe(
@@ -443,15 +443,23 @@ class Access:
         trade_date: str,
         min_listing_calendar_days: int,
     ) -> tuple[str, ...]:
-        selected_symbols = list(symbols)
-        if min_listing_calendar_days > 0:
-            stock_basic = self._read_processed_frame(
-                trade_date=trade_date,
+        stock_basic = self._read_processed_frame(
+            trade_date=trade_date,
+            dataset_name="stock_basic",
+        )
+        historical_symbols = set(
+            _unique_data_symbols(
+                stock_basic,
                 dataset_name="stock_basic",
             )
+        )
+        selected_symbols = [
+            symbol for symbol in symbols if symbol in historical_symbols
+        ]
+        if min_listing_calendar_days > 0:
             table_ops.require_columns(
                 stock_basic,
-                ("symbol", "list_date"),
+                ("list_date",),
                 who="stock_basic",
             )
             minimum_list_date = DateTimeUtils.days_before(

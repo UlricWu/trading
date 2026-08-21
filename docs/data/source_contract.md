@@ -64,12 +64,14 @@ broker config 不声明 `normalize_profile`。
 | `moneyflow` | `moneyflow` |
 | `top_list` | `top_list` |
 
-本地 `stock_basic` 是历史日股票列表，源端固定查询支持 `trade_date` 的 `bak_basic`；不得
-使用当前股票基础信息快照接口 `stock_basic` 代替。
+本地 `stock_basic` 是历史日股票列表，源端固定查询支持 `trade_date` 的 `bak_basic`；其
+response 记录集合定义该交易日的历史股票成员集合，不得使用当前股票基础信息快照接口
+`stock_basic` 代替。Standard 与 Level-2 universe 如何把该集合与各自行情可用集合组合，
+由 Access owner 定义。
 
 `processed/stock_basic/v1.list_date` 把能够按 Tushare 紧凑日期格式解析的值转换为
 `YYYY-MM-DD`，其他值转换为 null。Tushare response 的记录集合是该对象的权威；本系统不
-解释无法解析值的业务含义，也不与 `daily_bar` 或其他 source 检查记录覆盖关系。
+解释无法解析值的业务含义，也不要求它与 `daily_bar` 或其他 source 具有相同记录覆盖。
 
 除 `trade_calendar` 外，当前 Tushare source 按单日参数
 `trade_date=YYYYMMDD` 查询。`trade_calendar` 固定查询 SSE，并以自然年作为唯一请求与对象
