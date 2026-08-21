@@ -24,7 +24,7 @@ def _write_executable(path: Path, content: str) -> None:
 def _repository(tmp_path: Path) -> tuple[Path, str, str]:
     origin = tmp_path / "origin.git"
     seed = tmp_path / "seed"
-    source = tmp_path / "app" / "code"
+    source = tmp_path / "app" / "code" / "trading"
     _run(["git", "init", "--bare", str(origin)], tmp_path)
     _run(["git", "init", str(seed)], tmp_path)
     _run(["git", "config", "user.email", "test@example.com"], seed)
@@ -49,11 +49,11 @@ def _repository(tmp_path: Path) -> tuple[Path, str, str]:
 
 def _environment(tmp_path: Path, source: Path, target: str) -> tuple[dict[str, str], Path]:
     app_root = tmp_path / "app"
-    shared = app_root / "shared"
+    shared = app_root / "shared" / "trading"
     data = app_root / "data"
-    deploy = app_root / "deploy"
+    deploy = app_root / "deploy" / "trading"
     commands = tmp_path / "commands"
-    for path in (shared / "logs", data, deploy, commands):
+    for path in (shared / "logs", data / "raw", deploy, commands):
         path.mkdir(parents=True, exist_ok=True)
     (shared / ".env.test").write_text("TEST=1\n", encoding="utf-8")
     calls = tmp_path / "systemctl.calls"
@@ -95,6 +95,7 @@ elif sys.argv[1] != "lock":
         + "\n",
     )
     _write_executable(commands / "flock", "#!/usr/bin/env bash\nexit 0\n")
+    _write_executable(commands / "mountpoint", "#!/usr/bin/env bash\nexit 0\n")
     _write_executable(
         commands / "date",
         "#!/usr/bin/env bash\nprintf '%s\\n' '2026-08-20T00:00:00+00:00'\n",
@@ -105,7 +106,6 @@ elif sys.argv[1] != "lock":
         "RUN_ID": "delivery-1",
         "DEPLOY_SHA": target,
         "DEPLOY_APP_ROOT": str(app_root),
-        "DEPLOY_SOURCE_REPO": str(source),
         "MINQUANT_UV_BIN": str(commands / "uv"),
         "MINQUANT_SYSTEMCTL_BIN": str(commands / "systemctl"),
         "MINQUANT_CURL_BIN": str(commands / "curl"),
@@ -133,8 +133,17 @@ def test_deploys_only_the_exact_remote_tip_and_records_success(tmp_path: Path) -
     assert (source / "version.txt").read_text(encoding="utf-8") == "two\n"
     assert (source / ".env.test").is_symlink()
     assert (source / "logs").is_symlink()
-    record = (tmp_path / "app" / "deploy" / "current-test-release").read_text()
+    assert (source / ".env.test").readlink() == (
+        tmp_path / "app" / "shared" / "trading" / ".env.test"
+    )
+    assert (source / "logs").readlink() == (
+        tmp_path / "app" / "shared" / "trading" / "logs"
+    )
+    record = (
+        tmp_path / "app" / "deploy" / "trading" / "current-test-release"
+    ).read_text()
     assert f"commit_sha={target}\n" in record
+    assert f"source_repo={source}\n" in record
     assert calls.read_text(encoding="utf-8").splitlines() == [
         "--user stop minquant-api.service",
         "--user start minquant-api.service",
@@ -156,5 +165,27 @@ def test_stale_delivery_fails_before_stopping_service(tmp_path: Path) -> None:
 
     assert completed.returncode == 65
     assert "stale or out-of-order delivery" in completed.stderr
+    assert not calls.exists()
+    assert _run(["git", "rev-parse", "HEAD"], source).stdout.strip() == initial
+
+
+def test_missing_raw_mount_fails_before_stopping_service(tmp_path: Path) -> None:
+    source, initial, target = _repository(tmp_path)
+    environment, calls = _environment(tmp_path, source, target)
+    _write_executable(
+        tmp_path / "commands" / "mountpoint",
+        "#!/usr/bin/env bash\nexit 1\n",
+    )
+
+    completed = subprocess.run(
+        ["bash", str(DEPLOY_SCRIPT)],
+        check=False,
+        text=True,
+        capture_output=True,
+        env=environment,
+    )
+
+    assert completed.returncode == 66
+    assert "raw data root is not a mountpoint" in completed.stderr
     assert not calls.exists()
     assert _run(["git", "rev-parse", "HEAD"], source).stdout.strip() == initial

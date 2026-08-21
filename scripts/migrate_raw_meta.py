@@ -27,7 +27,7 @@ import os
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from src.access import meta
 from src.utils.datetime_utils import DateTimeUtils
@@ -195,22 +195,43 @@ def _load_legacy_candidate(
             "raw legacy Meta must not contain upstream or symbol_slices"
         )
 
-    payload_name = legacy_record.get("payload")
-    if not isinstance(payload_name, str):
-        raise _LegacyMetaError("legacy payload must be a string")
+    if legacy_record.get("version") != "V1.0":
+        raise _LegacyMetaError("legacy version must be V1.0")
+    if legacy_record.get("upstreams") != []:
+        raise _LegacyMetaError("raw legacy upstreams must be an empty array")
+
+    legacy_output = legacy_record.get("output")
+    if not isinstance(legacy_output, dict):
+        raise _LegacyMetaError("legacy output must be an object")
+    legacy_payload_text = legacy_output.get("path")
+    if not isinstance(legacy_payload_text, str):
+        raise _LegacyMetaError("legacy output.path must be a string")
+    legacy_payload_path = PurePosixPath(legacy_payload_text)
+    if (
+        not legacy_payload_path.is_absolute()
+        or legacy_payload_path.as_posix() != legacy_payload_text
+    ):
+        raise _LegacyMetaError(
+            "legacy output.path must be a normalized absolute POSIX path"
+        )
+
+    payload_name = legacy_payload_path.name
     try:
         PathManager.require_safe_basename(payload_name, "legacy payload")
     except (TypeError, ValueError) as exc:
         raise _LegacyMetaError(str(exc)) from exc
 
-    recorded_size = legacy_record.get("size_bytes")
+    legacy_fingerprint = legacy_output.get("fingerprint")
+    if not isinstance(legacy_fingerprint, dict):
+        raise _LegacyMetaError("legacy output.fingerprint must be an object")
+    recorded_size = legacy_fingerprint.get("size")
     if (
         not isinstance(recorded_size, int)
         or isinstance(recorded_size, bool)
         or recorded_size < 0
     ):
         raise _LegacyMetaError(
-            "legacy size_bytes must be a non-negative integer"
+            "legacy output.fingerprint.size must be a non-negative integer"
         )
 
     payload_path = meta_path.parent / payload_name
@@ -225,6 +246,15 @@ def _load_legacy_candidate(
     ):
         raise _LegacyMetaError(
             "legacy payload must resolve to a sibling below storage_root"
+        )
+
+    current_relative_payload = PurePosixPath(
+        resolved_payload.relative_to(pm.storage_root).as_posix()
+    )
+    suffix_size = len(current_relative_payload.parts)
+    if legacy_payload_path.parts[-suffix_size:] != current_relative_payload.parts:
+        raise _LegacyMetaError(
+            "legacy output.path does not match the current raw identity"
         )
 
     actual_size = FileSystem.get_file_size(resolved_payload)

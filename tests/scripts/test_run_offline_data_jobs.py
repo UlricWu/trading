@@ -44,7 +44,7 @@ def test_runner_fails_on_wrong_systemd_api_identity_without_submitting_jobs(
     storage = tmp_path / "data"
     project_root = _deployment_root(tmp_path)
     commands.mkdir()
-    storage.mkdir()
+    (storage / "raw").mkdir(parents=True)
     curl_calls = tmp_path / "curl.calls"
     _write_executable(
         commands / "curl",
@@ -55,6 +55,7 @@ def test_runner_fails_on_wrong_systemd_api_identity_without_submitting_jobs(
         "\"release_ref\":\"release/auto-release\",\"commit_sha\":\"wrong\"}'\n",
     )
     _write_executable(commands / "flock", "#!/usr/bin/env bash\nexit 0\n")
+    _write_executable(commands / "mountpoint", "#!/usr/bin/env bash\nexit 0\n")
     environment = {
         **os.environ,
         "PATH": f"{commands}:{os.environ['PATH']}",
@@ -77,3 +78,42 @@ def test_runner_fails_on_wrong_systemd_api_identity_without_submitting_jobs(
     calls = curl_calls.read_text(encoding="utf-8").splitlines()
     assert len(calls) == 1
     assert calls[0].endswith("http://127.0.0.1:5050/health")
+
+
+def test_runner_fails_before_health_check_when_raw_is_not_mounted(
+    tmp_path: Path,
+) -> None:
+    commands = tmp_path / "commands"
+    storage = tmp_path / "data"
+    project_root = _deployment_root(tmp_path)
+    commands.mkdir()
+    (storage / "raw").mkdir(parents=True)
+    curl_calls = tmp_path / "curl.calls"
+    _write_executable(
+        commands / "curl",
+        "#!/usr/bin/env bash\n"
+        f"printf '%s\\n' \"$*\" >> {curl_calls}\n"
+        "exit 1\n",
+    )
+    _write_executable(commands / "flock", "#!/usr/bin/env bash\nexit 0\n")
+    _write_executable(commands / "mountpoint", "#!/usr/bin/env bash\nexit 1\n")
+    environment = {
+        **os.environ,
+        "PATH": f"{commands}:{os.environ['PATH']}",
+        "MINQUANT_PROJECT_ROOT": str(project_root),
+        "ZERO_STORAGE_ROOT": str(storage),
+        "MINQUANT_OFFLINE_DATA_LOCK_FILE": str(tmp_path / "runner.lock"),
+        "MINQUANT_OFFLINE_DATA_DATE": "2026-08-20",
+    }
+
+    completed = subprocess.run(
+        ["bash", str(RUNNER)],
+        check=False,
+        text=True,
+        capture_output=True,
+        env=environment,
+    )
+
+    assert completed.returncode == 66
+    assert "raw data root is not a mountpoint" in completed.stderr
+    assert not curl_calls.exists()

@@ -5,13 +5,14 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=/home/wsw/app/code
+WorkingDirectory=/home/wsw/app/code/trading
 Environment=ENV=test
 Environment=MINQUANT_RELEASE_REF=release/auto-release
-Environment=PYTHONPATH=/home/wsw/app/code
+Environment=PYTHONPATH=/home/wsw/app/code/trading
 Environment=ZERO_STORAGE_ROOT=/home/wsw/app/data
-EnvironmentFile=/home/wsw/app/deploy/api-release.env
-ExecStart=/home/wsw/app/code/.venv/bin/python -m src.jobs.api
+EnvironmentFile=/home/wsw/app/deploy/trading/api-release.env
+ExecStartPre=/usr/bin/mountpoint --quiet /home/wsw/app/data/raw
+ExecStart=/home/wsw/app/code/trading/.venv/bin/python -m src.jobs.api
 Restart=on-failure
 RestartSec=3s
 
