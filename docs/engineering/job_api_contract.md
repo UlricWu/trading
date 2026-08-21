@@ -43,6 +43,8 @@ Flask 进程运行，多个 worker 进程会形成彼此独立且不一致的队
 
 请求 body 必须是 JSON object，`kind` 是唯一判别字段，额外字段必须拒绝：
 
+CLI-only 的 `data-calendar` 不属于 Job kind；`POST /jobs` 必须将其作为不支持的 kind 拒绝。
+
 - `data-standard`、`data-level2`
   - 必须且只允许提供 `start` 与 `end`。
   - 日期必须是规范 `YYYY-MM-DD`，且 `start <= end`。

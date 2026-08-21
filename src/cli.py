@@ -1,5 +1,5 @@
 # filepath: src/cli.py
-"""Define the four public CLI composition roots."""
+"""Define the five public CLI composition roots."""
 
 from __future__ import annotations
 
@@ -16,10 +16,12 @@ from src.jobs.requests import (
     create_data_submission,
     create_training_submission,
 )
+from src.utils.datetime_utils import DateTimeUtils
 from src.utils.path import PathManager
 from src.workflows.backtest import run_daily_alpha_backtest
 from src.workflows.offline_daily_data import run_offline_data
 from src.workflows.offline_training import run_offline_training
+from src.workflows.trade_calendar import run_trade_calendar_bootstrap
 
 app = typer.Typer(help="MinQuant CLI")
 
@@ -47,6 +49,21 @@ def _raise_bad_parameter(
 ) -> NoReturn:
     hint = field_hints.get(error.field) if error.field is not None else None
     raise typer.BadParameter(str(error), param_hint=hint) from None
+
+
+@app.command()
+def data_calendar() -> None:
+    """Bootstrap annual trade calendars from 2016 through the current year.
+
+    Example:
+        data_calendar()
+    """
+    app_config = AppConfig.load()
+    run_trade_calendar_bootstrap(
+        app_config=app_config,
+        path_manager=PathManager(app_config.storage_root),
+        as_of_date=DateTimeUtils.today(),
+    )
 
 
 @app.command()

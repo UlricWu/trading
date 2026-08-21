@@ -2,14 +2,19 @@
 
 - **状态**：正式 owner
 - **适用范围**：offline data、offline training 与 daily-alpha backtest 的配置选择、日程、
-  执行编排、运行结果和实验命名。
+  calendar bootstrap、执行编排、运行结果和实验命名。
 - **CLI owner**：[`docs/engineering/cli_contract.md`](engineering/cli_contract.md)
 
 ## 共同边界
 
-`src/workflows` 只提供三个 workflow composition root：
+`src/workflows` 只提供四个 workflow composition root：
 
 ```python
+run_trade_calendar_bootstrap(
+    *, app_config: AppConfig, path_manager: PathManager,
+    as_of_date: str,
+) -> None
+
 run_offline_data(
     *, app_config: AppConfig, path_manager: PathManager,
     submission: DataSubmission,
@@ -117,6 +122,25 @@ FullBacktestStep, MetricsPersistStep, ReportStep
 
 Workflow 不统一包装异常，不把失败改成空制品或 success，也不重复记录 traceback。
 
+## Calendar bootstrap workflow
+
+`run_trade_calendar_bootstrap` 是 CLI-only `data-calendar` 的唯一 workflow。CLI 在 composition
+root 读取一次 Asia/Shanghai 当前日期，并以显式 `as_of_date` 传入；workflow 不读取当前
+时间。`as_of_date` 必须是规范系统日期。Bootstrap 范围固定为：
+
+```text
+start = 2016-01-01
+end = <as_of_date 所在年份>-12-31
+```
+
+Workflow 从收到的 `PathManager` 创建唯一 `Access`，只组装一个
+`CalendarMaterializeStep` 的不可变 step tuple，并调用一次 `DataPipeline.run()`。该 Step
+按自然年升序复用或物化范围内每个完整年度的 raw 与 processed `trade_calendar`，并通过
+同一个 Access 终验完整范围。Bootstrap 不选择或执行 fact source、feature、label、Level-2
+或其他 derived operation，不创建 `DataSubmission`、Job、实验身份或运行制品。它记录一次
+`kind=data-calendar` started 和成功后的 finished 日志；错误原样传播，已正式提交的较早
+年度保留，重跑通过 Meta hit 续建。有效年度对象不隐式刷新或覆盖，未来年份不进入范围。
+
 ## Data workflow
 
 唯一入口 `run_offline_data` 直接消费已校验的 `DataSubmission(kind, start, end)`。
@@ -191,7 +215,8 @@ normalize 与 derived operation 实现。Pipeline 只按 workflow 传入的单�
 也不校验这些领域顺序。Normalize、feature 或 label 产生零行必须失败。成功对象必须先发布
 payload 再提交 Meta；
 Meta reuse、lineage、Level-2 symbol slices 与 staging/raw 选择继续由各 producer owner 负责。
-Data workflow 保留 started 和 finished 业务日志；其他两个 workflow 不新增 start/done 日志。
+Calendar bootstrap 与 Data workflow 保留 started 和 finished 业务日志；Training 和
+Backtest workflow 不新增 start/done 日志。
 
 ## Training workflow
 

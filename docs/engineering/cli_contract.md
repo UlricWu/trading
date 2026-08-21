@@ -32,21 +32,29 @@ CLI 不记录 start/done 或原始 JSON；workflow 负责业务运行日志。Ty
 `override` 只能包含 `data`、`model` 或 `backtest` 根键；因此不能改变
 `environment`、`storage_root` 或 `secret`。mapping 递归合并，标量、列表和显式
 `None` 直接替换，不定义字段级特殊合并规则。合并后必须校验完整 `AppConfig`。HTTP Job
-API 和四个 CLI 命令都不得用 request runtime 字段构造 config override。配置读取、
+API 和五个 CLI 命令都不得用 request runtime 字段构造 config override。配置读取、
 override 拒绝和最终 schema 校验错误均归 `AppConfig.load()`，不在下游组件重复校验。
 
 ## Data
 
 ```text
+python -m src.cli data-calendar
 python -m src.cli data-standard --start YYYY-MM-DD --end YYYY-MM-DD
 python -m src.cli data-level2 --start YYYY-MM-DD --end YYYY-MM-DD
 ```
 
-两个命令构造不同 kind 的 `DataSubmission`，但都只调用一次固定的 `run_offline_data`
+`data-calendar` 是仅供人工运维的无参数 CLI，不属于 HTTP Job API 或定时任务。CLI 在
+composition root 通过 `DateTimeUtils.today()` 取得一次 Asia/Shanghai 当前日期，并把该
+明确日期传给 calendar bootstrap workflow。Workflow 固定从 `2016-01-01` 开始，到当前
+年份的 `12-31` 结束，只复用或物化范围涉及的完整 `trade_calendar` 年度 raw 与 processed
+对象；不执行 fact、feature 或 label。命令成功时退出 `0`，配置、Tushare、normalize、
+Meta 或其他运行错误以 `1` 退出。命令不接受日期、年份、refresh 或其他参数。
+
+另外两个 data 命令构造不同 kind 的 `DataSubmission`，但都只调用一次固定的 `run_offline_data`
 workflow，不接受 group、run ID 或实验身份。
 完整闭区间是一次 workflow 执行单位；单日必须传相同的 `--start` 与 `--end`，不提供
 位置参数 `DATE` 或其他单日形式。数据对象由 source、version 和 date 标识，不属于一次
-experiment。两个命令成功时都退出 `0`；任一正式交易日 fact 缺失或其他运行错误都退出
+experiment。这两个命令成功时都退出 `0`；任一正式交易日 fact 缺失或其他运行错误都退出
 `1`，不得改写成 skipped。
 
 ## Training

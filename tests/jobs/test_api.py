@@ -153,6 +153,7 @@ def test_training_request_creates_one_full_range_job() -> None:
 @pytest.mark.parametrize(
     "payload",
     [
+        {"kind": "data-calendar"},
         {"kind": "data-standard"},
         {
             "kind": "data-standard",
