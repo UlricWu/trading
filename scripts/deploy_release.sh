@@ -5,11 +5,11 @@ set -Eeuo pipefail
 umask 027
 
 APP_ROOT="${DEPLOY_APP_ROOT:-/home/wsw/app}"
-SOURCE_REPO="${DEPLOY_SOURCE_REPO:-${APP_ROOT}/code}"
-SHARED_ENV_FILE="${DEPLOY_SHARED_ENV_FILE:-${APP_ROOT}/shared/.env.test}"
-SHARED_LOG_DIR="${DEPLOY_SHARED_LOG_DIR:-${APP_ROOT}/shared/logs}"
+SOURCE_REPO="${DEPLOY_SOURCE_REPO:-${APP_ROOT}/code/trading}"
+SHARED_ENV_FILE="${DEPLOY_SHARED_ENV_FILE:-${APP_ROOT}/shared/trading/.env.test}"
+SHARED_LOG_DIR="${DEPLOY_SHARED_LOG_DIR:-${APP_ROOT}/shared/trading/logs}"
 DATA_ROOT="${ZERO_STORAGE_ROOT:-${APP_ROOT}/data}"
-DEPLOY_DIR="${DEPLOY_STATE_DIR:-${APP_ROOT}/deploy}"
+DEPLOY_DIR="${DEPLOY_STATE_DIR:-${APP_ROOT}/deploy/trading}"
 LOCK_FILE="${DEPLOY_LOCK_FILE:-${DEPLOY_DIR}/test-release.lock}"
 RECORD_FILE="${DEPLOY_RECORD_FILE:-${DEPLOY_DIR}/current-test-release}"
 API_ENV_FILE="${DEPLOY_API_ENV_FILE:-${DEPLOY_DIR}/api-release.env}"
@@ -19,6 +19,7 @@ TEST_ENVIRONMENT="test"
 UV_COMMAND="${MINQUANT_UV_BIN:-/usr/local/bin/uv}"
 SYSTEMCTL_COMMAND="${MINQUANT_SYSTEMCTL_BIN:-systemctl}"
 CURL_COMMAND="${MINQUANT_CURL_BIN:-curl}"
+MOUNTPOINT_COMMAND="${MINQUANT_MOUNTPOINT_BIN:-mountpoint}"
 API_UNIT="${MINQUANT_API_UNIT:-minquant-api.service}"
 HEALTH_URL="${MINQUANT_API_HEALTH_URL:-http://127.0.0.1:5050/health}"
 LOCK_TIMEOUT_SECONDS="${DEPLOY_LOCK_TIMEOUT_SECONDS:-600}"
@@ -28,6 +29,7 @@ HEALTH_REQUIRED_SUCCESSES="${DEPLOY_HEALTH_REQUIRED_SUCCESSES:-2}"
 
 RUN_ID="${RUN_ID:-}"
 DEPLOY_SHA="${DEPLOY_SHA:-}"
+RAW_ROOT="${DATA_ROOT}/raw"
 
 log() {
   printf 'event=%s run_id=%s commit_sha=%s\n' "$1" "$RUN_ID" "$DEPLOY_SHA"
@@ -100,17 +102,22 @@ done
 
 for path in \
   "$APP_ROOT" "$SOURCE_REPO" "$SHARED_ENV_FILE" "$SHARED_LOG_DIR" "$DATA_ROOT" \
-  "$DEPLOY_DIR" "$LOCK_FILE" "$RECORD_FILE" "$API_ENV_FILE"; do
+  "$RAW_ROOT" "$DEPLOY_DIR" "$LOCK_FILE" "$RECORD_FILE" "$API_ENV_FILE"; do
   [[ "$path" == /* && "$path" != *$'\n'* && "$path" != *$'\r'* ]] \
     || fail "deployment paths must be absolute single-line paths" 64
 done
 
-for command in "$UV_COMMAND" "$SYSTEMCTL_COMMAND" "$CURL_COMMAND" flock git mv sleep; do
+for command in \
+  "$UV_COMMAND" "$SYSTEMCTL_COMMAND" "$CURL_COMMAND" "$MOUNTPOINT_COMMAND" \
+  flock git mv sleep; do
   command -v "$command" >/dev/null 2>&1 || fail "missing command: $command" 127
 done
 [[ -d "$SOURCE_REPO/.git" ]] || fail "source repository is missing: $SOURCE_REPO" 66
 [[ -f "$SHARED_ENV_FILE" ]] || fail "shared test environment file is missing" 66
 [[ -d "$DATA_ROOT" ]] || fail "data root is missing" 66
+[[ -d "$RAW_ROOT" ]] || fail "raw data root is missing: $RAW_ROOT" 66
+"$MOUNTPOINT_COMMAND" --quiet "$RAW_ROOT" \
+  || fail "raw data root is not a mountpoint: $RAW_ROOT" 66
 mkdir -p "$DEPLOY_DIR" "$SHARED_LOG_DIR"
 
 exec 9>"$LOCK_FILE"

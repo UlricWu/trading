@@ -15,6 +15,7 @@ POST_MAX_TIME="${MINQUANT_CRON_POST_MAX_TIME:-30}"
 GET_MAX_TIME="${MINQUANT_CRON_GET_MAX_TIME:-10}"
 POLL_SLEEP="${MINQUANT_CRON_POLL_SLEEP:-5}"
 JOB_DATE="${MINQUANT_OFFLINE_DATA_DATE:-}"
+MOUNTPOINT_COMMAND="${MINQUANT_MOUNTPOINT_BIN:-mountpoint}"
 ENVIRONMENT="test"
 RELEASE_REF="release/auto-release"
 
@@ -246,12 +247,13 @@ run_data_job() {
 
 main() {
     local failed=0
+    local raw_root
 
     if (( $# != 0 )); then
         log "run_offline_data_jobs.sh does not accept positional arguments"
         return 2
     fi
-    for required_command in curl flock git sleep; do
+    for required_command in curl flock git sleep "$MOUNTPOINT_COMMAND"; do
         require_command "$required_command"
     done
     require_positive_integer MINQUANT_CRON_POST_MAX_TIME "$POST_MAX_TIME"
@@ -263,6 +265,15 @@ main() {
     fi
     if [[ "$STORAGE_ROOT" != /* || ! -d "$STORAGE_ROOT" ]]; then
         log "ZERO_STORAGE_ROOT must be an existing absolute directory: $STORAGE_ROOT"
+        return 66
+    fi
+    raw_root="${STORAGE_ROOT}/raw"
+    if [[ ! -d "$raw_root" ]]; then
+        log "raw data root is missing: $raw_root"
+        return 66
+    fi
+    if ! "$MOUNTPOINT_COMMAND" --quiet "$raw_root"; then
+        log "raw data root is not a mountpoint: $raw_root"
         return 66
     fi
     if [[ "$LOCK_FILE" != /* || "$LOCK_FILE" == *$'\n'* || "$LOCK_FILE" == *$'\r'* ]]; then
