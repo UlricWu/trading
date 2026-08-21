@@ -50,6 +50,10 @@ semantic-release 必须能够分析 `dev` 中的原始 Conventional Commit 类�
 
 ## 测试部署边界
 
+从零安装、逐参数原理、验收和排障步骤见
+[测试环境自动部署操作指南](test_deployment_setup_guide.md)。该指南只说明如何落实本节
+契约，不单独拥有发布语义。
+
 测试发布链路为：
 
 ```text
