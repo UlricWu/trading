@@ -17,6 +17,7 @@ from src.utils import table_ops
 from src.utils.parquet_writer import write_parquet_atomic
 from src.utils.path import PathManager
 
+_EMPTY_EVENT_OUTPUTS = frozenset({"stock_st", "suspend_d"})
 _LEVEL2_TRADE_OUTPUTS = frozenset({"sh_trade", "sz_trade"})
 
 
@@ -254,13 +255,14 @@ class FactMaterializeStep:
                 output_name=output_file,
                 trade_date=trade_date,
             )
-            table_ops.require_nonempty(
-                normalized.table,
-                who=(
-                    f"FactNormalize source={plan.source_name} "
-                    f"target={plan.output} trade_date={trade_date}"
-                ),
-            )
+            if plan.output not in _EMPTY_EVENT_OUTPUTS:
+                table_ops.require_nonempty(
+                    normalized.table,
+                    who=(
+                        f"FactNormalize source={plan.source_name} "
+                        f"target={plan.output} trade_date={trade_date}"
+                    ),
+                )
             write_parquet_atomic(
                 output_file=output_file,
                 table=normalized.table,

@@ -69,7 +69,10 @@ GitHub release/auto-release push
 
 腾讯云中继、公网 IP、腾讯云 TLS、SSH 部署跳转、Nginx、Docker、SQLite、外部消息队列和
 cron 部署都不属于测试发布链路。Funnel 只允许映射 Webhook 接收端口，不得映射推理服务
-5050。`start.sh`、`kill.sh`、`status.sh` 可以用于人工本地开发，但不是自动部署入口。
+5050。测试 API unit 必须显式注入 `MINQUANT_API_HOST=0.0.0.0` 和
+`MINQUANT_API_PORT=5050`。`start.sh`、`kill.sh`、`status.sh` 可以用于人工本地开发，
+但不是自动部署入口；开发启动和状态检查默认使用 5051，避免与同机测试服务互相占用或
+误检。
 
 以下状态相互独立，不得互相替代：
 

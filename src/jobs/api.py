@@ -192,11 +192,26 @@ def _error_response(
 
 
 def main() -> None:
-    """Run one single-process Flask service and own its runtime shutdown.
+    """Run one configured single-process Flask service and own its shutdown.
 
     Example:
+        os.environ["MINQUANT_API_HOST"] = "127.0.0.1"
+        os.environ["MINQUANT_API_PORT"] = "5051"
         main()
     """
+    api_host = os.environ.get("MINQUANT_API_HOST", "0.0.0.0")
+    api_port_value = os.environ.get("MINQUANT_API_PORT", "5051") # test 5050 dev 5051
+    if not api_host.strip():
+        raise ValueError("MINQUANT_API_HOST must be non-blank")
+    try:
+        api_port = int(api_port_value)
+    except ValueError as exc:
+        raise ValueError(
+            "MINQUANT_API_PORT must be an integer from 1 to 65535"
+        ) from exc
+    if not 1 <= api_port <= 65535:
+        raise ValueError("MINQUANT_API_PORT must be an integer from 1 to 65535")
+
     started_at = DateTimeUtils.now()
     system_log_file = Path("logs") / "system" / f"{started_at:%Y-%m-%d-%H-%M-%S.%f}.log"
     configure_system_logging(system_log_file)
@@ -207,8 +222,8 @@ def main() -> None:
         with JobRuntime() as job_runtime:
             flask_app = create_app(job_runtime)
             flask_app.run(
-                host="0.0.0.0",
-                port=5050,
+                host=api_host,
+                port=api_port,
                 debug=False,
                 use_reloader=False,
                 threaded=True,

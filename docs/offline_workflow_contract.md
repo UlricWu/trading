@@ -212,8 +212,11 @@ partition date 与 maturity date。调度、计算或发布错误原样传播，
 两个 kind 使用同一套 workflow 语义，显式 step 顺序都固定为 calendar materialize → fact
 materialize → feature build → label build。差异只存在于 workflow 准备阶段选择的 source、
 normalize 与 derived operation 实现。Pipeline 只按 workflow 传入的单一 tuple 执行，不知道
-也不校验这些领域顺序。Normalize、feature 或 label 产生零行必须失败。成功对象必须先发布
-payload 再提交 Meta；
+也不校验这些领域顺序。`stock_st` 和 `suspend_d` normalize 产生零行时必须把它作为有效空
+事件集合发布 payload 并提交 Meta；其他 normalize、feature 或 label 产生零行必须失败。
+`stock_st` 的 `2019-04-01` 是该规则的正式案例：零行 raw 对象必须产生零行
+`processed/stock_st/v1/trade_date=2019-04-01/data.parquet` 及同目录 `meta.json`，不得跳过
+normalize 或把 processed 对象留作缺失。成功对象必须先发布 payload 再提交 Meta；
 Meta reuse、lineage、Level-2 symbol slices 与 staging/raw 选择继续由各 producer owner 负责。
 Calendar bootstrap 与 Data workflow 保留 started 和 finished 业务日志；Training 和
 Backtest workflow 不新增 start/done 日志。

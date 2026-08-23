@@ -178,14 +178,13 @@ class TushareBroker:
                 f"TushareBroker response must be a DataFrame, "
                 f"got={type(response).__name__}"
             )
-        if response.empty:
+        if source_name == "trade_calendar" and response.empty:
             logs.info(
                 f"no data source={source_name} "
                 f"api_name={api_name} params={params}"
             )
             return False
 
-        logs.info(f"fetched raw_payload={raw_payload}")
         payload = response.to_parquet()
         if not isinstance(payload, bytes):
             raise TypeError("TushareBroker parquet serialization returned no bytes")

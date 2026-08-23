@@ -872,11 +872,52 @@ TUSHARE_TOKEN=replace-me
 TUSHARE_GATEWAY=
 ~~~
 
-为什么不把它放在 Git 工作树中：
+#### 3.8.1 真实文件与部署工作树符号链接
 
-- checkout 和 <code>git clean</code> 不应该删除运行凭证；
-- Secret 不能进入 commit；
-- 同一份测试配置需要跨 release SHA 保留。
+<code>/home/wsw/app/shared/trading/.env.test</code> 是测试环境凭证的唯一真实文件，是
+<code>0600</code> 的普通文件，不是链接。自动部署完成后，代码工作树中的同名路径是指向它的
+绝对符号链接：
+
+~~~text
+/home/wsw/app/code/trading/.env.test
+  -> /home/wsw/app/shared/trading/.env.test
+~~~
+
+worker 在 detached checkout、hard reset 和 <code>git clean</code> 完成后执行等价于以下内容
+的命令；这是创建引用，不是复制文件：
+
+~~~bash
+ln -sfn \
+  /home/wsw/app/shared/trading/.env.test \
+  /home/wsw/app/code/trading/.env.test
+~~~
+
+应用仍按配置契约打开项目根目录的 <code>.env.test</code>。操作系统跟随符号链接后读取 shared
+中的真实文件，因此不存在两份需要同步的凭证。通过链接路径原地修改文件内容也会修改 shared
+中的同一文件；但删除链接只会删除链接本身，删除 shared 中的真实文件则会留下断链。某些通过
+“创建新文件再 rename 覆盖”实现保存的工具还可能把链接替换成普通文件，造成配置漂移。因此
+运维人员必须只编辑 <code>/home/wsw/app/shared/trading/.env.test</code>，不得在
+<code>/home/wsw/app/code/trading</code> 中人工创建或替换 <code>.env.test</code>。
+
+可以在不打印任何 Secret 的情况下验证当前关系：
+
+~~~bash
+test -L /home/wsw/app/code/trading/.env.test
+readlink /home/wsw/app/code/trading/.env.test
+test -f /home/wsw/app/shared/trading/.env.test
+~~~
+
+采用这一结构的原因是：
+
+- 精确 SHA 部署会重置和清理 <code>/home/wsw/app/code/trading</code>，运行凭证不能依赖该
+  工作树的生命周期；
+- Secret 不能进入 commit，shared 路径允许凭证独立于 Git 管理；
+- 同一份测试配置必须跨 release SHA 保留，不能在每次部署时复制并产生多个可能漂移的副本；
+- 应用继续使用稳定的项目根目录路径，无需感知服务器的部署目录划分。
+
+<code>logs</code> 使用相同结构：真实目录位于
+<code>/home/wsw/app/shared/trading/logs</code>，代码工作树中的 <code>logs</code> 是指向它的
+目录符号链接，使日志跨 checkout 保留。
 
 <code>ENV=test</code> 由 systemd unit 注入，<code>ZERO_STORAGE_ROOT</code> 也由 unit 注入；
 它们不是 Secret，不需要在该文件中重复定义。空的 <code>TUSHARE_GATEWAY</code> 表示使用默认
@@ -1042,7 +1083,7 @@ worker 内部依次做以下事情：
 4. 用 <code>flock -w 600</code> 最多等待部署锁十分钟；
 5. fetch release branch，并要求远端 tip 完全等于 <code>DEPLOY_SHA</code>；
 6. 停止 API，detached checkout、hard reset，并清理非 ignored untracked 文件；
-7. 把 <code>.env.test</code> 和 <code>logs</code> 重新链接到 shared；
+7. 为 <code>.env.test</code> 和 <code>logs</code> 重新创建指向 shared 的绝对符号链接；
 8. 校验锁文件并同步依赖；
 9. 再 fetch 一次，防止依赖安装期间远端已经前进；
 10. 写入 API commit identity、启动服务；
@@ -1574,8 +1615,9 @@ Gate。
 | <code>reset --hard SHA</code> | tracked 文件精确等于 commit。 |
 | <code>clean -fd</code> | 删除非 ignored 的人工残留；因此 <code>code/trading</code> 禁止人工修改。 |
 
-<code>.env.test</code> 和 <code>logs</code> 已在 <code>.gitignore</code> 中，worker 又会把它们
-重新链接到 shared，所以运行配置和日志不随 checkout 丢失。
+<code>.env.test</code> 和 <code>logs</code> 已在 <code>.gitignore</code> 中，worker 又会为它们
+重新创建指向 shared 的符号链接，所以运行配置和日志不随 checkout 丢失。链接只引用 shared
+中的真实文件或目录，不会复制内容；具体读写语义见 3.8.1。
 
 ### 4.2 为什么 Webhook 接收器不直接执行 worker
 

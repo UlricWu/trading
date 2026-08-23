@@ -1,4 +1,5 @@
 # filepath: src/data_system/market_phase.py
+
 from __future__ import annotations
 
 from enum import IntEnum
@@ -13,13 +14,13 @@ class MarketPhase(IntEnum):
 
     ``AUCTION = 0``:
         - SH stock/cdr from 2018-08-20:
-          ``[09:25:00, 09:25:02)`` and ``[15:00:00, 15:00:03)``.
+          ``[09:25:00, 09:25:02]`` and ``[15:00:00, 15:00:03)``.
         - SH b_share on every supported date:
-          ``[09:25:00, 09:25:01)`` and ``[15:00:00, 15:00:02)``.
+          ``[09:25:00, 09:25:01]`` and ``[15:00:00, 15:00:02)``.
         - SH fund/etf through 2026-07-05:
-          ``[09:25:00, 09:25:02)``.
+          ``[09:25:00, 09:25:02]``.
         - SH fund/etf from 2026-07-06:
-          ``[09:25:00, 09:25:02)`` and ``[15:00:00, 15:00:03)``.
+          ``[09:25:00, 09:25:02]`` and ``[15:00:00, 15:00:03)``.
         - SH bond/convertible_bond/bond_repo on every supported date:
           ``[09:25:00, 09:25:01)``.
         - SZ stock/fund/etf/bond/b_share on every supported date and SZ

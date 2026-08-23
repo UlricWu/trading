@@ -75,7 +75,7 @@ _DEFAULT_A_SHARE_TRADE_PHASE_RULES: tuple[_PhaseRule, ...] = (
             _PhaseInterval(
                 time(9, 25),
                 time(9, 25, 2),
-                False,
+                True,
                 MarketPhase.AUCTION,
             ),
             *_TRADE_REGULAR_AM,
@@ -97,7 +97,7 @@ _DEFAULT_A_SHARE_TRADE_PHASE_RULES: tuple[_PhaseRule, ...] = (
             _PhaseInterval(
                 time(9, 25),
                 time(9, 25, 1),
-                False,
+                True,
                 MarketPhase.AUCTION,
             ),
             *_TRADE_REGULAR_AM,
@@ -153,7 +153,7 @@ _DEFAULT_A_SHARE_TRADE_PHASE_RULES: tuple[_PhaseRule, ...] = (
             _PhaseInterval(
                 time(9, 25),
                 time(9, 25, 2),
-                False,
+                True,
                 MarketPhase.AUCTION,
             ),
             *_TRADE_REGULAR_AM,
@@ -169,7 +169,7 @@ _DEFAULT_A_SHARE_TRADE_PHASE_RULES: tuple[_PhaseRule, ...] = (
             _PhaseInterval(
                 time(9, 25),
                 time(9, 25, 2),
-                False,
+                True,
                 MarketPhase.AUCTION,
             ),
             *_TRADE_REGULAR_AM,

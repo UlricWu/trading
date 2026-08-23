@@ -8,6 +8,7 @@ from typing import cast
 from unittest.mock import Mock
 
 import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
 
 from src.access import meta
@@ -193,6 +194,125 @@ def test_fact_step_uses_matching_staging_payload_for_normalization(
     step.run(_context(trade_date))
 
     assert selected_inputs == [staging_path]
+
+
+@pytest.mark.parametrize("event_source", ("stock_st", "suspend_d"))
+def test_fact_step_publishes_empty_event_sets(
+    tmp_path: Path,
+    event_source: str,
+) -> None:
+    path_manager = PathManager(tmp_path)
+    trade_date = "2019-04-01"
+    raw_path = path_manager.raw_payload(
+        broker="broker",
+        source_name=event_source,
+        trade_date=trade_date,
+        payload_file="data.parquet",
+    )
+    raw_path.parent.mkdir(parents=True)
+    raw_path.write_bytes(b"empty-event-source")
+    meta.commit(pm=path_manager, payload_path=raw_path)
+
+    def normalize_operation(
+        *,
+        input_file: Path,
+        output_name: Path,
+        raw_object: str,
+        target_name: str,
+        trade_date: str,
+    ) -> NormalizeOutput:
+        return NormalizeOutput(
+            table=pa.table(
+                {"symbol": pa.array([], type=pa.string())}
+            )
+        )
+
+    step = FactMaterializeStep(
+        app_config=cast("AppConfig", object()),
+        path_manager=path_manager,
+        sources={event_source: _source(event_source)},
+        broker_classes=cast(
+            "dict[str, type[BrokerAdapter]]",
+            {"broker": Mock()},
+        ),
+        normalize_operations={"broker": normalize_operation},
+        processed_version="v1",
+        adapter_cache={},
+    )
+
+    context = step.run(_context(trade_date))
+
+    processed_path = path_manager.processed_data(
+        dataset_name=event_source,
+        version="v1",
+        trade_date=trade_date,
+    )
+    processed_meta = path_manager.processed_meta(
+        dataset_name=event_source,
+        version="v1",
+        trade_date=trade_date,
+    )
+    loaded = meta.require(
+        pm=path_manager,
+        meta_path=processed_meta,
+        expected_payload_path=processed_path,
+    )
+    assert context == _context(trade_date)
+    assert loaded.payload_path == processed_path
+    assert pq.ParquetFile(processed_path).read().num_rows == 0
+
+
+def test_fact_step_rejects_an_empty_non_event_output(tmp_path: Path) -> None:
+    path_manager = PathManager(tmp_path)
+    trade_date = "2026-07-20"
+    raw_path = path_manager.raw_payload(
+        broker="broker",
+        source_name="daily_bar",
+        trade_date=trade_date,
+        payload_file="data.parquet",
+    )
+    raw_path.parent.mkdir(parents=True)
+    raw_path.write_bytes(b"empty-daily-bar")
+    meta.commit(pm=path_manager, payload_path=raw_path)
+
+    def normalize_operation(
+        *,
+        input_file: Path,
+        output_name: Path,
+        raw_object: str,
+        target_name: str,
+        trade_date: str,
+    ) -> NormalizeOutput:
+        return NormalizeOutput(table=pa.table({"symbol": []}))
+
+    step = FactMaterializeStep(
+        app_config=cast("AppConfig", object()),
+        path_manager=path_manager,
+        sources={"daily_bar": _source("daily_bar")},
+        broker_classes=cast(
+            "dict[str, type[BrokerAdapter]]",
+            {"broker": Mock()},
+        ),
+        normalize_operations={"broker": normalize_operation},
+        processed_version="v1",
+        adapter_cache={},
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            "FactNormalize source=daily_bar target=daily_bar "
+            "trade_date=2026-07-20: data must contain at least one row"
+        ),
+    ):
+        step.run(_context(trade_date))
+
+    processed_meta = path_manager.processed_meta(
+        dataset_name="daily_bar",
+        version="v1",
+        trade_date=trade_date,
+    )
+    assert meta.find(pm=path_manager, meta_path=processed_meta) is None
 
 
 def test_fact_step_rejects_unbound_normalizer_before_date_io(tmp_path: Path) -> None:

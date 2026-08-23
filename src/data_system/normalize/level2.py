@@ -180,9 +180,9 @@ def normalize_level2(
             parsed_row_count += parsed_table.num_rows
             nonempty_batch_count += 1
 
-            if nonempty_batch_count % 32 == 0:
+            if nonempty_batch_count % 64 == 0:
                 logs.info(
-                    f"Level-2 batch progress; batches={nonempty_batch_count} "
+                    f"batches={nonempty_batch_count} "
                     f"raw_rows={raw_row_count} parsed_rows={parsed_row_count}"
                 )
 
