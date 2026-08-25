@@ -3,8 +3,9 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import Mapping, MutableMapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from src import logs
 from src.access import meta
@@ -30,12 +31,24 @@ class _NormalizePlan:
 
 
 @dataclass(slots=True)
+class _OperationTiming:
+    total_seconds: float = 0.0
+    runs: int = 0
+
+    def add(self, elapsed_seconds: float) -> None:
+        self.total_seconds += elapsed_seconds
+        self.runs += 1
+
+
+@dataclass(slots=True)
 class _MaterializeStats:
     raw_reused: int = 0
     raw_fetched: int = 0
     unavailable: int = 0
     processed_reused: int = 0
     processed_published: int = 0
+    raw_ingest_timings: dict[str, _OperationTiming] = field(default_factory=dict)
+    normalize_timings: dict[str, _OperationTiming] = field(default_factory=dict)
 
 
 class FactMaterializeStep:
@@ -132,16 +145,22 @@ class FactMaterializeStep:
         missing_dates: list[str] = []
         stats = _MaterializeStats()
         for trade_date in context.trade_dates:
+            date_started_at = time.perf_counter()
             if not self._ingest_sources(trade_date, stats):
                 missing_dates.append(trade_date)
                 continue
             self._normalize_sources(trade_date, stats)
+            logs.info(
+                f"✅ fact date; trade_date={trade_date} "
+                f"elapsed_seconds={time.perf_counter() - date_started_at:.3f}"
+            )
 
         if missing_dates:
             raise RuntimeError(
                 f"[OfflineData] fact dates are unavailable; "
                 f"missing_dates={missing_dates}"
             )
+        self._log_operation_summary(stats)
         logs.info(
             f"✅ fact materialize; trade_dates={len(context.trade_dates)} "
             f"raw_reused={stats.raw_reused} raw_fetched={stats.raw_fetched} "
@@ -186,12 +205,15 @@ class FactMaterializeStep:
                 adapter = self._broker_classes[plan.broker](app_cfg=self._app_config)
                 self._adapter_cache[plan.broker] = adapter
 
+            ingest_started_at = time.perf_counter()
             fetched = adapter.fetch(record=plan, pm=self._path_manager)
             if fetched is None:
+                elapsed_seconds = time.perf_counter() - ingest_started_at
                 logs.warning(
                     f"⚠️ fact source; reason=unavailable "
                     f"source={plan.source_name} broker={plan.broker} "
-                    f"trade_date={trade_date}"
+                    f"trade_date={trade_date} "
+                    f"elapsed_seconds={elapsed_seconds:.3f}"
                 )
                 missing_payloads += 1
                 stats.unavailable += 1
@@ -204,11 +226,18 @@ class FactMaterializeStep:
                 payload_file=fetched.payload_file,
             )
             meta.commit(pm=self._path_manager, payload_path=output_file)
+            elapsed_seconds = time.perf_counter() - ingest_started_at
+            timing = stats.raw_ingest_timings.setdefault(
+                plan.source_name,
+                _OperationTiming(),
+            )
+            timing.add(elapsed_seconds)
             available_payload = True
             stats.raw_fetched += 1
             logs.info(
                 f"✅ raw ingest; source={plan.source_name} broker={plan.broker} "
-                f"trade_date={trade_date} output={output_file}"
+                f"trade_date={trade_date} elapsed_seconds={elapsed_seconds:.3f} "
+                f"output={output_file}"
             )
 
         if not available_payload:
@@ -281,6 +310,7 @@ class FactMaterializeStep:
             ):
                 input_file = staging_candidate
 
+            normalize_started_at = time.perf_counter()
             normalized = plan.operation(
                 input_file=input_file,
                 raw_object=plan.source.raw_object,
@@ -296,6 +326,12 @@ class FactMaterializeStep:
                         f"target={plan.output} trade_date={trade_date}"
                     ),
                 )
+            normalize_seconds = time.perf_counter() - normalize_started_at
+            timing = stats.normalize_timings.setdefault(
+                plan.output,
+                _OperationTiming(),
+            )
+            timing.add(normalize_seconds)
             write_parquet_atomic(
                 output_file=output_file,
                 table=normalized.table,
@@ -310,5 +346,26 @@ class FactMaterializeStep:
             logs.info(
                 f"✅ processed publish; target={plan.output} "
                 f"source={plan.source_name} trade_date={trade_date} "
-                f"rows={normalized.table.num_rows} output={output_file}"
+                f"rows={normalized.table.num_rows} "
+                f"normalize_seconds={normalize_seconds:.3f} output={output_file}"
             )
+
+    def _log_operation_summary(self, stats: _MaterializeStats) -> None:
+        rows: list[str] = []
+        for source_name, timing in stats.raw_ingest_timings.items():
+            average_seconds = timing.total_seconds / timing.runs
+            label = f"raw ingest {source_name}"
+            rows.append(
+                f"{label:<35} {timing.total_seconds:>8.3f}s "
+                f"avg={average_seconds:.3f}s runs={timing.runs}"
+            )
+        for target_name, timing in stats.normalize_timings.items():
+            average_seconds = timing.total_seconds / timing.runs
+            label = f"normalize {target_name}"
+            rows.append(
+                f"{label:<35} {timing.total_seconds:>8.3f}s "
+                f"avg={average_seconds:.3f}s runs={timing.runs}"
+            )
+        if rows:
+            summary = "\n".join(rows)
+            logs.info(f"✅ ===== Fact operation summary =====\n{summary}")

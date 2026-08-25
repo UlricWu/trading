@@ -187,8 +187,8 @@ def normalize_level2(
             ):
                 elapsed_seconds = int(now_seconds - started_at_seconds)
                 logs.info(
-                    f"⏳ Level-2 normalize; stage=read_parse "
-                    f"target={target_name} trade_date={trade_date} "
+                    f"⏳ Level-2 normalize; target={target_name} "
+                    f"trade_date={trade_date} "
                     f"elapsed_seconds={elapsed_seconds}"
                 )
                 last_progress_at_seconds = now_seconds

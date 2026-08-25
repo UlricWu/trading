@@ -107,11 +107,13 @@ backtest_{start}_{end}_{experiment_id}
 以 `FileExistsError` 失败；该检查不创建、预留、锁定、清理或恢复目录。
 
 Instrumentation 衡量 workflow 显式组装的 step，返回 `step.run(context)` 的原始结果，以
-`finally` 累计耗时、次数、失败次数，并原样传播异常。Step 不接收也不调用
-Instrumentation；只有 `run_steps(...)` 负责默认测量。同名 step 累计总耗时、次数、平均值
-和失败次数；进入 Instrumentation 作用域后，每个 step 输出一条 `✅ pipeline step` 或
-`❌ pipeline step` 记录，最后只输出一条 `✅ pipeline` 或 `❌ pipeline` 汇总。准备阶段或空
-schedule/timing 在进入作用域前失败，因此不输出 timeline。现有 step label 固定为：
+`finally` 累计耗时和次数，并原样传播异常。Step 不接收也不调用 Instrumentation；只有
+`run_steps(...)` 负责默认测量。同名 step 累计总耗时、次数和平均值；离开 Instrumentation
+作用域时只输出一个多行、等宽对齐的 Pipeline timeline 日志事件，其中依次列出每个 step
+的总耗时，再列出 Total；同名 step 在同一作用域内实际执行多次时，该行才额外列出平均
+耗时和 runs。正常退出以 `✅` 和 `INFO` 开头，异常退出以 `❌` 和 `ERROR` 开头；续行不重复
+时间、level、源码位置或状态符号。准备阶段或空 schedule/timing 在进入作用域前失败，
+因此不输出 timeline。现有 step label 固定为：
 
 ```text
 CalendarMaterializeStep, FactMaterializeStep, FeatureBuildStep, LabelBuildStep,
@@ -203,9 +205,13 @@ Calendar 的 processed 与 raw Meta hit 分别记录 `♻️ calendar processed 
 `♻️ calendar raw meta hit`；每个新发布年度记录一次 `✅ calendar publish`，Step 成功后以
 `✅ calendar materialize` 聚合 years、reused、published 与 trade_dates。Fact 不记录逐日
 ingest/normalize start 或 finish；每个 raw 与 processed Meta hit 分别记录 `♻️ raw meta hit`
-与 `♻️ processed meta hit`，每个实际 raw ingest 与 processed publish 分别记录
-`✅ raw ingest` 与 `✅ processed publish`，不可用 source 记录 `⚠️ fact source`。Step 成功后
-以 `✅ fact materialize` 聚合 trade_dates、raw_reused、raw_fetched、processed_reused、
+与 `♻️ processed meta hit`。每个实际 raw ingest 记录 `✅ raw ingest` 及其 elapsed_seconds；
+每个 processed publish 记录 `✅ processed publish` 及其中 normalize_seconds；不可用 source
+记录 `⚠️ fact source` 及本次尝试的 elapsed_seconds。每个成功完成的日期记录
+`✅ fact date` 及其 elapsed_seconds。Meta hit 不计入 raw ingest 或 normalize runs。Step 成功后
+先以单个多行 `✅ Fact operation summary` 按 source 汇总 raw ingest、按 target 汇总 normalize
+的总耗时、平均耗时和真实 runs；没有实际执行的 raw ingest 或 normalize 时不输出该摘要。
+最后以 `✅ fact materialize` 聚合 trade_dates、raw_reused、raw_fetched、processed_reused、
 processed_published 与 unavailable。失败仍按现有边界原样传播。
 
 所有 fact 日期完成后，一个 `FeatureBuildStep` 才在自己的一次 `run` 中按到达日升序生成

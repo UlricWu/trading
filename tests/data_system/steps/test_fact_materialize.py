@@ -124,6 +124,11 @@ def test_fact_step_raw_meta_hit_does_not_construct_a_broker(
 ) -> None:
     logger = Mock()
     monkeypatch.setattr(fact_module, "logs", logger)
+    monkeypatch.setattr(
+        fact_module.time,
+        "perf_counter",
+        Mock(side_effect=[1.0, 1.25]),
+    )
     path_manager = Mock(spec=PathManager)
     raw_meta_path = Path("/raw/bars/meta.json")
     path_manager.raw_meta.return_value = raw_meta_path
@@ -148,6 +153,7 @@ def test_fact_step_raw_meta_hit_does_not_construct_a_broker(
     assert [call.args[0] for call in logger.info.call_args_list] == [
         f"♻️ raw meta hit; source=bars broker=broker trade_date=2026-07-20 "
         f"meta={raw_meta_path}",
+        "✅ fact date; trade_date=2026-07-20 elapsed_seconds=0.250",
         "✅ fact materialize; trade_dates=1 raw_reused=1 raw_fetched=0 "
         "processed_reused=0 processed_published=0 unavailable=0",
     ]
@@ -159,6 +165,11 @@ def test_fact_step_uses_matching_staging_payload_for_normalization(
 ) -> None:
     logger = Mock()
     monkeypatch.setattr(fact_module, "logs", logger)
+    monkeypatch.setattr(
+        fact_module.time,
+        "perf_counter",
+        Mock(side_effect=[1.0, 2.0, 2.5, 3.0, 4.0, 4.1]),
+    )
     path_manager = PathManager(tmp_path)
     trade_date = "2026-05-01"
     raw_path = path_manager.raw_payload(
@@ -227,15 +238,139 @@ def test_fact_step_uses_matching_staging_payload_for_normalization(
         f"♻️ raw meta hit; source=source broker=broker trade_date={trade_date} "
         f"meta={raw_meta_path}",
         f"✅ processed publish; target=output source=source "
-        f"trade_date={trade_date} rows=1 output={output_path}",
+        f"trade_date={trade_date} rows=1 normalize_seconds=0.500 "
+        f"output={output_path}",
+        f"✅ fact date; trade_date={trade_date} elapsed_seconds=2.000",
+        "\n".join(
+            (
+                "✅ ===== Fact operation summary =====",
+                f"{'normalize output':<35} {0.5:>8.3f}s "
+                "avg=0.500s runs=1",
+            )
+        ),
         "✅ fact materialize; trade_dates=1 raw_reused=1 raw_fetched=0 "
         "processed_reused=0 processed_published=1 unavailable=0",
         f"♻️ raw meta hit; source=source broker=broker trade_date={trade_date} "
         f"meta={raw_meta_path}",
         f"♻️ processed meta hit; target=output source=source "
         f"trade_date={trade_date} meta={processed_meta_path}",
+        f"✅ fact date; trade_date={trade_date} elapsed_seconds=0.100",
         "✅ fact materialize; trade_dates=1 raw_reused=1 raw_fetched=0 "
         "processed_reused=1 processed_published=0 unavailable=0",
+    ]
+
+
+def test_fact_step_times_each_real_ingest_and_normalize_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    logger = Mock()
+    monkeypatch.setattr(fact_module, "logs", logger)
+    monkeypatch.setattr(
+        fact_module.time,
+        "perf_counter",
+        Mock(
+            side_effect=[
+                0.0,
+                1.0,
+                3.0,
+                4.0,
+                7.0,
+                8.0,
+                10.0,
+                11.0,
+                16.0,
+                17.0,
+                21.0,
+                22.0,
+            ]
+        ),
+    )
+    path_manager = Mock(spec=PathManager)
+    path_manager.raw_meta.side_effect = lambda **kwargs: Path(
+        f"/raw/{kwargs['trade_date']}/meta.json"
+    )
+    path_manager.raw_payload.side_effect = lambda **kwargs: Path(
+        f"/raw/{kwargs['trade_date']}/{kwargs['payload_file']}"
+    )
+    path_manager.processed_meta.side_effect = lambda **kwargs: Path(
+        f"/processed/{kwargs['trade_date']}/meta.json"
+    )
+    path_manager.processed_data.side_effect = lambda **kwargs: Path(
+        f"/processed/{kwargs['trade_date']}/data.parquet"
+    )
+    path_manager.staging_payload.side_effect = lambda **kwargs: Path(
+        f"/staging/{kwargs['trade_date']}/{kwargs['payload_file']}"
+    )
+    monkeypatch.setattr(fact_module.meta, "find", Mock(return_value=None))
+    monkeypatch.setattr(
+        fact_module.meta,
+        "require",
+        Mock(
+            side_effect=[
+                Mock(
+                    payload_path=Path("/raw/2026-07-20/data.parquet"),
+                    size_bytes=1,
+                ),
+                Mock(
+                    payload_path=Path("/raw/2026-07-21/data.parquet"),
+                    size_bytes=1,
+                ),
+            ]
+        ),
+    )
+    monkeypatch.setattr(fact_module.meta, "commit", Mock())
+    monkeypatch.setattr(fact_module, "write_parquet_atomic", Mock())
+    adapter = Mock(spec=BrokerAdapter)
+    adapter.fetch.side_effect = lambda *, record, pm: DownloadPlan(
+        source_name=record.source_name,
+        trade_date=record.trade_date,
+        broker=record.broker,
+        raw_object=record.raw_object,
+        payload_file="data.parquet",
+    )
+    normalize = Mock(return_value=NormalizeOutput(table=pa.table({"value": [1]})))
+    step = FactMaterializeStep(
+        app_config=cast("AppConfig", object()),
+        path_manager=path_manager,
+        sources={"source": _source("raw_object", outputs=["output"])},
+        broker_classes=cast(
+            "dict[str, type[BrokerAdapter]]",
+            {"broker": Mock()},
+        ),
+        normalize_operations={"broker": normalize},
+        processed_version="v1",
+        adapter_cache={"broker": adapter},
+    )
+
+    result = step.run(_context("2026-07-20", "2026-07-21"))
+
+    assert result.trade_dates == ("2026-07-20", "2026-07-21")
+    assert adapter.fetch.call_count == 2
+    assert normalize.call_count == 2
+    assert [call.args[0] for call in logger.info.call_args_list] == [
+        "✅ raw ingest; source=source broker=broker trade_date=2026-07-20 "
+        "elapsed_seconds=2.000 output=/raw/2026-07-20/data.parquet",
+        "✅ processed publish; target=output source=source "
+        "trade_date=2026-07-20 rows=1 normalize_seconds=3.000 "
+        "output=/processed/2026-07-20/data.parquet",
+        "✅ fact date; trade_date=2026-07-20 elapsed_seconds=8.000",
+        "✅ raw ingest; source=source broker=broker trade_date=2026-07-21 "
+        "elapsed_seconds=5.000 output=/raw/2026-07-21/data.parquet",
+        "✅ processed publish; target=output source=source "
+        "trade_date=2026-07-21 rows=1 normalize_seconds=4.000 "
+        "output=/processed/2026-07-21/data.parquet",
+        "✅ fact date; trade_date=2026-07-21 elapsed_seconds=12.000",
+        "\n".join(
+            (
+                "✅ ===== Fact operation summary =====",
+                f"{'raw ingest source':<35} {7.0:>8.3f}s "
+                "avg=3.500s runs=2",
+                f"{'normalize output':<35} {7.0:>8.3f}s "
+                "avg=3.500s runs=2",
+            )
+        ),
+        "✅ fact materialize; trade_dates=2 raw_reused=0 raw_fetched=2 "
+        "processed_reused=0 processed_published=2 unavailable=0",
     ]
 
 

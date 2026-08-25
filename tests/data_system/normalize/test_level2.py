@@ -150,9 +150,9 @@ def test_normalize_level2_emits_rate_limited_operational_progress(
     assert [record.args[0] for record in logger.info.call_args_list] == [
         "▶️ Level-2 normalize; target=sh_trade trade_date=2026-03-02 "
         "input=SH_Stock_OrderTrade.csv.7z",
-        "⏳ Level-2 normalize; stage=read_parse target=sh_trade "
+        "⏳ Level-2 normalize; target=sh_trade "
         "trade_date=2026-03-02 elapsed_seconds=30",
-        "⏳ Level-2 normalize; stage=read_parse target=sh_trade "
+        "⏳ Level-2 normalize; target=sh_trade "
         "trade_date=2026-03-02 elapsed_seconds=61",
         "✅ Level-2 normalize; target=sh_trade trade_date=2026-03-02 "
         "rows=2 symbols=1 elapsed_seconds=70 output=/data/sh_trade.parquet",

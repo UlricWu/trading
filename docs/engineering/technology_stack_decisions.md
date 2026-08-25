@@ -60,9 +60,9 @@ System log 不得记录请求 payload、strategy、子进程 argv 或子进程 t
 
 状态符号属于日志语义而不是装饰。正文不得再用 `started`、`active`、`finished`、`done`、
 `succeeded`、`failed` 或 `reused` 重复同一通用状态；`publish` 等词只有作为被执行的具名
-动作时保留；`reused=<count>`、`published=<count>`、`failed_runs=<count>` 等聚合字段不属于
-重复状态。失败原因、HTTP status、Job 状态转换及其他领域结果仍必须通过稳定字段明确
-表达。多行消息只视为一个日志事件，其首行必须遵守上述前缀规则。
+动作时保留；`reused=<count>`、`published=<count>` 等聚合字段不属于重复状态。失败原因、
+HTTP status、Job 状态转换及其他领域结果仍必须通过稳定字段明确表达。多行消息只视为
+一个日志事件，其首行必须遵守上述前缀规则。
 
 CLI composition root 必须在命令分派前把公共 `src.logs` 配置为单一 stderr sink，格式
 固定为：

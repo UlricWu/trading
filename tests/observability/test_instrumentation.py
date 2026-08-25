@@ -33,15 +33,20 @@ def test_measure_returns_the_operation_result_and_forwards_arguments(
 
     assert result == {"status": "complete"}
     operation.assert_called_once_with("2026-07-20", required=True)
-    assert [call.args[0] for call in logger.info.call_args_list] == [
-        "✅ pipeline step; step=Load total_seconds=0.250 "
-        "average_seconds=0.250 runs=1 failed_runs=0",
-        "✅ pipeline; scope=scope total_seconds=0.250 steps=1",
-    ]
+    logger.info.assert_called_once_with(
+        "\n".join(
+            (
+                "✅ ===== Pipeline timeline for scope =====",
+                f"{'Load':<35} {0.25:>8.3f}s",
+                f"{'Total':<35} {0.25:>8.3f}s",
+                "=" * 43,
+            )
+        )
+    )
     logger.error.assert_not_called()
 
 
-def test_measure_counts_failed_operations_and_preserves_the_exception(
+def test_measure_reports_failed_timeline_and_preserves_the_exception(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     error = RuntimeError("failed")
@@ -62,10 +67,14 @@ def test_measure_counts_failed_operations_and_preserves_the_exception(
         instrumentation.measure("Build", operation)
 
     assert raised.value is error
-    assert [call.args[0] for call in logger.error.call_args_list] == [
-        "❌ pipeline step; step=Build total_seconds=0.500 "
-        "average_seconds=0.250 runs=2 failed_runs=1",
-        "❌ pipeline; scope=scope total_seconds=0.500 steps=1 "
-        "error_type=RuntimeError",
-    ]
+    logger.error.assert_called_once_with(
+        "\n".join(
+            (
+                "❌ ===== Pipeline timeline for scope =====",
+                f"{'Build':<35} {0.5:>8.3f}s avg=0.250s runs=2",
+                f"{'Total':<35} {0.5:>8.3f}s",
+                "=" * 43,
+            )
+        )
+    )
     logger.info.assert_not_called()
