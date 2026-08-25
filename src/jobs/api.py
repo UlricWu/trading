@@ -207,7 +207,7 @@ def main() -> None:
         main()
     """
     api_host = os.environ.get("MINQUANT_API_HOST", "0.0.0.0")
-    api_port_value = os.environ.get("MINQUANT_API_PORT", "5051") # test 5050 dev 5051
+    api_port_value = os.environ.get("MINQUANT_API_PORT", "5051")
     if not api_host.strip():
         raise ValueError("MINQUANT_API_HOST must be non-blank")
     try:

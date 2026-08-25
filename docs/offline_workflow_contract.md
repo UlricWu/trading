@@ -161,15 +161,11 @@ Instrumentation 和 I/O 前失败。完整闭区间是一个 workflow 执行单�
 3. 确认当前 kind 至少有一个 fact source；
 4. 绑定固定的 Tushare calendar broker/normalize，并解析所有 fact source 的 broker class
    和固定 broker normalize callable；
-5. 选择当前 kind 的 feature 与 label operation；
-6. 解析全部被选择的 `(feature_set, version)` 与 `(label_set, version)` builder；每个 label
-   builder 直接提供该 set 唯一的 `lookahead` 和 `label_column`。
+5. 为当前 kind 选择空的 feature 与 label operation 集。
 
-Feature 与 label 的支持集只由各自不可变 builder mapping 表达；workflow 不维护第二份
-identity allowlist。Standard 当前选择所有 enabled feature 与 label 配置；任一 identity 无法
-解析时，必须在 I/O 和 timeline 前失败。Level-2 的 feature 与 label 实现尚未定义，因此
-当前选择空 operation 集；对应两个 step 仍各执行一次，但不读写 derived 数据，也不解析
-Standard 的 feature 或 label 配置。
+Standard 与 Level-2 当前都选择空的 feature 与 label operation 集，不读取或解析
+`app_config.data.feature_sets` 和 `app_config.data.label_sets`。对应两个 step 仍各执行一次，
+但不读写 derived 数据。
 
 Tushare manifest 是受代码审查的执行清单，不通过配置、Broker 反射或 capability provider
 动态展开。Level-2 配置则只表达文件 identity、启停和输出映射。除 calendar 外的所选
@@ -178,8 +174,8 @@ source 在 workflow 准备阶段转换为完整 `SourceConfig` 后直接绑定�
 直接承担。
 
 Broker adapter 在首次 raw Meta miss 时才构造，并按 broker 在整个 workflow 内缓存一次。
-全 Meta hit 不构造 adapter。一次 fetch 仍可拥有自己的网络 session。Normalize、feature
-和 label operation 在准备阶段绑定 source/profile/builder；日期循环不得重复解析 capability。
+全 Meta hit 不构造 adapter。一次 fetch 仍可拥有自己的网络 session。Normalize operation
+在准备阶段绑定 source/profile；日期循环不得重复解析 capability。
 
 两个 kind 的 workflow 都只显式组装一个线性 step tuple。`CalendarMaterializeStep` 先在自己
 的一次 `run` 中按自然年升序复用或物化完整 `[start, end]` 所需的 `trade_calendar` 年度

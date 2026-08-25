@@ -162,7 +162,9 @@ def test_level2_sources_come_only_from_enabled_file_config(
     assert list(fact_sources) == ["sh_trade"]
 
 
-def test_level2_uses_empty_feature_and_label_operations(
+@pytest.mark.parametrize("kind", ["data-standard", "data-level2"])
+def test_data_workflow_uses_empty_feature_and_label_operations(
+    kind: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     config = _app_config()
@@ -176,43 +178,33 @@ def test_level2_uses_empty_feature_and_label_operations(
     )
     pipeline = Mock(spec=DataPipeline)
     pipeline.run.side_effect = lambda context: context
+    feature_step_factory = Mock()
+    label_step_factory = Mock()
     monkeypatch.setattr(workflow_module, "DataPipeline", Mock(return_value=pipeline))
+    monkeypatch.setattr(
+        workflow_module,
+        "FeatureBuildStep",
+        feature_step_factory,
+    )
+    monkeypatch.setattr(
+        workflow_module,
+        "LabelBuildStep",
+        label_step_factory,
+    )
 
     run_offline_data(
         app_config=config,
         path_manager=cast("PathManager", object()),
         submission=DataSubmission(
-            kind="data-level2",
+            kind=cast("DataJobKind", kind),
             start="2026-07-20",
             end="2026-07-20",
         ),
     )
 
+    assert feature_step_factory.call_args.kwargs["feature_sets"] == {}
+    assert label_step_factory.call_args.kwargs["label_sets"] == {}
     pipeline.run.assert_called_once()
-
-
-def test_standard_resolves_enabled_feature_and_label_operations_before_io(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    config = _app_config()
-    config.data.feature_sets["unknown"] = FeatureSetConfig(
-        enabled=True,
-        version="v1",
-    )
-    config.data.label_sets["unknown"] = LabelSetConfig(
-        enabled=True,
-        version="v1",
-    )
-    with pytest.raises(ValueError, match="unknown feature builder"):
-        run_offline_data(
-            app_config=config,
-            path_manager=cast("PathManager", object()),
-            submission=DataSubmission(
-                kind="data-standard",
-                start="2026-07-20",
-                end="2026-07-20",
-            ),
-        )
 
 
 def test_data_workflow_rejects_an_invalid_kind_before_preparation(

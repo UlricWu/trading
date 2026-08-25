@@ -267,8 +267,8 @@ def test_job_runtime_failure_does_not_change_health_response(
 @pytest.mark.parametrize(
     ("configured_host", "configured_port", "expected_host", "expected_port"),
     [
-        (None, None, "0.0.0.0", 5050),
-        ("127.0.0.1", "5051", "127.0.0.1", 5051),
+        (None, None, "0.0.0.0", 5051),
+        ("127.0.0.1", "5050", "127.0.0.1", 5050),
     ],
 )
 def test_main_runs_flask_on_the_configured_address(

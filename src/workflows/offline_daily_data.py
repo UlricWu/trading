@@ -69,16 +69,6 @@ def run_offline_data(
             for source_name in tushare_source_names
             if source_name != calendar_source_name
         }
-        # feature_sets = {
-        #     name: config
-        #     for name, config in app_config.data.feature_sets.items()
-        #     if config.enabled
-        # }
-        # label_sets = {
-        #     name: config
-        #     for name, config in app_config.data.label_sets.items()
-        #     if config.enabled
-        # }
     else:
         fact_sources = {}
         for source_name, source_config in app_config.data.sources.items():
