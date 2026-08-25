@@ -374,8 +374,8 @@ def test_level2_broker_accepts_a_control_timeout_after_the_full_payload(
 
     assert downloaded_plan is not None
     assert logger.warning_messages == [
-        "control response timed out after full payload; "
-        "remote_file=SZ_Trade.csv.7z"
+        "⚠️ download; reason=control_response_timeout "
+        "remote_file=SZ_Trade.csv.7z payload_complete=true"
     ]
 
 
@@ -412,5 +412,5 @@ def test_level2_broker_reports_an_empty_remote_directory_without_payload_names(
     assert downloaded_plan is None
     assert ftp.is_closed is True
     assert logger.warning_messages == [
-        "Level2 remote directory is empty; trade_date=2026-07-20"
+        "⚠️ Level-2 remote directory; reason=empty trade_date=2026-07-20"
     ]

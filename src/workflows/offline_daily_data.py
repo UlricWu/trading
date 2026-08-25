@@ -69,28 +69,18 @@ def run_offline_data(
             for source_name in tushare_source_names
             if source_name != calendar_source_name
         }
-        feature_sets = {
-            name: config
-            for name, config in app_config.data.feature_sets.items()
-            if config.enabled
-        }
-        label_sets = {
-            name: config
-            for name, config in app_config.data.label_sets.items()
-            if config.enabled
-        }
     else:
         fact_sources = {}
         for source_name, source_config in app_config.data.sources.items():
             if not source_config.enabled:
                 logs.warning(
-                    f"skip source={source_name} group={OFFLINE_LEVEL2} "
-                    f"broker={source_config.broker} reason=source_disabled"
+                    f"⚠️ source; source={source_name} group={OFFLINE_LEVEL2} "
+                    f"broker={source_config.broker} reason=disabled"
                 )
                 continue
             fact_sources[source_name] = source_config
-        feature_sets = {}
-        label_sets = {}
+    feature_sets = {}
+    label_sets = {}
 
     if not fact_sources:
         raise ValueError(f"offline data kind '{submission.kind}' has no fact sources")
@@ -136,9 +126,11 @@ def run_offline_data(
         instrumentation=instrumentation,
     )
     logs.info(
-        f"started kind={submission.kind} start={submission.start} end={submission.end}"
+        f"▶️ workflow; kind={submission.kind} start={submission.start} "
+        f"end={submission.end}"
     )
     pipeline.run(DataContext(start=submission.start, end=submission.end))
     logs.info(
-        f"finished kind={submission.kind} start={submission.start} end={submission.end}"
+        f"✅ workflow; kind={submission.kind} start={submission.start} "
+        f"end={submission.end}"
     )

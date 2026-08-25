@@ -52,6 +52,8 @@ def test_label_step_runs_each_single_maturity_set_independently(
         resolutions.append((label_set, version))
         return builders[label_set]
 
+    logger = Mock()
+    monkeypatch.setattr(label_module, "logs", logger)
     monkeypatch.setattr(label_module, "get_label_builder", get_builder)
     path_manager = PathManager(tmp_path)
     windows = {
@@ -114,6 +116,15 @@ def test_label_step_runs_each_single_maturity_set_independently(
     assert access.recent_trade_dates.call_count == 6
     for label_set, builder in builders.items():
         assert builder.build_dates == tuple(windows[builder.lookahead + 1])
+    messages = [call.args[0] for call in logger.info.call_args_list]
+    assert [message.split(";", 1)[0] for message in messages] == [
+        "✅ label publish",
+        "✅ label publish",
+        "✅ label publish",
+        "♻️ label meta hit",
+        "♻️ label meta hit",
+        "♻️ label meta hit",
+    ]
 
 
 def test_label_step_rejects_an_unknown_identity_at_construction(

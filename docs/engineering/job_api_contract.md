@@ -21,6 +21,11 @@ GET  /health
 Job、队列和状态都只存在于当前服务进程；服务重启不恢复历史 Job。服务必须以单个
 Flask 进程运行，多个 worker 进程会形成彼此独立且不一致的队列，因此不受支持。
 
+服务入口在启动时读取进程变量 `MINQUANT_API_HOST` 和 `MINQUANT_API_PORT`。变量缺失时
+分别使用 `0.0.0.0` 和 `5051`；host 必须非空白，port 必须可解析为 `1..65535` 的整数，
+否则必须在创建 `JobRuntime` 前启动失败。同一服务器上的人工开发入口使用 `5051`，测试部署
+必须显式配置 `5050`；环境差异不得通过修改 Python 源码中的端口实现。
+
 `GET /jobs/<job_id>` 对已知 Job 返回当前 Job object 和 `200`。`GET /health` 固定返回
 `200` 和以下精确字段：
 
@@ -42,6 +47,8 @@ Flask 进程运行，多个 worker 进程会形成彼此独立且不一致的队
 ## POST `/jobs`
 
 请求 body 必须是 JSON object，`kind` 是唯一判别字段，额外字段必须拒绝：
+
+CLI-only 的 `data-calendar` 不属于 Job kind；`POST /jobs` 必须将其作为不支持的 kind 拒绝。
 
 - `data-standard`、`data-level2`
   - 必须且只允许提供 `start` 与 `end`。

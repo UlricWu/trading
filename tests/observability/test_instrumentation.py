@@ -14,6 +14,8 @@ from src.observability.instrumentation import Instrumentation
 def test_measure_returns_the_operation_result_and_forwards_arguments(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    logger = Mock()
+    monkeypatch.setattr(instrumentation_module, "logs", logger)
     monkeypatch.setattr(
         instrumentation_module.time,
         "perf_counter",
@@ -31,15 +33,26 @@ def test_measure_returns_the_operation_result_and_forwards_arguments(
 
     assert result == {"status": "complete"}
     operation.assert_called_once_with("2026-07-20", required=True)
+    logger.info.assert_called_once_with(
+        "\n".join(
+            (
+                "✅ ===== Pipeline timeline for scope =====",
+                f"{'Load':<35} {0.25:>8.3f}s",
+                f"{'Total':<35} {0.25:>8.3f}s",
+                "=" * 43,
+            )
+        )
+    )
+    logger.error.assert_not_called()
 
 
-def test_measure_counts_failed_operations_and_preserves_the_exception(
+def test_measure_reports_failed_timeline_and_preserves_the_exception(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     error = RuntimeError("failed")
     operation = Mock(side_effect=[None, error])
-    info = Mock()
-    monkeypatch.setattr(instrumentation_module.logs, "info", info)
+    logger = Mock()
+    monkeypatch.setattr(instrumentation_module, "logs", logger)
     monkeypatch.setattr(
         instrumentation_module.time,
         "perf_counter",
@@ -54,7 +67,14 @@ def test_measure_counts_failed_operations_and_preserves_the_exception(
         instrumentation.measure("Build", operation)
 
     assert raised.value is error
-    messages = [call.args[0] for call in info.call_args_list]
-    assert sum("Pipeline timeline for scope" in message for message in messages) == 1
-    assert any("Build" in message and "runs=2" in message for message in messages)
-    assert any("Total" in message and "0.500s" in message for message in messages)
+    logger.error.assert_called_once_with(
+        "\n".join(
+            (
+                "❌ ===== Pipeline timeline for scope =====",
+                f"{'Build':<35} {0.5:>8.3f}s avg=0.250s runs=2",
+                f"{'Total':<35} {0.5:>8.3f}s",
+                "=" * 43,
+            )
+        )
+    )
+    logger.info.assert_not_called()

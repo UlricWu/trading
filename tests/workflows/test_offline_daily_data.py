@@ -53,6 +53,8 @@ def test_data_workflow_supplies_one_linear_domain_step_sequence(
     kind: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    logger = Mock()
+    monkeypatch.setattr(workflow_module, "logs", logger)
     pipeline = Mock(spec=DataPipeline)
     pipeline.run.side_effect = lambda context: context
     pipeline_factory = Mock(return_value=pipeline)
@@ -82,6 +84,10 @@ def test_data_workflow_supplies_one_linear_domain_step_sequence(
     pipeline.run.assert_called_once()
     context = pipeline.run.call_args.args[0]
     assert context == DataContext(start="2026-07-20", end="2026-07-20")
+    assert [call.args[0] for call in logger.info.call_args_list] == [
+        f"▶️ workflow; kind={kind} start=2026-07-20 end=2026-07-20",
+        f"✅ workflow; kind={kind} start=2026-07-20 end=2026-07-20",
+    ]
 
 
 def test_standard_sources_come_only_from_the_tushare_active_manifest(
@@ -156,7 +162,9 @@ def test_level2_sources_come_only_from_enabled_file_config(
     assert list(fact_sources) == ["sh_trade"]
 
 
-def test_level2_uses_empty_feature_and_label_operations(
+@pytest.mark.parametrize("kind", ["data-standard", "data-level2"])
+def test_data_workflow_uses_empty_feature_and_label_operations(
+    kind: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     config = _app_config()
@@ -170,43 +178,33 @@ def test_level2_uses_empty_feature_and_label_operations(
     )
     pipeline = Mock(spec=DataPipeline)
     pipeline.run.side_effect = lambda context: context
+    feature_step_factory = Mock()
+    label_step_factory = Mock()
     monkeypatch.setattr(workflow_module, "DataPipeline", Mock(return_value=pipeline))
+    monkeypatch.setattr(
+        workflow_module,
+        "FeatureBuildStep",
+        feature_step_factory,
+    )
+    monkeypatch.setattr(
+        workflow_module,
+        "LabelBuildStep",
+        label_step_factory,
+    )
 
     run_offline_data(
         app_config=config,
         path_manager=cast("PathManager", object()),
         submission=DataSubmission(
-            kind="data-level2",
+            kind=cast("DataJobKind", kind),
             start="2026-07-20",
             end="2026-07-20",
         ),
     )
 
+    assert feature_step_factory.call_args.kwargs["feature_sets"] == {}
+    assert label_step_factory.call_args.kwargs["label_sets"] == {}
     pipeline.run.assert_called_once()
-
-
-def test_standard_resolves_enabled_feature_and_label_operations_before_io(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    config = _app_config()
-    config.data.feature_sets["unknown"] = FeatureSetConfig(
-        enabled=True,
-        version="v1",
-    )
-    config.data.label_sets["unknown"] = LabelSetConfig(
-        enabled=True,
-        version="v1",
-    )
-    with pytest.raises(ValueError, match="unknown feature builder"):
-        run_offline_data(
-            app_config=config,
-            path_manager=cast("PathManager", object()),
-            submission=DataSubmission(
-                kind="data-standard",
-                start="2026-07-20",
-                end="2026-07-20",
-            ),
-        )
 
 
 def test_data_workflow_rejects_an_invalid_kind_before_preparation(

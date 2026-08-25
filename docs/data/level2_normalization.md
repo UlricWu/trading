@@ -192,8 +192,15 @@ Access 在加载 Meta 后以 Parquet 总行数校验完整覆盖；row-group ove
   也不联合扫描 `SZ_Order` 与 `SZ_Trade`；这些观察不构成 processed 发布门槛。
 - Access 只拥有已提交 processed payload、Meta、symbol slice 完整覆盖和跨 dataset
   symbol 冲突错误。Access 不检查通道序号完整性或成交字段唯一性。
-- `FactMaterializeStep` 拥有 fact normalize 的运行开始、结束与发布日志；Level-2
-  Normalize 拥有该对象内部的路由、batch 进度、排序和完成日志；Access 不记录日志。
+- `FactMaterializeStep` 拥有 raw/processed Meta hit、逐日耗时、按 source/target 聚合的
+  raw ingest/normalize 耗时与 processed publish 日志；Meta hit 不计入 runs。Level-2
+  Normalize 以 `▶️ Level-2 normalize` 表示开始，以
+  `⏳ Level-2 normalize` 表示 normalize 仍在运行，
+  以 `✅ Level-2 normalize` 表示成功完成，并以相同词汇记录内部排序和 symbol index。
+  流式读取解析阶段每 30 秒至多记录一条 `INFO` 心跳；该心跳只在一个 source batch 完成
+  解析后产生，并包含 target、trade date 与累计 elapsed seconds。Normalize 没有正式的
+  stage 状态机，日志不得添加暗示后续阶段的 `stage` 字段，也不记录 source batch 数、raw
+  行数或过滤后保留成交行数。Access 不记录日志。
 
 ## 当前不定义的关系
 

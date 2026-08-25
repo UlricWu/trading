@@ -4,7 +4,9 @@ set -Eeuo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PYTHON_BIN="${REPO_ROOT}/.venv/bin/python"
 SESSION="${MINQUANT_API_SESSION:-minquant_api}"
-API_URL="http://127.0.0.1:5050"
+API_HOST="${MINQUANT_API_HOST-0.0.0.0}"
+API_PORT="${MINQUANT_API_PORT-5051}"
+HEALTH_URL="${MINQUANT_API_HEALTH_URL:-http://127.0.0.1:${API_PORT}/health}"
 DEPLOY_ENVIRONMENT="${ENV:-dev}"
 RELEASE_REF="${MINQUANT_RELEASE_REF:-workspace}"
 COMMIT_SHA="${MINQUANT_COMMIT_SHA:-}"
@@ -14,7 +16,7 @@ if [[ -z "$COMMIT_SHA" ]]; then
 fi
 
 export PYTHONPATH="$REPO_ROOT"
-export ZERO_STORAGE_ROOT="${ZERO_STORAGE_ROOT:-${HOME}/data}"
+export ZERO_STORAGE_ROOT="${ZERO_STORAGE_ROOT:-${HOME}/app/data}"
 
 find_seven_zip() {
     local command_name
@@ -46,17 +48,19 @@ if ! find_seven_zip >/dev/null; then
 fi
 
 printf -v launch_command \
-    'cd %q && exec env ENV=%q MINQUANT_RELEASE_REF=%q MINQUANT_COMMIT_SHA=%q PYTHONPATH=%q ZERO_STORAGE_ROOT=%q %q -m src.jobs.api' \
+    'cd %q && exec env ENV=%q MINQUANT_RELEASE_REF=%q MINQUANT_COMMIT_SHA=%q MINQUANT_API_HOST=%q MINQUANT_API_PORT=%q PYTHONPATH=%q ZERO_STORAGE_ROOT=%q %q -m src.jobs.api' \
     "$REPO_ROOT" \
     "$DEPLOY_ENVIRONMENT" \
     "$RELEASE_REF" \
     "$COMMIT_SHA" \
+    "$API_HOST" \
+    "$API_PORT" \
     "$PYTHONPATH" \
     "$ZERO_STORAGE_ROOT" \
     "$PYTHON_BIN"
 tmux new-session -d -s "$SESSION" "$launch_command"
 
 echo "API process launched in tmux session: $SESSION"
-echo "Health endpoint: ${API_URL}/health"
+echo "Health endpoint: $HEALTH_URL"
 echo "Operational logs: ${REPO_ROOT}/logs/system/"
 echo "A launched process is not proof of readiness; verify the health endpoint."

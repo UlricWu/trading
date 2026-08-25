@@ -127,7 +127,7 @@ class BasicSignalDiagnostics:
         top_str = ", ".join(top) or "none"
 
         logs.info(
-            f"ts_us={ts_us} "
+            f"✅ feature diagnostics; ts_us={ts_us} "
             f"n_sym={n_syms} "
             f"n_feat={n_feats} "
             f"missing_ratio={missing_ratio:.4%} "
@@ -161,8 +161,9 @@ class BasicSignalDiagnostics:
             return
 
         if not scores:
-            logs.info(
-                f"ts_us={ts_us} requested={requested_count} scored=0 "
+            logs.warning(
+                f"⚠️ score diagnostics; reason=no_scores ts_us={ts_us} "
+                f"requested={requested_count} scored=0 "
                 f"skipped={skipped_count}"
             )
             return
@@ -177,7 +178,7 @@ class BasicSignalDiagnostics:
             thresholds=self.score_thresholds,
         )
         logs.info(
-            f"ts_us={ts_us} "
+            f"✅ score diagnostics; ts_us={ts_us} "
             f"requested={requested_count} "
             f"scored={len(scores)} "
             f"skipped={skipped_count} "

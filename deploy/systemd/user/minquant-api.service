@@ -8,6 +8,8 @@ Type=simple
 WorkingDirectory=/home/wsw/app/code/trading
 Environment=ENV=test
 Environment=MINQUANT_RELEASE_REF=release/auto-release
+Environment=MINQUANT_API_HOST=0.0.0.0
+Environment=MINQUANT_API_PORT=5050
 Environment=PYTHONPATH=/home/wsw/app/code/trading
 Environment=ZERO_STORAGE_ROOT=/home/wsw/app/data
 EnvironmentFile=/home/wsw/app/deploy/trading/api-release.env

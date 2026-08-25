@@ -66,15 +66,21 @@ def create_app(job_runtime: JobRuntime) -> Flask:
     @flask_app.before_request
     def log_request() -> None:
         g.request_started_at = time.monotonic()
-        logs.info(f"request method={request.method} path={request.path}")
+        logs.info(f"▶️ request; method={request.method} path={request.path}")
 
     @flask_app.after_request
     def log_response(response: Response) -> Response:
         duration_seconds = time.monotonic() - g.request_started_at
-        logs.info(
-            f"response method={request.method} path={request.path} "
+        response_message = (
+            f"response; method={request.method} path={request.path} "
             f"status={response.status_code} duration_s={duration_seconds:.6f}"
         )
+        if response.status_code >= 500:
+            logs.error(f"❌ {response_message}")
+        elif response.status_code >= 400:
+            logs.warning(f"⚠️ {response_message}")
+        else:
+            logs.info(f"✅ {response_message}")
         return response
 
     @flask_app.errorhandler(InvalidJobRequest)
@@ -115,7 +121,8 @@ def create_app(job_runtime: JobRuntime) -> Flask:
     @flask_app.errorhandler(Exception)
     def handle_internal_error(error: Exception) -> HttpResponse:
         logs.opt(exception=error).error(
-            f"internal_error method={request.method} path={request.path}"
+            f"❌ request; reason=internal_error method={request.method} "
+            f"path={request.path}"
         )
         return _error_response(
             code="internal_error",
@@ -192,32 +199,47 @@ def _error_response(
 
 
 def main() -> None:
-    """Run one single-process Flask service and own its runtime shutdown.
+    """Run one configured single-process Flask service and own its shutdown.
 
     Example:
+        os.environ["MINQUANT_API_HOST"] = "127.0.0.1"
+        os.environ["MINQUANT_API_PORT"] = "5051"
         main()
     """
+    api_host = os.environ.get("MINQUANT_API_HOST", "0.0.0.0")
+    api_port_value = os.environ.get("MINQUANT_API_PORT", "5051")
+    if not api_host.strip():
+        raise ValueError("MINQUANT_API_HOST must be non-blank")
+    try:
+        api_port = int(api_port_value)
+    except ValueError as exc:
+        raise ValueError(
+            "MINQUANT_API_PORT must be an integer from 1 to 65535"
+        ) from exc
+    if not 1 <= api_port <= 65535:
+        raise ValueError("MINQUANT_API_PORT must be an integer from 1 to 65535")
+
     started_at = DateTimeUtils.now()
     system_log_file = Path("logs") / "system" / f"{started_at:%Y-%m-%d-%H-%M-%S.%f}.log"
     configure_system_logging(system_log_file)
     pid = os.getpid()
-    logs.info(f"api.start pid={pid} started_at={started_at.isoformat()}")
+    logs.info(f"▶️ api; pid={pid}")
 
     try:
         with JobRuntime() as job_runtime:
             flask_app = create_app(job_runtime)
             flask_app.run(
-                host="0.0.0.0",
-                port=5050,
+                host=api_host,
+                port=api_port,
                 debug=False,
                 use_reloader=False,
                 threaded=True,
             )
     except Exception:
-        logs.exception(f"api.failed pid={pid}")
+        logs.exception(f"❌ api; pid={pid}")
         raise
     finally:
-        logs.info(f"api.stop pid={pid}")
+        logs.info(f"✅ api shutdown; pid={pid}")
         logs.complete()
         logs.remove()
 

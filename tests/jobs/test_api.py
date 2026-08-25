@@ -4,10 +4,13 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from contextlib import nullcontext
 from typing import cast
+from unittest.mock import Mock
 
 import pytest
 
+import src.jobs.api as api_module
 from src.jobs.api import create_app
 from src.jobs.requests import (
     BacktestSubmission,
@@ -153,6 +156,7 @@ def test_training_request_creates_one_full_range_job() -> None:
 @pytest.mark.parametrize(
     "payload",
     [
+        {"kind": "data-calendar"},
         {"kind": "data-standard"},
         {
             "kind": "data-standard",
@@ -258,3 +262,75 @@ def test_job_runtime_failure_does_not_change_health_response(
         "release_ref": "release/auto-release",
         "commit_sha": "0123456789abcdef0123456789abcdef01234567",
     }
+
+
+@pytest.mark.parametrize(
+    ("configured_host", "configured_port", "expected_host", "expected_port"),
+    [
+        (None, None, "0.0.0.0", 5051),
+        ("127.0.0.1", "5050", "127.0.0.1", 5050),
+    ],
+)
+def test_main_runs_flask_on_the_configured_address(
+    monkeypatch: pytest.MonkeyPatch,
+    configured_host: str | None,
+    configured_port: str | None,
+    expected_host: str,
+    expected_port: int,
+) -> None:
+    if configured_host is None:
+        monkeypatch.delenv("MINQUANT_API_HOST", raising=False)
+    else:
+        monkeypatch.setenv("MINQUANT_API_HOST", configured_host)
+    if configured_port is None:
+        monkeypatch.delenv("MINQUANT_API_PORT", raising=False)
+    else:
+        monkeypatch.setenv("MINQUANT_API_PORT", configured_port)
+
+    job_runtime = cast(JobRuntime, object())
+    captured_app = Mock()
+    monkeypatch.setattr(
+        api_module,
+        "JobRuntime",
+        lambda: nullcontext(job_runtime),
+    )
+    monkeypatch.setattr(api_module, "create_app", lambda _: captured_app)
+    monkeypatch.setattr(api_module, "configure_system_logging", lambda _: None)
+    monkeypatch.setattr(api_module.logs, "info", lambda _: None)
+    monkeypatch.setattr(api_module.logs, "complete", lambda: None)
+    monkeypatch.setattr(api_module.logs, "remove", lambda: None)
+
+    api_module.main()
+
+    captured_app.run.assert_called_once_with(
+        host=expected_host,
+        port=expected_port,
+        debug=False,
+        use_reloader=False,
+        threaded=True,
+    )
+
+
+@pytest.mark.parametrize("configured_port", ["", "not-a-port", "0", "65536"])
+def test_main_rejects_an_invalid_configured_port(
+    monkeypatch: pytest.MonkeyPatch,
+    configured_port: str,
+) -> None:
+    monkeypatch.setenv("MINQUANT_API_HOST", "0.0.0.0")
+    monkeypatch.setenv("MINQUANT_API_PORT", configured_port)
+
+    with pytest.raises(
+        ValueError,
+        match="MINQUANT_API_PORT must be an integer from 1 to 65535",
+    ):
+        api_module.main()
+
+
+def test_main_rejects_a_blank_configured_host(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MINQUANT_API_HOST", " ")
+    monkeypatch.setenv("MINQUANT_API_PORT", "5051")
+
+    with pytest.raises(ValueError, match="MINQUANT_API_HOST must be non-blank"):
+        api_module.main()

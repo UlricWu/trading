@@ -55,7 +55,7 @@ class ReportStep:
         )
         FileSystem.write_bytes_atomic(report_path, report.html.encode("utf-8"))
         logs.info(
-            f"saved path={report_path}\n"
+            f"✅ training report publish; path={report_path}\n"
             f"{format_log_json('rank_ic_summary', report.summary)}"
         )
         return context

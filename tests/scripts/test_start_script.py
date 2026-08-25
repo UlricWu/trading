@@ -47,8 +47,11 @@ printf '%s\n' "$@" >"$TMUX_CAPTURE"
         "MINQUANT_RELEASE_REF": "release/auto-release",
         "MINQUANT_COMMIT_SHA": COMMIT_SHA,
         "MINQUANT_API_SESSION": "test-api",
+        "MINQUANT_API_HOST": "127.0.0.1",
+        "MINQUANT_API_PORT": "5052",
         "ZERO_STORAGE_ROOT": str(tmp_path / "data"),
     }
+    environment.pop("MINQUANT_API_HEALTH_URL", None)
 
     completed = subprocess.run(
         ["bash", str(start_script)],
@@ -65,7 +68,10 @@ printf '%s\n' "$@" >"$TMUX_CAPTURE"
     assert "ENV=test" in tmux_arguments
     assert "MINQUANT_RELEASE_REF=release/auto-release" in tmux_arguments
     assert f"MINQUANT_COMMIT_SHA={COMMIT_SHA}" in tmux_arguments
+    assert "MINQUANT_API_HOST=127.0.0.1" in tmux_arguments
+    assert "MINQUANT_API_PORT=5052" in tmux_arguments
     assert f"PYTHONPATH={release_dir}" in tmux_arguments
     assert f"ZERO_STORAGE_ROOT={tmp_path / 'data'}" in tmux_arguments
     assert str(python_bin) in tmux_arguments
     assert "conda" not in tmux_arguments
+    assert "Health endpoint: http://127.0.0.1:5052/health" in completed.stdout

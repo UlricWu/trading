@@ -36,6 +36,7 @@ def _status_environment(tmp_path: Path) -> tuple[Path, dict[str, str]]:
     _write_executable(
         command_dir / "curl",
         """#!/usr/bin/env bash
+printf '%s\n' "$@" >"$CURL_CAPTURE"
 printf '%s' "$HEALTH_RESPONSE"
 """,
     )
@@ -47,15 +48,19 @@ printf '%s' "$HEALTH_RESPONSE"
             "commit_sha": COMMIT_SHA,
         }
     )
-    return status_script, {
+    environment = {
         **os.environ,
         "PATH": f"{command_dir}:{os.environ['PATH']}",
+        "CURL_CAPTURE": str(tmp_path / "curl-arguments"),
         "HEALTH_RESPONSE": health_response,
         "MINQUANT_API_SESSION": "test-api",
         "MINQUANT_EXPECTED_ENVIRONMENT": "test",
         "MINQUANT_EXPECTED_RELEASE_REF": "release/auto-release",
         "MINQUANT_EXPECTED_COMMIT_SHA": COMMIT_SHA,
     }
+    environment.pop("MINQUANT_API_PORT", None)
+    environment.pop("MINQUANT_API_HEALTH_URL", None)
+    return status_script, environment
 
 
 def test_status_accepts_the_expected_release_identity(tmp_path: Path) -> None:
@@ -71,6 +76,9 @@ def test_status_accepts_the_expected_release_identity(tmp_path: Path) -> None:
 
     assert completed.returncode == 0
     assert "health check passed" in completed.stdout
+    assert "http://127.0.0.1:5051/health" in (
+        tmp_path / "curl-arguments"
+    ).read_text(encoding="utf-8")
 
 
 def test_status_rejects_a_different_commit_identity(tmp_path: Path) -> None:

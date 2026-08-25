@@ -64,12 +64,14 @@ broker config 不声明 `normalize_profile`。
 | `moneyflow` | `moneyflow` |
 | `top_list` | `top_list` |
 
-本地 `stock_basic` 是历史日股票列表，源端固定查询支持 `trade_date` 的 `bak_basic`；不得
-使用当前股票基础信息快照接口 `stock_basic` 代替。
+本地 `stock_basic` 是历史日股票列表，源端固定查询支持 `trade_date` 的 `bak_basic`；其
+response 记录集合定义该交易日的历史股票成员集合，不得使用当前股票基础信息快照接口
+`stock_basic` 代替。Standard 与 Level-2 universe 如何把该集合与各自行情可用集合组合，
+由 Access owner 定义。
 
 `processed/stock_basic/v1.list_date` 把能够按 Tushare 紧凑日期格式解析的值转换为
 `YYYY-MM-DD`，其他值转换为 null。Tushare response 的记录集合是该对象的权威；本系统不
-解释无法解析值的业务含义，也不与 `daily_bar` 或其他 source 检查记录覆盖关系。
+解释无法解析值的业务含义，也不要求它与 `daily_bar` 或其他 source 具有相同记录覆盖。
 
 除 `trade_calendar` 外，当前 Tushare source 按单日参数
 `trade_date=YYYYMMDD` 查询。`trade_calendar` 固定查询 SSE，并以自然年作为唯一请求与对象
@@ -92,6 +94,22 @@ response 仍按单日保存。Broker 不改变正式 processed 字段。
 
 `sh_trade` 与 `sz_trade` 的字段和 index 由
 [`docs/data/level2_normalization.md`](level2_normalization.md) 所有。
+
+### 已知 Level-2 源端缺失
+
+| broker | source_name | raw_object | trade_date | 观测结果 |
+|---|---|---|---|---|
+| `level2_ftp` | `sz_trade` | `SZ_Trade` | `2025-11-25` | `source unavailable` |
+
+该记录对应的完整错误身份为：
+
+```text
+source unavailable; source=sz_trade broker=level2_ftp trade_date=2025-11-25
+```
+
+该结果表示上述精确 source identity 在源端不可用，不表示有效空记录集合；不推断缺失原因，
+也不授权跳过该日或使用其他日期、source 的数据补齐。Workflow 的缺失失败语义仍由
+[`docs/offline_workflow_contract.md`](../offline_workflow_contract.md) 定义。
 
 ## 正式交易日历
 
@@ -130,7 +148,16 @@ Workflow 不为 `is_open=false` 的日期请求 `daily_bar`。`is_open=true` 时
 
 ## Source no-data 边界
 
-Broker 只有在源端明确返回无 payload 时才返回 `None`；transport、认证、response 类型、
-必要字段缺失或没有上述可空映射的字段转换失败必须传播为错误。`trade_calendar` 对请求
-自然年返回 `None` 永远是错误。其他 source 的 range 聚合和缺失失败语义由 workflow
-owner 定义。
+单日 Tushare source 成功返回 `DataFrame` 即表示已取得 payload；零行 `DataFrame` 是有效
+空记录集合，Broker 必须照常写入 raw payload 并返回 `DownloadPlan`，不得把它转换为下载
+失败。只有源端返回 `None` 时，单日 Tushare Broker 才返回 `None`。
+
+`stock_st` 的 `2019-04-01` 是该边界的正式案例：源端成功响应且返回完整字段，但记录集合
+为零行。Producer 必须提交
+`raw/tushare/stock_st/trade_date=2019-04-01/data.parquet` 及同目录 `meta.json`；该对象表示
+当日没有 ST 排除项，不表示下载失败或数据缺失。不得使用 `2019-03-29`、`2019-04-02`
+或其他日期的记录填充该对象。
+
+Transport、认证、response 类型、必要字段缺失或没有上述可空映射的字段转换失败必须传播
+为错误。`trade_calendar` 必须包含记录；对请求自然年返回 `None` 或零行 response 都必须
+使日历 producer 失败。其他 source 的 range 聚合和缺失失败语义由 workflow owner 定义。

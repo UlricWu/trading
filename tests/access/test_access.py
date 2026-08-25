@@ -289,7 +289,7 @@ def test_universe_applies_listing_st_and_suspension_filters(
     assert symbols == ("000001", "600000")
 
 
-def test_universe_zero_listing_days_does_not_require_stock_basic(
+def test_universe_zero_listing_days_uses_historical_stock_list(
     tmp_path: Path,
 ) -> None:
     pm = PathManager(tmp_path)
@@ -298,14 +298,40 @@ def test_universe_zero_listing_days_does_not_require_stock_basic(
         pm,
         trade_date,
         "daily_bar",
-        pd.DataFrame({"symbol": ["600000", "000001"]}),
+        pd.DataFrame({"symbol": ["600000", "000001", "000002"]}),
+    )
+    _write_processed_frame(
+        pm,
+        trade_date,
+        "stock_basic",
+        pd.DataFrame({"symbol": ["600000", "000002", "300001"]}),
     )
     _write_empty_universe_exclusions(pm=pm, trade_date=trade_date)
 
     assert Access(pm=pm, processed_version="v1").universe(
         trade_date=trade_date,
         min_listing_calendar_days=0,
-    ) == ("000001", "600000")
+    ) == ("000002", "600000")
+
+
+def test_universe_zero_listing_days_requires_historical_stock_list(
+    tmp_path: Path,
+) -> None:
+    pm = PathManager(tmp_path)
+    trade_date = "2026-05-06"
+    _write_processed_frame(
+        pm,
+        trade_date,
+        "daily_bar",
+        pd.DataFrame({"symbol": ["000001"]}),
+    )
+    _write_empty_universe_exclusions(pm=pm, trade_date=trade_date)
+
+    with pytest.raises(FileNotFoundError, match="required Meta"):
+        Access(pm=pm, processed_version="v1").universe(
+            trade_date=trade_date,
+            min_listing_calendar_days=0,
+        )
 
 
 def test_universe_includes_exact_listing_age_boundary(tmp_path: Path) -> None:
@@ -373,6 +399,12 @@ def test_universe_requires_current_st_and_suspension_objects(
         pm,
         trade_date,
         "daily_bar",
+        pd.DataFrame({"symbol": ["000001"]}),
+    )
+    _write_processed_frame(
+        pm,
+        trade_date,
+        "stock_basic",
         pd.DataFrame({"symbol": ["000001"]}),
     )
     _write_processed_frame(

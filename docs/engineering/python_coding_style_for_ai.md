@@ -1173,7 +1173,7 @@ def worker_main(job: ImportJob) -> int:
     try:
         run_import_job(job)
     except Exception:
-        logger.exception(f"import job failed; job_id={job.job_id}")
+        logger.exception(f"❌ import job; job_id={job.job_id}")
         return 1
     return 0
 ```
@@ -1206,6 +1206,8 @@ def worker_main(job: ImportJob) -> int:
 ### 必须执行
 
 - 所有 logger 调用必须使用 f-string 生成日志消息，不得使用 `%` 占位符参数化格式或字符串拼接。
+- `src/` 下项目日志必须以前述日志技术 owner 定义的唯一状态符号开头，符号与 logger level
+  必须匹配，正文不得重复符号已经表达的通用状态。
 - 日志中的上下文必须使用稳定的 `key=value` 形式，以便检索和聚合。
 - 日志必须包含必要上下文，但不得输出敏感值。
 - 异常堆栈只能在负责处理或终止任务的边界记录一次。
@@ -1253,7 +1255,7 @@ except RepositoryError:
 
 ```python
 logger.info(
-    f"submitting order; order_id={order.order_id} "
+    f"▶️ order submission; order_id={order.order_id} "
     f"symbol={order.symbol} quantity={order.quantity}"
 )
 ```
@@ -1276,7 +1278,7 @@ def save_order(order: Order) -> None:
 try:
     submit_order_workflow(order)
 except OrderPersistenceError:
-    logger.exception(f"order workflow failed; order_id={order.order_id}")
+    logger.exception(f"❌ order workflow; order_id={order.order_id}")
     raise
 ```
 
@@ -2301,7 +2303,7 @@ def universe(
     trade_date: str,
     min_listing_calendar_days: int,
 ) -> tuple[str, ...]:
-    """Return the filtered daily-bar universe.
+    """Return historical-list members with daily bars.
 
     Example:
         symbols = access.universe(

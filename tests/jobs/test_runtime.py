@@ -299,6 +299,9 @@ def test_second_reap_failure_closes_only_runtime_and_retains_nonterminal_job(
         def info(self, message: str) -> None:
             pass
 
+        def warning(self, message: str) -> None:
+            pass
+
         def exception(self, message: str) -> None:
             pass
 

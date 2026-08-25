@@ -51,18 +51,33 @@ class Instrumentation:
             with Instrumentation("2026-07-20"):
                 pass
         """
-        logs.info(f"===== Pipeline timeline for {self._scope_name} =====")
+        timeline_rows: list[str] = []
         total_seconds = 0.0
         for name, elapsed_seconds in self._total_seconds_by_step.items():
             runs = self._runs_by_step[name]
-            average_seconds = elapsed_seconds / runs
-            logs.info(
-                f"{name:<35} {elapsed_seconds:>8.3f}s "
-                f"avg={average_seconds:.3f}s runs={runs}"
-            )
+            if runs == 1:
+                timeline_rows.append(f"{name:<35} {elapsed_seconds:>8.3f}s")
+            else:
+                average_seconds = elapsed_seconds / runs
+                timeline_rows.append(
+                    f"{name:<35} {elapsed_seconds:>8.3f}s "
+                    f"avg={average_seconds:.3f}s runs={runs}"
+                )
             total_seconds += elapsed_seconds
-        logs.info(f"{'Total':<35} {total_seconds:>8.3f}s")
-        logs.info(f"{'=' * 43}")
+
+        timeline_rows.append(f"{'Total':<35} {total_seconds:>8.3f}s")
+        timeline_rows.append("=" * 43)
+        timeline = "\n".join(timeline_rows)
+        if exc_type is None:
+            logs.info(
+                f"✅ ===== Pipeline timeline for {self._scope_name} =====\n"
+                f"{timeline}"
+            )
+        else:
+            logs.error(
+                f"❌ ===== Pipeline timeline for {self._scope_name} =====\n"
+                f"{timeline}"
+            )
         return False
 
     def measure(

@@ -97,12 +97,12 @@ class FeatureBuildStep:
                 )
                 if rows is None:
                     logs.info(
-                        f"feature reused; feature_set={feature_set} "
+                        f"♻️ feature meta hit; feature_set={feature_set} "
                         f"version={version} trade_date={trade_date}"
                     )
                 else:
                     logs.info(
-                        f"feature published; feature_set={feature_set} "
+                        f"✅ feature publish; feature_set={feature_set} "
                         f"version={version} trade_date={trade_date} rows={rows}"
                     )
         return context

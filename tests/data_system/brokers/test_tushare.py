@@ -180,11 +180,55 @@ def test_tushare_broker_queries_one_calendar_year(
     )
 
 
-def test_tushare_broker_translates_an_empty_response_to_no_payload(
+def test_tushare_broker_materializes_an_empty_daily_response(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    client = _TushareClient(pd.DataFrame())
+    response = pd.DataFrame(
+        columns=["ts_code", "name", "trade_date", "type", "type_name"]
+    )
+    client = _TushareClient(response)
+    monkeypatch.setattr(tushare_module.ts, "set_token", lambda token: None)
+    monkeypatch.setattr(tushare_module.ts, "pro_api", lambda: client)
+    app_config = SimpleNamespace(
+        secret=SimpleNamespace(tushare_token="token", tushare_gateway=None)
+    )
+    path_manager = PathManager(tmp_path)
+
+    fetched = TushareBroker(app_cfg=cast("AppConfig", app_config)).fetch(
+        record=DownloadPlan(
+            source_name="stock_st",
+            raw_object="stock_st",
+            trade_date="2019-04-01",
+            broker="tushare",
+        ),
+        pm=path_manager,
+    )
+
+    expected_path = path_manager.raw_payload(
+        broker="tushare",
+        source_name="stock_st",
+        trade_date="2019-04-01",
+        payload_file="data.parquet",
+    )
+    assert fetched == DownloadPlan(
+        source_name="stock_st",
+        raw_object="stock_st",
+        trade_date="2019-04-01",
+        broker="tushare",
+        payload_file="data.parquet",
+    )
+    assert client.queries == [("stock_st", {"trade_date": "20190401"})]
+    table = pq.ParquetFile(expected_path).read()
+    assert table.num_rows == 0
+    assert table.column_names == list(response.columns)
+
+
+def test_tushare_broker_translates_none_response_to_no_payload(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _TushareClient(None)
     monkeypatch.setattr(tushare_module.ts, "set_token", lambda token: None)
     monkeypatch.setattr(tushare_module.ts, "pro_api", lambda: client)
     app_config = SimpleNamespace(
@@ -202,3 +246,32 @@ def test_tushare_broker_translates_an_empty_response_to_no_payload(
     )
 
     assert fetched is None
+
+
+def test_tushare_broker_rejects_an_empty_trade_calendar(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _TushareClient(pd.DataFrame(columns=["cal_date", "is_open"]))
+    monkeypatch.setattr(tushare_module.ts, "set_token", lambda token: None)
+    monkeypatch.setattr(tushare_module.ts, "pro_api", lambda: client)
+    app_config = SimpleNamespace(
+        secret=SimpleNamespace(tushare_token="token", tushare_gateway=None)
+    )
+    path_manager = PathManager(tmp_path)
+
+    payload = TushareBroker(
+        app_cfg=cast("AppConfig", app_config)
+    ).fetch_trade_calendar(
+        calendar_year=2026,
+        pm=path_manager,
+    )
+
+    expected_path = path_manager.raw_year_payload(
+        broker="tushare",
+        source_name="trade_calendar",
+        calendar_year=2026,
+        payload_file="data.parquet",
+    )
+    assert payload is None
+    assert not expected_path.exists()

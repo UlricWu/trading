@@ -28,7 +28,6 @@
 - 第一次安装服务器：按第 3 节顺序执行；
 - 日常发布：只需第 5 节；
 - 出现故障：从第 6 节对应症状开始；
-- 想知道本次到底发生过什么：读第 7 节。
 
 ## 1. 先理解：真正发生了什么
 
@@ -324,9 +323,8 @@ dispatcher 和 API 使用 <code>wsw</code> user service，是为了让应用进�
 └── minquant-deploy
 ~~~
 
-<code>/home/wsw/app/venv</code> 即使历史上存在也不参与自动部署。应用依赖固定安装到
-<code>/home/wsw/app/code/trading/.venv</code>，由自动部署工作树独占管理，并在每次 release 时按
-当前 lock 同步；它不会和人工开发目录或历史公共 venv 混用。
+应用依赖固定安装到 <code>/home/wsw/app/code/trading/.venv</code>，由自动部署工作树独占管理，
+并在每次 release 时按当前 lock 同步。
 
 <code>/home/wsw/app/data</code> 是测试服务器共享数据根，不增加 <code>trading</code>
 子目录。Raw payload 必须保持源端身份；只有 staging、processed、features、labels 和
@@ -874,11 +872,52 @@ TUSHARE_TOKEN=replace-me
 TUSHARE_GATEWAY=
 ~~~
 
-为什么不把它放在 Git 工作树中：
+#### 3.8.1 真实文件与部署工作树符号链接
 
-- checkout 和 <code>git clean</code> 不应该删除运行凭证；
-- Secret 不能进入 commit；
-- 同一份测试配置需要跨 release SHA 保留。
+<code>/home/wsw/app/shared/trading/.env.test</code> 是测试环境凭证的唯一真实文件，是
+<code>0600</code> 的普通文件，不是链接。自动部署完成后，代码工作树中的同名路径是指向它的
+绝对符号链接：
+
+~~~text
+/home/wsw/app/code/trading/.env.test
+  -> /home/wsw/app/shared/trading/.env.test
+~~~
+
+worker 在 detached checkout、hard reset 和 <code>git clean</code> 完成后执行等价于以下内容
+的命令；这是创建引用，不是复制文件：
+
+~~~bash
+ln -sfn \
+  /home/wsw/app/shared/trading/.env.test \
+  /home/wsw/app/code/trading/.env.test
+~~~
+
+应用仍按配置契约打开项目根目录的 <code>.env.test</code>。操作系统跟随符号链接后读取 shared
+中的真实文件，因此不存在两份需要同步的凭证。通过链接路径原地修改文件内容也会修改 shared
+中的同一文件；但删除链接只会删除链接本身，删除 shared 中的真实文件则会留下断链。某些通过
+“创建新文件再 rename 覆盖”实现保存的工具还可能把链接替换成普通文件，造成配置漂移。因此
+运维人员必须只编辑 <code>/home/wsw/app/shared/trading/.env.test</code>，不得在
+<code>/home/wsw/app/code/trading</code> 中人工创建或替换 <code>.env.test</code>。
+
+可以在不打印任何 Secret 的情况下验证当前关系：
+
+~~~bash
+test -L /home/wsw/app/code/trading/.env.test
+readlink /home/wsw/app/code/trading/.env.test
+test -f /home/wsw/app/shared/trading/.env.test
+~~~
+
+采用这一结构的原因是：
+
+- 精确 SHA 部署会重置和清理 <code>/home/wsw/app/code/trading</code>，运行凭证不能依赖该
+  工作树的生命周期；
+- Secret 不能进入 commit，shared 路径允许凭证独立于 Git 管理；
+- 同一份测试配置必须跨 release SHA 保留，不能在每次部署时复制并产生多个可能漂移的副本；
+- 应用继续使用稳定的项目根目录路径，无需感知服务器的部署目录划分。
+
+<code>logs</code> 使用相同结构：真实目录位于
+<code>/home/wsw/app/shared/trading/logs</code>，代码工作树中的 <code>logs</code> 是指向它的
+目录符号链接，使日志跨 checkout 保留。
 
 <code>ENV=test</code> 由 systemd unit 注入，<code>ZERO_STORAGE_ROOT</code> 也由 unit 注入；
 它们不是 Secret，不需要在该文件中重复定义。空的 <code>TUSHARE_GATEWAY</code> 表示使用默认
@@ -1044,7 +1083,7 @@ worker 内部依次做以下事情：
 4. 用 <code>flock -w 600</code> 最多等待部署锁十分钟；
 5. fetch release branch，并要求远端 tip 完全等于 <code>DEPLOY_SHA</code>；
 6. 停止 API，detached checkout、hard reset，并清理非 ignored untracked 文件；
-7. 把 <code>.env.test</code> 和 <code>logs</code> 重新链接到 shared；
+7. 为 <code>.env.test</code> 和 <code>logs</code> 重新创建指向 shared 的绝对符号链接；
 8. 校验锁文件并同步依赖；
 9. 再 fetch 一次，防止依赖安装期间远端已经前进；
 10. 写入 API commit identity、启动服务；
@@ -1576,8 +1615,9 @@ Gate。
 | <code>reset --hard SHA</code> | tracked 文件精确等于 commit。 |
 | <code>clean -fd</code> | 删除非 ignored 的人工残留；因此 <code>code/trading</code> 禁止人工修改。 |
 
-<code>.env.test</code> 和 <code>logs</code> 已在 <code>.gitignore</code> 中，worker 又会把它们
-重新链接到 shared，所以运行配置和日志不随 checkout 丢失。
+<code>.env.test</code> 和 <code>logs</code> 已在 <code>.gitignore</code> 中，worker 又会为它们
+重新创建指向 shared 的符号链接，所以运行配置和日志不随 checkout 丢失。链接只引用 shared
+中的真实文件或目录，不会复制内容；具体读写语义见 3.8.1。
 
 ### 4.2 为什么 Webhook 接收器不直接执行 worker
 
@@ -1742,356 +1782,6 @@ printf '\n'
 ~~~
 
 这一步是人工控制面维护，不是一次普通应用发布。不要在 queue 正执行时替换 worker。
-
-### 5.6 从旧单项目目录迁移
-
-已经按旧布局运行的服务器必须在人工维护窗口迁移；普通 release 部署不得移动目录。迁移前
-必须确认 queue 为空、deploy service inactive，并记录当前 Git HEAD、release record 和
-health identity。`/home/wsw/app/data` 在整个过程中保持原位，不清理、不复制。
-
-迁移只允许执行以下一一映射：
-
-| 旧路径 | 新路径 |
-|---|---|
-| <code>/home/wsw/app/code</code> | <code>/home/wsw/app/code/trading</code> |
-| <code>/home/wsw/app/shared/.env.test</code> | <code>/home/wsw/app/shared/trading/.env.test</code> |
-| <code>/home/wsw/app/shared/logs</code> | <code>/home/wsw/app/shared/trading/logs</code> |
-| <code>/home/wsw/app/deploy/api-release.env</code> | <code>/home/wsw/app/deploy/trading/api-release.env</code> |
-| <code>/home/wsw/app/deploy/current-test-release</code> | <code>/home/wsw/app/deploy/trading/current-test-release</code> |
-| <code>/home/wsw/app/deploy/test-release.lock</code> | <code>/home/wsw/app/deploy/trading/test-release.lock</code> |
-
-`/home/wsw/app/dev/trading` 已是最终人工开发路径，不移动。上表第一行不能直接执行
-`mv /home/wsw/app/code /home/wsw/app/code/trading`，因为目标是源目录自身的子目录。必须先
-使用同一文件系统上的 sibling staging path，再重建父目录。
-
-维护窗口前，当前 `/home/wsw/app/code` 必须已经部署了包含本节新 worker 与 API unit 安装源的
-已审查 release SHA。维护期间冻结 `dev` 合入和 release branch 镜像，直到新路径验收或旧路径
-回滚完成；停止 receiver 只能阻止 Ubuntu 接纳 delivery，不能阻止 GitHub 上的 release branch
-继续变化。记录 Git HEAD、远端 tip、release record、health identity，并检查是否存在本项目
-管理的离线 cron block：
-
-~~~bash
-MIGRATION_SHA="$(git -C /home/wsw/app/code rev-parse HEAD)"
-REMOTE_SHA="$(
-  git -C /home/wsw/app/code \
-    ls-remote origin refs/heads/release/auto-release |
-    awk '{print $1}'
-)"
-
-test "$MIGRATION_SHA" = "$REMOTE_SHA"
-test -z "$(
-  git -C /home/wsw/app/code \
-    status --porcelain --untracked-files=no
-)"
-printf 'migration_sha=%s\n' "$MIGRATION_SHA"
-
-cat /home/wsw/app/deploy/current-test-release
-curl -fsS http://127.0.0.1:5050/health
-printf '\n'
-
-crontab -l 2>/dev/null |
-  sed -n \
-    '/^# BEGIN min_quant offline data jobs$/,/^# END min_quant offline data jobs$/p'
-~~~
-
-`MIGRATION_SHA`、release record 和 health 中的 commit 必须完全相同。如果 cron block 存在，
-必须在维护记录中保存它的五段 schedule；迁移后 installer 会用新项目 root 替换整个 managed
-block。然后停止接纳和执行，重新确认没有队列或 worker：
-
-~~~bash
-/usr/bin/env bash <<'STOP_TRADING_NAMESPACE_SERVICES'
-set -Eeuo pipefail
-
-sudo systemctl stop minquant-webhook.service
-systemctl --user stop minquant-deploy.path
-systemctl --user stop minquant-api.service
-
-! systemctl --user --quiet is-active minquant-deploy.service
-test -z "$(
-  sudo find /var/lib/minquant-webhook/queue \
-    -mindepth 1 \
-    -maxdepth 1 \
-    -type f \
-    -print \
-    -quit
-)"
-STOP_TRADING_NAMESPACE_SERVICES
-~~~
-
-`minquant-deploy.service` 必须为 inactive，queue 必须无输出。保存当前实际控制面的可恢复副本，
-且不得覆盖已经存在的同名备份：
-
-~~~bash
-/usr/bin/env bash <<'BACKUP_TRADING_NAMESPACE_CONTROLS'
-set -Eeuo pipefail
-
-sudo test ! -e /usr/local/libexec/minquant-deploy.before-trading-namespace
-sudo test ! -L /usr/local/libexec/minquant-deploy.before-trading-namespace
-test ! -e /home/wsw/.config/systemd/user/minquant-api.service.before-trading-namespace
-test ! -L /home/wsw/.config/systemd/user/minquant-api.service.before-trading-namespace
-
-sudo install \
-  -o root \
-  -g root \
-  -m 0755 \
-  /usr/local/libexec/minquant-deploy \
-  /usr/local/libexec/minquant-deploy.before-trading-namespace
-
-install -m 0644 \
-  /home/wsw/.config/systemd/user/minquant-api.service \
-  /home/wsw/.config/systemd/user/minquant-api.service.before-trading-namespace
-BACKUP_TRADING_NAMESPACE_CONTROLS
-~~~
-
-执行精确目录转换。旧 `.venv` 中的 console-script shebang 仍含旧绝对路径，不能随工作树直接
-复用；先把它改名为 Git 已忽略的 `venv.bak`，后续 bootstrap 必须在新路径重建 `.venv`。
-所有 source 必须具有预期类型，所有 destination、backup 和 staging path 必须预先不存在。
-整个块由独立 Bash 以 strict mode 执行；任一步失败都会立即停止，不得跳过失败命令、覆盖或
-合并目录后继续：
-
-~~~bash
-/usr/bin/env bash <<'MIGRATE_TRADING_NAMESPACE'
-set -Eeuo pipefail
-
-stage=/home/wsw/app/code.trading-namespace-stage
-
-test -d /home/wsw/app/code/.git
-test ! -L /home/wsw/app/code
-test -x /home/wsw/app/code/.venv/bin/python
-test -f /home/wsw/app/shared/.env.test
-test ! -L /home/wsw/app/shared/.env.test
-test -d /home/wsw/app/shared/logs
-test ! -L /home/wsw/app/shared/logs
-test -f /home/wsw/app/deploy/api-release.env
-test -f /home/wsw/app/deploy/current-test-release
-test -f /home/wsw/app/deploy/test-release.lock
-
-for destination in \
-  "$stage" \
-  /home/wsw/app/code/trading \
-  /home/wsw/app/code/venv.bak \
-  /home/wsw/app/shared/trading \
-  /home/wsw/app/deploy/trading; do
-  test ! -e "$destination"
-  test ! -L "$destination"
-done
-
-mv /home/wsw/app/code/.venv /home/wsw/app/code/venv.bak
-mv /home/wsw/app/code "$stage"
-
-install -d -m 0750 \
-  /home/wsw/app/code \
-  /home/wsw/app/shared/trading \
-  /home/wsw/app/deploy/trading
-
-mv "$stage" /home/wsw/app/code/trading
-mv /home/wsw/app/shared/.env.test /home/wsw/app/shared/trading/.env.test
-mv /home/wsw/app/shared/logs /home/wsw/app/shared/trading/logs
-mv /home/wsw/app/deploy/api-release.env /home/wsw/app/deploy/trading/api-release.env
-mv /home/wsw/app/deploy/current-test-release /home/wsw/app/deploy/trading/current-test-release
-mv /home/wsw/app/deploy/test-release.lock /home/wsw/app/deploy/trading/test-release.lock
-
-ln -sfn \
-  /home/wsw/app/shared/trading/.env.test \
-  /home/wsw/app/code/trading/.env.test
-ln -sfn \
-  /home/wsw/app/shared/trading/logs \
-  /home/wsw/app/code/trading/logs
-MIGRATE_TRADING_NAMESPACE
-~~~
-
-只替换两个路径敏感的控制面制品，不扩大维护面到未变化的 receiver、dispatcher、path 或
-deploy service unit：
-
-~~~bash
-/usr/bin/env bash <<'INSTALL_TRADING_NAMESPACE_CONTROLS'
-set -Eeuo pipefail
-
-sudo install \
-  -o root \
-  -g root \
-  -m 0755 \
-  /home/wsw/app/code/trading/scripts/deploy_release.sh \
-  /usr/local/libexec/minquant-deploy
-
-install -m 0644 \
-  /home/wsw/app/code/trading/deploy/systemd/user/minquant-api.service \
-  /home/wsw/.config/systemd/user/minquant-api.service
-
-systemctl --user daemon-reload
-INSTALL_TRADING_NAMESPACE_CONTROLS
-~~~
-
-然后用迁移前打印并保存的 40 位 SHA 替换占位符，执行新 worker。worker 会再次要求远端 tip
-等于该 SHA，并在新路径重建 `.venv`；任一条件失败时保持 receiver 和 dispatcher path 停止：
-
-~~~bash
-/usr/bin/env bash <<'BOOTSTRAP_TRADING_NAMESPACE'
-set -Eeuo pipefail
-
-MIGRATION_SHA='<迁移前记录的 40 位 SHA>'
-[[ "$MIGRATION_SHA" =~ ^[0-9a-f]{40}$ ]]
-
-test "$MIGRATION_SHA" = "$(
-  git -C /home/wsw/app/code/trading \
-    ls-remote origin refs/heads/release/auto-release |
-    awk '{print $1}'
-)"
-
-env \
-  -u CONDA_PREFIX \
-  -u VIRTUAL_ENV \
-  RUN_ID="namespace-migration-${MIGRATION_SHA:0:7}" \
-  DEPLOY_SHA="$MIGRATION_SHA" \
-  /usr/local/libexec/minquant-deploy
-BOOTSTRAP_TRADING_NAMESPACE
-~~~
-
-如果此前存在 cron block，用原 schedule 重新运行：
-
-~~~bash
-MINQUANT_PROJECT_ROOT=/home/wsw/app/code/trading \
-ZERO_STORAGE_ROOT=/home/wsw/app/data \
-MINQUANT_OFFLINE_DATA_CRON_SCHEDULE='<迁移前记录的五段 schedule>' \
-/usr/bin/env bash \
-  /home/wsw/app/code/trading/scripts/install_offline_data_cron.sh
-~~~
-
-此前没有 managed cron block 时不得因迁移新建一个。最后按 3.12 启动接收链路并按 3.17
-完整验收；新路径健康验收通过前不得恢复 GitHub delivery 接纳。
-
-需要回滚时先再次停止 receiver、dispatcher path 和 API，确认 deploy service inactive 且 queue
-为空。下面的 strict-mode 块会保留新路径构建的 `.venv` 为 Git 已忽略的 `env.bak`，恢复迁移前
-的 `venv.bak`；同时拒绝覆盖任何已重新出现的旧路径或忽略新增项目兄弟目录：
-
-~~~bash
-/usr/bin/env bash <<'ROLLBACK_TRADING_NAMESPACE'
-set -Eeuo pipefail
-
-stage=/home/wsw/app/code.trading-namespace-stage
-
-test -f /usr/local/libexec/minquant-deploy.before-trading-namespace
-test ! -L /usr/local/libexec/minquant-deploy.before-trading-namespace
-test -f /home/wsw/.config/systemd/user/minquant-api.service.before-trading-namespace
-test ! -L /home/wsw/.config/systemd/user/minquant-api.service.before-trading-namespace
-test ! -e "$stage"
-test ! -L "$stage"
-test -d /home/wsw/app/code/trading/.git
-test ! -L /home/wsw/app/code/trading
-test -d /home/wsw/app/code/trading/venv.bak
-test -f /home/wsw/app/shared/trading/.env.test
-test -d /home/wsw/app/shared/trading/logs
-test -f /home/wsw/app/deploy/trading/api-release.env
-test -f /home/wsw/app/deploy/trading/current-test-release
-test -f /home/wsw/app/deploy/trading/test-release.lock
-
-for old_destination in \
-  /home/wsw/app/shared/.env.test \
-  /home/wsw/app/shared/logs \
-  /home/wsw/app/deploy/api-release.env \
-  /home/wsw/app/deploy/current-test-release \
-  /home/wsw/app/deploy/test-release.lock; do
-  test ! -e "$old_destination"
-  test ! -L "$old_destination"
-done
-
-test -z "$(
-  find /home/wsw/app/code \
-    -mindepth 1 \
-    -maxdepth 1 \
-    ! -name trading \
-    -print \
-    -quit
-)"
-test -z "$(
-  find /home/wsw/app/shared/trading \
-    -mindepth 1 \
-    -maxdepth 1 \
-    ! -name .env.test \
-    ! -name logs \
-    -print \
-    -quit
-)"
-test -z "$(
-  find /home/wsw/app/deploy/trading \
-    -mindepth 1 \
-    -maxdepth 1 \
-    ! -name api-release.env \
-    ! -name current-test-release \
-    ! -name test-release.lock \
-    -print \
-    -quit
-)"
-
-if test -e /home/wsw/app/code/trading/.venv \
-  || test -L /home/wsw/app/code/trading/.venv; then
-  test ! -e /home/wsw/app/code/trading/env.bak
-  test ! -L /home/wsw/app/code/trading/env.bak
-  mv /home/wsw/app/code/trading/.venv /home/wsw/app/code/trading/env.bak
-fi
-mv /home/wsw/app/code/trading/venv.bak /home/wsw/app/code/trading/.venv
-
-mv /home/wsw/app/code/trading "$stage"
-rmdir /home/wsw/app/code
-mv "$stage" /home/wsw/app/code
-
-mv /home/wsw/app/shared/trading/.env.test /home/wsw/app/shared/.env.test
-mv /home/wsw/app/shared/trading/logs /home/wsw/app/shared/logs
-rmdir /home/wsw/app/shared/trading
-
-mv /home/wsw/app/deploy/trading/api-release.env /home/wsw/app/deploy/api-release.env
-mv /home/wsw/app/deploy/trading/current-test-release /home/wsw/app/deploy/current-test-release
-mv /home/wsw/app/deploy/trading/test-release.lock /home/wsw/app/deploy/test-release.lock
-rmdir /home/wsw/app/deploy/trading
-
-ln -sfn /home/wsw/app/shared/.env.test /home/wsw/app/code/.env.test
-ln -sfn /home/wsw/app/shared/logs /home/wsw/app/code/logs
-
-sudo install \
-  -o root \
-  -g root \
-  -m 0755 \
-  /usr/local/libexec/minquant-deploy.before-trading-namespace \
-  /usr/local/libexec/minquant-deploy
-
-install -m 0644 \
-  /home/wsw/.config/systemd/user/minquant-api.service.before-trading-namespace \
-  /home/wsw/.config/systemd/user/minquant-api.service
-
-systemctl --user daemon-reload
-ROLLBACK_TRADING_NAMESPACE
-~~~
-
-恢复 `.before-trading-namespace` worker 与 API unit 后，用同一个 `MIGRATION_SHA` 执行旧路径
-bootstrap：
-
-~~~bash
-/usr/bin/env bash <<'BOOTSTRAP_ROLLED_BACK_NAMESPACE'
-set -Eeuo pipefail
-
-MIGRATION_SHA='<迁移前记录的 40 位 SHA>'
-[[ "$MIGRATION_SHA" =~ ^[0-9a-f]{40}$ ]]
-
-test "$MIGRATION_SHA" = "$(
-  git -C /home/wsw/app/code \
-    ls-remote origin refs/heads/release/auto-release |
-    awk '{print $1}'
-)"
-
-env \
-  -u CONDA_PREFIX \
-  -u VIRTUAL_ENV \
-  RUN_ID="namespace-rollback-${MIGRATION_SHA:0:7}" \
-  DEPLOY_SHA="$MIGRATION_SHA" \
-  /usr/local/libexec/minquant-deploy
-BOOTSTRAP_ROLLED_BACK_NAMESPACE
-~~~
-
-此前存在 cron block 时再用原 schedule 和旧 `MINQUANT_PROJECT_ROOT=/home/wsw/app/code` 运行
-installer。旧路径健康和完整发布验收通过前不得恢复接纳。迁移和回滚都不得触及
-`/home/wsw/app/data`；因此不得附带数据清理、复制或重建。任一迁移或回滚块失败后，都必须按
-当前实际路径逐项审计，不得盲目重跑。控制面备份和 `venv.bak` 只在新布局通过整机重启验收后
-清理；回滚留下的 `env.bak` 也只在旧布局完整验收后清理。
 
 ## 6. 排障：从哪一层开始
 
@@ -2306,164 +1996,7 @@ env \
 直接运行 worker 会更新 release record 和服务，但不会创建 GitHub delivery result。记录这次
 人工处置的 RUN_ID，并保留相关 journal。
 
-## 7. 历史真实落地记录（旧目录布局）
-
-以下是 2026-08-20 实际安装过程的证据摘要，用来说明本指南来自已跑通链路；这些值不是未来
-安装时必须写死的配置。该次证据使用仓库独占 `/home/wsw/app` 的旧目录布局，只证明 Webhook
-到精确 SHA 和健康检查的链路；它不证明本次新增的 `trading` 目录命名空间已经部署或验收。
-
-### 7.1 初始状态
-
-- Ubuntu 24.04.3、systemd 255；
-- <code>wsw</code> 为 uid/gid 1000，最初尚未加入 <code>minquant-deploy</code>；
-- uv 0.11.7 位于 <code>/usr/local/bin/uv</code>；
-- shell 激活了 Conda，但干净环境找不到 Python 3.13；
-- Tailscale 1.92.5，节点名 <code>minquant-test</code>，最初显示
-  <code>No serve config</code>；
-- <code>Linger=no</code>；
-- <code>/home/wsw/app/dev</code> 不存在；
-- <code>/home/wsw/app/code</code> 已存在、tracked 工作树干净，初始 release SHA 为
-  <code>2d70f1742c126020d82b1bfa287859ffd99e1d6f</code>；
-- 只读 deploy key 已绑定为仓库 local <code>core.sshCommand</code>，无人值守
-  <code>ls-remote</code> 成功。
-
-### 7.2 首次合入后的 CI 测试修复
-
-部署功能第一次人工合入 <code>dev</code> 后，GitHub CI 在 181 个通过用例之后出现：
-
-~~~text
-test_runner_fails_on_wrong_systemd_api_identity_without_submitting_jobs
-expected return code 1, got 127
-project Python interpreter is missing or not executable:
-.../trading/.venv/bin/python
-~~~
-
-这不是 Ubuntu worker 或 Funnel 故障，而是测试隔离不完整：
-
-1. 被测 offline runner 的正式前置条件是“部署工作树存在
-   <code>.venv/bin/python</code>、<code>src</code> 和 Git commit”；
-2. 该测试本来只想验证“API 报告错误 release identity 时，不提交 Job”；
-3. 但测试把 GitHub Actions 的普通源码 checkout 当作部署工作树；
-4. CI checkout 没有项目 <code>.venv</code>，所以脚本在到达身份检查前先以 127 失败。
-
-修复没有放松生产脚本，也没有把缺少 Python 伪装成身份错误。commit
-<code>86bc295e62c041695832ccfbbe178a21fe90089d</code> 为测试创建临时部署 fixture：
-
-- <code>.venv</code> 链接到 pytest 当前解释器；
-- <code>src</code> 链接到被测源码；
-- 临时目录执行 <code>git init</code> 并创建一个空 commit；
-- <code>MINQUANT_PROJECT_ROOT</code> 指向该 fixture。
-
-这样先满足 runner 的真实部署前置条件，测试才只观察它声称要验证的“错误 systemd API
-identity”边界。随后 CI 通过，auto-release 才继续镜像和触发部署。这个事件说明 CI 的失败
-点和服务器的失败点必须分层判断，不能因为最终目标是部署就把所有红灯都归因于 Webhook。
-
-### 7.3 运行时准备
-
-- 清理 Conda 标记后由 uv 安装 Python 3.13.13；
-- 创建 <code>minquant-webhook</code>、<code>minquant-deploy</code>，把
-  <code>wsw</code> 加入 group；
-- 建立 spool、shared、data 和 deploy 权限；
-- 开启 linger；
-- 从 release SHA
-  <code>61a0348e0b6df49452896bea3a97aff572317812</code> 安装控制面；
-- bootstrap worker 成功，API health 报告同一 SHA；
-- Git 工作树处于 detached HEAD，<code>.env.test</code> 与 <code>logs</code> 指向 shared。
-
-### 7.4 本机异步测试与权限故障
-
-同一签名 delivery 连续发送两次得到：
-
-~~~text
-attempt=1 status=202 body=accepted
-attempt=2 status=200 body=duplicate
-~~~
-
-最初 result 没有生成。证据显示 delivery 和 queue 已存在，但 user dispatcher 的
-<code>/proc/PID/status</code> Groups 不含 <code>minquant-deploy</code> GID，尽管
-<code>id wsw</code> 和账户数据库已经包含它。重启 <code>user@1000.service</code> 后，旧
-queue 自动被处理，result 为：
-
-~~~json
-{"commit_sha":"61a0348e0b6df49452896bea3a97aff572317812","delivery_id":"local-test-20260820121634","exit_code":0,"status":"succeeded"}
-~~~
-
-这就是 3.4 把“刷新 user manager”放到启用 path unit 之前的原因。
-
-### 7.5 Funnel 与 DNS
-
-Funnel 最终配置为：
-
-~~~text
-https://minquant-test.tailefd506.ts.net
-|-- / proxy http://127.0.0.1:9000
-~~~
-
-初次测试时：
-
-- Ubuntu 把域名解析为自己的 Tailscale IP <code>100.86.106.108</code>，TLS 超时；
-- Mac 代理返回 fake-IP <code>198.18.0.6</code>，一度出现 TLS 错误；
-- 公共 DoH 随后返回 Status 0 和公开 A 记录；
-- 公网 unsigned POST 最终返回 <code>401 invalid signature</code>。
-
-因此最终判断依据是公共 DNS 加公网 HTTPS 的 401，而不是本地解析出的 remote IP。
-
-### 7.6 GitHub 与真实发布
-
-- GitHub 创建 Webhook 后的 ping 返回 <code>422 unsupported event</code>，符合严格 event
-  allowlist；
-- 一次 release push delivery ID 为
-  <code>4215fc4e-9c6e-11f1-88c9-d2409be05b4f</code>；
-- dispatcher 生成 succeeded result，queue 排空；
-- 最终自动部署 SHA 为
-  <code>cc6532686658dc4b0e17cef9dab9c3064bb32ee9</code>；
-- <code>current-test-release</code>、Git HEAD 和 health commit 完全一致；
-- health 返回：
-
-~~~json
-{"commit_sha":"cc6532686658dc4b0e17cef9dab9c3064bb32ee9","environment":"test","ok":true,"release_ref":"release/auto-release"}
-~~~
-
-- <code>minquant-api.service</code>、<code>minquant-deploy.path</code> 和
-  <code>minquant-webhook.service</code> 均 active；
-- 工作树只显示 detached HEAD，不再出现未跟踪的 <code>logs</code> 链接。
-
-该验收证明了从 GitHub release push 到 Ubuntu 精确 SHA、依赖、服务和身份健康的完整链路。
-本次没有执行整机重启验收；linger、enabled unit 和 Funnel 持久配置已经设置，但重启后的
-恢复仍应在维护窗口单独验证，不能把“已配置”写成“已经做过重启测试”。
-
-### 7.7 2026-08-21 HDD raw 与 SSD derived 迁移
-
-迁移前，HDD `/dev/sda` 挂载在 `/home/wsw/cold`，其 raw bind target 仍是旧路径
-`/home/wsw/data/raw`；SSD 上 `/home/wsw/app/data` 为空。旧 raw 为 998 GB、65,161 个文件。
-首次 `migrate_raw_meta.py` dry-run 的摘要是：
-
-~~~text
-current=0 migratable=0 migrated=0 blocked=32578
-~~~
-
-该历史结果只说明当时的工具不能直接迁移旧 Meta，不构成隐藏原始 payload 或创建空 raw 的理由；
-本次没有改写任何旧 Meta。维护窗口最终完成以下可回滚转换：
-
-- fstab bind target 从 `/home/wsw/data/raw` 改为 `/home/wsw/app/data/raw`；
-- HDD 上原有 998 GB、65,161 个文件的 raw 保持在 `/home/wsw/cold/raw`，并作为新逻辑路径的
-  活动 bind source；
-- `staging`、`processed`、`features`、`labels` 和 `experiments` 创建在 SSD；
-- 旧 `/home/wsw/data` 下约 856 GB derived 与 legacy 数据未删除；
-- 首次操作曾错误地把原有 raw 改名为 `/home/wsw/cold/raw-legacy-20260821` 并挂载空目录；同一
-  维护窗口内已通过可逆目录交换纠正，保留的空目录为
-  `/home/wsw/cold/raw-empty-20260821`。
-
-纠正后的终验中，`/home/wsw/app/data/raw` 为 998 GB、65,161 个文件；raw 与 processed 的
-设备号分别为 `2048` 和 `66306`，生成的 `home-wsw-app-data-raw.mount` 为 active，API 和
-deploy path 均 active；health 继续精确报告 commit
-`cc6532686658dc4b0e17cef9dab9c3064bb32ee9`。该次操作没有 apply Meta；旧 Meta 与当前代码的
-兼容或迁移仍是独立未完成事项，在 3.10.1 的最终复检通过前不得启用离线 cron 或提交数据
-Job，也不得把 mount 成功解释为 Meta 已兼容。后续迁移工具或 raw 状态变化后必须重新运行
-预检，不能继续把上述首次摘要称为当前状态。整机重启后的 mount 顺序仍未验证；空目录和
-`/etc/fstab.before-raw-mount-migration-20260821` 在该验证完成前承担回滚责任。
-
-## 8. 明确不在当前链路中的组件
+## 7. 明确不在当前链路中的组件
 
 以下组件可以保留在其他机器或目录，但不参与测试发布：
 
@@ -2475,7 +2008,6 @@ Job，也不得把 mount 成功解释为 Meta 已兼容。后续迁移工具或 
 - SQLite；
 - 外部消息队列；
 - cron 部署；
-- <code>/home/minquant-deploy/minquant</code>。
 
 部署健康检查只从本机 <code>127.0.0.1:5050</code> 访问，Funnel 不映射 5050。当前 Flask
 实现实际绑定 <code>0.0.0.0:5050</code>，所以它能否被局域网或 tailnet 访问还取决于主机
@@ -2484,7 +2016,7 @@ Job，也不得把 mount 成功解释为 Meta 已兼容。后续迁移工具或 
 
 正式生产部署尚未定义，不得把本指南直接复制到 <code>master</code> 生产链路。
 
-## 9. 官方资料
+## 8. 官方资料
 
 - [uv 安装](https://docs.astral.sh/uv/getting-started/installation/)
 - [uv 安装器参数](https://docs.astral.sh/uv/reference/installer/)

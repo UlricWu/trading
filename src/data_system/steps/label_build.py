@@ -103,12 +103,12 @@ class LabelBuildStep:
                 )
                 if rows is None:
                     logs.info(
-                        f"label reused; label_set={label_set} version={version} "
+                        f"♻️ label meta hit; label_set={label_set} version={version} "
                         f"trade_date={target_date} maturity_date={input_dates[-1]}"
                     )
                 else:
                     logs.info(
-                        f"label published; label_set={label_set} version={version} "
+                        f"✅ label publish; label_set={label_set} version={version} "
                         f"trade_date={target_date} maturity_date={input_dates[-1]} "
                         f"rows={rows}"
                     )

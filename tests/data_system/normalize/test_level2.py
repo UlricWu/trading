@@ -3,12 +3,15 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from datetime import date, time
 from pathlib import Path
+from unittest.mock import Mock
 
 import pyarrow as pa
 import pytest
 
+import src.data_system.normalize.level2 as level2_module
 from src.data_system.market_phase import MarketPhase
 from src.data_system.normalize.level2 import (
     Level2TradeSpec,
@@ -95,6 +98,66 @@ def test_normalize_level2_rejects_invalid_partition_date_before_input_read(
             trade_date="2026-02-30",
             target_name="sh_trade",
         )
+
+
+def test_normalize_level2_emits_rate_limited_operational_progress(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_batch = pa.record_batch(
+        [pa.array(["raw-1", "raw-2"])],
+        names=["raw"],
+    )
+    retained_batch = pa.table({"value": pa.array([1], type=pa.int64())})
+    empty_batch = pa.table({"value": pa.array([], type=pa.int64())})
+    processed_day = level2_module.NormalizeOutput(
+        table=pa.table({"value": pa.array([1, 1], type=pa.int64())}),
+        symbol_slices={"600000": range(0, 2)},
+    )
+    logger = Mock()
+    monotonic_times = iter([100.0, 110.0, 130.0, 161.0, 170.0])
+    monkeypatch.setattr(level2_module, "logs", logger)
+    monkeypatch.setattr(
+        level2_module,
+        "open_csv7z_batches",
+        lambda _: nullcontext(iter([source_batch, source_batch, source_batch])),
+    )
+    monkeypatch.setattr(
+        level2_module,
+        "parse_level2_trade_batch",
+        Mock(side_effect=[retained_batch, empty_batch, retained_batch]),
+    )
+    monkeypatch.setattr(
+        level2_module,
+        "resolve_level2_security_type",
+        lambda table, *, exchange: table,
+    )
+    monkeypatch.setattr(
+        level2_module,
+        "build_processed_level2_trade_day",
+        Mock(return_value=processed_day),
+    )
+    monkeypatch.setattr(level2_module, "monotonic", lambda: next(monotonic_times))
+
+    output = normalize_level2(
+        input_file=Path("/data/SH_Stock_OrderTrade.csv.7z"),
+        output_name=Path("/data/sh_trade.parquet"),
+        raw_object="SH_Stock_OrderTrade",
+        trade_date="2026-03-02",
+        target_name="sh_trade",
+    )
+
+    assert output is processed_day
+    assert [record.args[0] for record in logger.info.call_args_list] == [
+        "▶️ Level-2 normalize; target=sh_trade trade_date=2026-03-02 "
+        "input=SH_Stock_OrderTrade.csv.7z",
+        "⏳ Level-2 normalize; target=sh_trade "
+        "trade_date=2026-03-02 elapsed_seconds=30",
+        "⏳ Level-2 normalize; target=sh_trade "
+        "trade_date=2026-03-02 elapsed_seconds=61",
+        "✅ Level-2 normalize; target=sh_trade trade_date=2026-03-02 "
+        "rows=2 symbols=1 elapsed_seconds=70 output=/data/sh_trade.parquet",
+    ]
+    logger.debug.assert_not_called()
 
 
 @pytest.fixture

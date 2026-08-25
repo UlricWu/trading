@@ -1,5 +1,5 @@
 # filepath: tests/test_cli.py
-"""Public contract tests for the four CLI commands."""
+"""Public contract tests for the five CLI commands."""
 
 from __future__ import annotations
 
@@ -13,6 +13,25 @@ from typer.testing import CliRunner
 from src import cli
 from src.config.backtest_config import BacktestMode
 from src.utils.path import PathManager
+
+
+def test_data_calendar_bootstraps_through_the_current_market_year(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = SimpleNamespace(storage_root=tmp_path)
+    workflow = Mock()
+    monkeypatch.setattr(cli.AppConfig, "load", Mock(return_value=config))
+    monkeypatch.setattr(cli.DateTimeUtils, "today", Mock(return_value="2026-08-21"))
+    monkeypatch.setattr(cli, "run_trade_calendar_bootstrap", workflow)
+
+    result = CliRunner().invoke(cli.app, ["data-calendar"])
+
+    assert result.exit_code == 0, result.output
+    arguments = workflow.call_args.kwargs
+    assert arguments["app_config"] is config
+    assert arguments["as_of_date"] == "2026-08-21"
+    assert isinstance(arguments["path_manager"], PathManager)
 
 
 @pytest.mark.parametrize(
@@ -202,6 +221,11 @@ def test_empty_runtime_schedule_propagates_as_exit_code_1(
 @pytest.mark.parametrize(
     "arguments",
     [
+        [
+            "data-calendar",
+            "--start",
+            "2026-01-01",
+        ],
         [
             "data-standard",
             "--start",
