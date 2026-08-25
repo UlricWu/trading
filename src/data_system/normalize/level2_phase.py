@@ -62,7 +62,7 @@ _SZ_OPEN_AND_CLOSE_CALL = (
     _PhaseInterval(time(15, 0), time(15, 0, 1), False, MarketPhase.AUCTION),
 )
 
-_SZ_CONVERTIBLE_BOND_RESUME_CALL = (
+_SZ_1457_RESUME_CALL = (
     _PhaseInterval(time(14, 57), time(14, 57, 1), False, MarketPhase.AUCTION),
 )
 
@@ -74,8 +74,8 @@ _DEFAULT_A_SHARE_TRADE_PHASE_RULES: tuple[_PhaseRule, ...] = (
         intervals=(
             _PhaseInterval(
                 time(9, 25),
-                time(9, 25, 2),
-                True,
+                time(9, 25, 13),
+                False,
                 MarketPhase.AUCTION,
             ),
             *_TRADE_REGULAR_AM,
@@ -96,8 +96,8 @@ _DEFAULT_A_SHARE_TRADE_PHASE_RULES: tuple[_PhaseRule, ...] = (
         intervals=(
             _PhaseInterval(
                 time(9, 25),
-                time(9, 25, 1),
-                True,
+                time(9, 25, 13),
+                False,
                 MarketPhase.AUCTION,
             ),
             *_TRADE_REGULAR_AM,
@@ -115,8 +115,20 @@ _DEFAULT_A_SHARE_TRADE_PHASE_RULES: tuple[_PhaseRule, ...] = (
         exchange="sz",
         effective_from=_EARLIEST_SUPPORTED_DATE,
         effective_to=None,
+        intervals=(
+            _SZ_OPEN_AND_CLOSE_CALL
+            + _TRADE_REGULAR_AM
+            + _TRADE_STOCK_PM
+            + _SZ_1457_RESUME_CALL
+        ),
+        security_types=("stock",),
+    ),
+    _PhaseRule(
+        exchange="sz",
+        effective_from=_EARLIEST_SUPPORTED_DATE,
+        effective_to=None,
         intervals=_SZ_OPEN_AND_CLOSE_CALL + _TRADE_REGULAR_AM + _TRADE_STOCK_PM,
-        security_types=("stock", "fund", "etf", "bond"),
+        security_types=("fund", "etf", "bond"),
     ),
     _PhaseRule(
         exchange="sz",
@@ -141,7 +153,7 @@ _DEFAULT_A_SHARE_TRADE_PHASE_RULES: tuple[_PhaseRule, ...] = (
             _SZ_OPEN_AND_CLOSE_CALL
             + _TRADE_REGULAR_AM
             + _TRADE_STOCK_PM
-            + _SZ_CONVERTIBLE_BOND_RESUME_CALL
+            + _SZ_1457_RESUME_CALL
         ),
         security_types=("convertible_bond",),
     ),
@@ -152,8 +164,8 @@ _DEFAULT_A_SHARE_TRADE_PHASE_RULES: tuple[_PhaseRule, ...] = (
         intervals=(
             _PhaseInterval(
                 time(9, 25),
-                time(9, 25, 2),
-                True,
+                time(9, 25, 13),
+                False,
                 MarketPhase.AUCTION,
             ),
             *_TRADE_REGULAR_AM,
@@ -168,8 +180,8 @@ _DEFAULT_A_SHARE_TRADE_PHASE_RULES: tuple[_PhaseRule, ...] = (
         intervals=(
             _PhaseInterval(
                 time(9, 25),
-                time(9, 25, 2),
-                True,
+                time(9, 25, 13),
+                False,
                 MarketPhase.AUCTION,
             ),
             *_TRADE_REGULAR_AM,
@@ -190,7 +202,7 @@ _DEFAULT_A_SHARE_TRADE_PHASE_RULES: tuple[_PhaseRule, ...] = (
         intervals=(
             _PhaseInterval(
                 time(9, 25),
-                time(9, 25, 1),
+                time(9, 25, 13),
                 False,
                 MarketPhase.AUCTION,
             ),

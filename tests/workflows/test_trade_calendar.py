@@ -19,6 +19,8 @@ from src.workflows.trade_calendar import run_trade_calendar_bootstrap
 def test_bootstrap_runs_only_calendar_materialization_from_2016_to_as_of_year(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    logger = Mock()
+    monkeypatch.setattr(workflow_module, "logs", logger)
     pipeline = Mock(spec=DataPipeline)
     pipeline.run.side_effect = lambda context: context
     pipeline_factory = Mock(return_value=pipeline)
@@ -36,6 +38,12 @@ def test_bootstrap_runs_only_calendar_materialization_from_2016_to_as_of_year(
     pipeline.run.assert_called_once_with(
         DataContext(start="2016-01-01", end="2026-12-31")
     )
+    assert [call.args[0] for call in logger.info.call_args_list] == [
+        "▶️ workflow; kind=data-calendar start=2016-01-01 "
+        "end=2026-12-31 as_of_date=2026-08-21",
+        "✅ workflow; kind=data-calendar start=2016-01-01 "
+        "end=2026-12-31 as_of_date=2026-08-21",
+    ]
 
 
 def test_bootstrap_rejects_invalid_as_of_before_pipeline_preparation(

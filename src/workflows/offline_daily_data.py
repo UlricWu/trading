@@ -84,8 +84,8 @@ def run_offline_data(
         for source_name, source_config in app_config.data.sources.items():
             if not source_config.enabled:
                 logs.warning(
-                    f"skip source={source_name} group={OFFLINE_LEVEL2} "
-                    f"broker={source_config.broker} reason=source_disabled"
+                    f"⚠️ source; source={source_name} group={OFFLINE_LEVEL2} "
+                    f"broker={source_config.broker} reason=disabled"
                 )
                 continue
             fact_sources[source_name] = source_config
@@ -136,9 +136,11 @@ def run_offline_data(
         instrumentation=instrumentation,
     )
     logs.info(
-        f"started kind={submission.kind} start={submission.start} end={submission.end}"
+        f"▶️ workflow; kind={submission.kind} start={submission.start} "
+        f"end={submission.end}"
     )
     pipeline.run(DataContext(start=submission.start, end=submission.end))
     logs.info(
-        f"finished kind={submission.kind} start={submission.start} end={submission.end}"
+        f"✅ workflow; kind={submission.kind} start={submission.start} "
+        f"end={submission.end}"
     )

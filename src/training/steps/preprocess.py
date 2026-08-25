@@ -65,7 +65,8 @@ class PreprocessStep:
         )
         processed_y = train_y.iloc[np.flatnonzero(keep_rows)].copy()
         logs.info(
-            f"train_rows={len(train_X)} retained_rows={len(processed_X)} "
+            f"✅ preprocess; train_rows={len(train_X)} "
+            f"retained_rows={len(processed_X)} "
             f"skipped_rows={len(train_X) - len(processed_X)}"
         )
         return processed_X, processed_y, fitted

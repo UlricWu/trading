@@ -68,7 +68,7 @@ def normalize_tushare(
     """
     raw_frame = pq.ParquetFile(input_file).read().to_pandas()
     logs.info(
-        f"raw normalize: "
+        f"▶️ Tushare normalize; "
         f"target={target_name} trade_date={trade_date} "
         f"output={output_name} rows={len(raw_frame)}"
     )

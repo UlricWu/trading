@@ -53,6 +53,8 @@ def test_data_workflow_supplies_one_linear_domain_step_sequence(
     kind: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    logger = Mock()
+    monkeypatch.setattr(workflow_module, "logs", logger)
     pipeline = Mock(spec=DataPipeline)
     pipeline.run.side_effect = lambda context: context
     pipeline_factory = Mock(return_value=pipeline)
@@ -82,6 +84,10 @@ def test_data_workflow_supplies_one_linear_domain_step_sequence(
     pipeline.run.assert_called_once()
     context = pipeline.run.call_args.args[0]
     assert context == DataContext(start="2026-07-20", end="2026-07-20")
+    assert [call.args[0] for call in logger.info.call_args_list] == [
+        f"▶️ workflow; kind={kind} start=2026-07-20 end=2026-07-20",
+        f"✅ workflow; kind={kind} start=2026-07-20 end=2026-07-20",
+    ]
 
 
 def test_standard_sources_come_only_from_the_tushare_active_manifest(

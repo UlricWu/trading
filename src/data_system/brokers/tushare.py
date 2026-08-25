@@ -168,8 +168,8 @@ class TushareBroker:
     ) -> bool:
         response = self._pro.query(api_name, **dict(params))
         if response is None:
-            logs.info(
-                f"no data source={source_name} "
+            logs.warning(
+                f"⚠️ Tushare query; reason=no_data source={source_name} "
                 f"api_name={api_name} params={params}"
             )
             return False
@@ -179,8 +179,8 @@ class TushareBroker:
                 f"got={type(response).__name__}"
             )
         if source_name == "trade_calendar" and response.empty:
-            logs.info(
-                f"no data source={source_name} "
+            logs.warning(
+                f"⚠️ Tushare query; reason=no_data source={source_name} "
                 f"api_name={api_name} params={params}"
             )
             return False

@@ -79,8 +79,11 @@ class CalendarMaterializeStep:
         if start_date > end_date:
             raise ValueError(f"invalid date range: start={start_date}, end={end_date}")
 
-        for calendar_year in range(int(start_date[:4]), int(end_date[:4]) + 1):
-            self._materialize_year(calendar_year)
+        calendar_years = range(int(start_date[:4]), int(end_date[:4]) + 1)
+        published_years = 0
+        for calendar_year in calendar_years:
+            if self._materialize_year(calendar_year):
+                published_years += 1
 
         context.trade_dates = tuple(
             self._access.trade_dates(
@@ -88,9 +91,14 @@ class CalendarMaterializeStep:
                 end_date=end_date,
             )
         )
+        logs.info(
+            f"✅ calendar materialize; years={len(calendar_years)} "
+            f"reused={len(calendar_years) - published_years} "
+            f"published={published_years} trade_dates={len(context.trade_dates)}"
+        )
         return context
 
-    def _materialize_year(self, calendar_year: int) -> None:
+    def _materialize_year(self, calendar_year: int) -> bool:
         processed_payload = self._path_manager.processed_year_data(
             dataset_name="trade_calendar",
             version=self._processed_version,
@@ -110,10 +118,10 @@ class CalendarMaterializeStep:
             is not None
         ):
             logs.info(
-                f"calendar meta hit; calendar_year={calendar_year} "
-                f"output={processed_meta}"
+                f"♻️ calendar processed meta hit; "
+                f"calendar_year={calendar_year} meta={processed_meta}"
             )
-            return
+            return False
 
         raw_payload = self._path_manager.raw_year_payload(
             broker=TushareBroker.name,
@@ -149,6 +157,10 @@ class CalendarMaterializeStep:
             raw_payload = fetched_payload
         else:
             raw_payload = loaded_raw.payload_path
+            logs.info(
+                f"♻️ calendar raw meta hit; calendar_year={calendar_year} "
+                f"meta={raw_meta}"
+            )
 
         normalized = normalize_tushare(
             input_file=raw_payload,
@@ -165,3 +177,8 @@ class CalendarMaterializeStep:
             payload_path=processed_payload,
             upstream_meta_path=raw_meta,
         )
+        logs.info(
+            f"✅ calendar publish; calendar_year={calendar_year} "
+            f"output={processed_payload}"
+        )
+        return True

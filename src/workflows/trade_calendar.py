@@ -55,7 +55,7 @@ def run_trade_calendar_bootstrap(
         ),
     )
     logs.info(
-        f"started kind=data-calendar start={_CALENDAR_BOOTSTRAP_START} "
+        f"▶️ workflow; kind=data-calendar start={_CALENDAR_BOOTSTRAP_START} "
         f"end={end_date} as_of_date={validated_as_of}"
     )
     pipeline.run(
@@ -65,7 +65,7 @@ def run_trade_calendar_bootstrap(
         )
     )
     logs.info(
-        f"finished kind=data-calendar start={_CALENDAR_BOOTSTRAP_START} "
+        f"✅ workflow; kind=data-calendar start={_CALENDAR_BOOTSTRAP_START} "
         f"end={end_date} as_of_date={validated_as_of}"
     )
 

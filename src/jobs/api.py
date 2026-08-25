@@ -66,15 +66,21 @@ def create_app(job_runtime: JobRuntime) -> Flask:
     @flask_app.before_request
     def log_request() -> None:
         g.request_started_at = time.monotonic()
-        logs.info(f"request method={request.method} path={request.path}")
+        logs.info(f"▶️ request; method={request.method} path={request.path}")
 
     @flask_app.after_request
     def log_response(response: Response) -> Response:
         duration_seconds = time.monotonic() - g.request_started_at
-        logs.info(
-            f"response method={request.method} path={request.path} "
+        response_message = (
+            f"response; method={request.method} path={request.path} "
             f"status={response.status_code} duration_s={duration_seconds:.6f}"
         )
+        if response.status_code >= 500:
+            logs.error(f"❌ {response_message}")
+        elif response.status_code >= 400:
+            logs.warning(f"⚠️ {response_message}")
+        else:
+            logs.info(f"✅ {response_message}")
         return response
 
     @flask_app.errorhandler(InvalidJobRequest)
@@ -115,7 +121,8 @@ def create_app(job_runtime: JobRuntime) -> Flask:
     @flask_app.errorhandler(Exception)
     def handle_internal_error(error: Exception) -> HttpResponse:
         logs.opt(exception=error).error(
-            f"internal_error method={request.method} path={request.path}"
+            f"❌ request; reason=internal_error method={request.method} "
+            f"path={request.path}"
         )
         return _error_response(
             code="internal_error",
@@ -216,7 +223,7 @@ def main() -> None:
     system_log_file = Path("logs") / "system" / f"{started_at:%Y-%m-%d-%H-%M-%S.%f}.log"
     configure_system_logging(system_log_file)
     pid = os.getpid()
-    logs.info(f"api.start pid={pid} started_at={started_at.isoformat()}")
+    logs.info(f"▶️ api; pid={pid}")
 
     try:
         with JobRuntime() as job_runtime:
@@ -229,10 +236,10 @@ def main() -> None:
                 threaded=True,
             )
     except Exception:
-        logs.exception(f"api.failed pid={pid}")
+        logs.exception(f"❌ api; pid={pid}")
         raise
     finally:
-        logs.info(f"api.stop pid={pid}")
+        logs.info(f"✅ api shutdown; pid={pid}")
         logs.complete()
         logs.remove()
 

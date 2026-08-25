@@ -14,17 +14,19 @@ class MarketPhase(IntEnum):
 
     ``AUCTION = 0``:
         - SH stock/cdr from 2018-08-20:
-          ``[09:25:00, 09:25:02]`` and ``[15:00:00, 15:00:03)``.
+          ``[09:25:00, 09:25:13)`` and ``[15:00:00, 15:00:03)``.
         - SH b_share on every supported date:
-          ``[09:25:00, 09:25:01]`` and ``[15:00:00, 15:00:02)``.
+          ``[09:25:00, 09:25:13)`` and ``[15:00:00, 15:00:02)``.
         - SH fund/etf through 2026-07-05:
-          ``[09:25:00, 09:25:02]``.
+          ``[09:25:00, 09:25:13)``.
         - SH fund/etf from 2026-07-06:
-          ``[09:25:00, 09:25:02]`` and ``[15:00:00, 15:00:03)``.
+          ``[09:25:00, 09:25:13)`` and ``[15:00:00, 15:00:03)``.
         - SH bond/convertible_bond/bond_repo on every supported date:
-          ``[09:25:00, 09:25:01)``.
-        - SZ stock/fund/etf/bond/b_share on every supported date and SZ
-          convertible_bond through 2020-06-07: ``[09:25:00, 09:25:01)`` and
+          ``[09:25:00, 09:25:13)``.
+        - SZ stock on every supported date: ``[09:25:00, 09:25:01)``,
+          ``[14:57:00, 14:57:01)``, and ``[15:00:00, 15:00:01)``.
+        - SZ fund/etf/bond/b_share on every supported date and SZ convertible
+          bond through 2020-06-07: ``[09:25:00, 09:25:01)`` and
           ``[15:00:00, 15:00:01)``.
         - SZ convertible_bond from 2020-06-08:
           ``[09:25:00, 09:25:01)``, ``[14:57:00, 14:57:01)``, and

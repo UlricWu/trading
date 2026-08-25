@@ -105,8 +105,7 @@ def build_components(
         )
 
     logs.info(
-        f"ready "
-        f"mode={mode.value} "
+        f"✅ components; mode={mode.value} "
         f"signal={type(signal).__name__} "
         f"feature_set={inference_model.feature_set} "
         f"feature_version={inference_model.feature_version} "

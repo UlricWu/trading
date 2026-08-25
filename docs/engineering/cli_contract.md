@@ -10,8 +10,9 @@
 CLI 只把不可信文本解析为 `src.jobs.requests` 已构造的 data、training 或 backtest
 submission，加载一次 `AppConfig`，创建 `PathManager` 并调用一次工作流。HTTP Job API
 也必须复用同一构造边界，不得各自实现日期、mode、model experiment 或 strategy 校验。
-CLI 不记录 start/done 或原始 JSON；workflow 负责业务运行日志。Typer 负责参数错误并以
-`2` 退出，未处理的配置或运行错误以 `1` 退出。
+CLI 在命令分派前按日志技术 owner 配置一次公共 logger 的 stderr sink；它不记录
+start/done 或原始 JSON，workflow 负责业务运行日志。Typer 负责参数错误并以 `2` 退出，
+未处理的配置或运行错误以 `1` 退出。
 
 日期必须是规范 `YYYY-MM-DD`。范围必须满足 `start <= end`。Training 和 backtest 的
 `EXPERIMENT_ID` 必须匹配 `[A-Za-z0-9][A-Za-z0-9._-]{0,63}`。

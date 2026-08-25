@@ -104,7 +104,8 @@ class Level2Broker:
 
             if not names:
                 logs.warning(
-                    f"Level2 remote directory is empty; trade_date={trade_date}"
+                    f"⚠️ Level-2 remote directory; reason=empty "
+                    f"trade_date={trade_date}"
                 )
                 return None
 
@@ -113,8 +114,9 @@ class Level2Broker:
 
             if not matches:
                 logs.warning(
-                    f"Level2 remote file not found; file={expected_file} "
-                    f"trade_date={trade_date} remote_file_count={len(names)}"
+                    f"⚠️ Level-2 remote file; reason=not_found "
+                    f"file={expected_file} trade_date={trade_date} "
+                    f"remote_file_count={len(names)}"
                 )
                 return None
 
@@ -145,7 +147,7 @@ class Level2Broker:
                 )
 
             logs.info(
-                f"download_start "
+                f"▶️ download; "
                 f"remote_size={FileSystem.format_size(remote_size)} "
                 f"trade_date={trade_date} "
                 f"file={remote_file} "
@@ -245,8 +247,8 @@ class Level2Broker:
                         if FileSystem.get_file_size(part_file) != remote_size_bytes:
                             raise
                         logs.warning(
-                            f"control response timed out after full payload; "
-                            f"remote_file={remote_file}"
+                            f"⚠️ download; reason=control_response_timeout "
+                            f"remote_file={remote_file} payload_complete=true"
                         )
                     else:
                         writable_part_stream.flush()

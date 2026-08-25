@@ -83,7 +83,7 @@ class ArtifactPersistStep:
             inference_model=context.model,
         )
         logs.info(
-            "type=training_inference "
+            f"✅ training artifact publish; type=training_inference "
             f"path={self._pm.experiment_training_inference(experiment_name=self._experiment_name)} "
             f"model_group={self._model_group} asof_day={asof_day}"
         )

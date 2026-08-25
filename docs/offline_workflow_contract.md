@@ -107,10 +107,11 @@ backtest_{start}_{end}_{experiment_id}
 以 `FileExistsError` 失败；该检查不创建、预留、锁定、清理或恢复目录。
 
 Instrumentation 衡量 workflow 显式组装的 step，返回 `step.run(context)` 的原始结果，以
-`finally` 累计耗时，并原样传播异常。Step 不接收也不调用 Instrumentation；只有
-`run_steps(...)` 负责默认测量。同名 step 累计总耗时、次数和平均值；进入 Instrumentation
-作用域后，成功或异常都只输出一次 timeline。准备阶段或空 schedule/timing 在进入作用域前
-失败，因此不输出 timeline。现有 step label 固定为：
+`finally` 累计耗时、次数、失败次数，并原样传播异常。Step 不接收也不调用
+Instrumentation；只有 `run_steps(...)` 负责默认测量。同名 step 累计总耗时、次数、平均值
+和失败次数；进入 Instrumentation 作用域后，每个 step 输出一条 `✅ pipeline step` 或
+`❌ pipeline step` 记录，最后只输出一条 `✅ pipeline` 或 `❌ pipeline` 汇总。准备阶段或空
+schedule/timing 在进入作用域前失败，因此不输出 timeline。现有 step label 固定为：
 
 ```text
 CalendarMaterializeStep, FactMaterializeStep, FeatureBuildStep, LabelBuildStep,
@@ -137,9 +138,10 @@ Workflow 从收到的 `PathManager` 创建唯一 `Access`，只组装一个
 `CalendarMaterializeStep` 的不可变 step tuple，并调用一次 `DataPipeline.run()`。该 Step
 按自然年升序复用或物化范围内每个完整年度的 raw 与 processed `trade_calendar`，并通过
 同一个 Access 终验完整范围。Bootstrap 不选择或执行 fact source、feature、label、Level-2
-或其他 derived operation，不创建 `DataSubmission`、Job、实验身份或运行制品。它记录一次
-`kind=data-calendar` started 和成功后的 finished 日志；错误原样传播，已正式提交的较早
-年度保留，重跑通过 Meta hit 续建。有效年度对象不隐式刷新或覆盖，未来年份不进入范围。
+或其他 derived operation，不创建 `DataSubmission`、Job、实验身份或运行制品。Workflow
+进入执行时记录 `▶️ workflow`，成功返回后记录 `✅ workflow`；错误原样传播，已正式提交
+的较早年度保留，重跑通过 Meta hit 续建。有效年度对象不隐式刷新或覆盖，未来年份不进入
+范围。
 
 ## Data workflow
 
@@ -197,6 +199,15 @@ Calendar 的年度 ingest、raw Meta、normalize 和 lineage 由
 时才 normalize；不得拆分独立 ingest/normalize Pipeline Step，也不得引入 Materializer 或
 其他转发对象。
 
+Calendar 的 processed 与 raw Meta hit 分别记录 `♻️ calendar processed meta hit` 与
+`♻️ calendar raw meta hit`；每个新发布年度记录一次 `✅ calendar publish`，Step 成功后以
+`✅ calendar materialize` 聚合 years、reused、published 与 trade_dates。Fact 不记录逐日
+ingest/normalize start 或 finish；每个 raw 与 processed Meta hit 分别记录 `♻️ raw meta hit`
+与 `♻️ processed meta hit`，每个实际 raw ingest 与 processed publish 分别记录
+`✅ raw ingest` 与 `✅ processed publish`，不可用 source 记录 `⚠️ fact source`。Step 成功后
+以 `✅ fact materialize` 聚合 trade_dates、raw_reused、raw_fetched、processed_reused、
+processed_published 与 unavailable。失败仍按现有边界原样传播。
+
 所有 fact 日期完成后，一个 `FeatureBuildStep` 才在自己的一次 `run` 中按到达日升序生成
 全部 selected feature operation；一个 `LabelBuildStep` 再按相同日期顺序生成全部 selected
 label operation。每个 label set 只有一个 maturity：builder 的 `lookahead=L` 时，Access
@@ -206,8 +217,9 @@ partition identity，末日是 maturity。多个 label set（包括不同 lookah
 operation 集自然不产生数据；Pipeline 不隐式扩大请求范围。
 
 Feature/label builder 和 Access 不记录运行日志。Private 发布函数也不记录日志；具体 Step
-在每个 operation 完成后只记录该分区是 `reused` 还是 `published`，label 日志同时携带
-partition date 与 maturity date。调度、计算或发布错误原样传播，不追加重复错误日志。
+在每个 operation 完成后以 `♻️ feature meta hit` / `♻️ label meta hit` 表示复用，以
+`✅ feature publish` / `✅ label publish` 表示发布，label 日志同时携带 partition date 与
+maturity date。调度、计算或发布错误原样传播，不追加重复错误日志。
 
 两个 kind 使用同一套 workflow 语义，显式 step 顺序都固定为 calendar materialize → fact
 materialize → feature build → label build。差异只存在于 workflow 准备阶段选择的 source、
@@ -218,8 +230,8 @@ normalize 与 derived operation 实现。Pipeline 只按 workflow 传入的单�
 `processed/stock_st/v1/trade_date=2019-04-01/data.parquet` 及同目录 `meta.json`，不得跳过
 normalize 或把 processed 对象留作缺失。成功对象必须先发布 payload 再提交 Meta；
 Meta reuse、lineage、Level-2 symbol slices 与 staging/raw 选择继续由各 producer owner 负责。
-Calendar bootstrap 与 Data workflow 保留 started 和 finished 业务日志；Training 和
-Backtest workflow 不新增 start/done 日志。
+Calendar bootstrap 与 Data workflow 保留 `▶️ workflow` 和成功后的 `✅ workflow` 业务
+日志；Training 和 Backtest workflow 不新增 workflow 边界日志。
 
 ## Training workflow
 

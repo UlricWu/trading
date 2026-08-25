@@ -45,8 +45,35 @@ Loguru 是项目明确选定的日志技术栈。项目自有日志实现必须�
 服务运行始终写入这个文件，不按时间或大小轮转，也不自动清理历史文件；启动文件已
 存在时必须失败，不得追加。API 请求日志属于 system log，不得另建 API file sink。
 System log 不得记录请求 payload、strategy、子进程 argv 或子进程 traceback。
-项目自有日志消息不得添加方括号组件 prefix；消息必须直接以动作或状态开头，并保留
-用于检索和聚合的稳定 `key=value` 上下文。
+项目自有日志消息不得添加方括号组件 prefix；`src/` 下每条项目日志消息必须以且仅以
+下列一个 UTF-8 状态符号开头，符号后直接写具名对象或动作，再以 `;` 分隔稳定的
+`key=value` 上下文：
+
+| 状态符号 | 唯一含义 | Loguru level |
+| --- | --- | --- |
+| `▶️` | 开始 | `INFO` |
+| `⏳` | 仍在运行 | `INFO` |
+| `✅` | 成功完成或成功发布 | `INFO` |
+| `♻️` | 复用已有制品 | `INFO` |
+| `⚠️` | 需要关注但尚未失败 | `WARNING` |
+| `❌` | 失败 | `ERROR` 或 `EXCEPTION` |
+
+状态符号属于日志语义而不是装饰。正文不得再用 `started`、`active`、`finished`、`done`、
+`succeeded`、`failed` 或 `reused` 重复同一通用状态；`publish` 等词只有作为被执行的具名
+动作时保留；`reused=<count>`、`published=<count>`、`failed_runs=<count>` 等聚合字段不属于
+重复状态。失败原因、HTTP status、Job 状态转换及其他领域结果仍必须通过稳定字段明确
+表达。多行消息只视为一个日志事件，其首行必须遵守上述前缀规则。
+
+CLI composition root 必须在命令分派前把公共 `src.logs` 配置为单一 stderr sink，格式
+固定为：
+
+```text
+{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {name}:{line} - {message}
+```
+
+`name` 是完整 Python 模块名；源码位置不重复输出 function。该 stderr 同时是人工 CLI
+输出和 job 子进程日志的来源，默认只接收 `INFO` 及以上级别；`DEBUG` 诊断不得进入默认
+CLI 或 job 日志。Flask system log 继续使用不含源码位置的独立格式。
 
 每个 job 的日志包含文件身份首行及该 job 子进程的完整 stdout/stderr 输出。每次 job
 启动时，`JobRuntime` 必须只读取一次 `Asia/Shanghai` 时间，该时间同时确定

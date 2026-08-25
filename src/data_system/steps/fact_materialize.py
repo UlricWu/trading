@@ -29,6 +29,15 @@ class _NormalizePlan:
     operation: NormalizeOperation
 
 
+@dataclass(slots=True)
+class _MaterializeStats:
+    raw_reused: int = 0
+    raw_fetched: int = 0
+    unavailable: int = 0
+    processed_reused: int = 0
+    processed_published: int = 0
+
+
 class FactMaterializeStep:
     """Ingest and normalize all selected facts over formal trade dates.
 
@@ -121,21 +130,32 @@ class FactMaterializeStep:
             )
         """
         missing_dates: list[str] = []
+        stats = _MaterializeStats()
         for trade_date in context.trade_dates:
-            if not self._ingest_sources(trade_date):
+            if not self._ingest_sources(trade_date, stats):
                 missing_dates.append(trade_date)
                 continue
-            self._normalize_sources(trade_date)
+            self._normalize_sources(trade_date, stats)
 
         if missing_dates:
             raise RuntimeError(
                 f"[OfflineData] fact dates are unavailable; "
                 f"missing_dates={missing_dates}"
             )
+        logs.info(
+            f"✅ fact materialize; trade_dates={len(context.trade_dates)} "
+            f"raw_reused={stats.raw_reused} raw_fetched={stats.raw_fetched} "
+            f"processed_reused={stats.processed_reused} "
+            f"processed_published={stats.processed_published} "
+            f"unavailable={stats.unavailable}"
+        )
         return context
 
-    def _ingest_sources(self, trade_date: str) -> bool:
-        logs.info(f"fact ingest started; trade_date={trade_date}")
+    def _ingest_sources(
+        self,
+        trade_date: str,
+        stats: _MaterializeStats,
+    ) -> bool:
         available_payload = False
         missing_payloads = 0
 
@@ -153,9 +173,11 @@ class FactMaterializeStep:
             )
             if meta.find(pm=self._path_manager, meta_path=meta_path) is not None:
                 available_payload = True
+                stats.raw_reused += 1
                 logs.info(
-                    f"raw meta hit; source={plan.source_name} "
-                    f"trade_date={trade_date} output={meta_path}"
+                    f"♻️ raw meta hit; source={plan.source_name} "
+                    f"broker={plan.broker} trade_date={trade_date} "
+                    f"meta={meta_path}"
                 )
                 continue
 
@@ -167,10 +189,12 @@ class FactMaterializeStep:
             fetched = adapter.fetch(record=plan, pm=self._path_manager)
             if fetched is None:
                 logs.warning(
-                    f"source unavailable; source={plan.source_name} "
-                    f"broker={plan.broker} trade_date={trade_date}"
+                    f"⚠️ fact source; reason=unavailable "
+                    f"source={plan.source_name} broker={plan.broker} "
+                    f"trade_date={trade_date}"
                 )
                 missing_payloads += 1
+                stats.unavailable += 1
                 continue
 
             output_file = self._path_manager.raw_payload(
@@ -181,8 +205,12 @@ class FactMaterializeStep:
             )
             meta.commit(pm=self._path_manager, payload_path=output_file)
             available_payload = True
+            stats.raw_fetched += 1
+            logs.info(
+                f"✅ raw ingest; source={plan.source_name} broker={plan.broker} "
+                f"trade_date={trade_date} output={output_file}"
+            )
 
-        logs.info(f"fact ingest finished; trade_date={trade_date}")
         if not available_payload:
             return False
         if missing_payloads:
@@ -192,8 +220,11 @@ class FactMaterializeStep:
             )
         return True
 
-    def _normalize_sources(self, trade_date: str) -> None:
-        logs.info(f"fact normalize started; trade_date={trade_date}")
+    def _normalize_sources(
+        self,
+        trade_date: str,
+        stats: _MaterializeStats,
+    ) -> None:
         for plan in self._normalize_plans:
             processed_meta = self._path_manager.processed_meta(
                 dataset_name=plan.output,
@@ -220,9 +251,11 @@ class FactMaterializeStep:
                     f"dataset={plan.output}, meta_path={processed_meta}"
                 )
             if loaded_output is not None:
+                stats.processed_reused += 1
                 logs.info(
-                    f"processed meta hit; target={plan.output} "
-                    f"source={plan.source_name} trade_date={trade_date}"
+                    f"♻️ processed meta hit; target={plan.output} "
+                    f"source={plan.source_name} trade_date={trade_date} "
+                    f"meta={processed_meta}"
                 )
                 continue
 
@@ -273,4 +306,9 @@ class FactMaterializeStep:
                 upstream_meta_path=raw_meta_path,
                 symbol_slices=normalized.symbol_slices,
             )
-        logs.info(f"fact normalize finished; trade_date={trade_date}")
+            stats.processed_published += 1
+            logs.info(
+                f"✅ processed publish; target={plan.output} "
+                f"source={plan.source_name} trade_date={trade_date} "
+                f"rows={normalized.table.num_rows} output={output_file}"
+            )

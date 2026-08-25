@@ -122,7 +122,11 @@ def test_fact_step_reports_all_wholly_missing_dates_without_normalizing(
 def test_fact_step_raw_meta_hit_does_not_construct_a_broker(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    logger = Mock()
+    monkeypatch.setattr(fact_module, "logs", logger)
     path_manager = Mock(spec=PathManager)
+    raw_meta_path = Path("/raw/bars/meta.json")
+    path_manager.raw_meta.return_value = raw_meta_path
     adapter_class = Mock()
     monkeypatch.setattr(fact_module.meta, "find", Mock(return_value=object()))
     step = FactMaterializeStep(
@@ -141,11 +145,20 @@ def test_fact_step_raw_meta_hit_does_not_construct_a_broker(
 
     assert step.run(context) is context
     adapter_class.assert_not_called()
+    assert [call.args[0] for call in logger.info.call_args_list] == [
+        f"♻️ raw meta hit; source=bars broker=broker trade_date=2026-07-20 "
+        f"meta={raw_meta_path}",
+        "✅ fact materialize; trade_dates=1 raw_reused=1 raw_fetched=0 "
+        "processed_reused=0 processed_published=0 unavailable=0",
+    ]
 
 
 def test_fact_step_uses_matching_staging_payload_for_normalization(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    logger = Mock()
+    monkeypatch.setattr(fact_module, "logs", logger)
     path_manager = PathManager(tmp_path)
     trade_date = "2026-05-01"
     raw_path = path_manager.raw_payload(
@@ -192,8 +205,38 @@ def test_fact_step_uses_matching_staging_payload_for_normalization(
     )
 
     step.run(_context(trade_date))
+    step.run(_context(trade_date))
 
     assert selected_inputs == [staging_path]
+    output_path = path_manager.processed_data(
+        dataset_name="output",
+        version="v1",
+        trade_date=trade_date,
+    )
+    raw_meta_path = path_manager.raw_meta(
+        broker="broker",
+        source_name="source",
+        trade_date=trade_date,
+    )
+    processed_meta_path = path_manager.processed_meta(
+        dataset_name="output",
+        version="v1",
+        trade_date=trade_date,
+    )
+    assert [call.args[0] for call in logger.info.call_args_list] == [
+        f"♻️ raw meta hit; source=source broker=broker trade_date={trade_date} "
+        f"meta={raw_meta_path}",
+        f"✅ processed publish; target=output source=source "
+        f"trade_date={trade_date} rows=1 output={output_path}",
+        "✅ fact materialize; trade_dates=1 raw_reused=1 raw_fetched=0 "
+        "processed_reused=0 processed_published=1 unavailable=0",
+        f"♻️ raw meta hit; source=source broker=broker trade_date={trade_date} "
+        f"meta={raw_meta_path}",
+        f"♻️ processed meta hit; target=output source=source "
+        f"trade_date={trade_date} meta={processed_meta_path}",
+        "✅ fact materialize; trade_dates=1 raw_reused=1 raw_fetched=0 "
+        "processed_reused=1 processed_published=0 unavailable=0",
+    ]
 
 
 @pytest.mark.parametrize("event_source", ("stock_st", "suspend_d"))

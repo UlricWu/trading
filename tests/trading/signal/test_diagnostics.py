@@ -15,11 +15,11 @@ from src.trading.signal.diagnostics import BasicSignalDiagnostics
 def test_all_skipped_predictions_log_requested_scored_and_skipped_counts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    log_info = Mock()
+    log_warning = Mock()
     monkeypatch.setattr(
         diagnostics_module,
         "logs",
-        SimpleNamespace(info=log_info),
+        SimpleNamespace(warning=log_warning),
     )
 
     BasicSignalDiagnostics(log_daily_only=False).on_after_predict(
@@ -29,4 +29,7 @@ def test_all_skipped_predictions_log_requested_scored_and_skipped_counts(
         skipped_count=2,
     )
 
-    log_info.assert_called_once_with("ts_us=1 requested=2 scored=0 skipped=2")
+    log_warning.assert_called_once_with(
+        "⚠️ score diagnostics; reason=no_scores ts_us=1 "
+        "requested=2 scored=0 skipped=2"
+    )

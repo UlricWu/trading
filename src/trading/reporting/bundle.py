@@ -52,7 +52,7 @@ class ReportingBundle:
         )
         FileSystem.write_bytes_atomic(report_path, html.encode("utf-8"))
         logs.info(
-            f"saved path={report_path}\n"
+            f"✅ backtest report publish; path={report_path}\n"
             f"{format_log_json('backtest_metrics', metrics)}"
         )
         return report_path

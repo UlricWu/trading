@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date, time
 from pathlib import Path
+from time import monotonic
 from types import MappingProxyType
 from typing import Literal
 
@@ -20,6 +21,8 @@ from src.data_system.normalize.level2_security import resolve_level2_security_ty
 from src.utils import table_ops
 from src.utils.csv7z_batch_source import open_csv7z_batches
 from src.utils.datetime_utils import DateTimeUtils
+
+_NORMALIZE_PROGRESS_INTERVAL_SECONDS = 30.0
 
 _PARSED_TRADE_SCHEMA = pa.schema(
     [
@@ -149,42 +152,46 @@ def normalize_level2(
             "unsupported Level-2 raw/output normalize target: "
             f"raw_object={raw_object!r}, output={target_name!r}"
         )
-    logs.info(f"Level-2 route resolved; spec={spec}")
     trade_date = DateTimeUtils.require_system_date(
         trade_date,
         field_name="trade_date",
     )
 
     parsed_batches: list[pa.Table] = []
-    nonempty_batch_count = 0
-    raw_row_count = 0
-    parsed_row_count = 0
+    started_at_seconds = monotonic()
+    last_progress_at_seconds = started_at_seconds
 
     with open_csv7z_batches(input_file) as record_batches:
+        logs.info(
+            f"▶️ Level-2 normalize; target={target_name} "
+            f"trade_date={trade_date} input={input_file.name}"
+        )
         for record_batch in record_batches:
             raw_table = pa.Table.from_batches([record_batch])
-            raw_row_count += raw_table.num_rows
             parsed_table = parse_level2_trade_batch(
                 raw_table,
                 spec=spec,
                 trade_date=trade_date,
             )
-            if parsed_table.num_rows == 0:
-                continue
-
-            parsed_table = resolve_level2_security_type(
-                parsed_table,
-                exchange=spec.exchange,
-            )
-            parsed_batches.append(parsed_table)
-            parsed_row_count += parsed_table.num_rows
-            nonempty_batch_count += 1
-
-            if nonempty_batch_count % 64 == 0:
-                logs.info(
-                    f"batches={nonempty_batch_count} "
-                    f"raw_rows={raw_row_count} parsed_rows={parsed_row_count}"
+            if parsed_table.num_rows != 0:
+                parsed_table = resolve_level2_security_type(
+                    parsed_table,
+                    exchange=spec.exchange,
                 )
+                parsed_batches.append(parsed_table)
+
+            now_seconds = monotonic()
+            if (
+                now_seconds - last_progress_at_seconds
+                >= _NORMALIZE_PROGRESS_INTERVAL_SECONDS
+            ):
+                elapsed_seconds = int(now_seconds - started_at_seconds)
+                logs.info(
+                    f"⏳ Level-2 normalize; stage=read_parse "
+                    f"target={target_name} trade_date={trade_date} "
+                    f"elapsed_seconds={elapsed_seconds}"
+                )
+                last_progress_at_seconds = now_seconds
 
     if not parsed_batches:
         return NormalizeOutput(table=pa.table({}))
@@ -195,9 +202,11 @@ def normalize_level2(
         trade_date=trade_date,
     )
     symbol_count = len(processed_day.symbol_slices or {})
+    elapsed_seconds = int(monotonic() - started_at_seconds)
     logs.info(
-        f"Level-2 normalize done; rows={processed_day.table.num_rows} "
-        f"exchange={spec.exchange} symbols={symbol_count} output={output_name}"
+        f"✅ Level-2 normalize; target={target_name} trade_date={trade_date} "
+        f"rows={processed_day.table.num_rows} symbols={symbol_count} "
+        f"elapsed_seconds={elapsed_seconds} output={output_name}"
     )
     return processed_day
 
@@ -396,7 +405,7 @@ def _build_symbol_index(table: pa.Table) -> tuple[pa.Table, dict[str, range]]:
             )
 
     row_count = table.num_rows
-    logs.info(f"Level-2 sort started; rows={row_count}")
+    logs.info(f"▶️ Level-2 sort; rows={row_count}")
     sorted_table = table.take(
         pc.sort_indices(
             table,
@@ -408,7 +417,7 @@ def _build_symbol_index(table: pa.Table) -> tuple[pa.Table, dict[str, range]]:
             ],
         )
     )
-    logs.info(f"Level-2 sort done; rows={row_count}")
+    logs.info(f"✅ Level-2 sort; rows={row_count}")
 
     encoded = pc.run_end_encode(sorted_table["symbol"]).combine_chunks()
     run_ends = encoded.run_ends.to_pylist()
@@ -420,7 +429,7 @@ def _build_symbol_index(table: pa.Table) -> tuple[pa.Table, dict[str, range]]:
         symbol_slices[symbol_value] = range(start, end)
         start = end
 
-    logs.info(f"Level-2 symbol index done; symbols={len(symbol_slices)}")
+    logs.info(f"✅ Level-2 symbol index; symbols={len(symbol_slices)}")
     return sorted_table, symbol_slices
 
 

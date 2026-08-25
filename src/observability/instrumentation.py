@@ -29,6 +29,7 @@ class Instrumentation:
         self._scope_name = scope_name
         self._total_seconds_by_step: dict[str, float] = {}
         self._runs_by_step: dict[str, int] = {}
+        self._failed_runs_by_step: dict[str, int] = {}
 
     def __enter__(self) -> Self:
         """Return this instrumentation for one workflow execution.
@@ -51,18 +52,39 @@ class Instrumentation:
             with Instrumentation("2026-07-20"):
                 pass
         """
-        logs.info(f"===== Pipeline timeline for {self._scope_name} =====")
         total_seconds = 0.0
         for name, elapsed_seconds in self._total_seconds_by_step.items():
             runs = self._runs_by_step[name]
+            failed_runs = self._failed_runs_by_step.get(name, 0)
             average_seconds = elapsed_seconds / runs
-            logs.info(
-                f"{name:<35} {elapsed_seconds:>8.3f}s "
-                f"avg={average_seconds:.3f}s runs={runs}"
-            )
+            if failed_runs:
+                logs.error(
+                    f"❌ pipeline step; step={name} "
+                    f"total_seconds={elapsed_seconds:.3f} "
+                    f"average_seconds={average_seconds:.3f} runs={runs} "
+                    f"failed_runs={failed_runs}"
+                )
+            else:
+                logs.info(
+                    f"✅ pipeline step; step={name} "
+                    f"total_seconds={elapsed_seconds:.3f} "
+                    f"average_seconds={average_seconds:.3f} runs={runs} "
+                    f"failed_runs=0"
+                )
             total_seconds += elapsed_seconds
-        logs.info(f"{'Total':<35} {total_seconds:>8.3f}s")
-        logs.info(f"{'=' * 43}")
+        if exc_type is None:
+            logs.info(
+                f"✅ pipeline; scope={self._scope_name} "
+                f"total_seconds={total_seconds:.3f} "
+                f"steps={len(self._total_seconds_by_step)}"
+            )
+        else:
+            logs.error(
+                f"❌ pipeline; scope={self._scope_name} "
+                f"total_seconds={total_seconds:.3f} "
+                f"steps={len(self._total_seconds_by_step)} "
+                f"error_type={exc_type.__name__}"
+            )
         return False
 
     def measure(
@@ -82,8 +104,12 @@ class Instrumentation:
             )
         """
         started_at = time.perf_counter()
+        failed = False
         try:
             return operation(*args, **kwargs)
+        except BaseException:
+            failed = True
+            raise
         finally:
             elapsed_seconds = time.perf_counter() - started_at
             self._total_seconds_by_step[operation_name] = (
@@ -92,3 +118,7 @@ class Instrumentation:
             self._runs_by_step[operation_name] = (
                 self._runs_by_step.get(operation_name, 0) + 1
             )
+            if failed:
+                self._failed_runs_by_step[operation_name] = (
+                    self._failed_runs_by_step.get(operation_name, 0) + 1
+                )

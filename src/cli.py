@@ -17,6 +17,7 @@ from src.jobs.requests import (
     create_training_submission,
 )
 from src.utils.datetime_utils import DateTimeUtils
+from src.utils.logger import configure_cli_logging
 from src.utils.path import PathManager
 from src.workflows.backtest import run_daily_alpha_backtest
 from src.workflows.offline_daily_data import run_offline_data
@@ -217,4 +218,5 @@ def backtest(
 
 
 if __name__ == "__main__":
+    configure_cli_logging()
     app()

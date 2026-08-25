@@ -14,6 +14,8 @@ from src.observability.instrumentation import Instrumentation
 def test_measure_returns_the_operation_result_and_forwards_arguments(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    logger = Mock()
+    monkeypatch.setattr(instrumentation_module, "logs", logger)
     monkeypatch.setattr(
         instrumentation_module.time,
         "perf_counter",
@@ -31,6 +33,12 @@ def test_measure_returns_the_operation_result_and_forwards_arguments(
 
     assert result == {"status": "complete"}
     operation.assert_called_once_with("2026-07-20", required=True)
+    assert [call.args[0] for call in logger.info.call_args_list] == [
+        "✅ pipeline step; step=Load total_seconds=0.250 "
+        "average_seconds=0.250 runs=1 failed_runs=0",
+        "✅ pipeline; scope=scope total_seconds=0.250 steps=1",
+    ]
+    logger.error.assert_not_called()
 
 
 def test_measure_counts_failed_operations_and_preserves_the_exception(
@@ -38,8 +46,8 @@ def test_measure_counts_failed_operations_and_preserves_the_exception(
 ) -> None:
     error = RuntimeError("failed")
     operation = Mock(side_effect=[None, error])
-    info = Mock()
-    monkeypatch.setattr(instrumentation_module.logs, "info", info)
+    logger = Mock()
+    monkeypatch.setattr(instrumentation_module, "logs", logger)
     monkeypatch.setattr(
         instrumentation_module.time,
         "perf_counter",
@@ -54,7 +62,10 @@ def test_measure_counts_failed_operations_and_preserves_the_exception(
         instrumentation.measure("Build", operation)
 
     assert raised.value is error
-    messages = [call.args[0] for call in info.call_args_list]
-    assert sum("Pipeline timeline for scope" in message for message in messages) == 1
-    assert any("Build" in message and "runs=2" in message for message in messages)
-    assert any("Total" in message and "0.500s" in message for message in messages)
+    assert [call.args[0] for call in logger.error.call_args_list] == [
+        "❌ pipeline step; step=Build total_seconds=0.500 "
+        "average_seconds=0.250 runs=2 failed_runs=1",
+        "❌ pipeline; scope=scope total_seconds=0.500 steps=1 "
+        "error_type=RuntimeError",
+    ]
+    logger.info.assert_not_called()

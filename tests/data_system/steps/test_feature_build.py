@@ -44,6 +44,8 @@ def test_feature_step_binds_builder_and_materializes_each_date(
         resolutions.append((feature_set, version))
         return builder
 
+    logger = Mock()
+    monkeypatch.setattr(feature_module, "logs", logger)
     monkeypatch.setattr(feature_module, "get_feature_builder", get_builder)
     path_manager = PathManager(tmp_path)
     access = Mock(spec=Access)
@@ -78,6 +80,11 @@ def test_feature_step_binds_builder_and_materializes_each_date(
     assert resolutions == [("daily", "v1")]
     assert builder.build_dates == ["2026-07-20"]
     assert pq.read_table(output_path).to_pydict() == {"feature": [1]}
+    assert [call.args[0] for call in logger.info.call_args_list] == [
+        "✅ feature publish; feature_set=daily version=v1 "
+        "trade_date=2026-07-20 rows=1",
+        "♻️ feature meta hit; feature_set=daily version=v1 trade_date=2026-07-20",
+    ]
 
 
 def test_feature_step_rejects_an_unknown_identity_at_construction(
