@@ -355,3 +355,64 @@ final exit           = end 下一正式 session 的相同执行窗口
 - **Next**：H05 产生 cutoff 合法且可恢复的候选 artifact 后，先预注册 replay 范围与阈值，再
   在独立实现分支中完成未来隔离、T+1、最终退出和公司行动失败测试；需要运行时创建 H06
   Notebook 或稳定 experiment 引用。
+
+## 未来版本边界（非 Change）
+
+以下内容只保存本次研究形成的条件性版本边界，不属于 H01–H06 的采用范围，不创建实现承诺，
+也不改变当前正式语义。未来准备实现时，必须按独立采用边界建立新的 Change，并重新确定
+Hypothesis、Acceptance 与 Evidence；届时可以明确接受、修改或推翻这些边界。
+
+### 日频 Feature V1/V2
+
+条件性的 builder 依赖元数据为：
+
+```python
+class TushareDailyBasicV1Builder:
+    lookback_sessions = 61
+
+
+class TushareDailyBasicV2Builder:
+    lookback_sessions = 121
+```
+
+版本独立存储：
+
+```text
+features/tushare_daily_basic/v1/trade_date=T/data.parquet
+features/tushare_daily_basic/v2/trade_date=T/data.parquet
+```
+
+- V1 的 identity、schema 和 `lookback_sessions=61` 保持不变。
+- V2 是独立新版本，不覆盖、迁移、别名或静默升级 V1。
+- 构建 V1 的目标日 T 需要 T 之前 61 个正式交易日，加上 T 共读取 62 个正式 session。
+- 构建 V2 的目标日 T 需要 T 之前 121 个正式交易日，加上 T 共读取 122 个正式 session。
+- Backfill planner 必须从精确版本的 builder 读取 `lookback_sessions`，不能硬编码或根据版本名
+  推导依赖长度。
+- 首个目标日前、只用于满足 lookback 的正常 warm-up session 不生成 Feature 分区。该规则不
+  授权 planner 静默缩小显式目标范围；显式目标 T 缺少完整历史时仍必须失败。
+- 必要历史范围中间存在日期或对象缺口时必须失败，不能跳过、补零、读取更早日期替代或回退
+  到其他版本。
+- V1 与 V2 分别执行回填；当前不把配置或单次命令扩展为同一个 feature set 同时声明、自动
+  发现或构建多个版本。
+
+### Level2 Feature、Label 与融合版本
+
+- 如果 Level2 Feature V2 只增加能够从现有 minute facts 推导的 120 分钟窗口，它可以继续
+  明确读取 minute fact V1，不因下游 Feature 版本变化而复制 minute fact 版本。
+- Level2 的 120 分钟窗口表示 decision 前最后 120 个计划连续竞价分钟，不是 120 个自然分钟，
+  也不是最后 120 条实际观察。
+- 以 14:30 decision 为例，跨午休的 120 个计划连续竞价分钟窗口是：
+
+  ```text
+  [11:00,11:30) + [13:00,14:30)
+  ```
+
+  午休不进入窗口分母，稀疏观察也不能把窗口向更早时间扩张。
+- Feature V2 可以继续明确绑定 Label V1，前提是 Label 的经济目标、universe、key、entry/exit
+  和 maturity 均未改变；Feature 与 Label 的版本号不要求同步。
+- minute fact、Level2 Feature、Label、daily Feature 和融合 Feature 分别独立版本化；某一层
+  升级不自动要求其他层使用相同版本号。
+- 每个融合 Feature 版本必须明确绑定一个具体的 daily Feature set/version 与 Level2 Feature
+  set/version 组合，不能从存储状态推断上游。
+- 所有 producer、consumer、训练 artifact 和 replay 必须使用精确版本 identity；禁止
+  `latest`、自动升级、缺失时降级、跨版本列 union、列交集、重排或补 null 来伪造兼容。
