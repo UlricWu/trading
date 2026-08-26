@@ -1,6 +1,6 @@
 # AGENTS.md
 
-本文件对仓库中的设计、文档、代码、测试、配置、候选变更、Git、发布、部署及权威外部状态操作强制生效，只规定语义权威、任务分类与权限、工程执行、候选隔离和完成证据。
+本文件对仓库中的设计、文档、代码、测试、配置、研究候选、Git、发布、部署及权威外部状态操作强制生效，只规定语义权威、任务分类与权限、工程执行、候选隔离和完成证据。
 
 ## 第一性原理
 
@@ -18,14 +18,14 @@
 
 ## 正式语义与 Owner
 
-- 当前正式语义只由目标分支 `docs/` 中的 owner docs 定义；候选差异只记录在 `changes/<change>/README.md`。
-- 根 `AGENTS.md` 只拥有执行规则，`changes/README.md` 只拥有候选变更治理；二者都不是业务设计 owner。
+- 当前正式语义只由目标分支 `docs/` 中的 owner docs 定义；研究目标、候选假设、实验引用和结论只记录在 `research/<topic>/README.md`。
+- 根 `AGENTS.md` 只拥有全局执行规则，`docs/engineering/research_workflow.md` 只拥有研究治理；二者都不是业务设计 owner。
 - 代码、测试、配置、Git、PR、CI、部署及运行结果只表示实现状态或证据，不能自行改变正式语义。
 - 每个可执行决策必须有且仅有一个 owner。Owner 必须由文档或 owner 索引明确指定，不得仅凭文件名猜测。
 - 实现与 owner 冲突时，默认修复实现；只有任务明确要求改变正式语义时，才按“任务分类”处理。
-- Owner 缺失、冲突或不能确定目标语义时不得猜测：最终设计已明确时补齐 owner；仍需选择或验证时进入 open change；否则停止受影响修改并报告。
+- Owner 缺失、冲突或不能确定目标语义时不得猜测：最终设计已明确时补齐 owner；仍需选择或验证时进入 open research；否则停止受影响修改并报告。
 - 拟议 owner 修改在合入目标分支前不属于当前正式语义。
-- `changes/` 不得成为运行时依赖。
+- `research/` 不得成为运行时依赖；Notebook 和研究候选代码也不得被正式入口、registry 或生产配置引用。
 - 更深目录的 `AGENTS.md` 只能增加该目录独有的约束，不得削弱或复制本文件。
 
 ## 任务分类
@@ -36,11 +36,11 @@
 
 1. **既定契约执行或维护**：不改变正式外部语义，或目标状态转换已由 owner 唯一定义。按当前 owner 实现、修复、测试或维护。
 2. **直接采用**：最终设计已经明确，不存在待选择方案，不需要实验或生产观察决定设计，并且正式契约、实现和证据可以在一个可审查修改中同步。不创建 change。
-3. **Open change**：其他情况。保持当前 owner 不变，按 `changes/README.md` 隔离设计、实现和验证。
+3. **Open research**：其他情况。保持当前 owner 不变，按 `docs/engineering/research_workflow.md` 在一个研究卷宗中记录、验证并决定候选假设。
 
 正式外部语义包括业务规则、公共 API、schema、数据 lineage、状态机、交易与风控行为、持久化副作用、运行入口及发布部署契约；private 命名、局部结构、格式化和无行为变化的重构不属于正式外部语义。
 
-实施过程中发现必须发明新的正式语义时，停止将其写成正式行为；能够安全隔离时转入 open change，否则停止并报告。
+实施过程中发现必须发明新的正式语义时，停止将其写成正式行为；能够安全隔离时转入 open research，否则停止并报告。
 
 ## 修改准备与专项规则
 
@@ -61,18 +61,18 @@
 | `docs/engineering/technology_stack_decisions.md` | 触及其拥有的技术栈边界 |
 | `docs/engineering/cli_contract.md` | 修改 CLI 的接口或副作用 |
 | `docs/engineering/release_workflow.md` | 触及 branch、PR、版本、release 或 deploy |
-| `changes/README.md` | 创建、修改、验收或关闭 change，或修改候选机制 |
+| `docs/engineering/research_workflow.md` | 创建、修改、验收或关闭研究假设，或修改研究机制 |
 
 以上路径是规范路径；路径缺失或出现冲突 owner 时停止，不按文件名猜测。
 
-## 候选变更与隔离
+## 研究与候选隔离
 
-- Change 的结构、依赖、采用、拒绝、迁移和归档统一遵循 `changes/README.md`。
-- 一个 open change 只包含一个可独立采用或拒绝的设计差异，并位于独立的 `feature/<change>` branch 或 worktree。
-- Change README 只能修改其明确列出的候选决策，不得覆盖本文件、权限、隔离或证据规则，也不得授权生产副作用。
-- Adoption 前，候选不得进入正式分支、默认入口、正式 API、registry、定时任务、生产模型选择或生产可发现制品；默认关闭的 feature flag 不构成隔离。
+- 研究卷宗、假设、Notebook、依赖、采用、拒绝和保留统一遵循 `docs/engineering/research_workflow.md`。
+- 一个研究目标只有一个 `research/<topic>/README.md` 入口；每个假设必须能够独立采用或拒绝，但默认只是该 README 中的一个段落，不自动创建目录、Notebook、branch 或 worktree。
+- 目标分支可以保存 `research/` 下的 open 假设和实验事实，因为它们不属于正式语义；它们不得改变默认入口、正式 API、schema、registry、定时任务、生产模型选择或生产可发现制品。
+- 候选实现需要修改共享代码、配置或运行入口时，必须在 `feature/*` branch 或 worktree 中按独立采用边界隔离；默认关闭的 feature flag 和混合候选 PR 都不是隔离。
 - 候选不得写入权威数据、生产队列、真实 broker、正式 registry 或其他生产状态，也不得使用生产写凭证。
-- 验证制品必须绑定 change 和不可变 candidate 标识，并明确保留期限或清理责任。
+- Notebook 只在需要可执行验证时创建；使用实验作出决定时，必须引用可恢复的确定版本，并记录所有会影响结论的输入。
 - 没有安全隔离边界时停止，不得新增永久候选平台绕过阻塞。
 - 除非正式 owner 已定义客观自动判定条件，直接采用及 adoption/rejection 必须由用户明确决定；Acceptance 通过不自动表示已采用。
 

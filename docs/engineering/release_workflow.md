@@ -8,7 +8,7 @@
 
 | 分支 | 职责 | 允许的主要写入方式 |
 |---|---|---|
-| `feature/*` | 单个功能或修复的开发分支。 | 开发者提交。 |
+| `feature/*` | 一个可审查的代码或文档修改分支。 | 开发者提交。 |
 | `dev` | 所有开发集成的唯一目标分支。 | `feature/*` 通过 PR 合入；发布成功后由 workflow 同步 `master`。 |
 | `release/auto-release` | 当前待发布内容的机器镜像，也是测试环境唯一部署源。 | auto-release workflow 从 `dev` 强制镜像；不得人工提交。 |
 | `master` | 已批准的正式版本，也是正式环境唯一部署源。 | `release/auto-release` 通过 release PR 合入。 |
@@ -42,11 +42,19 @@ semantic-release 必须能够分析 `dev` 中的原始 Conventional Commit 类�
 - `docs:`、`test:`、`refactor:`、`chore:`、`build:`、`ci:`、`style:`：不发布。
 - `type!:` header 不作为 breaking release 依据，并由 CI 拒绝。
 
-### Change 终态 commit 可达性
+### Research 记录与正式化
 
-采用 open change 且拟议目标树会删除对应 change 时，feature PR 必须使用 merge commit
-或 rebase merge，使写入 `Status: adopted` 的终态 commit 在目标分支保持可达，不得 squash。
-如果必须 squash，则最终树必须保留含终态 README 的必要 archive，不得同时删除 change。
+`research/` 中的 open 假设、Notebook 和结论可以通过普通 feature PR 进入 `dev`，但它们不得
+成为运行时依赖或改变正式行为。同一研究目标的纯记录更新可以位于一个 feature branch；不要求
+一个假设对应一个 branch。
+
+候选需要修改共享代码、配置或入口时，能够独立采用的实现差异必须使用独立 feature branch 或
+worktree 隔离，且在 adoption 前不得进入 `dev` 的正式实现、默认入口或 registry。采用某项研究
+假设的 PR 必须同步修改最终 owner docs、实现、测试和卷宗中的 `Status`。该 PR 合入 `dev` 前，
+研究状态仍为 `open`；merge、release 和 deploy 继续分别判断。
+
+研究状态、Evidence 和 adoption 条件由 `research_workflow.md` 拥有。本文件只拥有 branch、PR、
+merge 和目标分支机制，Git 可达性本身不能证明假设已经 adopted。
 
 ## 测试部署边界
 
