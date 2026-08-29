@@ -23,9 +23,9 @@ H01 与 H02 没有相互依赖，可以并行判断。H03–H06 可以在上游�
 
 ## 当前背景
 
-- 正式 [`tushare_daily_basic/v1`](../../docs/data/daily_feature_label_contract.md) 已定义 schema、
-  公式和 builder，但当前 [`data-standard`](../../docs/offline_workflow_contract.md) 对 Feature
-  与 Label 使用空 operation 集，没有独立的历史 Feature 回填入口。
+- 目标分支正式 [`tushare_daily_basic/v1`](../../docs/data/daily_feature_label_contract.md) 已定义
+  schema、公式和 builder，但目标分支 [`data-standard`](../../docs/offline_workflow_contract.md)
+  对 Feature 与 Label 使用空 operation 集，没有独立的历史 Feature 回填入口。
 - 正式 Level2 链路已经产生 `sh_trade/v1`、`sz_trade/v1` 逐笔正成交事实，但尚无可复用的
   stock minute fact。
 - 当前训练和回测以日频二字段 key 和 daily timing 为正式语义，不能直接证明 14:30 三字段
@@ -57,14 +57,18 @@ H01 与 H02 没有相互依赖，可以并行判断。H03–H06 可以在上游�
 
 - **Title**：日频 Feature 依赖感知回填
 - **Status**：`open`
-- **Hypothesis**：只消费已提交日频事实、按 builder 声明解析历史依赖的 CLI-only 回填入口，
-  可以稳定物化 `tushare_daily_basic/v1`，且不改变事实入库和 Label 行为。
-- **Why**：当前 builder 已存在，但事实 workflow 不构建 Feature。把派生回填重新塞回事实入库，
-  会让历史不足或 Feature 失败掩盖已经成功提交的事实对象。
-- **Scope**：精确选择一个 Feature set/version 和目标日期闭区间；解析正式交易 session；复用
-  现有 builder、原子发布和 Meta；按日期升序回填并支持失败后续建。
-- **Not included**：事实下载或重建、Label、Level2、HTTP Job、cron、自动日常调度、多 Feature
-  批量选择、覆盖或刷新已有对象。
+- **Hypothesis**：由同一个依赖感知 `FeatureBuildStep` 同时承担日常 Standard 派生阶段与
+  CLI-only 历史回填，并用独立 Standard facts 冷启动入口显式准备 warm-up，可以在不隐式
+  扩大任一请求范围的前提下稳定物化 `tushare_daily_basic/v1`。
+- **Why**：日常事实到达后需要在同一 Job 内立即物化 enabled Feature 和刚成熟的 Label；历史
+  恢复仍需要只消费已提交 facts 的精确 Feature 回填。首次运行所需 warm-up facts 若藏在任一
+  入口中，会混淆目标分区与输入范围，因此必须由独立显式入口承担。
+- **Scope**：`data-standard` 在事实阶段后顺序执行 enabled Feature 与 Label；CLI-only
+  `data-standard-bootstrap` 只物化显式 Standard facts 闭区间；CLI-only
+  `data-feature-backfill` 精确选择一个 Feature set/version 和目标日期闭区间；三条路径复用
+  现有 Step、builder、原子发布和 Meta，并支持失败后续建。
+- **Not included**：Level2 derived、任何新 HTTP Job kind、cron、隐式 warm-up、自动扩大范围、
+  多 Feature backfill 批量选择、覆盖或刷新已有对象。
 - **Depends on**：无其他 Change；依赖当前正式 calendar、daily facts、Feature builder 和 Meta。
 
 候选的最小语义：
@@ -81,19 +85,122 @@ required sessions = T-61 ... T，共 62 个正式 session
 - 单个 symbol 历史不足继续按正式 Feature 契约产生 null；整个输出为空仍失败。
 - 有效 Meta hit 不读取上游或重算；较早日期已提交、较晚日期失败时保留已提交分区，重跑从
   miss 处继续。
+- `data-standard` 只选择现有配置中 `enabled=true` 的 Feature/Label；任一集合全部 disabled
+  时记录 warning 且对应空 Step 成功。到达日 `A` 的 Label 阶段只构建在 `A` 刚成熟的历史
+  分区，不构建 `Label(A)`。
+- `data-standard-bootstrap` 的闭区间只表示 facts，不知道 `61`；日常 `data-standard` 与
+  Feature backfill 都不隐式承担 cold start。
 
 **Acceptance**：
 
-- `data-standard`、`data-level2` 及现有 Feature 数值行为无变化；
+- `data-standard` 在同一 Job 内按 Calendar → Facts → enabled Features → enabled mature Labels
+  分阶段执行；全部 disabled 时记录 warning 且空 Feature/Label 集成功；
+- `data-level2` 暂时保留两个空 derived Step，现有 Feature/Label 数值行为不变；
 - V1 只有一个 `61` 的依赖权威，目标范围、跨周末/长假和边界失败均由正式 session 推出；
-- CLI-only，且不调用 broker、不写 raw/processed/label/experiment；
+- Feature backfill 为 CLI-only，且不调用 broker、不写 raw/processed/label/experiment；Standard
+  facts 冷启动也是 CLI-only，且不写 Feature/Label；两者都不是 HTTP Job kind；
 - 原子发布、Meta reuse、部分成功后的重跑行为通过回归测试；
-- 至少一个真实的 62-session 以上范围完成首次构建和 Meta-hit 重跑，并记录输入 identity、
-  输出行数、null coverage、耗时和峰值内存；
+- 真实验证从 `2019-01-01` 开始，先由 facts 冷启动入口准备 61 个正式 warm-up session，再对
+  随后 62 个正式目标 session 完成首次构建和 Meta-hit 重跑，并记录 resolved dates、输入
+  identity、输出行数、null coverage、耗时和峰值内存；
 - adoption 同步正式 owner、实现和测试，并由用户明确决定。
 
-- **Next**：在独立实现分支中核对最终 owner 差异，固定真实验收日期范围，实现候选并绑定可恢复
-  的代码和输入证据。
+**Evidence（2026-08-28..2026-08-29，候选实现）**：
+
+- 隔离存储根为 `/tmp/minquant-h01-2019-DNP1Nf`，没有写入正式数据。代码基线为
+  commit `b1bff7445fd9ce180b8fe7e0665829702dd15b9c`。运行发生在提交前，但受测实现与测试的
+  内容和该 commit 完全相同；研究 README 不参与运行。因此以下运行事实已绑定到可恢复的
+  候选代码版本，但不表示 H01 已采用。
+- `pytest` 全量执行 `515 passed`；另有两条仓库既有的 Python 3.13 multiprocessing
+  `fork()` deprecation warning。当前环境没有 Ruff、Black、Mypy 或 Pyright；`compileall`
+  成功。
+- 正式日历把请求解析为 warm-up `2019-01-02..2019-04-03` 共 61 个 session，以及目标
+  `2019-04-04..2019-07-05` 共 62 个 session。两个完整日期数组的规范 JSON SHA-256 为
+  `5430a6cdc7602c075752f0a7f5e86b610cc88f57e8935fb9e958bbd5b3b2852a`。
+- `data-standard-bootstrap --start 2019-01-01 --end 2019-04-03` 在第 59 个 warm-up session
+  `2019-04-01` 失败：源端 `bak_basic(trade_date=20190401)` 在独立复查时仍返回
+  `DataFrame(rows=0, columns=[])`；当时候选 normalize 要求 raw 携带 `stock_basic.list_date`，
+  因而抛出 `ValueError`。该失败没有以前后日期填充，首次命令耗时 `22:34.12`、峰值
+  `614712 KiB`、exit `1`；显式补齐
+  `2019-04-02..2019-04-03` 成功，耗时 `47.52s`、峰值 `390820 KiB`。因此 Feature 所需的
+  `daily_bar/adj_factor/daily_basic` 在 61 个 warm-up session 上完整，但“全部 Standard facts
+  冷启动成功”这一 Acceptance 在该版本上未通过。
+- 同日保存的 `stock_st(trade_date=20190401)` raw 实际也是
+  `DataFrame(rows=0, columns=[])`，而不是先前假定的“完整字段零行”；联网复核仍不支持
+  “当日没有 ST 排除项”。[Tushare `stock_st` 文档](https://tushare.pro/document/2?doc_id=397)
+  将该接口定义为按交易日期获取历史每日 ST 列表，并声明数据从 `20000101`
+  开始。[上交所 `2019-04-01` 每日交易公开信息](https://www.sse.com.cn/disclosure/diclosure/public/?time=2019-04-01)
+  中 ST 栏目为空，只能证明没有 ST、*ST 或 S 证券触发该页定义的三日累计偏离或
+  盘中换手率异常披露条件，该页不是当日 ST 全量名单。上交所成交概况页自有查询
+  `security/fund/queryNewAllQuatAbel.do`，固定 `searchDate=2019-04-01`、`inMonth=201904`
+  和 `inYear=2019` 后，至少返回以下当日 ST 记录：
+
+  | 证券 | 收盘价 | 成交量（万股） | 成交金额（万元） |
+  | --- | ---: | ---: | ---: |
+  | [600397 `*ST安煤`](https://www.sse.com.cn/assortment/stock/list/info/turnover/index.shtml?COMPANY_CODE=600397) | 2.98 | 1,361.7439 | 4,008.73 |
+  | [600423 `*ST柳化`](https://www.sse.com.cn/assortment/stock/list/info/turnover/index.shtml?COMPANY_CODE=600423) | 4.06 | 1,878.5264 | 7,422.39 |
+  | [600701 `*ST工新`](https://www.sse.com.cn/assortment/stock/list/info/turnover/index.shtml?COMPANY_CODE=600701) | 2.81 | 2,469.0202 | 6,874.67 |
+  | [600749 `*ST藏旅`](https://www.sse.com.cn/assortment/stock/list/info/turnover/index.shtml?COMPANY_CODE=600749) | 12.21 | 478.8736 | 5,803.95 |
+  | [600202 `*ST哈空`](https://www.sse.com.cn/assortment/stock/list/info/turnover/index.shtml?COMPANY_CODE=600202) | 5.85 | 0 | 0 |
+  | [600871 `*ST油服`](https://www.sse.com.cn/assortment/stock/list/info/turnover/index.shtml?COMPANY_CODE=600871) | 2.49 | 0 | 0 |
+
+  其中前四只有非零成交；`*ST哈空` 和 `*ST油服` 当日停牌，并分别发布
+  [撤销退市风险警示公告](https://www.sse.com.cn/disclosure/listedinfo/announcement/c/2019-04-01/600202_20190401_1.pdf)
+  和[撤销退市风险警示公告](https://www.sse.com.cn/disclosure/listedinfo/announcement/c/2019-04-01/600871_20190401_1.pdf)。
+  该响应与上交所资料存在数据质量差异，但用户确认 Tushare broker response 的记录集合是
+  H01 候选要正式化的 source 权威；零行响应仍是有效空 source 对象，normalize 负责构造可
+  消费的空 `symbol` 列并正常发布 processed。外部差异只作为待后续统一排查的研究异常，不
+  触发运行时复核、失败、填充或备用来源，也不改变 Access 对该空对象不产生 ST 排除项的
+  行为。
+- 用户确认 cold-start 继续包含全部 Standard facts，并确认零行、零列 `stock_basic` 是可信
+  空记录集合。首次修正后重跑暴露同日空 `stock_st` processed 没有 `symbol`、不能由 Access
+  消费；该失败被保留为回归场景，最终由同一个 normalize 边界为
+  `stock_basic/stock_st/suspend_d` 构造各自必要的空列。最终 warm-up 重跑解析
+  `2019-01-02..2019-04-03` 共 61 个 session，12 个 Standard source 的 732 个 raw 与 732 个
+  processed 均通过 Meta/payload 校验；`stock_basic` 为零行 `symbol/list_date`，`stock_st` 为
+  零行 `symbol`，Access 对 `2019-04-01` 直接返回空 universe。原样再跑为 732 次 raw Meta hit、
+  732 次 processed Meta hit、0 次发布，耗时 `1.44s`、峰值 `245868 KiB`、exit `0`。
+- 目标 facts 冷启动 `2019-04-04..2019-07-05` 成功：12 个 Standard dataset 的 744 个分区
+  全部通过 Meta/payload 校验，耗时 `23:22.34`、峰值 `603248 KiB`、exit `0`。
+- Feature 实际输入清单由 1 个 2019 calendar、123 个 `daily_bar`、123 个 `adj_factor` 和
+  81 个 `daily_basic` identity 组成，共 328 项。每项记录 role、storage-relative Meta/payload、
+  payload size 和直接 upstream Meta/size，按 Meta path 排序后的规范 JSON SHA-256 为
+  `9b2f4c8721e4f9d6dd287e944131129bd9901516f6983d900ab4ec3494fe7b56`；所有对象均通过正式
+  Meta 读取边界。
+- 当前代码下再次从 0 个既有分区开始 Feature backfill，62 次 publish、0 次 Meta hit，耗时
+  `1:58.26`，其中 `FeatureBuildStep` 为 `117.209s`，峰值 `724148 KiB`、exit `0`。原样重跑为
+  0 次 publish、62 次 Meta hit，命令耗时 `1.06s`，其中 `FeatureBuildStep` 为 `0.014s`，峰值
+  `245828 KiB`、exit `0`。
+- 62 个 Feature 输出 identity 的规范清单 SHA-256 为
+  `125263d2d417f2b9d7141766592affc526d82714d5d13b03108a11fbe238f674`。所有分区具有相同的
+  正式 2-key + 16-feature schema，key 唯一，分区日期等于显式目标，所有非 null feature 数值
+  有限。当前重建的 62 个 payload 与前次构建逐字节相同；path 与内容组成的 manifest SHA-256
+  为 `288a47785913b328c3abb7c8139cbb982a35df1774cd57a5a740e33c2b25e9b0`。总行数为
+  224,916；单分区为 3,586..3,657 行，首分区 3,608 行，末分区 3,646 行。
+- 以 224,916 行为分母，null coverage 为：
+
+  | Feature 列 | null 行数 | 比例 |
+  | --- | ---: | ---: |
+  | `f_d_intraday_return`、`f_d_log_volume`、`f_d_log_amount` | 0 | 0% |
+  | `f_d_close_return_1d`、`f_d_open_gap_1d`、`f_d_range_vs_prev_close` | 834 | 0.370805% |
+  | `f_d_amount_mean_5d_asof_tminus1` | 2,547 | 1.132423% |
+  | `f_d_close_return_5d_asof_tminus1` | 2,910 | 1.293816% |
+  | `f_d_max_drawdown_20d_asof_tminus1`、`f_d_close_distance_to_high_20d_asof_tminus1`、`f_d_amount_mean_20d_asof_tminus1`、`f_d_close_position_in_range_20d_asof_tminus1` | 7,088 | 3.151399% |
+  | `f_d_close_return_20d_asof_tminus1`、`f_d_close_volatility_20d_asof_tminus1` | 7,374 | 3.278557% |
+  | `f_d_turnover_rate_mean_20d_asof_tminus1` | 7,537 | 3.351029% |
+  | `f_d_close_volatility_60d_asof_tminus1` | 16,612 | 7.385869% |
+
+- 同一隔离根上的 `data-standard --start 2019-07-05 --end 2019-07-05` 依次完成 Calendar、
+  Facts、Feature、Label：12 个 raw 和 12 个 processed fact 均 Meta hit，Feature Meta hit；d1、
+  d3、d5 Label 分别发布到 `2019-07-04`（3,643 行）、`2019-07-02`（3,648 行）和
+  `2019-06-28`（3,652 行），三个 set 均不存在 `Label(2019-07-05)`。当前代码下重建耗时
+  `1.22s`、峰值 `323076 KiB`、exit `0`；原样重跑的三个 Label 均 Meta hit，耗时 `1.04s`、
+  峰值 `245808 KiB`、exit `0`。
+
+- **Next**：H01 保持 `open`。候选 Acceptance 已通过，实现与测试已绑定 commit
+  `b1bff7445fd9ce180b8fe7e0665829702dd15b9c`。下一步由用户明确 adoption/rejection；若采用，
+  再按 release workflow 推送候选、创建 PR、合入 `dev` 并部署精确测试 SHA。部署完成前不得向
+  `/home/wsw/app/data` 写入 Feature/Label；合入目标分支前不得把 H01 标记为 `adopted`。
 
 ## H02
 
@@ -362,15 +469,11 @@ final exit           = end 下一正式 session 的相同执行窗口
 也不改变当前正式语义。未来准备实现时，必须按独立采用边界建立新的 Change，并重新确定
 Hypothesis、Acceptance 与 Evidence；届时可以明确接受、修改或推翻这些边界。
 
-### 日频 Feature V1/V2
+### 日频 Feature V2
 
 条件性的 builder 依赖元数据为：
 
 ```python
-class TushareDailyBasicV1Builder:
-    lookback_sessions = 61
-
-
 class TushareDailyBasicV2Builder:
     lookback_sessions = 121
 ```
@@ -382,18 +485,15 @@ features/tushare_daily_basic/v1/trade_date=T/data.parquet
 features/tushare_daily_basic/v2/trade_date=T/data.parquet
 ```
 
-- V1 的 identity、schema 和 `lookback_sessions=61` 保持不变。
 - V2 是独立新版本，不覆盖、迁移、别名或静默升级 V1。
-- 构建 V1 的目标日 T 需要 T 之前 61 个正式交易日，加上 T 共读取 62 个正式 session。
 - 构建 V2 的目标日 T 需要 T 之前 121 个正式交易日，加上 T 共读取 122 个正式 session。
-- Backfill planner 必须从精确版本的 builder 读取 `lookback_sessions`，不能硬编码或根据版本名
-  推导依赖长度。
+- 如果未来把 V2 接入 backfill，必须从 V2 builder 读取 `lookback_sessions`，不能硬编码或
+  根据版本名推导依赖长度。
 - 首个目标日前、只用于满足 lookback 的正常 warm-up session 不生成 Feature 分区。该规则不
   授权 planner 静默缩小显式目标范围；显式目标 T 缺少完整历史时仍必须失败。
 - 必要历史范围中间存在日期或对象缺口时必须失败，不能跳过、补零、读取更早日期替代或回退
   到其他版本。
-- V1 与 V2 分别执行回填；当前不把配置或单次命令扩展为同一个 feature set 同时声明、自动
-  发现或构建多个版本。
+- 当前不把配置或单次命令扩展为同一个 feature set 同时声明、自动发现或构建多个版本。
 
 ### Level2 Feature、Label 与融合版本
 
