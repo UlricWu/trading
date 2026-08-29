@@ -23,9 +23,10 @@ H01 与 H02 没有相互依赖，可以并行判断。H03–H06 可以在上游�
 
 ## 当前背景
 
-- 目标分支正式 [`tushare_daily_basic/v1`](../../docs/data/daily_feature_label_contract.md) 已定义
-  schema、公式和 builder，但目标分支 [`data-standard`](../../docs/offline_workflow_contract.md)
-  对 Feature 与 Label 使用空 operation 集，没有独立的历史 Feature 回填入口。
+- H01 建立时，目标分支正式
+  [`tushare_daily_basic/v1`](../../docs/data/daily_feature_label_contract.md) 已定义 schema、公式和
+  builder，但 [`data-standard`](../../docs/offline_workflow_contract.md) 对 Feature 与 Label 使用
+  空 operation 集，也没有独立的历史 Feature 回填入口。
 - 正式 Level2 链路已经产生 `sh_trade/v1`、`sz_trade/v1` 逐笔正成交事实，但尚无可复用的
   stock minute fact。
 - 当前训练和回测以日频二字段 key 和 daily timing 为正式语义，不能直接证明 14:30 三字段
@@ -56,7 +57,7 @@ H01 与 H02 没有相互依赖，可以并行判断。H03–H06 可以在上游�
 ## H01
 
 - **Title**：日频 Feature 依赖感知回填
-- **Status**：`open`
+- **Status**：`adopted`
 - **Hypothesis**：由同一个依赖感知 `FeatureBuildStep` 同时承担日常 Standard 派生阶段与
   CLI-only 历史回填，并用独立 Standard facts 冷启动入口显式准备 warm-up，可以在不隐式
   扩大任一请求范围的前提下稳定物化 `tushare_daily_basic/v1`。
@@ -111,9 +112,13 @@ required sessions = T-61 ... T，共 62 个正式 session
   commit `b1bff7445fd9ce180b8fe7e0665829702dd15b9c`。运行发生在提交前，但受测实现与测试的
   内容和该 commit 完全相同；研究 README 不参与运行。因此以下运行事实已绑定到可恢复的
   候选代码版本，但不表示 H01 已采用。
-- `pytest` 全量执行 `515 passed`；另有两条仓库既有的 Python 3.13 multiprocessing
-  `fork()` deprecation warning。当前环境没有 Ruff、Black、Mypy 或 Pyright；`compileall`
-  成功。
+- 候选验证与最终 Adoption diff 均在项目锁定环境全量执行 `515 passed`；最终复跑命令为
+  `uv lock --check && uv run --locked --no-python-downloads python -m pytest`，使用 Python
+  3.13.13、PyArrow 25.0.0，另有两条仓库既有的 Python 3.13 multiprocessing `fork()`
+  deprecation warning。误用当前 Conda Python 3.13.10、PyArrow 23.0.0 直接执行时为
+  `510 passed, 5 failed`：五项失败都是 `pq.read_table()` 从测试临时路径额外推断出
+  `trade_date` 或 `year` Hive 分区列；同一代码在发布契约要求的锁定环境通过，因此不改变 H01
+  判断。当前环境没有 Ruff、Black、Mypy 或 Pyright；`compileall` 成功。
 - 正式日历把请求解析为 warm-up `2019-01-02..2019-04-03` 共 61 个 session，以及目标
   `2019-04-04..2019-07-05` 共 62 个 session。两个完整日期数组的规范 JSON SHA-256 为
   `5430a6cdc7602c075752f0a7f5e86b610cc88f57e8935fb9e958bbd5b3b2852a`。
@@ -197,10 +202,20 @@ required sessions = T-61 ... T，共 62 个正式 session
   `1.22s`、峰值 `323076 KiB`、exit `0`；原样重跑的三个 Label 均 Meta hit，耗时 `1.04s`、
   峰值 `245808 KiB`、exit `0`。
 
-- **Next**：H01 保持 `open`。候选 Acceptance 已通过，实现与测试已绑定 commit
-  `b1bff7445fd9ce180b8fe7e0665829702dd15b9c`。下一步由用户明确 adoption/rejection；若采用，
-  再按 release workflow 推送候选、创建 PR、合入 `dev` 并部署精确测试 SHA。部署完成前不得向
-  `/home/wsw/app/data` 写入 Feature/Label；合入目标分支前不得把 H01 标记为 `adopted`。
+- **Conclusion**：Acceptance 全部通过。隔离实测证明同一组最小 Step 可以同时承担日常
+  Standard 派生、显式 Standard facts 冷启动和 Feature-only 历史回填；不需要新 HTTP Job、
+  隐式 warm-up、备用来源或兼容入口。Tushare broker response 的记录集合按 source 契约直接
+  信任，空响应由 normalize 构造成下游可消费的空对象。
+- **Decision（2026-08-29）**：用户明确采用 H01，并授权部署测试环境及回填正式
+  Feature/Label 数据。
+- **Formalized in**：[`source_contract.md`](../../docs/data/source_contract.md)、
+  [`daily_feature_label_contract.md`](../../docs/data/daily_feature_label_contract.md)、
+  [`access.md`](../../docs/engineering/access.md)、
+  [`cli_contract.md`](../../docs/engineering/cli_contract.md)、
+  [`job_api_contract.md`](../../docs/engineering/job_api_contract.md) 和
+  [`offline_workflow_contract.md`](../../docs/offline_workflow_contract.md)。
+- **Next**：Adoption PR 合入 `dev` 后，由 `release/auto-release` 部署精确测试 SHA；部署成功后
+  才在 `/home/wsw/app/data` 回填 Feature/Label，并分别记录 merge、deploy 与数据状态。
 
 ## H02
 
