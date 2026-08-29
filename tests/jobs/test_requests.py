@@ -10,9 +10,13 @@ import pytest
 from src.jobs.requests import (
     BacktestSubmission,
     DataSubmission,
+    FeatureBackfillSubmission,
     InvalidJobRequest,
+    StandardFactBootstrapSubmission,
     TrainingSubmission,
     build_cli_command,
+    create_feature_backfill_submission,
+    create_standard_fact_bootstrap_submission,
     parse_job_request,
 )
 
@@ -45,6 +49,42 @@ def test_training_range_creates_one_submission() -> None:
     )
 
     assert submissions == [TrainingSubmission(start="2026-07-01", end="2026-07-20")]
+
+
+def test_cli_only_data_ranges_create_distinct_submissions() -> None:
+    assert create_standard_fact_bootstrap_submission(
+        "2019-01-01",
+        "2019-04-03",
+    ) == StandardFactBootstrapSubmission(
+        start="2019-01-01",
+        end="2019-04-03",
+    )
+    assert create_feature_backfill_submission(
+        feature_set="tushare_daily_basic",
+        version="v1",
+        start="2019-04-04",
+        end="2019-07-05",
+    ) == FeatureBackfillSubmission(
+        feature_set="tushare_daily_basic",
+        version="v1",
+        start="2019-04-04",
+        end="2019-07-05",
+    )
+
+
+@pytest.mark.parametrize(
+    "kind",
+    ["data-calendar", "data-standard-bootstrap", "data-feature-backfill"],
+)
+def test_cli_only_data_kinds_are_not_http_job_kinds(kind: str) -> None:
+    with pytest.raises(InvalidJobRequest, match="not supported"):
+        parse_job_request(
+            {
+                "kind": kind,
+                "start": "2019-01-01",
+                "end": "2019-07-01",
+            }
+        )
 
 
 def test_backtest_command_uses_job_id_as_experiment_id() -> None:

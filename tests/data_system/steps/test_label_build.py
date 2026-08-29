@@ -12,7 +12,6 @@ import pyarrow.parquet as pq
 import pytest
 
 from src.access import Access, meta
-from src.config.data_config import LabelSetConfig
 from src.data_system.context import DataContext
 from src.data_system.steps import label_build as label_module
 from src.data_system.steps.label_build import LabelBuildStep
@@ -75,10 +74,7 @@ def test_label_step_runs_each_single_maturity_set_independently(
     step = LabelBuildStep(
         pm=path_manager,
         access=access,
-        label_sets={
-            label_set: LabelSetConfig(enabled=True, version="v1")
-            for label_set in builders
-        },
+        label_versions={label_set: "v1" for label_set in builders},
     )
 
     context = DataContext(
@@ -134,5 +130,5 @@ def test_label_step_rejects_an_unknown_identity_at_construction(
         LabelBuildStep(
             pm=PathManager(tmp_path),
             access=Mock(spec=Access),
-            label_sets={"unknown": LabelSetConfig(enabled=True, version="v1")},
+            label_versions={"unknown": "v1"},
         )

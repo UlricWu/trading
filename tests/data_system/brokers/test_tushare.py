@@ -184,9 +184,7 @@ def test_tushare_broker_materializes_an_empty_daily_response(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    response = pd.DataFrame(
-        columns=["ts_code", "name", "trade_date", "type", "type_name"]
-    )
+    response = pd.DataFrame()
     client = _TushareClient(response)
     monkeypatch.setattr(tushare_module.ts, "set_token", lambda token: None)
     monkeypatch.setattr(tushare_module.ts, "pro_api", lambda: client)

@@ -8,6 +8,7 @@ from pathlib import Path
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
+import pytest
 
 from src.data_system.normalize.tushare import normalize_tushare
 
@@ -68,6 +69,50 @@ def test_stock_basic_normalizes_available_list_dates_and_maps_others_to_null(
 
     assert output.table["symbol"].to_pylist() == ["000001", "301583"]
     assert output.table["list_date"].to_pylist() == ["1991-04-03", None]
+
+
+def test_stock_basic_normalizes_a_columnless_empty_response(
+    tmp_path: Path,
+) -> None:
+    input_file = tmp_path / "stock_basic.parquet"
+    pq.write_table(
+        pa.Table.from_pandas(pd.DataFrame(), preserve_index=False),
+        input_file,
+    )
+
+    output = normalize_tushare(
+        input_file=input_file,
+        output_name=tmp_path / "output.parquet",
+        raw_object="stock_basic",
+        target_name="stock_basic",
+        trade_date="2019-04-01",
+    )
+
+    assert output.table.num_rows == 0
+    assert output.table.column_names == ["symbol", "list_date"]
+
+
+@pytest.mark.parametrize("target_name", ("stock_st", "suspend_d"))
+def test_empty_symbol_sets_normalize_a_columnless_response(
+    tmp_path: Path,
+    target_name: str,
+) -> None:
+    input_file = tmp_path / f"{target_name}.parquet"
+    pq.write_table(
+        pa.Table.from_pandas(pd.DataFrame(), preserve_index=False),
+        input_file,
+    )
+
+    output = normalize_tushare(
+        input_file=input_file,
+        output_name=tmp_path / "output.parquet",
+        raw_object=target_name,
+        target_name=target_name,
+        trade_date="2019-04-01",
+    )
+
+    assert output.table.num_rows == 0
+    assert output.table.column_names == ["symbol"]
 
 
 def test_daily_basic_normalizes_without_limit_status(tmp_path: Path) -> None:

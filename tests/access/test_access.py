@@ -314,6 +314,34 @@ def test_universe_zero_listing_days_uses_historical_stock_list(
     ) == ("000002", "600000")
 
 
+def test_universe_consumes_an_empty_historical_stock_list(tmp_path: Path) -> None:
+    pm = PathManager(tmp_path)
+    trade_date = "2019-04-01"
+    _write_processed_frame(
+        pm,
+        trade_date,
+        "daily_bar",
+        pd.DataFrame({"symbol": ["600000", "000001"]}),
+    )
+    _write_processed_frame(
+        pm,
+        trade_date,
+        "stock_basic",
+        pd.DataFrame(
+            {
+                "symbol": pd.Series(dtype="string"),
+                "list_date": pd.Series(dtype="string"),
+            }
+        ),
+    )
+    _write_empty_universe_exclusions(pm=pm, trade_date=trade_date)
+
+    assert Access(pm=pm, processed_version="v1").universe(
+        trade_date=trade_date,
+        min_listing_calendar_days=30,
+    ) == ()
+
+
 def test_universe_zero_listing_days_requires_historical_stock_list(
     tmp_path: Path,
 ) -> None:

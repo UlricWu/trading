@@ -7,7 +7,6 @@ from collections.abc import Mapping
 
 from src import logs
 from src.access import Access
-from src.config.data_config import FeatureSetConfig
 from src.data_system.builders.registry import get_feature_builder
 from src.data_system.context import DataContext
 from src.data_system.steps._derived_partition import _publish_derived_partition
@@ -21,7 +20,7 @@ class FeatureBuildStep:
         build_features = FeatureBuildStep(
             pm=path_manager,
             access=access,
-            feature_sets=feature_sets,
+            feature_versions={"tushare_daily_basic": "v1"},
         )
         build_features.run(
             DataContext(
@@ -37,7 +36,7 @@ class FeatureBuildStep:
         *,
         pm: PathManager,
         access: Access,
-        feature_sets: Mapping[str, FeatureSetConfig],
+        feature_versions: Mapping[str, str],
     ) -> None:
         """Resolve and bind all selected feature builders.
 
@@ -45,17 +44,17 @@ class FeatureBuildStep:
             build_features = FeatureBuildStep(
                 pm=path_manager,
                 access=access,
-                feature_sets=feature_sets,
+                feature_versions={"tushare_daily_basic": "v1"},
             )
         """
         self._pm = pm
         self._access = access
         self._builders = {
-            (feature_set, config.version): get_feature_builder(
+            (feature_set, version): get_feature_builder(
                 feature_set,
-                config.version,
+                version,
             )
-            for feature_set, config in feature_sets.items()
+            for feature_set, version in feature_versions.items()
         }
 
     def run(self, context: DataContext) -> DataContext:
@@ -88,7 +87,12 @@ class FeatureBuildStep:
                     output_path=output_path,
                     build=lambda builder=builder, trade_date=trade_date: builder.build(
                         access=self._access,
-                        trade_date=trade_date,
+                        trade_dates=tuple(
+                            self._access.recent_trade_dates(
+                                end_date=trade_date,
+                                sessions=builder.lookback_sessions + 1,
+                            )
+                        ),
                     ),
                     who=(
                         f"FeatureBuild feature_set={feature_set} "

@@ -126,6 +126,10 @@ symbol, trade_date, turnover_rate
 historical_base(T) = symbols(valid stock_basic at T)
 ```
 
+有效空 `stock_basic(T)` 定义空 `historical_base(T)`；Access 不使用 daily bars 或其他日期
+补充成员。两种 universe 仍要求当日正式 `stock_st` 与 `suspend_d`，这些对象有效时直接返回
+空 tuple。
+
 `universe(T, N)` 的基础集合是当日正式 daily bars 与历史股票成员集合的交集：
 
 ```text

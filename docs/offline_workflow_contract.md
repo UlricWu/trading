@@ -7,7 +7,7 @@
 
 ## 共同边界
 
-`src/workflows` 只提供四个 workflow composition root：
+`src/workflows` 只提供六个 workflow composition root：
 
 ```python
 run_trade_calendar_bootstrap(
@@ -18,6 +18,16 @@ run_trade_calendar_bootstrap(
 run_offline_data(
     *, app_config: AppConfig, path_manager: PathManager,
     submission: DataSubmission,
+) -> None
+
+run_standard_fact_bootstrap(
+    *, app_config: AppConfig, path_manager: PathManager,
+    submission: StandardFactBootstrapSubmission,
+) -> None
+
+run_feature_backfill(
+    *, path_manager: PathManager,
+    submission: FeatureBackfillSubmission,
 ) -> None
 
 run_offline_training(
@@ -161,11 +171,14 @@ Instrumentation 和 I/O 前失败。完整闭区间是一个 workflow 执行单�
 3. 确认当前 kind 至少有一个 fact source；
 4. 绑定固定的 Tushare calendar broker/normalize，并解析所有 fact source 的 broker class
    和固定 broker normalize callable；
-5. 为当前 kind 选择空的 feature 与 label operation 集。
+5. Standard 从 `app_config.data.feature_sets` 与 `label_sets` 分别选择全部且仅选择
+   `enabled=true` 的 operation；Level-2 选择空的 feature 与 label operation 集。
 
-Standard 与 Level-2 当前都选择空的 feature 与 label operation 集，不读取或解析
-`app_config.data.feature_sets` 和 `app_config.data.label_sets`。对应两个 step 仍各执行一次，
-但不读写 derived 数据。
+Standard 允许 Feature 配置全部 disabled，也允许 Label 配置全部 disabled；任一空 operation
+集都由 workflow 记录一条 `reason=no_enabled_config` warning，再自然成功。Enabled
+identity 必须在 workflow 准备阶段解析到精确 builder，否则在任何日期 I/O 前失败。
+Level-2 暂时仍组装并各执行一次空的 `FeatureBuildStep` 与
+`LabelBuildStep`，但不读写 derived 数据。
 
 Tushare manifest 是受代码审查的执行清单，不通过配置、Broker 反射或 capability provider
 动态展开。Level-2 配置则只表达文件 identity、启停和输出映射。除 calendar 外的所选
@@ -212,8 +225,11 @@ processed_published 与 unavailable。失败仍按现有边界原样传播。
 
 所有 fact 日期完成后，一个 `FeatureBuildStep` 才在自己的一次 `run` 中按到达日升序生成
 全部 selected feature operation；一个 `LabelBuildStep` 再按相同日期顺序生成全部 selected
-label operation。每个 label set 只有一个 maturity：builder 的 `lookahead=L` 时，Access
-返回截至到达日的最近 `L + 1` 个正式交易日；完整 tuple 交给 builder，首日是 label
+label operation。Feature 输出 Meta miss 时，Step 从精确 builder 读取
+`lookback_sessions=L`，通过 Access 取得截至目标日的最近 `L + 1` 个正式交易日，并把完整
+tuple 交给 builder；有效 Meta hit 不解析历史 session、不读取 facts 或重算。每个 label set
+只有一个 maturity：builder 的 `lookahead=L` 时，Access 返回截至到达日的最近 `L + 1` 个
+正式交易日；完整 tuple 交给 builder，首日是 label
 partition identity，末日是 maturity。多个 label set（包括不同 lookahead）在同一个
 `LabelBuildStep` 中各自解析窗口、复用 Meta 和发布分区，互不改变对方的 maturity。空
 operation 集自然不产生数据；Pipeline 不隐式扩大请求范围。
@@ -223,17 +239,65 @@ Feature/label builder 和 Access 不记录运行日志。Private 发布函数也
 `✅ feature publish` / `✅ label publish` 表示发布，label 日志同时携带 partition date 与
 maturity date。调度、计算或发布错误原样传播，不追加重复错误日志。
 
-两个 kind 使用同一套 workflow 语义，显式 step 顺序都固定为 calendar materialize → fact
-materialize → feature build → label build。差异只存在于 workflow 准备阶段选择的 source、
-normalize 与 derived operation 实现。Pipeline 只按 workflow 传入的单一 tuple 执行，不知道
-也不校验这些领域顺序。`stock_st` 和 `suspend_d` normalize 产生零行时必须把它作为有效空
-事件集合发布 payload 并提交 Meta；其他 normalize、feature 或 label 产生零行必须失败。
-`stock_st` 的 `2019-04-01` 是该规则的正式案例：零行 raw 对象必须产生零行
+两个 kind 的显式 step 顺序都固定为 calendar materialize → fact materialize → feature
+build → label build。Standard 的 derived operation 来自 enabled 配置；Level-2 的两个
+derived operation 集为空。其他差异只存在于 workflow 准备阶段选择的 source 与 normalize
+实现。Pipeline 只按 workflow 传入的单一 tuple 执行，不知道
+也不校验这些领域顺序。`stock_basic`、`stock_st` 和 `suspend_d` normalize 产生零行时必须
+把它作为有效空集合发布 payload 并提交 Meta；其他 normalize、feature 或 label 产生零行
+必须失败。
+`stock_basic` 的 `2019-04-01` 是无记录且源 DataFrame 不携带列的正式案例：normalize 必须
+提供空 `symbol` 与 `list_date` 列，producer 必须发布零行
+`processed/stock_basic/v1/trade_date=2019-04-01/data.parquet` 及同目录 `meta.json`，不得使用
+其他日期填充。
+`stock_st` 的 `2019-04-01` 是该规则的正式案例：零行、零列 raw 对象必须产生含空 `symbol`
+列的零行
 `processed/stock_st/v1/trade_date=2019-04-01/data.parquet` 及同目录 `meta.json`，不得跳过
 normalize 或把 processed 对象留作缺失。成功对象必须先发布 payload 再提交 Meta；
 Meta reuse、lineage、Level-2 symbol slices 与 staging/raw 选择继续由各 producer owner 负责。
-Calendar bootstrap 与 Data workflow 保留 `▶️ workflow` 和成功后的 `✅ workflow` 业务
-日志；Training 和 Backtest workflow 不新增 workflow 边界日志。
+Calendar bootstrap、Data、Standard fact cold-start 与 Feature backfill workflow 保留
+`▶️ workflow` 和成功后的 `✅ workflow` 业务日志；Training 和 Backtest workflow 不新增
+workflow 边界日志。
+
+## Standard fact cold-start workflow
+
+`run_standard_fact_bootstrap` 是 CLI-only `data-standard-bootstrap` 的唯一 workflow，直接消费
+已校验的 `StandardFactBootstrapSubmission(start, end)`。闭区间精确表示调用方要求写入的
+calendar 与 Standard facts，不表示 Feature 目标范围。Workflow 不读取 Feature/Label 配置，
+不从 builder 读取 lookback，也不隐式扩大日期范围。
+
+Workflow 与 Standard data workflow 使用同一个 Tushare active manifest 解析规则、同一个
+固定 calendar source、相同 broker/normalize 绑定和相同 lazy adapter cache 语义。它从收到
+的 `PathManager` 创建唯一 Access，只显式组装 calendar materialize → fact materialize 两个
+Step，并调用一次 `DataPipeline.run()`。Calendar、fact、Meta reuse、缺失日期、空正式 session
+集、日志与部分提交后的重跑语义和 Standard data workflow 完全相同；不组装 Feature 或 Label
+Step，不写 derived、experiment 或 Job 状态。
+
+Workflow 的 Instrumentation identity 固定为
+`data-standard-bootstrap_{start}_{end}`。进入执行时记录 `▶️ workflow`，成功返回后记录
+`✅ workflow`，两条日志的 `kind` 均为 `data-standard-bootstrap`。错误原样传播。
+
+## Feature backfill workflow
+
+`run_feature_backfill` 是 CLI-only `data-feature-backfill` 的唯一 workflow，直接消费已校验的
+`FeatureBackfillSubmission(feature_set, version, start, end)`。`feature_set/version` 精确选择
+一个 registry identity；闭区间精确表示目标 Feature 分区，不表示输入 facts 范围。
+
+Workflow 从收到的 `PathManager` 创建唯一 Access，先构造一个只含所选 identity 的
+`FeatureBuildStep`，从而在任何日期 I/O 前完成 registry 解析；随后通过同一个 Access 把请求
+闭区间解析为升序正式目标 session。它只显式组装该单一 Step 并调用一次
+`DataPipeline.run()`。目标 session 集为空时 Step 仍执行一次并自然成功。
+
+Backfill 不组装 Calendar、Fact 或 Label Step，不创建 broker adapter，不下载或写入 raw、
+processed、label、experiment 或 Job 状态。每个目标 Meta miss 的历史依赖、发布和失败语义
+完全由同一个 `FeatureBuildStep`、精确 builder、Access 与 derived-partition 发布边界拥有；
+有效 Meta hit 不读取历史输入，较早目标已提交而较晚目标失败时保留已提交分区，重跑从 miss
+处续建。
+
+Workflow 的 Instrumentation identity 固定为
+`data-feature-backfill_{feature_set}_{version}_{start}_{end}`。正式目标 session 解析完成后记录
+`▶️ workflow`，成功返回后记录 `✅ workflow`；两条日志携带 kind、feature_set、version、
+start、end 与 targets。错误原样传播。
 
 ## Training workflow
 

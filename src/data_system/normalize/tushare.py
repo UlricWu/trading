@@ -110,12 +110,23 @@ def normalize_tushare(
                 )
             )
 
+    if (
+        len(normalized_frame) == 0
+        and target_name in ("stock_basic", "stock_st", "suspend_d")
+        and "symbol" not in normalized_frame.columns
+    ):
+        normalized_frame["symbol"] = pd.Series(dtype="string")
+
     if target_name == "stock_basic":
-        table_ops.require_columns(
-            normalized_frame,
-            ("list_date",),
-            who="stock_basic",
-        )
+        if len(normalized_frame) == 0:
+            if "list_date" not in normalized_frame.columns:
+                normalized_frame["list_date"] = pd.Series(dtype="string")
+        else:
+            table_ops.require_columns(
+                normalized_frame,
+                ("list_date",),
+                who="stock_basic",
+            )
         normalized_frame["list_date"] = pd.to_datetime(
             normalized_frame["list_date"],
             format="%Y%m%d",
