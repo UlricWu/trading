@@ -201,6 +201,40 @@ required sessions = T-61 ... T，共 62 个正式 session
   `2019-06-28`（3,652 行），三个 set 均不存在 `Label(2019-07-05)`。当前代码下重建耗时
   `1.22s`、峰值 `323076 KiB`、exit `0`；原样重跑的三个 Label 均 Meta hit，耗时 `1.04s`、
   峰值 `245808 KiB`、exit `0`。
+- 用户明确 Feature/Label 是可以从 processed facts 确定性重建的派生对象，不要求先部署服务
+  才能人工回填。2026-08-29 从干净 commit
+  `5b0d4ede2146748511351c97ead5e372e0fd32f8`、项目锁定环境直接写入测试数据根
+  `/home/wsw/app/data`；写入前 `/home/wsw/app/data/raw` 是 mountpoint。测试服务没有部署本次
+  commit，仍运行 `aaf77a70b6c780a98656666fad42cf83b28732ff`；merge、deploy 与派生数据回填按
+  独立状态记录。
+- 正式 `data-feature-backfill` 对 `2019-04-04..2019-07-05` 发布 62 个 Feature 分区、
+  224,916 行，单分区 3,586..3,657 行；所有 payload 与隔离验收输出逐分区、逐字节相同，
+  null 计数也逐列相同。首次耗时 `2:00.98`，其中 `FeatureBuildStep=119.922s`，峰值
+  `736412 KiB`、exit `0`；原样重跑 62 次 Meta hit、0 次 publish，耗时 `1.04s`，峰值
+  `245492 KiB`、exit `0`。
+- 随后的正式 `data-standard --start 2019-04-04 --end 2019-07-05` 复用 1 个 calendar 年对象、
+  744 个 raw fact、744 个 processed fact 和 62 个 Feature，raw fetch、processed publish 与
+  Feature publish 均为 0；只发布三个 enabled Label set 各 62 个分区：
+
+  | Label set | 目标范围 | 行数 | null 行数 | null 比例 |
+  | --- | --- | ---: | ---: | ---: |
+  | `daily_close_return_rank_d1/v1` | `2019-04-03..2019-07-04` | 224,872 | 790 | 0.351311% |
+  | `daily_close_return_rank_d3/v1` | `2019-04-01..2019-07-02` | 224,799 | 1,034 | 0.459966% |
+  | `daily_close_return_rank_d5/v1` | `2019-03-28..2019-06-28` | 224,688 | 1,206 | 0.536744% |
+
+  三个末分区都在到达日 `2019-07-05` 成熟，不存在 `Label(2019-07-05)`；与隔离验收重叠的
+  三个 payload 逐字节相同。首次耗时 `11.90s`，其中 `LabelBuildStep=10.363s`，峰值
+  `398668 KiB`、exit `0`；原样重跑为 744 次 raw fact Meta hit、744 次 processed fact Meta
+  hit、62 次 Feature Meta hit、186 次 Label Meta hit、0 次 publish，耗时 `1.78s`、峰值
+  `247880 KiB`、exit `0`。
+- 对 62 个 Feature 和 186 个 Label 分区逐一执行 Meta/payload、逻辑 schema、非空唯一 key、
+  `(symbol, trade_date)` 排序、分区日期、与 `daily_bar(T)` symbol 集合一致、非 null 数值有限、
+  Label 有效值位于 `(0, 1]` 的检查，全部通过。首次检查把 Arrow `large_string` 误写成只允许
+  物理 `string` 而失败；[`table_ops.md`](../../docs/engineering/table_ops.md) 已明确两者属于同一
+  逻辑 string，按该 owner 修正检查后通过。raw 与 processed 的 path/size/mtime 指纹在写前、
+  写后及幂等重跑后分别稳定为
+  `10729cefebe223def31d089135805e7811ed4e5539142fcebe2a486d6ffeb359` 和
+  `92e03a727c18c9d4c1d1ca1ab5d705ecd510dae8d75ada02208bcde152b45f2d`，没有被本次回填改写。
 
 - **Conclusion**：Acceptance 全部通过。隔离实测证明同一组最小 Step 可以同时承担日常
   Standard 派生、显式 Standard facts 冷启动和 Feature-only 历史回填；不需要新 HTTP Job、
@@ -214,8 +248,10 @@ required sessions = T-61 ... T，共 62 个正式 session
   [`cli_contract.md`](../../docs/engineering/cli_contract.md)、
   [`job_api_contract.md`](../../docs/engineering/job_api_contract.md) 和
   [`offline_workflow_contract.md`](../../docs/offline_workflow_contract.md)。
-- **Next**：Adoption PR 合入 `dev` 后，由 `release/auto-release` 部署精确测试 SHA；部署成功后
-  才在 `/home/wsw/app/data` 回填 Feature/Label，并分别记录 merge、deploy 与数据状态。
+- **Next**：正式派生回填已完成。当前 Adoption commit 尚未 push 或合入 `dev`，测试服务也尚未
+  部署本次代码；本段 `adopted` 状态随 Adoption PR 合入目标分支才成为目标分支事实。后续
+  push、merge、release 与 deploy 继续按各自独立授权和发布契约处理，不作为已完成数据回填的
+  前置或证明。
 
 ## H02
 
