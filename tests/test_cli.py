@@ -1,5 +1,5 @@
 # filepath: tests/test_cli.py
-"""Public contract tests for the five CLI commands."""
+"""Public contract tests for the seven CLI commands."""
 
 from __future__ import annotations
 
@@ -31,6 +31,34 @@ def test_data_calendar_bootstraps_through_the_current_market_year(
     arguments = workflow.call_args.kwargs
     assert arguments["app_config"] is config
     assert arguments["as_of_date"] == "2026-08-21"
+    assert isinstance(arguments["path_manager"], PathManager)
+
+
+def test_standard_fact_bootstrap_passes_one_validated_explicit_range(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = SimpleNamespace(storage_root=tmp_path)
+    workflow = Mock()
+    monkeypatch.setattr(cli.AppConfig, "load", Mock(return_value=config))
+    monkeypatch.setattr(cli, "run_standard_fact_bootstrap", workflow)
+
+    result = CliRunner().invoke(
+        cli.app,
+        [
+            "data-standard-bootstrap",
+            "--start",
+            "2019-01-01",
+            "--end",
+            "2019-04-03",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    arguments = workflow.call_args.kwargs
+    assert arguments["app_config"] is config
+    assert arguments["submission"].start == "2019-01-01"
+    assert arguments["submission"].end == "2019-04-03"
     assert isinstance(arguments["path_manager"], PathManager)
 
 
@@ -69,6 +97,40 @@ def test_data_command_passes_one_validated_range_submission(
     assert submission.start == "2026-07-01"
     assert submission.end == "2026-07-20"
     assert isinstance(workflow.call_args.kwargs["path_manager"], PathManager)
+
+
+def test_feature_backfill_passes_one_exact_identity_and_target_range(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = SimpleNamespace(storage_root=tmp_path)
+    workflow = Mock()
+    monkeypatch.setattr(cli.AppConfig, "load", Mock(return_value=config))
+    monkeypatch.setattr(cli, "run_feature_backfill", workflow)
+
+    result = CliRunner().invoke(
+        cli.app,
+        [
+            "data-feature-backfill",
+            "--feature-set",
+            "tushare_daily_basic",
+            "--version",
+            "v1",
+            "--start",
+            "2019-04-04",
+            "--end",
+            "2019-07-05",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    arguments = workflow.call_args.kwargs
+    submission = arguments["submission"]
+    assert submission.feature_set == "tushare_daily_basic"
+    assert submission.version == "v1"
+    assert submission.start == "2019-04-04"
+    assert submission.end == "2019-07-05"
+    assert isinstance(arguments["path_manager"], PathManager)
 
 
 def test_train_passes_base_model_config_and_complete_submission(
@@ -232,6 +294,24 @@ def test_empty_runtime_schedule_propagates_as_exit_code_1(
             "2026-02-30",
             "--end",
             "2026-03-01",
+        ],
+        [
+            "data-standard-bootstrap",
+            "--start",
+            "2019-04-02",
+            "--end",
+            "2019-01-01",
+        ],
+        [
+            "data-feature-backfill",
+            "--feature-set",
+            "../daily",
+            "--version",
+            "v1",
+            "--start",
+            "2019-04-03",
+            "--end",
+            "2019-07-01",
         ],
         [
             "train",

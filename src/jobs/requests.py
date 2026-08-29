@@ -37,7 +37,7 @@ _BACKTEST_FIELDS = frozenset(
 
 
 class InvalidJobRequest(ValueError):
-    """Report one invalid public job field without exposing implementation data.
+    """Report one invalid public workflow field without exposing implementation data.
 
     Example:
         error = InvalidJobRequest("is required", field="date")
@@ -62,6 +62,40 @@ class DataSubmission:
     """
 
     kind: DataJobKind
+    start: str
+    end: str
+
+
+@dataclass(frozen=True, slots=True)
+class StandardFactBootstrapSubmission:
+    """Describe one validated CLI-only Standard fact cold-start range.
+
+    Example:
+        submission = StandardFactBootstrapSubmission(
+            start="2019-01-01",
+            end="2019-04-03",
+        )
+    """
+
+    start: str
+    end: str
+
+
+@dataclass(frozen=True, slots=True)
+class FeatureBackfillSubmission:
+    """Describe one validated CLI-only Feature target range.
+
+    Example:
+        submission = FeatureBackfillSubmission(
+            feature_set="tushare_daily_basic",
+            version="v1",
+            start="2019-04-04",
+            end="2019-07-05",
+        )
+    """
+
+    feature_set: str
+    version: str
     start: str
     end: str
 
@@ -131,6 +165,56 @@ def create_data_submission(
     )
 
 
+def create_standard_fact_bootstrap_submission(
+    start: object,
+    end: object,
+) -> StandardFactBootstrapSubmission:
+    """Construct one usable CLI-only Standard fact cold-start submission.
+
+    Example:
+        submission = create_standard_fact_bootstrap_submission(
+            "2019-01-01",
+            "2019-04-03",
+        )
+    """
+    normalized_start, normalized_end = _require_range(start, end)
+    return StandardFactBootstrapSubmission(
+        start=normalized_start,
+        end=normalized_end,
+    )
+
+
+def create_feature_backfill_submission(
+    *,
+    feature_set: object,
+    version: object,
+    start: object,
+    end: object,
+) -> FeatureBackfillSubmission:
+    """Construct one usable CLI-only Feature backfill submission.
+
+    Example:
+        submission = create_feature_backfill_submission(
+            feature_set="tushare_daily_basic",
+            version="v1",
+            start="2019-04-04",
+            end="2019-07-05",
+        )
+    """
+    normalized_feature_set = _require_safe_basename(
+        feature_set,
+        field="feature_set",
+    )
+    normalized_version = _require_safe_basename(version, field="version")
+    normalized_start, normalized_end = _require_range(start, end)
+    return FeatureBackfillSubmission(
+        feature_set=normalized_feature_set,
+        version=normalized_version,
+        start=normalized_start,
+        end=normalized_end,
+    )
+
+
 def create_training_submission(
     start: object,
     end: object,
@@ -170,21 +254,10 @@ def create_backtest_submission(
     except (TypeError, ValueError) as exc:
         raise InvalidJobRequest("is invalid", field="mode") from exc
 
-    try:
-        normalized_model_experiment = PathManager.require_safe_basename(
-            cast(str, model_experiment),
-            "model_experiment",
-        )
-    except TypeError as exc:
-        raise InvalidJobRequest(
-            "must be a string",
-            field="model_experiment",
-        ) from exc
-    except ValueError as exc:
-        raise InvalidJobRequest(
-            "must be a safe basename",
-            field="model_experiment",
-        ) from exc
+    normalized_model_experiment = _require_safe_basename(
+        model_experiment,
+        field="model_experiment",
+    )
 
     try:
         normalized_strategy = TypeAdapter(StrategyConfig).validate_python(strategy)
@@ -340,6 +413,15 @@ def _require_date(value: object, *, field: str) -> str:
         return DateTimeUtils.require_system_date(value, field_name=field)
     except (TypeError, ValueError) as exc:
         raise InvalidJobRequest("must be a valid YYYY-MM-DD date", field=field) from exc
+
+
+def _require_safe_basename(value: object, *, field: str) -> str:
+    try:
+        return PathManager.require_safe_basename(cast(str, value), field)
+    except TypeError as exc:
+        raise InvalidJobRequest("must be a string", field=field) from exc
+    except ValueError as exc:
+        raise InvalidJobRequest("must be a safe basename", field=field) from exc
 
 
 def _require_range(start: object, end: object) -> tuple[str, str]:

@@ -374,21 +374,24 @@ def test_fact_step_times_each_real_ingest_and_normalize_run(
     ]
 
 
-@pytest.mark.parametrize("event_source", ("stock_st", "suspend_d"))
-def test_fact_step_publishes_empty_event_sets(
+@pytest.mark.parametrize(
+    "empty_source",
+    ("stock_basic", "stock_st", "suspend_d"),
+)
+def test_fact_step_publishes_allowed_empty_outputs(
     tmp_path: Path,
-    event_source: str,
+    empty_source: str,
 ) -> None:
     path_manager = PathManager(tmp_path)
     trade_date = "2019-04-01"
     raw_path = path_manager.raw_payload(
         broker="broker",
-        source_name=event_source,
+        source_name=empty_source,
         trade_date=trade_date,
         payload_file="data.parquet",
     )
     raw_path.parent.mkdir(parents=True)
-    raw_path.write_bytes(b"empty-event-source")
+    raw_path.write_bytes(b"empty-source")
     meta.commit(pm=path_manager, payload_path=raw_path)
 
     def normalize_operation(
@@ -408,7 +411,7 @@ def test_fact_step_publishes_empty_event_sets(
     step = FactMaterializeStep(
         app_config=cast("AppConfig", object()),
         path_manager=path_manager,
-        sources={event_source: _source(event_source)},
+        sources={empty_source: _source(empty_source)},
         broker_classes=cast(
             "dict[str, type[BrokerAdapter]]",
             {"broker": Mock()},
@@ -421,12 +424,12 @@ def test_fact_step_publishes_empty_event_sets(
     context = step.run(_context(trade_date))
 
     processed_path = path_manager.processed_data(
-        dataset_name=event_source,
+        dataset_name=empty_source,
         version="v1",
         trade_date=trade_date,
     )
     processed_meta = path_manager.processed_meta(
-        dataset_name=event_source,
+        dataset_name=empty_source,
         version="v1",
         trade_date=trade_date,
     )

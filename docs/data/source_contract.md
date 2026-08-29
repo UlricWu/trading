@@ -72,6 +72,9 @@ response 记录集合定义该交易日的历史股票成员集合，不得使�
 `processed/stock_basic/v1.list_date` 把能够按 Tushare 紧凑日期格式解析的值转换为
 `YYYY-MM-DD`，其他值转换为 null。Tushare response 的记录集合是该对象的权威；本系统不
 解释无法解析值的业务含义，也不要求它与 `daily_bar` 或其他 source 具有相同记录覆盖。
+当 response 为零行时，即使 Tushare DataFrame 没有携带列，normalize 也必须构造包含空
+`symbol` 与 `list_date` 列的零行 processed 对象。该转换只建立可消费 schema，不增加任何
+股票记录；`stock_basic@2019-04-01` 是该规则的正式案例，不得以前后日期填充。
 
 除 `trade_calendar` 外，当前 Tushare source 按单日参数
 `trade_date=YYYYMMDD` 查询。`trade_calendar` 固定查询 SSE，并以自然年作为唯一请求与对象
@@ -152,12 +155,17 @@ Workflow 不为 `is_open=false` 的日期请求 `daily_bar`。`is_open=true` 时
 空记录集合，Broker 必须照常写入 raw payload 并返回 `DownloadPlan`，不得把它转换为下载
 失败。只有源端返回 `None` 时，单日 Tushare Broker 才返回 `None`。
 
-`stock_st` 的 `2019-04-01` 是该边界的正式案例：源端成功响应且返回完整字段，但记录集合
-为零行。Producer 必须提交
+`stock_st` 的 `2019-04-01` 是该边界的正式案例：源端成功响应且记录集合为零行，返回的
+DataFrame 不携带列。Normalize 必须构造空 `symbol` 列，Producer 必须提交
 `raw/tushare/stock_st/trade_date=2019-04-01/data.parquet` 及同目录 `meta.json`；该对象表示
-当日没有 ST 排除项，不表示下载失败或数据缺失。不得使用 `2019-03-29`、`2019-04-02`
-或其他日期的记录填充该对象。
+Tushare 对当日查询返回的 ST 记录集合为空。本系统以该 source response 的记录集合为权威，
+不在运行时使用外部来源复核其事实完整性；因此该对象不表示下载失败或数据缺失，也不得使用
+`2019-03-29`、`2019-04-02` 或其他日期的记录填充。
 
-Transport、认证、response 类型、必要字段缺失或没有上述可空映射的字段转换失败必须传播
-为错误。`trade_calendar` 必须包含记录；对请求自然年返回 `None` 或零行 response 都必须
-使日历 producer 失败。其他 source 的 range 聚合和缺失失败语义由 workflow owner 定义。
+`suspend_d` 的零行 response 使用相同的空 `symbol` 列构造规则。该规则只使空集合能够由
+Access 直接消费，不增加事件记录。
+
+Transport、认证、response 类型、非空 response 的必要字段缺失或没有上述可空映射的字段
+转换失败必须传播为错误。`trade_calendar` 必须包含记录；对请求自然年返回 `None` 或零行
+response 都必须使日历 producer 失败。其他 source 的 range 聚合和缺失失败语义由 workflow
+owner 定义。

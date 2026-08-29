@@ -7,7 +7,6 @@ from collections.abc import Mapping
 
 from src import logs
 from src.access import Access
-from src.config.data_config import LabelSetConfig
 from src.data_system.builders.registry import get_label_builder
 from src.data_system.context import DataContext
 from src.data_system.steps._derived_partition import _publish_derived_partition
@@ -21,7 +20,7 @@ class LabelBuildStep:
         step = LabelBuildStep(
             pm=path_manager,
             access=access,
-            label_sets=label_sets,
+            label_versions={"daily_close_return_rank_d1": "v1"},
         )
         step.run(
             DataContext(
@@ -37,7 +36,7 @@ class LabelBuildStep:
         *,
         pm: PathManager,
         access: Access,
-        label_sets: Mapping[str, LabelSetConfig],
+        label_versions: Mapping[str, str],
     ) -> None:
         """Resolve and bind every selected label builder.
 
@@ -45,17 +44,17 @@ class LabelBuildStep:
             step = LabelBuildStep(
                 pm=path_manager,
                 access=access,
-                label_sets=label_sets,
+                label_versions={"daily_close_return_rank_d1": "v1"},
             )
         """
         self._pm = pm
         self._access = access
         self._builders = {
-            (label_set, config.version): get_label_builder(
+            (label_set, version): get_label_builder(
                 label_set,
-                config.version,
+                version,
             )
-            for label_set, config in label_sets.items()
+            for label_set, version in label_versions.items()
         }
 
     def run(self, context: DataContext) -> DataContext:

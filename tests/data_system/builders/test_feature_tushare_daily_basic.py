@@ -50,11 +50,6 @@ class _Access:
         self._missing_row_index = missing_row_index
         self.turnover_dates: list[str] = []
 
-    def recent_trade_dates(self, *, end_date: str, sessions: int) -> list[str]:
-        assert end_date == self.dates[-1]
-        assert sessions == 62
-        return list(self.dates)
-
     def daily_bars(self, *, trade_date: str) -> pd.DataFrame:
         index = self._index_by_date[trade_date]
         symbols = ["000001", "000002"]
@@ -102,7 +97,7 @@ def test_feature_builder_exposes_exact_post_close_schema_and_windows() -> None:
 
     result = TushareDailyBasicV1Builder().build(
         access=cast(Access, access),
-        trade_date=access.dates[-1],
+        trade_dates=access.dates,
     )
     frame = result.to_pandas()
 
@@ -128,7 +123,7 @@ def test_feature_builder_nulls_only_metrics_with_incomplete_symbol_history() -> 
         TushareDailyBasicV1Builder()
         .build(
             access=cast(Access, access),
-            trade_date=access.dates[-1],
+            trade_dates=access.dates,
         )
         .to_pandas()
     )
@@ -136,3 +131,20 @@ def test_feature_builder_nulls_only_metrics_with_incomplete_symbol_history() -> 
     assert pd.isna(frame.loc[0, "f_d_close_volatility_60d_asof_tminus1"])
     assert pd.isna(frame.loc[0, "f_d_close_return_5d_asof_tminus1"])
     assert pd.notna(frame.loc[0, "f_d_intraday_return"])
+
+
+def test_feature_builder_declares_and_requires_its_exact_history_window() -> None:
+    builder = TushareDailyBasicV1Builder()
+    access = _Access()
+
+    assert builder.lookback_sessions == 61
+    with pytest.raises(ValueError, match="requires 62 trade dates"):
+        builder.build(
+            access=cast(Access, access),
+            trade_dates=access.dates[1:],
+        )
+    with pytest.raises(TypeError, match="sequence of dates"):
+        builder.build(
+            access=cast(Access, access),
+            trade_dates=access.dates[-1],
+        )

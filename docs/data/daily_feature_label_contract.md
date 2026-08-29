@@ -20,8 +20,9 @@ Feature 和 label 分区都以 `(symbol, trade_date)` 为唯一 key。`trade_dat
 Producer API 只接受已经绑定正式存储和 processed version 的 Access：
 
 ```python
+TushareDailyBasicV1Builder.lookback_sessions: int
 TushareDailyBasicV1Builder.build(
-    *, access: Access, trade_date: str,
+    *, access: Access, trade_dates: Sequence[str],
 ) -> pa.Table
 
 DailyCloseReturnRankV1Builder.lookahead: int
@@ -41,6 +42,12 @@ Producer 不接收 `PathManager`、processed version 或预读 table，不公开
 因此在 `T` 日正式 daily bar、adjustment factor 和所需历史对象提交后可用。跨日价格统一使用
 以 `T` 为 as-of 的 qfq 价格。下文 `O/H/L/C` 表示该 qfq 价格；`V`、`A` 和 `R` 分别表示
 source-native `vol`、`amount` 和 `turnover_rate` 数值，producer 不做单位换算。
+
+V1 builder 唯一拥有 `lookback_sessions=61`。构建目标分区 `T` 时，调用方必须通过 Access
+取得截至且包含 `T` 的最近 `lookback_sessions + 1` 个正式 session，并把按日期升序的完整
+62 日 tuple 交给 builder；最后一日是输出 identity。首个目标日前的 61 日只提供输入，不
+产生 Feature 分区。tuple 长度不是 62 时 producer 失败；显式目标缺少完整正式历史时由
+Access 失败，不得跳过、缩小范围或读取更早日期替代缺口。
 
 价格和 adjustment factor 只有有限且大于零时可参与相应计算；`vol`、`amount` 和
 `turnover_rate` 只有有限且大于等于零时可参与相应计算。`d` 均指正式交易 session，
@@ -160,6 +167,8 @@ close-to-close 观测只定义监督目标，不定义入场、退出、成交�
 - 日期、symbol 请求、正式对象 Meta/payload、对象 key 和分区日期 identity 由 Access 失败；
 - producer 所需的额外 daily-bar 列缺失、join key 不唯一或计算输入结构无效时由 producer
   失败；单个 symbol 的行或数值缺失按本文规则产生 null，不升级为整个分区失败；
+- feature 输入窗口长度与 `lookback_sessions + 1` 不一致时由 feature producer 失败；正式
+  历史 session 不足时由 Access 的日历边界失败；
 - label maturity 窗口长度与该 set 的 `lookahead` 不一致时由 label producer 失败；正式历史
   session 不足时由 Access 的日历边界失败；
 - 空 feature/label 输出、payload 原子写入和 Meta 提交由 derived-partition 发布边界失败；

@@ -1,5 +1,5 @@
 # filepath: src/cli.py
-"""Define the five public CLI composition roots."""
+"""Define the seven public CLI composition roots."""
 
 from __future__ import annotations
 
@@ -14,13 +14,19 @@ from src.jobs.requests import (
     InvalidJobRequest,
     create_backtest_submission,
     create_data_submission,
+    create_feature_backfill_submission,
+    create_standard_fact_bootstrap_submission,
     create_training_submission,
 )
 from src.utils.datetime_utils import DateTimeUtils
 from src.utils.logger import configure_cli_logging
 from src.utils.path import PathManager
 from src.workflows.backtest import run_daily_alpha_backtest
-from src.workflows.offline_daily_data import run_offline_data
+from src.workflows.offline_daily_data import (
+    run_feature_backfill,
+    run_offline_data,
+    run_standard_fact_bootstrap,
+)
 from src.workflows.offline_training import run_offline_training
 from src.workflows.trade_calendar import run_trade_calendar_bootstrap
 
@@ -64,6 +70,38 @@ def data_calendar() -> None:
         app_config=app_config,
         path_manager=PathManager(app_config.storage_root),
         as_of_date=DateTimeUtils.today(),
+    )
+
+
+@app.command()
+def data_standard_bootstrap(
+    start_date: str = typer.Option(..., "--start"),
+    end_date: str = typer.Option(..., "--end"),
+) -> None:
+    """Materialize one explicit Standard calendar and fact cold-start range.
+
+    Example:
+        data_standard_bootstrap(
+            start_date="2019-01-01",
+            end_date="2019-04-03",
+        )
+    """
+    try:
+        submission = create_standard_fact_bootstrap_submission(
+            start_date,
+            end_date,
+        )
+    except InvalidJobRequest as exc:
+        _raise_bad_parameter(
+            exc,
+            {"start": "--start", "end": "--end"},
+        )
+
+    app_config = AppConfig.load()
+    run_standard_fact_bootstrap(
+        app_config=app_config,
+        path_manager=PathManager(app_config.storage_root),
+        submission=submission,
     )
 
 
@@ -128,6 +166,48 @@ def data_level2(
     app_config = AppConfig.load()
     run_offline_data(
         app_config=app_config,
+        path_manager=PathManager(app_config.storage_root),
+        submission=submission,
+    )
+
+
+@app.command()
+def data_feature_backfill(
+    feature_set: str = typer.Option(..., "--feature-set"),
+    version: str = typer.Option(..., "--version"),
+    start_date: str = typer.Option(..., "--start"),
+    end_date: str = typer.Option(..., "--end"),
+) -> None:
+    """Backfill one exact Feature identity over one target range.
+
+    Example:
+        data_feature_backfill(
+            feature_set="tushare_daily_basic",
+            version="v1",
+            start_date="2019-04-04",
+            end_date="2019-07-05",
+        )
+    """
+    try:
+        submission = create_feature_backfill_submission(
+            feature_set=feature_set,
+            version=version,
+            start=start_date,
+            end=end_date,
+        )
+    except InvalidJobRequest as exc:
+        _raise_bad_parameter(
+            exc,
+            {
+                "feature_set": "--feature-set",
+                "version": "--version",
+                "start": "--start",
+                "end": "--end",
+            },
+        )
+
+    app_config = AppConfig.load()
+    run_feature_backfill(
         path_manager=PathManager(app_config.storage_root),
         submission=submission,
     )

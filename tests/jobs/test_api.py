@@ -157,6 +157,8 @@ def test_training_request_creates_one_full_range_job() -> None:
     "payload",
     [
         {"kind": "data-calendar"},
+        {"kind": "data-standard-bootstrap"},
+        {"kind": "data-feature-backfill"},
         {"kind": "data-standard"},
         {
             "kind": "data-standard",

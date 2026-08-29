@@ -8,6 +8,7 @@ from src.data_system.builders.registry import FEATURE_BUILDERS, LABEL_BUILDERS
 
 def test_registry_exposes_the_formal_feature_builder() -> None:
     assert tuple(FEATURE_BUILDERS) == (("tushare_daily_basic", "v1"),)
+    assert FEATURE_BUILDERS[("tushare_daily_basic", "v1")].lookback_sessions == 61
 
 
 def test_registry_exposes_one_label_builder_per_maturity() -> None:

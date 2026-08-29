@@ -3,6 +3,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from typing import ClassVar
+
 import numpy as np
 import pandas as pd
 import pyarrow as pa
@@ -41,7 +44,6 @@ _OUTPUT_COLUMNS = (
     "f_d_close_position_in_range_20d_asof_tminus1",
 )
 _LONG_VOLATILITY_WINDOW = 60
-_HISTORY_SESSIONS = _LONG_VOLATILITY_WINDOW + 1
 _TURNOVER_WINDOW = 20
 
 
@@ -49,32 +51,49 @@ class TushareDailyBasicV1Builder:
     """Build one post-close ``tushare_daily_basic/v1`` partition.
 
     Example:
-        features = TushareDailyBasicV1Builder().build(
+        builder = TushareDailyBasicV1Builder()
+        features = builder.build(
             access=access,
-            trade_date="2026-07-20",
+            trade_dates=tuple(
+                access.recent_trade_dates(
+                    end_date="2026-07-20",
+                    sessions=builder.lookback_sessions + 1,
+                )
+            ),
         )
     """
+
+    lookback_sessions: ClassVar[int] = _LONG_VOLATILITY_WINDOW + 1
 
     def build(
         self,
         *,
         access: Access,
-        trade_date: str,
+        trade_dates: Sequence[str],
     ) -> pa.Table:
-        """Return features whose identity and as-of date are ``trade_date``.
+        """Return features for the final date of one exact history window.
 
         Example:
-            features = TushareDailyBasicV1Builder().build(
+            builder = TushareDailyBasicV1Builder()
+            features = builder.build(
                 access=access,
-                trade_date="2026-07-20",
+                trade_dates=tuple(
+                    access.recent_trade_dates(
+                        end_date="2026-07-20",
+                        sessions=builder.lookback_sessions + 1,
+                    )
+                ),
             )
         """
-        dates = tuple(
-            access.recent_trade_dates(
-                end_date=trade_date,
-                sessions=_HISTORY_SESSIONS + 1,
+        if isinstance(trade_dates, str):
+            raise TypeError("trade_dates must be a sequence of dates")
+        dates = tuple(trade_dates)
+        required_dates = self.lookback_sessions + 1
+        if len(dates) != required_dates:
+            raise ValueError(
+                f"tushare_daily_basic/v1 requires {required_dates} trade dates"
             )
-        )
+
         output_date = dates[-1]
         daily_parts: list[pd.DataFrame] = []
         current_symbols: tuple[str, ...] = ()
