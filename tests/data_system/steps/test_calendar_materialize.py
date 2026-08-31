@@ -89,11 +89,11 @@ def test_calendar_step_builds_missing_years_and_resolves_trade_dates(
         "✅ calendar materialize; years=2 reused=2 published=0 trade_dates=1"
     )
     processed_meta_by_year = {
-        calendar_year: path_manager.processed_year_meta(
+        calendar_year: path_manager.processed_year_object(
             dataset_name="trade_calendar",
             version="v1",
             calendar_year=calendar_year,
-        )
+        ).meta_path
         for calendar_year in (2025, 2026)
     }
     for offset, calendar_year in enumerate((2025, 2026), start=3):
@@ -107,12 +107,12 @@ def test_calendar_step_builds_missing_years_and_resolves_trade_dates(
     )
 
     for calendar_year in (2025, 2026):
-        processed_payload = path_manager.processed_year_data(
+        processed_paths = path_manager.processed_year_object(
             dataset_name="trade_calendar",
             version="v1",
             calendar_year=calendar_year,
         )
-        assert pq.read_table(processed_payload).to_pydict() == {
+        assert pq.read_table(processed_paths.payload_path).to_pydict() == {
             "trade_date": [
                 f"{calendar_year}-01-01",
                 f"{calendar_year}-01-02",
@@ -121,12 +121,8 @@ def test_calendar_step_builds_missing_years_and_resolves_trade_dates(
         }
         processed = meta.require(
             pm=path_manager,
-            meta_path=path_manager.processed_year_meta(
-                dataset_name="trade_calendar",
-                version="v1",
-                calendar_year=calendar_year,
-            ),
-            expected_payload_path=processed_payload,
+            meta_path=processed_paths.meta_path,
+            expected_payload_path=processed_paths.payload_path,
         )
         assert processed.upstream is not None
         assert str(processed.upstream[0]) == (
@@ -165,11 +161,11 @@ def test_calendar_step_reports_raw_meta_hit_before_processed_publish(
     result = step.run(DataContext(start="2026-01-01", end="2026-01-02"))
 
     assert result.trade_dates == ("2026-01-02",)
-    processed_payload = path_manager.processed_year_data(
+    processed_payload = path_manager.processed_year_object(
         dataset_name="trade_calendar",
         version="v1",
         calendar_year=calendar_year,
-    )
+    ).payload_path
     messages = [call.args[0] for call in logger.info.call_args_list]
     assert messages == [
         f"♻️ calendar raw meta hit; calendar_year=2026 meta={raw_meta}",

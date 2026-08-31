@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from src.utils.path import PathManager
+from src.utils.path import ObjectPaths, PathManager
 
 
 def test_constructor_creates_only_the_six_fixed_namespaces(tmp_path: Path) -> None:
@@ -169,16 +169,14 @@ def test_trade_calendar_paths_use_annual_partitions(tmp_path: Path) -> None:
         source_name="trade_calendar",
         calendar_year=2026,
     ) == raw_partition / "meta.json"
-    assert pm.processed_year_data(
+    assert pm.processed_year_object(
         dataset_name="trade_calendar",
         version="v1",
         calendar_year=2026,
-    ) == processed_partition / "data.parquet"
-    assert pm.processed_year_meta(
-        dataset_name="trade_calendar",
-        version="v1",
-        calendar_year=2026,
-    ) == processed_partition / "meta.json"
+    ) == ObjectPaths(
+        payload_path=processed_partition / "data.parquet",
+        meta_path=processed_partition / "meta.json",
+    )
 
 
 def test_formal_dataset_paths_use_canonical_partition_files(tmp_path: Path) -> None:
@@ -199,53 +197,29 @@ def test_formal_dataset_paths_use_canonical_partition_files(tmp_path: Path) -> N
         pm.processed_version_dir(dataset_name="sh_order", version="v1")
         == processed_version_dir
     )
-    assert (
-        pm.processed_data(
-            dataset_name="sh_order",
-            version="v1",
-            trade_date="2026-05-01",
-        )
-        == processed_partition / "data.parquet"
+    assert pm.processed_object(
+        dataset_name="sh_order",
+        version="v1",
+        trade_date="2026-05-01",
+    ) == ObjectPaths(
+        payload_path=processed_partition / "data.parquet",
+        meta_path=processed_partition / "meta.json",
     )
-    assert (
-        pm.processed_meta(
-            dataset_name="sh_order",
-            version="v1",
-            trade_date="2026-05-01",
-        )
-        == processed_partition / "meta.json"
+    assert pm.feature_object(
+        feature_set="l2_microstructure",
+        version="v2",
+        trade_date="2026-05-01",
+    ) == ObjectPaths(
+        payload_path=feature_partition / "data.parquet",
+        meta_path=feature_partition / "meta.json",
     )
-    assert (
-        pm.feature_data(
-            feature_set="l2_microstructure",
-            version="v2",
-            trade_date="2026-05-01",
-        )
-        == feature_partition / "data.parquet"
-    )
-    assert (
-        pm.feature_meta(
-            feature_set="l2_microstructure",
-            version="v2",
-            trade_date="2026-05-01",
-        )
-        == feature_partition / "meta.json"
-    )
-    assert (
-        pm.label_data(
-            label_set="return_5d",
-            version="v3",
-            trade_date="2026-05-01",
-        )
-        == label_partition / "data.parquet"
-    )
-    assert (
-        pm.label_meta(
-            label_set="return_5d",
-            version="v3",
-            trade_date="2026-05-01",
-        )
-        == label_partition / "meta.json"
+    assert pm.label_object(
+        label_set="return_5d",
+        version="v3",
+        trade_date="2026-05-01",
+    ) == ObjectPaths(
+        payload_path=label_partition / "data.parquet",
+        meta_path=label_partition / "meta.json",
     )
     assert not processed_version_dir.exists()
     assert not feature_partition.exists()
@@ -379,13 +353,13 @@ def test_each_path_identity_is_validated_at_the_public_boundary(
     with pytest.raises(ValueError, match="version must be a safe basename"):
         pm.processed_version_dir(dataset_name="sh_order", version="../v1")
     with pytest.raises(ValueError, match="feature_set must be a safe basename"):
-        pm.feature_data(
+        pm.feature_object(
             feature_set="../microstructure",
             version="v1",
             trade_date="2026-05-01",
         )
     with pytest.raises(ValueError, match="label_set must be a safe basename"):
-        pm.label_data(
+        pm.label_object(
             label_set="../return_5d",
             version="v1",
             trade_date="2026-05-01",
@@ -413,7 +387,7 @@ def test_trade_dates_must_be_canonical_calendar_dates(
     pm = PathManager(storage_root)
 
     with pytest.raises(ValueError):
-        pm.feature_data(
+        pm.feature_object(
             feature_set="l2_microstructure",
             version="v1",
             trade_date=bad_trade_date,
@@ -430,7 +404,7 @@ def test_calendar_years_must_be_canonical_integers(
     pm = PathManager(storage_root)
 
     with pytest.raises((TypeError, ValueError)):
-        pm.processed_year_data(
+        pm.processed_year_object(
             dataset_name="trade_calendar",
             version="v1",
             calendar_year=bad_year,  # type: ignore[arg-type]

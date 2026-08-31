@@ -1,5 +1,5 @@
 # filepath: tests/test_cli.py
-"""Public contract tests for the seven CLI commands."""
+"""Public contract tests for the eight CLI commands."""
 
 from __future__ import annotations
 
@@ -130,6 +130,33 @@ def test_feature_backfill_passes_one_exact_identity_and_target_range(
     assert submission.version == "v1"
     assert submission.start == "2019-04-04"
     assert submission.end == "2019-07-05"
+    assert isinstance(arguments["path_manager"], PathManager)
+
+
+def test_level2_minute_backfill_passes_one_validated_target_range(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = SimpleNamespace(storage_root=tmp_path)
+    workflow = Mock()
+    monkeypatch.setattr(cli.AppConfig, "load", Mock(return_value=config))
+    monkeypatch.setattr(cli, "run_level2_minute_backfill", workflow)
+
+    result = CliRunner().invoke(
+        cli.app,
+        [
+            "data-level2-minute-backfill",
+            "--start",
+            "2025-11-18",
+            "--end",
+            "2025-11-19",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    arguments = workflow.call_args.kwargs
+    assert arguments["submission"].start == "2025-11-18"
+    assert arguments["submission"].end == "2025-11-19"
     assert isinstance(arguments["path_manager"], PathManager)
 
 
@@ -312,6 +339,13 @@ def test_empty_runtime_schedule_propagates_as_exit_code_1(
             "2019-04-03",
             "--end",
             "2019-07-01",
+        ],
+        [
+            "data-level2-minute-backfill",
+            "--start",
+            "2025-11-19",
+            "--end",
+            "2025-11-18",
         ],
         [
             "train",

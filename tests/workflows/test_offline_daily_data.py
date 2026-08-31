@@ -23,12 +23,14 @@ from src.jobs.requests import (
     DataJobKind,
     DataSubmission,
     FeatureBackfillSubmission,
+    Level2MinuteBackfillSubmission,
     StandardFactBootstrapSubmission,
 )
 from src.utils.path import PathManager
 from src.workflows import offline_daily_data as workflow_module
 from src.workflows.offline_daily_data import (
     run_feature_backfill,
+    run_level2_minute_backfill,
     run_offline_data,
     run_standard_fact_bootstrap,
 )
@@ -490,6 +492,71 @@ def test_feature_backfill_accepts_an_empty_formal_target_set(
             trade_dates=(),
         )
     )
+
+
+@pytest.mark.parametrize(
+    "resolved_dates",
+    [("2025-11-18", "2025-11-19"), ()],
+)
+def test_level2_minute_backfill_runs_only_one_minute_step(
+    resolved_dates: tuple[str, ...],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    logger = Mock()
+    monkeypatch.setattr(workflow_module, "logs", logger)
+    access = Mock()
+    access.trade_dates.return_value = list(resolved_dates)
+    access_factory = Mock(return_value=access)
+    monkeypatch.setattr(workflow_module, "Access", access_factory)
+    minute_step = object()
+    minute_step_factory = Mock(return_value=minute_step)
+    monkeypatch.setattr(
+        workflow_module,
+        "Level2MinuteBuildStep",
+        minute_step_factory,
+    )
+    pipeline = Mock(spec=DataPipeline)
+    pipeline.run.side_effect = lambda context: context
+    pipeline_factory = Mock(return_value=pipeline)
+    monkeypatch.setattr(workflow_module, "DataPipeline", pipeline_factory)
+    path_manager = cast("PathManager", object())
+
+    run_level2_minute_backfill(
+        path_manager=path_manager,
+        submission=Level2MinuteBackfillSubmission(
+            start="2025-11-18",
+            end="2025-11-19",
+        ),
+    )
+
+    access_factory.assert_called_once_with(
+        pm=path_manager,
+        processed_version="v1",
+    )
+    access.trade_dates.assert_called_once_with(
+        start_date="2025-11-18",
+        end_date="2025-11-19",
+    )
+    assert minute_step_factory.call_args.kwargs == {
+        "pm": path_manager,
+        "access": access,
+        "processed_version": "v1",
+        "symbol_batch_size": 16,
+    }
+    assert pipeline_factory.call_args.kwargs["steps"] == (minute_step,)
+    pipeline.run.assert_called_once_with(
+        DataContext(
+            start="2025-11-18",
+            end="2025-11-19",
+            trade_dates=resolved_dates,
+        )
+    )
+    assert [call.args[0] for call in logger.info.call_args_list] == [
+        "▶️ workflow; kind=data-level2-minute-backfill start=2025-11-18 "
+        f"end=2025-11-19 targets={len(resolved_dates)}",
+        "✅ workflow; kind=data-level2-minute-backfill start=2025-11-18 "
+        f"end=2025-11-19 targets={len(resolved_dates)}",
+    ]
 
 
 def test_data_workflow_rejects_an_invalid_kind_before_preparation(

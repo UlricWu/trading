@@ -100,8 +100,12 @@ Meta API，不建立第二套对象校验。
 
 `processed/<dataset_name>/<version>/` 是实际分区扫描所需的正式目录身份，由
 `PathManager.processed_version_dir()` 返回。调用方不得从 processed root 手工拼接该路径。
-年度 raw 与 processed 路径分别由 `raw_year_payload()`、`raw_year_meta()`、
-`processed_year_data()` 和 `processed_year_meta()` 返回。
+规范文件名固定的 processed、feature 和 label 对象由 `PathManager` 一次返回不可变的
+`ObjectPaths(payload_path, meta_path)`；调用方不得以两次路径调用分别重建同一对象身份。
+对应入口为 `processed_object()`、`processed_year_object()`、`feature_object()` 和
+`label_object()`。Raw payload 的 source-native basename 必须由来源显式提供，因此 raw
+payload 与 Meta 继续分别由 `raw_payload()`/`raw_meta()` 或
+`raw_year_payload()`/`raw_year_meta()` 返回。
 
 ## Object-side Meta
 
@@ -132,10 +136,13 @@ Meta API，不建立第二套对象校验。
 `upstream` 只表示一个直接输入，schema 精确为 `meta_path` 和 `size_bytes`。
 `meta_path` 必须是 `storage_root` 下 `meta.json` 的 POSIX 相对路径；读取方校验该直接
 Meta 的 schema、payload 和实际字节数，并与记录的 `size_bytes` 比较，但不得递归校验
-更上游。Feature 和 label 当前没有 upstream，不写该字段。
+更上游。Level-2 股票分钟事实按其领域 owner 记录同交易所同日逐笔对象的一个直接 upstream；
+Feature 和 label 当前没有 upstream，不写该字段。
 
-`symbol_slices` 只用于 Level-2 processed payload，其 schema 和不变量由
-`docs/data/level2_normalization.md` 拥有。其他 payload 不写该字段。
+`symbol_slices` 只用于 `sh_trade` 与 `sz_trade` 两个 Level-2 Normalize processed payload，
+其 schema 和不变量由 `docs/data/level2_normalization.md` 拥有。Level-2 股票分钟事实和其他
+payload 不写该字段；分钟对象的 lineage 由
+[`docs/data/level2_minute_contract.md`](level2_minute_contract.md) 拥有。
 
 只有 `meta.json` 不存在表示对象尚未产出。Meta 已存在但 JSON、schema、payload、
 payload 字节数、直接 upstream 或 symbol slice 无效时必须失败，不得降级为未产出。

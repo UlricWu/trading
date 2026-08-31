@@ -4,11 +4,28 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
 from src.utils.datetime_utils import DateTimeUtils
 from src.utils.filesystem import FileSystem
+
+
+@dataclass(frozen=True, slots=True)
+class ObjectPaths:
+    """Identify one canonical payload and its same-partition Meta.
+
+    Example:
+        paths = ObjectPaths(
+            payload_path=Path("/formal/processed/daily_bar/v1/data.parquet"),
+            meta_path=Path("/formal/processed/daily_bar/v1/meta.json"),
+        )
+        payload_path = paths.payload_path
+    """
+
+    payload_path: Path
+    meta_path: Path
 
 
 class PathManager:
@@ -17,6 +34,14 @@ class PathManager:
     Construction resolves the existing storage root and creates only the six
     fixed top-level namespaces. Dataset partitions and experiment directories
     are created by their writers.
+
+    Example:
+        pm = PathManager(Path("/absolute/formal-storage"))
+        paths = pm.processed_object(
+            dataset_name="daily_bar",
+            version="v1",
+            trade_date="2026-07-20",
+        )
     """
 
     _FIXED_ROOTS: Final[tuple[str, ...]] = (
@@ -166,156 +191,112 @@ class PathManager:
             / self.require_safe_basename(version, "version")
         )
 
-    def processed_data(
+    def processed_object(
         self,
         *,
         dataset_name: str,
         version: str,
         trade_date: str,
-    ) -> Path:
-        """Return the canonical processed payload path."""
-        return (
-            self._processed_partition(
-                dataset_name=dataset_name,
-                version=version,
-                trade_date=trade_date,
+    ) -> ObjectPaths:
+        """Return the payload and Meta paths for one processed object.
+
+        Example:
+            paths = pm.processed_object(
+                dataset_name="daily_bar",
+                version="v1",
+                trade_date="2026-07-20",
             )
-            / "data.parquet"
+            payload_path = paths.payload_path
+        """
+        partition = self._processed_partition(
+            dataset_name=dataset_name,
+            version=version,
+            trade_date=trade_date,
+        )
+        return ObjectPaths(
+            payload_path=partition / "data.parquet",
+            meta_path=partition / "meta.json",
         )
 
-    def processed_meta(
-        self,
-        *,
-        dataset_name: str,
-        version: str,
-        trade_date: str,
-    ) -> Path:
-        """Return the object-side processed metadata path."""
-        return (
-            self._processed_partition(
-                dataset_name=dataset_name,
-                version=version,
-                trade_date=trade_date,
-            )
-            / "meta.json"
-        )
-
-    def processed_year_data(
+    def processed_year_object(
         self,
         *,
         dataset_name: str,
         version: str,
         calendar_year: int,
-    ) -> Path:
-        """Return the canonical payload path for one annual processed object.
+    ) -> ObjectPaths:
+        """Return the payload and Meta paths for one annual processed object.
 
         Example:
-            payload = pm.processed_year_data(
+            paths = pm.processed_year_object(
                 dataset_name="trade_calendar",
                 version="v1",
                 calendar_year=2026,
             )
+            payload_path = paths.payload_path
         """
-        return (
-            self._processed_year_partition(
-                dataset_name=dataset_name,
-                version=version,
-                calendar_year=calendar_year,
-            )
-            / "data.parquet"
+        partition = self._processed_year_partition(
+            dataset_name=dataset_name,
+            version=version,
+            calendar_year=calendar_year,
+        )
+        return ObjectPaths(
+            payload_path=partition / "data.parquet",
+            meta_path=partition / "meta.json",
         )
 
-    def processed_year_meta(
-        self,
-        *,
-        dataset_name: str,
-        version: str,
-        calendar_year: int,
-    ) -> Path:
-        """Return object-side metadata for one annual processed object.
-
-        Example:
-            meta_path = pm.processed_year_meta(
-                dataset_name="trade_calendar",
-                version="v1",
-                calendar_year=2026,
-            )
-        """
-        return (
-            self._processed_year_partition(
-                dataset_name=dataset_name,
-                version=version,
-                calendar_year=calendar_year,
-            )
-            / "meta.json"
-        )
-
-    def feature_data(
+    def feature_object(
         self,
         *,
         feature_set: str,
         version: str,
         trade_date: str,
-    ) -> Path:
-        """Return the canonical feature payload path."""
-        return (
-            self._feature_partition(
-                feature_set=feature_set,
-                version=version,
-                trade_date=trade_date,
+    ) -> ObjectPaths:
+        """Return the payload and Meta paths for one feature object.
+
+        Example:
+            paths = pm.feature_object(
+                feature_set="daily",
+                version="v1",
+                trade_date="2026-07-20",
             )
-            / "data.parquet"
+            payload_path = paths.payload_path
+        """
+        partition = self._feature_partition(
+            feature_set=feature_set,
+            version=version,
+            trade_date=trade_date,
+        )
+        return ObjectPaths(
+            payload_path=partition / "data.parquet",
+            meta_path=partition / "meta.json",
         )
 
-    def feature_meta(
-        self,
-        *,
-        feature_set: str,
-        version: str,
-        trade_date: str,
-    ) -> Path:
-        """Return the object-side feature metadata path."""
-        return (
-            self._feature_partition(
-                feature_set=feature_set,
-                version=version,
-                trade_date=trade_date,
-            )
-            / "meta.json"
-        )
-
-    def label_data(
+    def label_object(
         self,
         *,
         label_set: str,
         version: str,
         trade_date: str,
-    ) -> Path:
-        """Return the canonical label payload path."""
-        return (
-            self._label_partition(
-                label_set=label_set,
-                version=version,
-                trade_date=trade_date,
-            )
-            / "data.parquet"
-        )
+    ) -> ObjectPaths:
+        """Return the payload and Meta paths for one label object.
 
-    def label_meta(
-        self,
-        *,
-        label_set: str,
-        version: str,
-        trade_date: str,
-    ) -> Path:
-        """Return the object-side label metadata path."""
-        return (
-            self._label_partition(
-                label_set=label_set,
-                version=version,
-                trade_date=trade_date,
+        Example:
+            paths = pm.label_object(
+                label_set="daily_return",
+                version="v1",
+                trade_date="2026-07-20",
             )
-            / "meta.json"
+            payload_path = paths.payload_path
+        """
+        partition = self._label_partition(
+            label_set=label_set,
+            version=version,
+            trade_date=trade_date,
+        )
+        return ObjectPaths(
+            payload_path=partition / "data.parquet",
+            meta_path=partition / "meta.json",
         )
 
     def experiment_dir(self, *, experiment_name: str) -> Path:

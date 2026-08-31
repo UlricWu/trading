@@ -8,8 +8,8 @@
 ## 通用边界
 
 CLI 只把不可信文本解析为 `src.jobs.requests` 已构造的 data、fact bootstrap、Feature
-backfill、training 或 backtest submission，加载一次 `AppConfig`，创建 `PathManager` 并调用
-一次工作流。HTTP Job API
+backfill、Level-2 minute backfill、training 或 backtest submission，加载一次 `AppConfig`，
+创建 `PathManager` 并调用一次工作流。HTTP Job API
 也必须复用同一构造边界，不得各自实现日期、mode、model experiment 或 strategy 校验。
 CLI 在命令分派前按日志技术 owner 配置一次公共 logger 的 stderr sink；它不记录
 start/done 或原始 JSON，workflow 负责业务运行日志。Typer 负责参数错误并以 `2` 退出，
@@ -34,7 +34,7 @@ start/done 或原始 JSON，workflow 负责业务运行日志。Typer 负责参�
 `override` 只能包含 `data`、`model` 或 `backtest` 根键；因此不能改变
 `environment`、`storage_root` 或 `secret`。mapping 递归合并，标量、列表和显式
 `None` 直接替换，不定义字段级特殊合并规则。合并后必须校验完整 `AppConfig`。HTTP Job
-API 和七个 CLI 命令都不得用 request runtime 字段构造 config override。配置读取、
+API 和八个 CLI 命令都不得用 request runtime 字段构造 config override。配置读取、
 override 拒绝和最终 schema 校验错误均归 `AppConfig.load()`，不在下游组件重复校验。
 
 ## Data
@@ -44,6 +44,8 @@ python -m src.cli data-calendar
 python -m src.cli data-standard-bootstrap --start YYYY-MM-DD --end YYYY-MM-DD
 python -m src.cli data-standard --start YYYY-MM-DD --end YYYY-MM-DD
 python -m src.cli data-level2 --start YYYY-MM-DD --end YYYY-MM-DD
+python -m src.cli data-level2-minute-backfill \
+  --start YYYY-MM-DD --end YYYY-MM-DD
 python -m src.cli data-feature-backfill \
   --feature-set FEATURE_SET --version VERSION \
   --start YYYY-MM-DD --end YYYY-MM-DD
@@ -69,6 +71,16 @@ derived 对象，也不根据 Feature lookback 隐式扩大范围。它构造
 位置参数 `DATE` 或其他单日形式。数据对象由 source、version 和 date 标识，不属于一次
 experiment。这两个命令成功时都退出 `0`；任一正式交易日 fact 缺失或其他运行错误都退出
 `1`，不得改写成 skipped。
+
+`data-level2-minute-backfill` 是 CLI-only 的两市股票一分钟事实历史回填入口。`start/end`
+闭区间只表示目标分钟分区；它构造 `Level2MinuteBackfillSubmission` 并只调用一次
+`run_level2_minute_backfill`。Workflow 只消费已经提交的 calendar、`sh_trade/v1` 与
+`sz_trade/v1`，不调用 broker，不下载或写入 raw，不执行日常 `data-level2`，也不构建
+Feature、Label 或 experiment。范围内没有正式交易 session 时成功；显式目标缺少任一必要
+逐笔对象、分钟构建或发布失败时退出 `1`，不得跳过日期或交易所。该命令不接受 exchange、
+version、batch size、group 或 experiment identity，不属于 HTTP Job API、cron 或 MQTT。
+分钟对象的 schema、聚合和 lineage 由
+[`docs/data/level2_minute_contract.md`](../data/level2_minute_contract.md) 所有。
 
 `data-feature-backfill` 是 CLI-only 的单 Feature 历史回填入口。`FEATURE_SET` 与 `VERSION`
 共同选择一个精确 registry identity，`start/end` 闭区间只表示目标 Feature 分区。它构造

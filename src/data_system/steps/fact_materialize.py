@@ -257,20 +257,15 @@ class FactMaterializeStep:
         stats: _MaterializeStats,
     ) -> None:
         for plan in self._normalize_plans:
-            processed_meta = self._path_manager.processed_meta(
-                dataset_name=plan.output,
-                version=self._processed_version,
-                trade_date=trade_date,
-            )
-            output_file = self._path_manager.processed_data(
+            processed_paths = self._path_manager.processed_object(
                 dataset_name=plan.output,
                 version=self._processed_version,
                 trade_date=trade_date,
             )
             loaded_output = meta.find(
                 pm=self._path_manager,
-                meta_path=processed_meta,
-                expected_payload_path=output_file,
+                meta_path=processed_paths.meta_path,
+                expected_payload_path=processed_paths.payload_path,
             )
             if (
                 plan.output in _LEVEL2_TRADE_OUTPUTS
@@ -279,14 +274,14 @@ class FactMaterializeStep:
             ):
                 raise RuntimeError(
                     f"Level-2 Meta has no symbol_slices: "
-                    f"dataset={plan.output}, meta_path={processed_meta}"
+                    f"dataset={plan.output}, meta_path={processed_paths.meta_path}"
                 )
             if loaded_output is not None:
                 stats.processed_reused += 1
                 logs.info(
                     f"♻️ processed meta hit; target={plan.output} "
                     f"source={plan.source_name} trade_date={trade_date} "
-                    f"meta={processed_meta}"
+                    f"meta={processed_paths.meta_path}"
                 )
                 continue
 
@@ -317,7 +312,7 @@ class FactMaterializeStep:
                 input_file=input_file,
                 raw_object=plan.source.raw_object,
                 target_name=plan.output,
-                output_name=output_file,
+                output_name=processed_paths.payload_path,
                 trade_date=trade_date,
             )
             if plan.output not in _EMPTY_PROCESSED_OUTPUTS:
@@ -335,12 +330,12 @@ class FactMaterializeStep:
             )
             timing.add(normalize_seconds)
             write_parquet_atomic(
-                output_file=output_file,
+                output_file=processed_paths.payload_path,
                 table=normalized.table,
             )
             meta.commit(
                 pm=self._path_manager,
-                payload_path=output_file,
+                payload_path=processed_paths.payload_path,
                 upstream_meta_path=raw_meta_path,
                 symbol_slices=normalized.symbol_slices,
             )
@@ -349,7 +344,8 @@ class FactMaterializeStep:
                 f"✅ processed publish; target={plan.output} "
                 f"source={plan.source_name} trade_date={trade_date} "
                 f"rows={normalized.table.num_rows} "
-                f"normalize_seconds={normalize_seconds:.3f} output={output_file}"
+                f"normalize_seconds={normalize_seconds:.3f} "
+                f"output={processed_paths.payload_path}"
             )
 
     def _log_operation_summary(self, stats: _MaterializeStats) -> None:

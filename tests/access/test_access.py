@@ -510,6 +510,57 @@ def test_level2_universe_uses_level2_base_and_canonical_order(
     ) == ("000001",)
 
 
+def test_level2_symbols_support_all_market_and_explicit_exchange(
+    tmp_path: Path,
+) -> None:
+    pm = PathManager(tmp_path)
+    trade_date = "2026-05-06"
+    _write_level2_row_group_fixture(pm=pm, trade_date=trade_date)
+    access = Access(pm=pm, processed_version="v1")
+
+    assert access.level2_symbols(trade_date=trade_date) == (
+        "000001",
+        "600000",
+        "600001",
+        "600002",
+    )
+    assert access.level2_symbols(
+        trade_date=trade_date,
+        exchange="sh",
+    ) == ("600000", "600001", "600002")
+    assert access.level2_symbols(
+        trade_date=trade_date,
+        exchange="sz",
+    ) == ("000001",)
+
+
+def test_scoped_level2_access_requires_only_the_selected_market(
+    tmp_path: Path,
+) -> None:
+    pm = PathManager(tmp_path)
+    trade_date = "2026-05-06"
+    _write_l2_object(
+        pm,
+        trade_date,
+        "sh_trade",
+        pd.DataFrame({"symbol": ["600000"], "ts_utc": [1], "price": [10.0]}),
+        {"600000": range(0, 1)},
+    )
+    access = Access(pm=pm, processed_version="v1")
+
+    assert access.level2_symbols(
+        trade_date=trade_date,
+        exchange="sh",
+    ) == ("600000",)
+    assert access.trades(
+        trade_date=trade_date,
+        symbols=("600000",),
+        exchange="sh",
+    )["600000"]["price"].to_pylist() == [10.0]
+    with pytest.raises(FileNotFoundError, match="required Meta"):
+        access.level2_symbols(trade_date=trade_date)
+
+
 def test_trades_preserve_requested_order(tmp_path: Path) -> None:
     pm = PathManager(tmp_path)
     trade_date = "2026-05-06"
@@ -523,6 +574,21 @@ def test_trades_preserve_requested_order(tmp_path: Path) -> None:
     assert list(tables) == ["000001", "600001"]
     assert tables["000001"]["price"].to_pylist() == [40.0]
     assert tables["600001"]["price"].to_pylist() == [20.0]
+
+
+def test_scoped_trades_reject_symbols_from_the_other_market(
+    tmp_path: Path,
+) -> None:
+    pm = PathManager(tmp_path)
+    trade_date = "2026-05-06"
+    _write_level2_row_group_fixture(pm=pm, trade_date=trade_date)
+
+    with pytest.raises(KeyError, match="000001"):
+        Access(pm=pm, processed_version="v1").trades(
+            trade_date=trade_date,
+            symbols=("000001",),
+            exchange="sh",
+        )
 
 
 def test_trades_read_only_overlapping_row_groups(
@@ -557,11 +623,11 @@ def test_trades_read_only_overlapping_row_groups(
     assert tables["600001"]["price"].to_pylist() == [20.0]
     assert read_row_group_calls == [
         (
-            pm.processed_data(
+            pm.processed_object(
                 dataset_name="sh_trade",
                 version="v1",
                 trade_date=trade_date,
-            ),
+            ).payload_path,
             [1],
         )
     ]
@@ -577,9 +643,26 @@ def test_empty_trade_request_does_not_require_level2_objects(
         ).trades(
             trade_date="2026-05-06",
             symbols=(),
+            exchange="sh",
         )
         == {}
     )
+
+
+def test_level2_exchange_is_validated_before_object_io(tmp_path: Path) -> None:
+    access = Access(pm=PathManager(tmp_path), processed_version="v1")
+
+    with pytest.raises(ValueError, match="exchange"):
+        access.level2_symbols(
+            trade_date="2026-05-06",
+            exchange=cast("object", "hk"),
+        )
+    with pytest.raises(TypeError, match="exchange"):
+        access.trades(
+            trade_date="2026-05-06",
+            symbols=(),
+            exchange=cast("object", 1),
+        )
 
 
 def test_level2_rejects_missing_meta_and_missing_symbol(tmp_path: Path) -> None:
@@ -643,6 +726,13 @@ def test_level2_rejects_cross_dataset_symbol_collision(tmp_path: Path) -> None:
             trade_date=trade_date,
             symbols=["000001"],
         )
+
+    scoped = Access(pm=pm, processed_version="v1").trades(
+        trade_date=trade_date,
+        symbols=["000001"],
+        exchange="sh",
+    )
+    assert scoped["000001"]["price"].to_pylist() == [20.0]
 
 
 def _empty_symbol_frame() -> pd.DataFrame:
@@ -712,11 +802,11 @@ def _write_processed_frame(
     dataset_name: str,
     frame: pd.DataFrame,
 ) -> None:
-    path = pm.processed_data(
+    path = pm.processed_object(
         dataset_name=dataset_name,
         version="v1",
         trade_date=trade_date,
-    )
+    ).payload_path
     path.parent.mkdir(parents=True, exist_ok=True)
     frame.to_parquet(path, index=False)
     meta.commit(
@@ -730,11 +820,11 @@ def _write_calendar_year(
     calendar_year: int,
     frame: pd.DataFrame,
 ) -> None:
-    path = pm.processed_year_data(
+    path = pm.processed_year_object(
         dataset_name="trade_calendar",
         version="v1",
         calendar_year=calendar_year,
-    )
+    ).payload_path
     path.parent.mkdir(parents=True, exist_ok=True)
     frame.to_parquet(path, index=False)
     meta.commit(
@@ -751,11 +841,11 @@ def _write_l2_object(
     symbol_slices: Mapping[str, range],
     row_group_size: int | None = None,
 ) -> None:
-    path = pm.processed_data(
+    path = pm.processed_object(
         dataset_name=dataset_name,
         version="v1",
         trade_date=trade_date,
-    )
+    ).payload_path
     path.parent.mkdir(parents=True, exist_ok=True)
     pq.write_table(
         pa.Table.from_pandas(frame, preserve_index=False),

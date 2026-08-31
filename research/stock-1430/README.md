@@ -256,13 +256,14 @@ required sessions = T-61 ... T，共 62 个正式 session
 ## H02
 
 - **Title**：Level2 股票分钟事实
-- **Status**：`open`
+- **Status**：`adopted`
 - **Hypothesis**：将两市已提交的正成交逐笔事实聚合为守恒、稀疏、phase-aware 的一分钟事实，
   能消除下游重复扫描与重复定义，同时在完整交易日保持有界内存。
 - **Why**：Feature、Label 和 replay 都需要相同的分钟成交量、成交额、价格范围和方向代理；
   让每个下游直接扫描数千万逐笔行会重复成本并产生不同分钟语义。
 - **Scope**：两个 V1 minute dataset、固定 schema/key、单 upstream lineage、按 symbol 有界批处理、
-  CLI-only 范围回填、原子发布和 Meta reuse。
+  CLI-only 范围回填、原子发布和 Meta reuse；Access 的 Level2 symbol 与 trade 读取允许显式限定
+  单一交易所，缺省仍表示全市场。
 - **Not included**：order/order-book、撤单、盘口、非股票品种、dense 分钟、补零或前向填充、
   rolling Feature、Label、训练、回放、FTP 下载、HTTP、cron 或 MQTT。
 - **Depends on**：无其他 Change；依赖正式 `sh_trade/v1`、`sz_trade/v1`、stock 和 phase 语义。
@@ -275,27 +276,220 @@ processed/sz_stock_trade_1m/v1/trade_date=T
 key = (symbol, trade_date, minute_start_ts_utc, phase)
 ```
 
-每个左闭右开一分钟桶保存 `high`、`low`、`volume_sum`、`notional_sum`、`trade_count`、
-`tick_signed_volume_sum` 和 `tick_signed_notional_sum`。其中 signed 值只表示 tick-rule direction
-proxy，不解释为交易所认证的主动买卖方向。
+每个左闭右开一分钟桶保存 `open`、`high`、`low`、`close`、`volume_sum`、`notional_sum`、
+`trade_count`、`tick_signed_volume_sum` 和 `tick_signed_notional_sum`。其中 signed 值只表示
+tick-rule direction proxy，不解释为交易所认证的主动买卖方向。分钟起点由 UTC epoch
+microseconds 对 `60_000_000` 向下取整；OHLC 在每个完整 key 内按
+`(ts_utc, main_seq, sub_seq)` 升序选择首尾并计算极值。该顺序只提供确定性结果，不把不同
+`main_seq` 的数值顺序解释为跨通道因果关系；完全相同排序身份但 `price` 不同的输入无法决定
+开收盘价，必须失败。
 
 - 只保留 `security_type=stock`，但同时保留 AUCTION 和 CONTINUOUS，并把 `phase` 放入 key。
 - 只保存实际观察到成交的 key；缺行不等于零成交量，不建立 dense session grid。
 - 每个输出只绑定同交易所同日逐笔对象；两市和多个日期不是事务。
 - 完整交易所日对象不得整体转为 Pandas；批大小属于实现细节，由真实日峰值内存证据决定。
+- `level2_symbols(trade_date, exchange=None)` 与 `trades(trade_date, symbols, exchange=None)` 的
+  `exchange=None` 表示全市场，显式 `sh` 或 `sz` 只要求对应单一对象；`trades.symbols` 继续
+  必填。`level2_symbols` 返回 Meta 中实际观察到的全部证券类型，股票过滤只由分钟 producer
+  根据正式 `security_type` 执行。
+- 有效上游没有 stock 行时发布固定 schema 的零行 Parquet 和单 upstream Meta；missing 或
+  invalid upstream 失败。分钟输出不建立 `symbol_slices`。
+- CLI 固定同时请求 SH、SZ，按日期升序且每个日期固定 SH 后 SZ；首次失败终止。已经提交的
+  较早日期或同日较早交易所对象保留，重跑只复用 direct upstream 未变化的有效输出。
 
 **Acceptance**：
 
-- 每个 exchange/date 的 tick 数、volume、notional 和 signed sums 与 stock 输入守恒；
+- 每个 exchange/date 的 tick 数、volume、notional 和 signed sums 与 stock 输入守恒；整数
+  精确相等，浮点以 `math.fsum` 为 reference，预先固定 `rel_tol=1e-12`、
+  `abs_tol=1e-6`；
 - minute/phase 边界、午休 sparse 语义、空 stock observation 与 missing upstream 可区分；
-- key 唯一且全局排序稳定，NaN、Infinity 和整数溢出确定性失败；
+- OHLC、key 唯一和全局排序稳定；NaN、Infinity、整数溢出及相同排序身份的冲突价格确定性
+  失败；
 - 完整日通过有限 symbol batch 构建，没有整日 Pandas materialization；
-- 多个真实完整交易日记录输入 identity、tick/输出行数、守恒误差、峰值 RSS、耗时和重跑复用；
-- CLI-only，不改变现有 Level2 normalize、Access 或事实 workflow；
+- 以 `16/64/256` 三个 symbol batch 候选验证结果一致并记录已观测最大 SH/SZ 输入日的耗时和
+  峰值 RSS；进程 RSS 只作为实现观测，不在执行环境 owner 没有定义内存预算时成为正确性门槛；
+- 最终验证固定使用三个预注册候选中内存占用最低且已在两项最大输入成功构建的 batch 16，
+  不引入 batch 8、`large_string`、流式 writer 或缓存层；
+- 在 `2025-11-18`、`2026-04-30`、`2026-07-27` 记录输入 identity、stock tick/输出行数、
+  守恒误差、峰值 RSS、耗时和 Meta-hit 重跑；所有运行只写隔离 storage root；
+- CLI-only，不改变现有 Level2 normalize、事实 workflow、HTTP Job、cron 或 MQTT；
 - adoption 同步正式 owner、实现和测试，并由用户明确决定。
 
-- **Next**：在独立实现分支中先用合成跨分钟/phase 数据固定守恒容差，再用两市完整真实日确定
-  有界批处理是否满足资源约束。
+**Evidence（2026-08-29—2026-08-30，adoption candidate）**：
+
+- 候选代码和本段证据仍位于 base `2ae615ee652f896c58d16ae398d75bcefd542c97` 之上的 dirty
+  `feature/level2_feature` 工作树，没有绑定可恢复 commit，因而只能支持当前工作树中的 adoption
+  候选，不能证明目标分支已采用或支持跨任务复现。项目锁定环境为 Python 3.13.13、
+  PyArrow 25.0.0；2026-08-30
+  重跑 `uv lock --check`、`compileall`、`git diff --check` 和全量 `pytest` 全部通过，共
+  `543 passed`，另有两条仓库既有 multiprocessing `fork()` deprecation warning。Ruff、Black、
+  Mypy 和 Pyright 不在当前项目环境中，未运行。
+- 隔离根为 `/home/wsw/app/h02-validation-tAqNHU`，没有写入 `/home/wsw/app/data`。正式 processed
+  payload 通过同 filesystem hard link 进入每个独立候选根；最终验证子根为
+  `final-b16-zbA2dX`。隔离 Meta 从正式 `symbol_slices` 和相同 payload size 重新提交，不复制 raw
+  upstream；trade calendar 也只重建 payload Meta。因此运行精确消费正式 processed payload，
+  但隔离 Meta 不是正式 Meta 的逐字节副本，不能用来验证上游 raw lineage。
+- 资源选择输入 identity 为：
+
+  | 日期 / dataset | 正式 Meta SHA-256 | payload bytes | rows | row groups |
+  | --- | --- | ---: | ---: | ---: |
+  | `2026-07-21 sh_trade` | `82bb1b57112428c67a8b0d0d10e8a8e5564758470a69415c80f2dfca0d9db0b5` | 1,281,134,826 | 99,821,632 | 96 |
+  | `2026-07-21 sz_trade` | `818771fa99b0dafa8f94eb924a545838964a664310f23b347ebfda645a010b34` | 1,506,676,613 | 119,385,454 | 114 |
+  | `2026-01-14 sh_trade` | `03dbd5907a5737e58f170578aa7f0ed29ec6c97c25847adc68b226da7f482810` | 1,202,786,359 | 93,682,575 | 90 |
+  | `2026-01-14 sz_trade` | `2959dd473b6ca8577a6172d7ba7fe41f749494714fbdfe20f477eae3638a2b09` | 1,805,634,569 | 143,133,762 | 137 |
+
+- 已观测最大 SH 日 `2026-07-21` 的三个预注册候选均成功构建，且 SH/SZ 输出在
+  `pa.Table.equals` 下跨 batch size 完全相等；payload bytes 不同，只反映 batch 产生的 Arrow
+  chunk 边界进入同一默认 Parquet writer 后物理编码不同，不能用 payload digest 代替逻辑
+  equality：
+
+  | symbol batch | SH elapsed | SZ elapsed | process wall | peak RSS KiB | 原 `<= 2 GiB` 判断 |
+  | ---: | ---: | ---: | ---: | ---: | --- |
+  | 16 | 35.518s | 44.673s | 80.70s | 1,615,724 | 是 |
+  | 64 | 30.408s | 38.865s | 69.82s | 2,922,044 | 否 |
+  | 256 | 30.867s | 38.558s | 69.97s | 8,058,424 | 否 |
+
+  batch 16 的 SH 输入含 3,421 symbols，产生 89,366,952 个 stock ticks、544,816 分钟行、
+  12,274,002 bytes；SZ 输入含 4,080 symbols，产生 110,237,781 个 stock ticks、685,883
+  分钟行、13,821,190 bytes。输出固定 13 字段非 nullable schema，包含 OHLC。
+- 按当时错误的 RSS 门槛，64 和 256 在第一个资源选择输入被判定为不可能满足“两项最大输入都
+  通过”，因而未在最大 SZ 日重复运行。batch 16 在已观测最大 SZ 日 `2026-01-14` 成功构建：
+  SH 3,312 symbols、86,192,303 stock ticks、544,723 分钟行、33.777s；SZ 3,999 symbols、
+  133,425,385 stock ticks、683,107 分钟行、52.078s；process wall 86.38s，peak RSS
+  `2,103,548 KiB`。输出 payload 分别为 12,556,895 和 14,333,285 bytes。
+- 严格 `2 GiB` 等于 `2,097,152 KiB`；batch 16 在最大 SZ 日超出 `6,396 KiB`。此前因此停止，
+  没有运行 `2025-11-18`、`2026-04-30`、`2026-07-27` 最终验证、守恒 reference 或 Meta-hit
+  重跑。该停止条件错误地把标准 Arrow `string/binary` 的单个可变长 Array 32-bit offset 上限
+  解释为整个进程的 RSS 上限；二者没有这种关系。当前输出最大的已检查 `symbol` Array 为
+  `2026-07-21 sz_stock_trade_1m` 的 685,883 行，offset buffer 为 2,743,536 bytes，data buffer
+  为 4,115,298 bytes，并未接近单个 Array 的约 `2 GiB` 边界。`large_string` 只会把 offset
+  改为 64-bit，不能降低进程 RSS，因而没有当前业务必要性。Acceptance 在最终验证前据此纠正：
+  保留上述失败观测和三个候选结果，但不再把 `2 GiB` RSS 当成通过条件，也不新增 batch 8、
+  流式 writer、列投影或缓存层。
+
+- 最终验证输入 identity 如下；六个 payload 与正式文件均为相同 inode：
+
+  | 日期 / dataset | 正式 Meta SHA-256 | payload bytes | rows | row groups | observed symbols |
+  | --- | --- | ---: | ---: | ---: | ---: |
+  | `2025-11-18 sh_trade` | `676d6f2a095c927596dfed63fac40bb57ea6187253f6a4c4c275d8bf3d8c793b` | 749,683,842 | 59,423,448 | 57 | 3,279 |
+  | `2025-11-18 sz_trade` | `7ef3a56898fa154e2c17f1bfc7190ee562259482343f0c73ef6055d7da6357ad` | 1,068,481,337 | 86,389,788 | 83 | 3,976 |
+  | `2026-04-30 sh_trade` | `734591031aff4c5af770037c4798383875c97e48ce54e0b1359b770276dc3810` | 958,259,213 | 75,951,750 | 73 | 3,347 |
+  | `2026-04-30 sz_trade` | `ca62f77f462756fedd5627493a255e89e72490cc957ae781257b81f8c254d48d` | 1,194,305,070 | 96,804,129 | 93 | 4,020 |
+  | `2026-07-27 sh_trade` | `036ce39aef3fbaf13111e1fa1bb1eb6b4b6f1338dcd38eb6b51ce05dfc012425` | 904,940,051 | 71,788,586 | 69 | 3,424 |
+  | `2026-07-27 sz_trade` | `5f12cbe181108b3bfe161bc255be99f1f39431d0cd9e49e494291a1db3c50d5b` | 1,068,039,887 | 85,782,458 | 82 | 4,066 |
+
+- 固定 batch 16 后，三个日期都通过真实 `data-level2-minute-backfill` CLI 首次构建；每个输出均为
+  一个 row group：
+
+  | 日期 / target | stock symbols | stock ticks | output rows | elapsed | payload bytes | payload SHA-256 |
+  | --- | ---: | ---: | ---: | ---: | ---: | --- |
+  | `2025-11-18 sh_stock_trade_1m` | 2,289 | 54,723,485 | 538,035 | 23.979s | 11,589,829 | `2a2ff8a4525fbdc00d87c80fcd01b57e40fedb7a0271e7e9b17dc97bbff6782e` |
+  | `2025-11-18 sz_stock_trade_1m` | 2,868 | 80,781,621 | 678,859 | 34.776s | 13,313,548 | `f63c9cee764c0c6e45122e0fcf2fdc6d3dd2338db2ad03f72555814eef158df3` |
+  | `2026-04-30 sh_stock_trade_1m` | 2,284 | 70,956,894 | 538,252 | 28.855s | 11,931,094 | `a411c30285a72d3a7f3a4a9cd632ee7eede6821930064ea8509ce67d9790027a` |
+  | `2026-04-30 sz_stock_trade_1m` | 2,866 | 90,881,151 | 677,640 | 38.367s | 13,365,540 | `d7a4cf8f6ea02891f61bc192a38c5072bb9cdd914e77b0d7297410b427463809` |
+  | `2026-07-27 sh_stock_trade_1m` | 2,307 | 65,641,207 | 536,578 | 28.582s | 11,506,367 | `bb019d0801ebee44832909bd52314f46f6e007add2f097602b3ed6df3500ac20` |
+  | `2026-07-27 sz_stock_trade_1m` | 2,885 | 78,965,640 | 676,989 | 35.835s | 12,934,732 | `2e650315a1e898dd9a3a4219d43e3b7c917e9bf0c96deb8cd74002c52b854846` |
+
+  | 日期 | CLI process wall | peak RSS KiB | Meta-hit pipeline |
+  | --- | ---: | ---: | ---: |
+  | `2025-11-18` | 59.87s | 1,389,456 | 0.013s |
+  | `2026-04-30` | 68.32s | 1,532,268 | 0.015s |
+  | `2026-07-27` | 65.54s | 2,930,424 | 0.014s |
+
+  `2026-07-27` 的进程 RSS 超过 2 GiB 但构建成功，没有单 Array offset 错误；这再次表明 RSS 不能
+  作为 Arrow 32-bit offset 的代理。三个日期的第二次 CLI 调用都对 SH、SZ 输出记录 `♻️`，六个
+  payload 和六个 Meta 的 SHA-256、size 与 mtime 在调用前后均未变化。
+
+- 守恒校验按不超过 1,048,576 行的输入 batch 扫描正式 payload；只过滤正式
+  `security_type=stock`，整数逐 batch 求和后以 Python integer 精确比较，浮点逐 batch 和跨 batch
+  均使用 `math.fsum`，再按预设容差比较：
+
+  | 日期 / target | volume reference | signed volume reference | notional delta | signed notional delta |
+  | --- | ---: | ---: | ---: | ---: |
+  | `2025-11-18 sh_stock_trade_1m` | 59,404,525,942 | -638,937,410 | 0 | 0 |
+  | `2025-11-18 sz_stock_trade_1m` | 78,864,219,160 | -650,530,012 | 0 | 0 |
+  | `2026-04-30 sh_stock_trade_1m` | 65,615,414,523 | -267,857,706 | 0 | `-2.384185791015625e-7` |
+  | `2026-04-30 sz_stock_trade_1m` | 73,744,974,511 | -168,068,563 | 0 | `1.1920928955078125e-7` |
+  | `2026-07-27 sh_stock_trade_1m` | 50,460,127,580 | -24,387,416 | 0 | `-2.384185791015625e-7` |
+  | `2026-07-27 sz_stock_trade_1m` | 57,122,765,888 | -58,106,663 | 0 | 0 |
+
+  六项的 tick count、volume 和 signed volume 均精确相等；notional 全部零差，signed notional
+  全部满足 `rel_tol=1e-12`、`abs_tol=1e-6`。独立校验还确认固定 13 字段 non-null schema、完整
+  key 全局排序且唯一、分钟起点整除 `60_000_000`、`low <= open/close <= high`、输入输出 stock
+  symbol 集相等，以及输出只有一个正确 direct upstream 且没有 `symbol_slices`。首轮只读校验器
+  因 PyArrow 25.0.0 没有 `compute.mod` 在第一项检查中止；改用 NumPy remainder 后从六项开头完整
+  重跑，上述结果全部来自成功重跑。
+
+**Evidence（2026-08-31，正式分钟事实回填）**：
+
+- 用户在 H02 adoption 后独立授权写入正式数据，并明确允许只排除 `2025-11-25`。正式根为
+  `/home/wsw/app/data`；执行显式设置 `ENV=dev` 和 `ZERO_STORAGE_ROOT=/home/wsw/app/data`，因为
+  当前 feature 工作树不存在 `.env.test`。该 CLI 只消费已提交的 calendar、`sh_trade/v1` 和
+  `sz_trade/v1`，没有调用 broker。执行代码仍是 base
+  `2ae615ee652f896c58d16ae398d75bcefd542c97` 之上的 dirty `feature/level2_feature` 工作树，尚无
+  可恢复 adoption commit；正式写入成功不能替代 commit、merge、release 或 deploy 状态。
+- 正式 calendar 在 `2025-11-05..2026-08-25` 内共有 197 个 session；其中
+  `2025-11-25` 的 SH、SZ 逐笔输入都不存在，其余 196 日的 392 个输入 Meta、payload 和
+  `symbol_slices` 全部通过读取边界。回填前两个分钟 dataset 都不存在任何分区。预检记录的输入
+  payload 合计为 `409,943,861,418` bytes，SH 每日 observed symbols 为 3,264..3,450，SZ 为
+  3,962..4,108；当次有序输入 identity 清单 SHA-256 为
+  `5b158fe6867199a2ecff9c2b8e35f744fe966bd3fdf6d46ebc4dee27dcc296c5`。
+- 为精确排除该日，正式 CLI 分两段运行并全部成功：
+
+  | 目标闭区间 | sessions | 发布对象 | process wall | peak RSS KiB | exit |
+  | --- | ---: | ---: | ---: | ---: | ---: |
+  | `2025-11-05..2025-11-24` | 14 | 28 | 14:10.49 | 1,637,348 | 0 |
+  | `2025-11-26..2026-08-25` | 182 | 364 | 3:37:23 | 2,832,788 | 0 |
+
+  两段均按日期升序、每日期 SH 后 SZ 完成；`2025-11-25` 的两个分钟分区保持不存在。正式输出
+  汇总为：
+
+  | dataset | objects | rows | stock ticks | payload bytes | rows / partition |
+  | --- | ---: | ---: | ---: | ---: | ---: |
+  | `sh_stock_trade_1m/v1` | 196 | 105,920,642 | 12,788,839,003 | 2,321,099,021 | 507,904..546,258 |
+  | `sz_stock_trade_1m/v1` | 196 | 133,417,236 | 17,425,478,128 | 2,636,085,858 | 672,820..686,067 |
+
+- 对 392 个正式输出逐一读取完整 Parquet，并检查精确 13 字段 non-null schema、无 null、分区日期、
+  非空 symbol、分钟起点整除 `60_000_000`、浮点有限、`low <= open/close <= high`、正
+  `trade_count`、完整 key 全局严格升序且唯一、唯一正确 direct upstream 及无
+  `symbol_slices`，全部通过。按日期升序且每日期 SH 后 SZ，对
+  `dataset\tdate\tsize\tpayload_sha256\n` 求得输出 manifest SHA-256
+  `c0faa242a81c00901385ab63cd50046d234b2e30b75fe30f1c6653125985253c`。前述三个预注册日期的
+  六个正式 payload SHA-256 与隔离 Acceptance 输出 6/6 完全相同，因此正式输出继承了这六项
+  已完成的逐笔守恒证据。本次全量发布后检查没有再次扫描约 410GB 的全部逐笔列来为其余 386 个
+  对象重复计算守恒 reference，不能把全量结构检查表述为 392 项独立守恒复算。
+- 首轮构建日志观测到 `2026-06-08` 与 `2026-06-09` 的聚合计数相同：SH 两日均为
+  74,103,732 stock ticks、546,258 行，SZ 两日均为 97,570,757 stock ticks、684,640 行。只读
+  复核显示两日上游也分别具有相同行数和 observed symbol 数，但 payload bytes、inode 和 Meta
+  SHA-256 均不同；四个分钟 payload SHA-256 也各不相同，不是同一文件或相同输出被重复发布。
+  按已确认的 source 权威语义，该现象只作为 broker 输入观测保留，不增加运行时外部复核、失败、
+  填充或备用来源规则。
+- 原样复跑两个范围分别命中 28 和 364 次分钟 Meta reuse，发布数均为 0，wall 分别为 1.36s 和
+  3.29s，peak RSS 分别为 241,744 和 241,912 KiB，exit 均为 0。784 个正式 payload/Meta 文件
+  的 path-sorted 内容指纹在复跑前后均为
+  `7248b0be327affde773a00568bff1ac0b288af7b54ff4322a2d29b65d37c0b64`，
+  path/inode/size/mtime 指纹均为
+  `9a50872611cb88750432b94859a8af8842630b231e2b2bd000747a63ebd6a0d6`，证明复跑没有改写既有对象。
+
+- **Conclusion**：合成测试和最大日构建证明当前 schema、OHLC、Access market scope、空结果、
+  原子发布、lineage、batch-independent logical output 与固定 batch 16 的完整日执行可以运行；
+  三个预注册日期的 schema、顺序、key、守恒、资源观测和 Meta reuse 也全部满足纠正后的
+  Acceptance。最小正式关系是两个 exchange-specific sparse minute facts、一个领域 builder、
+  一个发布 Step 和一个 CLI-only backfill workflow；不需要 `large_string`、流式 writer、HTTP、
+  cron、MQTT 或日常 `data-level2` 集成。
+- **Decision（2026-08-30—2026-08-31）**：用户明确采用 H02；随后独立授权正式历史回填，并明确
+  允许只排除缺少两市逐笔输入的 `2025-11-25`。授权不包含 commit、push、merge、release 或
+  deploy，也不把该单日操作选择提升为一般排除规则。
+- **Formalized in**：[`level2_minute_contract.md`](../../docs/data/level2_minute_contract.md)、
+  [`access.md`](../../docs/engineering/access.md)、
+  [`cli_contract.md`](../../docs/engineering/cli_contract.md)、
+  [`job_api_contract.md`](../../docs/engineering/job_api_contract.md)、
+  [`storage_layout.md`](../../docs/data/storage_layout.md) 和
+  [`offline_workflow_contract.md`](../../docs/offline_workflow_contract.md)。
+- **Next**：正式分钟事实已覆盖当前范围内 196 个两市输入完整 session；`2025-11-25` 按明确授权
+  保持没有分钟分区。当前 Adoption diff 仍位于 dirty feature 工作树；本段 `adopted` 状态随
+  Adoption PR 合入 `dev` 才成为目标分支事实。commit、push、merge、release 与 deploy 继续按
+  各自独立授权和状态判断。
 
 ## H03
 

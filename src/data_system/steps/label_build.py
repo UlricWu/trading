@@ -78,20 +78,15 @@ class LabelBuildStep:
                     )
                 )
                 target_date = input_dates[0]
-                output_meta = self._pm.label_meta(
-                    label_set=label_set,
-                    version=version,
-                    trade_date=target_date,
-                )
-                output_path = self._pm.label_data(
+                output_paths = self._pm.label_object(
                     label_set=label_set,
                     version=version,
                     trade_date=target_date,
                 )
                 rows = _publish_derived_partition(
                     pm=self._pm,
-                    meta_path=output_meta,
-                    output_path=output_path,
+                    meta_path=output_paths.meta_path,
+                    output_path=output_paths.payload_path,
                     build=lambda builder=builder, input_dates=input_dates: (
                         builder.build(
                             access=self._access,
