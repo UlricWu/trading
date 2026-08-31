@@ -1,176 +1,179 @@
 # filepath: tests/utils/test_logger.py
 from __future__ import annotations
 
-import os
-import subprocess
+import ast
+import re
 import sys
-from datetime import date
+from collections.abc import Iterator
 from pathlib import Path
+from typing import cast
 
 import pytest
 from loguru import logger as loguru_logger
 
-import src
 import src.utils.logger as logger_module
 from src import logs
-from src.utils.logger import (
-    JobLogContext,
-    LoggingSettings,
-    configure_api_logging,
-    configure_job_logging,
-    configure_system_logging,
-)
+from src.utils.logger import configure_cli_logging, configure_system_logging
+
+_INFO_PREFIXES = ("▶️", "⏳", "✅", "♻️")
+_STATUS_SYMBOLS = (*_INFO_PREFIXES, "⚠️", "❌")
+_PREFIXES_BY_METHOD = {
+    "trace": _INFO_PREFIXES,
+    "debug": _INFO_PREFIXES,
+    "info": _INFO_PREFIXES,
+    "success": _INFO_PREFIXES,
+    "warning": ("⚠️",),
+    "error": ("❌",),
+    "exception": ("❌",),
+    "critical": ("❌",),
+}
 
 
-class _FailOnceSinkRegistry:
-    """Exercise session cleanup failures without Loguru private APIs."""
+@pytest.fixture(autouse=True)
+def restore_project_logger() -> Iterator[None]:
+    """Give every test isolated sinks and restore stderr afterward."""
+    logs.remove()
+    logs.add(sys.stderr)
+    try:
+        yield
+    finally:
+        logs.complete()
+        logs.remove()
+        logs.add(sys.stderr)
 
-    def __init__(self) -> None:
-        self.removal_attempts: list[int | None] = []
-        self.fail_once_sink_ids: set[int] = set()
 
-    def remove(self, handler_id: int | None = None) -> None:
-        self.removal_attempts.append(handler_id)
-        if handler_id in self.fail_once_sink_ids:
-            self.fail_once_sink_ids.remove(handler_id)
-            raise OSError("sink close failed")
-
-
-def test_src_exports_the_project_loguru_logger() -> None:
-    assert src.__all__ == ["logs"]
+def test_logger_module_exports_current_public_contract() -> None:
+    assert logger_module.__all__ == [
+        "ProcessLogger",
+        "configure_cli_logging",
+        "configure_system_logging",
+        "logs",
+    ]
     assert logs is loguru_logger
+    assert logger_module.logs is logs
 
 
-def test_import_does_not_create_log_directories(tmp_path: Path) -> None:
+def test_src_log_messages_start_with_level_compatible_status_symbols() -> None:
     repository_root = Path(__file__).resolve().parents[2]
-    environment = dict(os.environ)
-    environment["PYTHONPATH"] = str(repository_root)
-    environment["PYTHONDONTWRITEBYTECODE"] = "1"
+    violations: list[str] = []
 
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            (
-                "from src import logs; "
-                'value = 1; logs.info(f"public logger import works; value={value}")'
-            ),
-        ],
-        cwd=tmp_path,
-        env=environment,
-        check=True,
-        capture_output=True,
-        text=True,
+    for source_file in sorted((repository_root / "src").rglob("*.py")):
+        tree = ast.parse(source_file.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call) or not isinstance(
+                node.func,
+                ast.Attribute,
+            ):
+                continue
+            allowed_prefixes = _PREFIXES_BY_METHOD.get(node.func.attr)
+            if allowed_prefixes is None or not _is_project_logger(node.func.value):
+                continue
+            message_prefix = _static_message_prefix(node)
+            allowed_starts = tuple(f"{prefix} " for prefix in allowed_prefixes)
+            symbol_count = (
+                0
+                if message_prefix is None
+                else sum(message_prefix.count(symbol) for symbol in _STATUS_SYMBOLS)
+            )
+            if (
+                message_prefix is None
+                or not message_prefix.startswith(allowed_starts)
+                or symbol_count != 1
+            ):
+                relative_path = source_file.relative_to(repository_root)
+                violations.append(
+                    f"{relative_path}:{node.lineno} method={node.func.attr} "
+                    f"prefix={message_prefix!r}"
+                )
+
+    assert violations == []
+
+
+def _is_project_logger(expression: ast.expr) -> bool:
+    if isinstance(expression, ast.Name):
+        return expression.id == "logs" or expression.id.endswith("logger")
+    if isinstance(expression, ast.Attribute):
+        return expression.attr == "logs" or expression.attr.endswith("logger")
+    if isinstance(expression, ast.Call) and isinstance(
+        expression.func,
+        ast.Attribute,
+    ):
+        return expression.func.attr == "opt" and _is_project_logger(
+            expression.func.value
+        )
+    return False
+
+
+def _static_message_prefix(node: ast.Call) -> str | None:
+    if not node.args:
+        return None
+    message = node.args[0]
+    if isinstance(message, ast.Constant) and isinstance(message.value, str):
+        return message.value
+    if isinstance(message, ast.JoinedStr) and message.values:
+        first_part = message.values[0]
+        if isinstance(first_part, ast.Constant) and isinstance(first_part.value, str):
+            return first_part.value
+    return None
+
+
+def test_configure_system_logging_requires_path() -> None:
+    invalid_path = cast(Path, "logs/system/service.log")
+
+    with pytest.raises(TypeError, match="system_log_file must be a pathlib.Path"):
+        configure_system_logging(invalid_path)
+
+
+def test_configure_cli_logging_uses_module_and_line_without_function(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    configure_cli_logging()
+    run_id = "cli-1"
+
+    logs.debug(f"debug run_id={run_id}")
+    logs.info(f"test run_id={run_id}")
+
+    stderr = capsys.readouterr().err
+    assert f"debug run_id={run_id}" not in stderr
+    assert re.search(
+        r" \| INFO     \| tests\.utils\.test_logger:\d+ - test run_id=cli-1\n$",
+        stderr,
+    )
+    assert (
+        ":test_configure_cli_logging_uses_module_and_line_without_function:"
+        not in stderr
     )
 
-    assert "public logger import works; value=1" in result.stderr
-    assert not (tmp_path / "logs").exists()
 
-
-def test_api_and_system_configuration_route_public_logs_without_cross_writes(
-    tmp_path: Path,
-) -> None:
-    settings = LoggingSettings(log_root=tmp_path)
-
-    with configure_api_logging(settings):
-        request_id = "request-1"
-        logs.info(f"api event; request_id={request_id}")
-
-    with configure_system_logging(settings):
-        check_id = "check-1"
-        logs.info(f"system event; check_id={check_id}")
-
-    api_text = (tmp_path / "api" / "api.current.log").read_text(encoding="utf-8")
-    system_text = (tmp_path / "system.log").read_text(encoding="utf-8")
-    assert "request-1" in api_text
-    assert "check-1" not in api_text
-    assert "check-1" in system_text
-    assert "request-1" not in system_text
-
-
-def test_job_configuration_writes_public_logs_only_to_validated_partition(
+def test_configure_system_logging_routes_to_new_file_and_stderr(
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
 ) -> None:
-    settings = LoggingSettings(log_root=tmp_path)
-    context = JobLogContext(
-        job_id="job-20260715_01",
-        run_date=date(2026, 7, 15),
+    replaced_sink_messages: list[str] = []
+    logs.add(replaced_sink_messages.append, format="{message}")
+    system_log_file = tmp_path / "logs" / "system" / "2026-07-22-09-15-32.123456.log"
+
+    configure_system_logging(system_log_file)
+    run_id = "service-1"
+    logs.info(f"test run_id={run_id}")
+    logs.complete()
+
+    assert list(system_log_file.parent.iterdir()) == [system_log_file]
+    assert "test run_id=service-1" in system_log_file.read_text(
+        encoding="utf-8"
     )
-
-    with configure_job_logging(settings, context):
-        logs.info(f"job event; job_id={context.job_id}")
-
-    expected_log = tmp_path / "jobs" / "2026-07-15" / "job-20260715_01.log"
-    assert expected_log.is_file()
-    assert context.job_id in expected_log.read_text(encoding="utf-8")
-    assert expected_log.is_relative_to(tmp_path / "jobs")
-    assert capsys.readouterr().err == ""
+    assert "test run_id=service-1" in capsys.readouterr().err
+    assert replaced_sink_messages == []
 
 
-@pytest.mark.parametrize(
-    "job_id",
-    [
-        "",
-        "../escape",
-        "/tmp/escape",
-        "nested/job",
-        r"nested\job",
-        " leading-space",
-        "job id",
-        "a" * 129,
-    ],
-)
-def test_job_context_rejects_unsafe_job_ids(job_id: str) -> None:
-    with pytest.raises(ValueError, match="job_id"):
-        JobLogContext(job_id=job_id, run_date=date(2026, 7, 15))
+def test_configure_system_logging_rejects_existing_run_file(
+    tmp_path: Path,
+) -> None:
+    system_log_file = tmp_path / "system" / "2026-07-22-09-15-32.123456.log"
+    system_log_file.parent.mkdir(parents=True)
+    system_log_file.write_text("previous service run\n", encoding="utf-8")
 
+    with pytest.raises(FileExistsError):
+        configure_system_logging(system_log_file)
 
-def test_logging_settings_require_absolute_root() -> None:
-    with pytest.raises(ValueError, match="absolute path"):
-        LoggingSettings(log_root=Path("relative/logs"))
-
-
-def test_logging_session_close_is_idempotent_and_terminal(tmp_path: Path) -> None:
-    session = configure_job_logging(
-        LoggingSettings(log_root=tmp_path),
-        JobLogContext(job_id="job-1", run_date=date(2026, 7, 15)),
-    )
-
-    session.close()
-    session.close()
-
-    with pytest.raises(RuntimeError, match="closed"):
-        session.__enter__()
-
-
-def test_logging_session_attempts_all_sink_cleanup_and_retries_failures() -> None:
-    backend = _FailOnceSinkRegistry()
-    backend.fail_once_sink_ids.add(0)
-    session = logger_module._OwnedLoggingSession(backend, sink_ids=(0, 1))
-
-    with pytest.raises(ExceptionGroup, match="sinks failed to close"):
-        session.close()
-
-    assert backend.removal_attempts == [0, 1]
-    with pytest.raises(RuntimeError, match="closing"):
-        session.__enter__()
-
-    session.close()
-    assert backend.removal_attempts == [0, 1, 0]
-
-
-def test_logger_module_exposes_only_bootstrap_contracts() -> None:
-    assert set(logger_module.__all__) == {
-        "JobLogContext",
-        "LogLevel",
-        "LoggingSession",
-        "LoggingSettings",
-        "ProcessLogger",
-        "configure_api_logging",
-        "configure_job_logging",
-        "configure_system_logging",
-    }
-    assert not hasattr(logger_module, "logs")
-    assert not hasattr(logger_module, "system_logs")
-    assert not hasattr(logger_module, "Logging")
+    assert system_log_file.read_text(encoding="utf-8") == "previous service run\n"

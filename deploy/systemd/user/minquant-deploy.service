@@ -1,0 +1,9 @@
+[Unit]
+Description=Deploy accepted MinQuant release deliveries
+
+[Service]
+Type=oneshot
+Environment=MINQUANT_WEBHOOK_STATE_DIR=/var/lib/minquant-webhook
+Environment=MINQUANT_DEPLOY_SCRIPT=/usr/local/libexec/minquant-deploy
+ExecStart=/usr/bin/python3 /usr/local/libexec/minquant-deploy-dispatcher
+TimeoutStartSec=infinity

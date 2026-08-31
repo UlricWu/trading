@@ -1,0 +1,102 @@
+# ==================================================
+# Data System (SOURCE / BROKER DECLARATION)
+# ==================================================
+data:
+  # ----------------------------------
+  # Broker capability (SYSTEM CAPABILITY)
+  # - 声明系统“能用什么”
+  # - 声明即默认可用，不承担本次运行的启停选择
+  # ----------------------------------
+  brokers:
+    tushare: {}
+    level2_ftp:
+      remote_root: "level2"
+      ftp_backend: "ftplib"
+
+
+  # ----------------------------------
+  # Sources (RAW OBJECT / OUTPUT DECLARATION)
+  # - Tushare 结构化 source 由 TushareBroker 的 Python manifest 固定拥有
+  # - 此处只声明 Level-2 文件 source 到 processed output 的映射
+  # - outputs=[] 表示 raw-only
+  # ----------------------------------
+  sources:
+    sh_stock_ordertrade: # source_name
+      enabled: true
+      broker: "level2_ftp"
+      group: "offline_level2"
+      raw_object: "SH_Stock_OrderTrade"
+      outputs:
+        - "sh_trade"
+
+    sz_order:
+      enabled: true
+      broker: "level2_ftp"
+      group: "offline_level2"
+      raw_object: "SZ_Order"
+      outputs: []
+
+    sz_trade:
+      enabled: true
+      broker: "level2_ftp"
+      group: "offline_level2"
+      raw_object: "SZ_Trade"
+      outputs:
+        - "sz_trade"
+
+  feature_sets:
+    tushare_daily_basic:
+      enabled: true
+      version: "v1"
+
+  label_sets:
+    daily_close_return_rank_d1:
+      enabled: true
+      version: "v1"
+
+    daily_close_return_rank_d3:
+      enabled: true
+      version: "v1"
+
+    daily_close_return_rank_d5:
+      enabled: true
+      version: "v1"
+
+# ==================================================
+# Backtest System
+# - Runtime mode, model experiment and strategy belong to BacktestSubmission.
+# - Minimum listing age is explicit; Access always excludes current ST and suspension.
+# ==================================================
+backtest:
+  init_cash: 200000
+  min_listing_calendar_days: 120
+# ==================================================
+# Model / Training System
+# - Runtime range and experiment identity are CLI inputs.
+# - Model group is selected explicitly from the training model catalog.
+# ==================================================
+model:
+  group: "sgd_regression"
+  model_params:
+    alpha: 0.0005
+    l1_ratio: 0.0
+  train_window_days: 30
+  preprocessing:
+    missing:
+      method: "constant"
+      fill_value: 0.0
+  dataset:
+    feature_set: "tushare_daily_basic"
+    feature_version: "v1"
+    feature_columns:
+      - "f_d_close_return_1d"
+      - "f_d_open_gap_1d"
+      - "f_d_log_amount"
+      - "f_d_max_drawdown_20d_asof_tminus1"
+      - "f_d_close_volatility_60d_asof_tminus1"
+      - "f_d_close_return_5d_asof_tminus1"
+      - "f_d_turnover_rate_mean_20d_asof_tminus1"
+
+    label_set: "daily_close_return_rank_d1"
+    label_version: "v1"
+    label_column: "y_rank_return"

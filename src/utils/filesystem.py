@@ -3,14 +3,16 @@ from __future__ import annotations
 
 import os
 import shutil
-import uuid
+import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 _BINARY_UNIT_BASE = 1024
 
 
 class FileSystem:
-    """Stateless local-filesystem operations over caller-provided paths."""
+    """Discoverable stateless facade for approved local file operations."""
 
     @staticmethod
     def ensure_dir(path: str | Path) -> Path:
@@ -25,6 +27,7 @@ class FileSystem:
 
     @staticmethod
     def file_exists(path: str | Path) -> bool:
+        """Return whether `path` exists as a file."""
         return FileSystem._require_path(path, field_name="path").is_file()
 
     @staticmethod
@@ -43,22 +46,6 @@ class FileSystem:
         return FileSystem.get_file_size(path) / (1024 * 1024)
 
     @staticmethod
-    def files_have_same_nonzero_size(
-        left_path: str | Path,
-        right_path: str | Path,
-    ) -> bool:
-        """Compare non-empty files by size only, not by content hash."""
-        left_file = FileSystem._require_path(left_path, field_name="left_path")
-        right_file = FileSystem._require_path(right_path, field_name="right_path")
-        if not (left_file.is_file() and right_file.is_file()):
-            return False
-
-        left_size_bytes = left_file.stat().st_size
-        if left_size_bytes == 0:
-            return False
-        return left_size_bytes == right_file.stat().st_size
-
-    @staticmethod
     def format_size(size_bytes: int) -> str:
         """Format a non-negative byte count with binary unit thresholds."""
         if type(size_bytes) is not int:
@@ -67,35 +54,52 @@ class FileSystem:
             raise ValueError("field 'size_bytes' must be non-negative")
 
         size_value = float(size_bytes)
-        for unit in ("B", "KB", "MB", "GB", "TB"):
+        for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
             if size_value < _BINARY_UNIT_BASE:
                 return f"{size_value:.2f} {unit}"
             size_value /= _BINARY_UNIT_BASE
-        return f"{size_value:.2f} PB"
+        return f"{size_value:.2f} PiB"
 
     @staticmethod
-    def safe_write(path: str | Path, payload: bytes) -> None:
-        """Fsync a temporary file before atomically replacing the target."""
-        if not isinstance(payload, bytes):
-            raise TypeError("field 'payload' must be bytes")
-
+    @contextmanager
+    def atomic_path(path: str | Path) -> Iterator[Path]:
+        """Yield a sibling temporary file and replace `path` on success."""
         target_path = FileSystem._require_path(path, field_name="path")
         FileSystem.ensure_dir(target_path.parent)
+        with tempfile.NamedTemporaryFile(
+            dir=target_path.parent,
+            prefix=f".{target_path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temporary_file:
+            temporary_path = Path(temporary_file.name)
 
-        temporary_path = FileSystem._unique_tmp_path(target_path)
-
-        published = False
         try:
-            with temporary_path.open("wb") as temporary_file:
-                temporary_file.write(payload)
-                temporary_file.flush()
+            yield temporary_path
+            if temporary_path.is_symlink() or not temporary_path.is_file():
+                raise FileNotFoundError(
+                    f"atomic temporary file does not exist: {temporary_path}"
+                )
+            with temporary_path.open("rb") as temporary_file:
                 os.fsync(temporary_file.fileno())
-
-            FileSystem.publish_file_atomic(temporary_path, target_path)
-            published = True
-        finally:
-            if not published:
+            os.replace(temporary_path, target_path)
+        except BaseException as exc:
+            try:
                 temporary_path.unlink(missing_ok=True)
+            except OSError as cleanup_error:
+                exc.add_note(
+                    f"atomic temporary file cleanup also failed: {cleanup_error!r}"
+                )
+            raise
+
+    @staticmethod
+    def write_bytes_atomic(path: str | Path, data: bytes) -> None:
+        """Write bytes through a sibling temporary file and replace `path`."""
+        if not isinstance(data, bytes):
+            raise TypeError("field 'data' must be bytes")
+
+        with FileSystem.atomic_path(path) as temporary_path:
+            temporary_path.write_bytes(data)
 
     @staticmethod
     def copy_file_atomic(
@@ -113,32 +117,18 @@ class FileSystem:
             destination_path,
             field_name="destination_path",
         )
-        if not source_file.is_file():
-            raise FileNotFoundError(f"source file does not exist: {source_file}")
+        if source_file.is_symlink() or not source_file.is_file():
+            raise FileNotFoundError(
+                f"source must be an existing non-symlink file: {source_file}"
+            )
 
-        FileSystem.ensure_dir(destination_file.parent)
-        temporary_path = FileSystem._unique_tmp_path(destination_file)
-
-        published = False
-        try:
+        with FileSystem.atomic_path(destination_file) as temporary_path:
             with (
                 source_file.open("rb") as reader,
                 temporary_path.open("wb") as writer,
             ):
                 shutil.copyfileobj(reader, writer, length=1024 * 1024 * 16)
-                writer.flush()
-                os.fsync(writer.fileno())
-
-            FileSystem.publish_file_atomic(temporary_path, destination_file)
-            published = True
-            return destination_file
-        finally:
-            if not published:
-                temporary_path.unlink(missing_ok=True)
-
-    @staticmethod
-    def _unique_tmp_path(path: Path) -> Path:
-        return path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+        return destination_file
 
     @staticmethod
     def _require_path(value: object, *, field_name: str) -> Path:
@@ -149,47 +139,6 @@ class FileSystem:
                 raise ValueError(f"field '{field_name}' must be a non-empty path")
             return Path(value)
         raise TypeError(f"field '{field_name}' must be a str or pathlib.Path")
-
-    @staticmethod
-    def publish_file_atomic(
-        staged_path: str | Path,
-        destination_path: str | Path,
-    ) -> Path:
-        """Consume a staged file and atomically replace a sibling destination.
-
-        Both paths must resolve to the same parent directory so the final
-        ``os.replace`` cannot cross filesystem boundaries.
-        """
-        staged_file = FileSystem._require_path(staged_path, field_name="staged_path")
-        destination_file = FileSystem._require_path(
-            destination_path,
-            field_name="destination_path",
-        )
-        if staged_file.is_symlink() or not staged_file.is_file():
-            raise FileNotFoundError(f"staged file does not exist: {staged_file}")
-        if staged_file.resolve() == destination_file.resolve():
-            raise ValueError("staged_path and destination_path must be different files")
-
-        destination_directory = FileSystem.ensure_dir(destination_file.parent)
-        if staged_file.parent.resolve() != destination_directory.resolve():
-            raise ValueError(
-                "staged_path and destination_path must share a parent directory"
-            )
-
-        os.replace(staged_file, destination_file)
-        FileSystem._fsync_dir(destination_directory)
-        return destination_file
-
-    @staticmethod
-    def _fsync_dir(path: Path) -> None:
-        if os.name == "nt":
-            return
-        open_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
-        fd = os.open(path, open_flags)
-        try:
-            os.fsync(fd)
-        finally:
-            os.close(fd)
 
     @staticmethod
     def remove(path: str | Path) -> None:
@@ -212,6 +161,8 @@ class FileSystem:
         directory_path = FileSystem._require_path(path, field_name="path")
         if suffix is not None and not isinstance(suffix, str):
             raise TypeError("field 'suffix' must be a string or None")
+        if suffix is not None and (not suffix or not suffix.startswith(".")):
+            raise ValueError("field 'suffix' must start with '.'")
         if not directory_path.exists():
             raise FileNotFoundError(f"directory does not exist: {directory_path}")
         if not directory_path.is_dir():
@@ -236,7 +187,10 @@ class FileSystem:
 
         for file_path in directory_path.rglob("*"):
             if file_path.is_file() and not file_path.is_symlink():
-                total_bytes += file_path.stat().st_size
+                try:
+                    total_bytes += file_path.stat().st_size
+                except FileNotFoundError:
+                    continue
 
         return total_bytes
 
@@ -245,8 +199,8 @@ class FileSystem:
         """Delete matching temporary files recursively and return their count."""
         if not isinstance(suffix, str):
             raise TypeError("field 'suffix' must be a string")
-        if not suffix or "/" in suffix or "\\" in suffix:
-            raise ValueError("field 'suffix' must be a non-empty filename suffix")
+        if not suffix:
+            raise ValueError("field 'suffix' must be non-empty")
 
         directory_path = FileSystem._require_path(path, field_name="path")
         removed_file_count = 0
@@ -257,7 +211,9 @@ class FileSystem:
             raise NotADirectoryError(f"path is not a directory: {directory_path}")
 
         for temporary_file in directory_path.rglob("*"):
-            if temporary_file.is_file() and temporary_file.name.endswith(suffix):
+            if temporary_file.name.endswith(suffix) and (
+                temporary_file.is_symlink() or temporary_file.is_file()
+            ):
                 temporary_file.unlink()
                 removed_file_count += 1
 

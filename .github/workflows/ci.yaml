@@ -70,6 +70,11 @@ jobs:
       - name: Run non-contract tests
         run: pytest -m "not contract" -q --disable-warnings --maxfail=1
 
+      - name: Install contract dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends --assume-yes 7zip-standalone
+
       - name: Run contract tests
         run: |
           set +e
