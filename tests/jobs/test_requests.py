@@ -12,10 +12,12 @@ from src.jobs.requests import (
     DataSubmission,
     FeatureBackfillSubmission,
     InvalidJobRequest,
+    Level2MinuteBackfillSubmission,
     StandardFactBootstrapSubmission,
     TrainingSubmission,
     build_cli_command,
     create_feature_backfill_submission,
+    create_level2_minute_backfill_submission,
     create_standard_fact_bootstrap_submission,
     parse_job_request,
 )
@@ -70,11 +72,23 @@ def test_cli_only_data_ranges_create_distinct_submissions() -> None:
         start="2019-04-04",
         end="2019-07-05",
     )
+    assert create_level2_minute_backfill_submission(
+        "2025-11-18",
+        "2025-11-19",
+    ) == Level2MinuteBackfillSubmission(
+        start="2025-11-18",
+        end="2025-11-19",
+    )
 
 
 @pytest.mark.parametrize(
     "kind",
-    ["data-calendar", "data-standard-bootstrap", "data-feature-backfill"],
+    [
+        "data-calendar",
+        "data-standard-bootstrap",
+        "data-feature-backfill",
+        "data-level2-minute-backfill",
+    ],
 )
 def test_cli_only_data_kinds_are_not_http_job_kinds(kind: str) -> None:
     with pytest.raises(InvalidJobRequest, match="not supported"):

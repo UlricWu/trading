@@ -109,35 +109,27 @@ class DatasetBuildStep:
 
     def _load_one_day(self, trade_date: str) -> tuple[pd.DataFrame, pd.Series]:
         dataset_cfg = self._dataset_cfg
-        feature_path = self._pm.feature_data(
+        feature_paths = self._pm.feature_object(
             feature_set=dataset_cfg.feature_set,
             version=dataset_cfg.feature_version,
             trade_date=trade_date,
         )
         loaded_feature = meta.require(
             pm=self._pm,
-            meta_path=self._pm.feature_meta(
-                feature_set=dataset_cfg.feature_set,
-                version=dataset_cfg.feature_version,
-                trade_date=trade_date,
-            ),
-            expected_payload_path=feature_path,
+            meta_path=feature_paths.meta_path,
+            expected_payload_path=feature_paths.payload_path,
         )
         feature_frame = pq.ParquetFile(loaded_feature.payload_path).read().to_pandas()
 
-        label_path = self._pm.label_data(
+        label_paths = self._pm.label_object(
             label_set=dataset_cfg.label_set,
             version=dataset_cfg.label_version,
             trade_date=trade_date,
         )
         loaded_label = meta.require(
             pm=self._pm,
-            meta_path=self._pm.label_meta(
-                label_set=dataset_cfg.label_set,
-                version=dataset_cfg.label_version,
-                trade_date=trade_date,
-            ),
-            expected_payload_path=label_path,
+            meta_path=label_paths.meta_path,
+            expected_payload_path=label_paths.payload_path,
         )
         label_frame = pq.ParquetFile(loaded_label.payload_path).read().to_pandas()
 

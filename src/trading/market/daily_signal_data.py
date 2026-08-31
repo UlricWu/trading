@@ -114,19 +114,15 @@ def _read_feature_rows(
 ) -> pd.DataFrame:
     ordered_symbols = [str(symbol) for symbol in symbols]
     names = [str(name) for name in feature_names]
-    path = pm.feature_data(
+    paths = pm.feature_object(
         feature_set=feature_set,
         version=feature_version,
         trade_date=trade_date,
     )
     loaded = meta.require(
         pm=pm,
-        meta_path=pm.feature_meta(
-            feature_set=feature_set,
-            version=feature_version,
-            trade_date=trade_date,
-        ),
-        expected_payload_path=path,
+        meta_path=paths.meta_path,
+        expected_payload_path=paths.payload_path,
     )
     features = pq.ParquetFile(loaded.payload_path).read().to_pandas()
 

@@ -29,11 +29,11 @@ def test_loader_consumes_the_supplied_window_without_calendar_resolution(
         ("2026-07-01", "2026-07-02", "2026-07-03"),
         start=1,
     ):
-        feature_path = path_manager.feature_data(
+        feature_path = path_manager.feature_object(
             feature_set="features",
             version="v1",
             trade_date=trade_date,
-        )
+        ).payload_path
         feature_path.parent.mkdir(parents=True, exist_ok=True)
         pd.DataFrame(
             {
@@ -47,11 +47,11 @@ def test_loader_consumes_the_supplied_window_without_calendar_resolution(
         )
         meta.commit(pm=path_manager, payload_path=feature_path)
 
-        label_path = path_manager.label_data(
+        label_path = path_manager.label_object(
             label_set="labels",
             version="v1",
             trade_date=trade_date,
-        )
+        ).payload_path
         label_path.parent.mkdir(parents=True, exist_ok=True)
         pd.DataFrame(
             {

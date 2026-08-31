@@ -101,6 +101,21 @@ class FeatureBackfillSubmission:
 
 
 @dataclass(frozen=True, slots=True)
+class Level2MinuteBackfillSubmission:
+    """Describe one validated CLI-only Level2 minute target range.
+
+    Example:
+        submission = Level2MinuteBackfillSubmission(
+            start="2025-11-18",
+            end="2025-11-18",
+        )
+    """
+
+    start: str
+    end: str
+
+
+@dataclass(frozen=True, slots=True)
 class TrainingSubmission:
     """Describe one validated full-range training workflow execution.
 
@@ -210,6 +225,25 @@ def create_feature_backfill_submission(
     return FeatureBackfillSubmission(
         feature_set=normalized_feature_set,
         version=normalized_version,
+        start=normalized_start,
+        end=normalized_end,
+    )
+
+
+def create_level2_minute_backfill_submission(
+    start: object,
+    end: object,
+) -> Level2MinuteBackfillSubmission:
+    """Construct one usable CLI-only Level2 minute backfill submission.
+
+    Example:
+        submission = create_level2_minute_backfill_submission(
+            "2025-11-18",
+            "2025-11-18",
+        )
+    """
+    normalized_start, normalized_end = _require_range(start, end)
+    return Level2MinuteBackfillSubmission(
         start=normalized_start,
         end=normalized_end,
     )

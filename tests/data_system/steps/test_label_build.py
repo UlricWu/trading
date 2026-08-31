@@ -91,21 +91,17 @@ def test_label_step_runs_each_single_maturity_set_independently(
         "daily_close_return_rank_d5": "2026-07-13",
     }
     for label_set, target_date in expected_targets.items():
-        output_path = path_manager.label_data(
+        output_paths = path_manager.label_object(
             label_set=label_set,
             version="v1",
             trade_date=target_date,
         )
         meta.require(
             pm=path_manager,
-            meta_path=path_manager.label_meta(
-                label_set=label_set,
-                version="v1",
-                trade_date=target_date,
-            ),
-            expected_payload_path=output_path,
+            meta_path=output_paths.meta_path,
+            expected_payload_path=output_paths.payload_path,
         )
-        assert pq.read_table(output_path).to_pydict() == {
+        assert pq.read_table(output_paths.payload_path).to_pydict() == {
             "label": [float(builders[label_set].lookahead)]
         }
     assert resolutions == [(label_set, "v1") for label_set in builders]

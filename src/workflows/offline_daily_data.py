@@ -1,5 +1,5 @@
 # filepath: src/workflows/offline_daily_data.py
-"""Execute fixed range-based Standard, Level-2, and Feature workflows."""
+"""Execute fixed range-based Standard, Level-2, and derived-data workflows."""
 
 from __future__ import annotations
 
@@ -23,9 +23,11 @@ from src.data_system.steps.calendar_materialize import CalendarMaterializeStep
 from src.data_system.steps.fact_materialize import FactMaterializeStep
 from src.data_system.steps.feature_build import FeatureBuildStep
 from src.data_system.steps.label_build import LabelBuildStep
+from src.data_system.steps.level2_minute_build import Level2MinuteBuildStep
 from src.jobs.requests import (
     DataSubmission,
     FeatureBackfillSubmission,
+    Level2MinuteBackfillSubmission,
     StandardFactBootstrapSubmission,
 )
 from src.observability.instrumentation import Instrumentation
@@ -35,6 +37,7 @@ from src.workflows import PROCESSED_VERSION
 
 OFFLINE_STANDARD = "offline_standard"
 OFFLINE_LEVEL2 = "offline_level2"
+_LEVEL2_MINUTE_SYMBOL_BATCH_SIZE = 16
 _NORMALIZE_OPERATIONS: Mapping[str, NormalizeOperation] = MappingProxyType(
     {
         TushareBroker.name: normalize_tushare,
@@ -286,4 +289,58 @@ def run_feature_backfill(
         f"✅ workflow; kind=data-feature-backfill "
         f"feature_set={submission.feature_set} version={submission.version} "
         f"start={submission.start} end={submission.end} targets={len(target_dates)}"
+    )
+
+
+def run_level2_minute_backfill(
+    *,
+    path_manager: PathManager,
+    submission: Level2MinuteBackfillSubmission,
+) -> None:
+    """Backfill both Level2 stock minute facts from committed trades.
+
+    Example:
+        run_level2_minute_backfill(
+            path_manager=path_manager,
+            submission=Level2MinuteBackfillSubmission(
+                start="2025-11-18",
+                end="2025-11-18",
+            ),
+        )
+    """
+    access = Access(pm=path_manager, processed_version=PROCESSED_VERSION)
+    target_dates = tuple(
+        access.trade_dates(
+            start_date=submission.start,
+            end_date=submission.end,
+        )
+    )
+    minute_step = Level2MinuteBuildStep(
+        pm=path_manager,
+        access=access,
+        processed_version=PROCESSED_VERSION,
+        symbol_batch_size=_LEVEL2_MINUTE_SYMBOL_BATCH_SIZE,
+    )
+    pipeline = DataPipeline(
+        steps=(minute_step,),
+        instrumentation=Instrumentation(
+            f"data-level2-minute-backfill_{submission.start}_{submission.end}"
+        ),
+    )
+    logs.info(
+        f"▶️ workflow; kind=data-level2-minute-backfill "
+        f"start={submission.start} end={submission.end} "
+        f"targets={len(target_dates)}"
+    )
+    pipeline.run(
+        DataContext(
+            start=submission.start,
+            end=submission.end,
+            trade_dates=target_dates,
+        )
+    )
+    logs.info(
+        f"✅ workflow; kind=data-level2-minute-backfill "
+        f"start={submission.start} end={submission.end} "
+        f"targets={len(target_dates)}"
     )

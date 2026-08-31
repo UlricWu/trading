@@ -1,5 +1,5 @@
 # filepath: src/cli.py
-"""Define the seven public CLI composition roots."""
+"""Define the eight public CLI composition roots."""
 
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ from src.jobs.requests import (
     create_backtest_submission,
     create_data_submission,
     create_feature_backfill_submission,
+    create_level2_minute_backfill_submission,
     create_standard_fact_bootstrap_submission,
     create_training_submission,
 )
@@ -24,6 +25,7 @@ from src.utils.path import PathManager
 from src.workflows.backtest import run_daily_alpha_backtest
 from src.workflows.offline_daily_data import (
     run_feature_backfill,
+    run_level2_minute_backfill,
     run_offline_data,
     run_standard_fact_bootstrap,
 )
@@ -166,6 +168,37 @@ def data_level2(
     app_config = AppConfig.load()
     run_offline_data(
         app_config=app_config,
+        path_manager=PathManager(app_config.storage_root),
+        submission=submission,
+    )
+
+
+@app.command()
+def data_level2_minute_backfill(
+    start_date: str = typer.Option(..., "--start"),
+    end_date: str = typer.Option(..., "--end"),
+) -> None:
+    """Backfill both Level2 stock minute facts over one target range.
+
+    Example:
+        data_level2_minute_backfill(
+            start_date="2025-11-18",
+            end_date="2025-11-18",
+        )
+    """
+    try:
+        submission = create_level2_minute_backfill_submission(
+            start_date,
+            end_date,
+        )
+    except InvalidJobRequest as exc:
+        _raise_bad_parameter(
+            exc,
+            {"start": "--start", "end": "--end"},
+        )
+
+    app_config = AppConfig.load()
+    run_level2_minute_backfill(
         path_manager=PathManager(app_config.storage_root),
         submission=submission,
     )

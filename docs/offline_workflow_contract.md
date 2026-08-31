@@ -1,13 +1,13 @@
 # Offline 工作流契约
 
 - **状态**：正式 owner
-- **适用范围**：offline data、offline training 与 daily-alpha backtest 的配置选择、日程、
-  calendar bootstrap、执行编排、运行结果和实验命名。
+- **适用范围**：offline data、CLI-only backfill、offline training 与 daily-alpha backtest
+  的配置选择、日程、calendar bootstrap、执行编排、运行结果和实验命名。
 - **CLI owner**：[`docs/engineering/cli_contract.md`](engineering/cli_contract.md)
 
 ## 共同边界
 
-`src/workflows` 只提供六个 workflow composition root：
+`src/workflows` 只提供七个 workflow composition root：
 
 ```python
 run_trade_calendar_bootstrap(
@@ -28,6 +28,11 @@ run_standard_fact_bootstrap(
 run_feature_backfill(
     *, path_manager: PathManager,
     submission: FeatureBackfillSubmission,
+) -> None
+
+run_level2_minute_backfill(
+    *, path_manager: PathManager,
+    submission: Level2MinuteBackfillSubmission,
 ) -> None
 
 run_offline_training(
@@ -127,7 +132,7 @@ Instrumentation 衡量 workflow 显式组装的 step，返回 `step.run(context)
 
 ```text
 CalendarMaterializeStep, FactMaterializeStep, FeatureBuildStep, LabelBuildStep,
-DatasetBuildStep, PreprocessStep, ModelTrainStep, ICEvaluateStep,
+Level2MinuteBuildStep, DatasetBuildStep, PreprocessStep, ModelTrainStep, ICEvaluateStep,
 ArtifactPersistStep, SignalStep, SignalEvalStep, TradableAlphaEvalStep,
 PortfolioStep, RiskEvalStep, ExecutionEvalStep, AccountingStep,
 FullBacktestStep, MetricsPersistStep, ReportStep
@@ -255,9 +260,9 @@ derived operation 集为空。其他差异只存在于 workflow 准备阶段选�
 `processed/stock_st/v1/trade_date=2019-04-01/data.parquet` 及同目录 `meta.json`，不得跳过
 normalize 或把 processed 对象留作缺失。成功对象必须先发布 payload 再提交 Meta；
 Meta reuse、lineage、Level-2 symbol slices 与 staging/raw 选择继续由各 producer owner 负责。
-Calendar bootstrap、Data、Standard fact cold-start 与 Feature backfill workflow 保留
-`▶️ workflow` 和成功后的 `✅ workflow` 业务日志；Training 和 Backtest workflow 不新增
-workflow 边界日志。
+Calendar bootstrap、Data、Standard fact cold-start、Feature backfill 与 Level-2 minute
+backfill workflow 保留 `▶️ workflow` 和成功后的 `✅ workflow` 业务日志；Training 和
+Backtest workflow 不新增 workflow 边界日志。
 
 ## Standard fact cold-start workflow
 
@@ -298,6 +303,40 @@ Workflow 的 Instrumentation identity 固定为
 `data-feature-backfill_{feature_set}_{version}_{start}_{end}`。正式目标 session 解析完成后记录
 `▶️ workflow`，成功返回后记录 `✅ workflow`；两条日志携带 kind、feature_set、version、
 start、end 与 targets。错误原样传播。
+
+## Level-2 minute backfill workflow
+
+`run_level2_minute_backfill` 是 CLI-only `data-level2-minute-backfill` 的唯一 workflow，直接
+消费已校验的 `Level2MinuteBackfillSubmission(start, end)`。闭区间精确表示目标分钟事实分区，
+不表示逐笔下载范围，也不隐式运行日常 `data-level2`。
+
+Workflow 从收到的 `PathManager` 创建唯一 Access，通过正式 trade calendar 把请求闭区间解析为
+升序目标 session，然后只显式组装一个 `Level2MinuteBuildStep` 并调用一次
+`DataPipeline.run()`。它不组装 Calendar、Fact、Feature 或 Label Step，不创建 broker adapter，
+不读取配置中的 Level-2 source 或 derived operation，也不写 raw、feature、label 或 experiment。
+目标 session 集为空时 Step 仍执行一次并自然成功。
+
+`Level2MinuteBuildStep` 按 Context 中的日期顺序执行；每个日期固定先
+`sh_stock_trade_1m <- sh_trade`，再 `sz_stock_trade_1m <- sz_trade`。每个输出 miss 时，Step
+通过 Access 取得该交易所实际观察到的 symbols，按有限 symbol batch 读取逐笔事实并调用分钟
+builder；batch 大小不进入 submission、配置或 Context。输出 schema、计算、空 stock 结果、
+lineage、Meta reuse 和发布错误由
+[`docs/data/level2_minute_contract.md`](data/level2_minute_contract.md) 所有。
+
+一个日期或交易所失败时原异常传播，后续对象不再执行；此前已经提交的日期或同日上海对象
+保留。有效输出 Meta hit 不读取 symbols 或逐笔 payload，重跑从第一个 miss 继续。Workflow
+Instrumentation identity 固定为：
+
+```text
+data-level2-minute-backfill_{start}_{end}
+```
+
+目标日期解析完成后记录 `▶️ workflow`，成功返回后记录 `✅ workflow`；两条日志携带 kind、
+start、end 与 targets。Step 对有效输出记录 `♻️ Level-2 minute fact`；对 miss 记录一次
+`▶️ Level-2 minute fact`，每完成一个 symbol batch 后至多每 30 秒记录一次
+`⏳ Level-2 minute fact`，发布后记录 `✅ Level-2 minute fact publish`。这些日志携带 target、
+trade_date 和与事件直接相关的 symbols、进度、tick、行数、耗时或路径，不建立额外 stage
+状态机，也不由 Access 或 builder 重复记录。
 
 ## Training workflow
 

@@ -99,12 +99,7 @@ class CalendarMaterializeStep:
         return context
 
     def _materialize_year(self, calendar_year: int) -> bool:
-        processed_payload = self._path_manager.processed_year_data(
-            dataset_name="trade_calendar",
-            version=self._processed_version,
-            calendar_year=calendar_year,
-        )
-        processed_meta = self._path_manager.processed_year_meta(
+        processed_paths = self._path_manager.processed_year_object(
             dataset_name="trade_calendar",
             version=self._processed_version,
             calendar_year=calendar_year,
@@ -112,14 +107,14 @@ class CalendarMaterializeStep:
         if (
             meta.find(
                 pm=self._path_manager,
-                meta_path=processed_meta,
-                expected_payload_path=processed_payload,
+                meta_path=processed_paths.meta_path,
+                expected_payload_path=processed_paths.payload_path,
             )
             is not None
         ):
             logs.info(
                 f"♻️ calendar processed meta hit; "
-                f"calendar_year={calendar_year} meta={processed_meta}"
+                f"calendar_year={calendar_year} meta={processed_paths.meta_path}"
             )
             return False
 
@@ -164,21 +159,21 @@ class CalendarMaterializeStep:
 
         normalized = normalize_tushare(
             input_file=raw_payload,
-            output_name=processed_payload,
+            output_name=processed_paths.payload_path,
             raw_object="trade_calendar",
             target_name="trade_calendar",
         )
         write_parquet_atomic(
-            output_file=processed_payload,
+            output_file=processed_paths.payload_path,
             table=normalized.table,
         )
         meta.commit(
             pm=self._path_manager,
-            payload_path=processed_payload,
+            payload_path=processed_paths.payload_path,
             upstream_meta_path=raw_meta,
         )
         logs.info(
             f"✅ calendar publish; calendar_year={calendar_year} "
-            f"output={processed_payload}"
+            f"output={processed_paths.payload_path}"
         )
         return True

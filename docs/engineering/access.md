@@ -3,7 +3,7 @@
 - **状态**：正式 owner
 - **适用范围**：`src/access/access.py::Access` 的正式 processed 市场数据读取、
   可用交易日、日频行情/复权因子/换手率、日频 universe、Level-2 universe 和 Level-2
-  symbol 读取。
+  symbol/trade 市场范围读取。
 
 ## 身份与职责
 
@@ -56,6 +56,13 @@ class Access:
         min_listing_calendar_days: int,
     ) -> tuple[str, ...]: ...
 
+    def level2_symbols(
+        self,
+        *,
+        trade_date: str,
+        exchange: Literal["sh", "sz"] | None = None,
+    ) -> tuple[str, ...]: ...
+
     def daily_bars(
         self,
         *,
@@ -82,6 +89,7 @@ class Access:
         *,
         trade_date: str,
         symbols: Sequence[str],
+        exchange: Literal["sh", "sz"] | None = None,
     ) -> dict[str, pa.Table]: ...
 ```
 
@@ -192,9 +200,26 @@ T - stock_basic.list_date(symbol) >= N 个自然日
 各正式 Level-2 对象的 symbol slice identity 和覆盖不变量由
 `docs/data/level2_normalization.md` 拥有。
 
-Access 加载全部必要对象的 Meta，验证 slice 覆盖 Parquet 总行数，并拒绝跨对象重复
-symbol。`trades()` 只读取与显式请求 slice 相交的 row groups，再按 Meta 的全局行区间
-裁出每个 symbol 的表。返回字典保持请求顺序；空请求返回空字典且不读取对象。
+`level2_symbols(T, exchange)` 返回所选市场范围内正式 Meta 实际观察到的全部 symbol，按
+symbol 升序。它不与 `stock_basic`、daily bars、ST 或停牌集合相交，也不按
+`security_type` 过滤；调用方需要股票分钟事实时由对应 producer 消费持久化
+`security_type`。`level2_universe()` 的既有全市场策略过滤语义不因此改变。
+
+`level2_symbols()` 与 `trades()` 使用相同市场范围：
+
+```text
+exchange=None  -> 同时要求 sh_trade(T) 与 sz_trade(T)
+exchange="sh"  -> 只要求 sh_trade(T)
+exchange="sz"  -> 只要求 sz_trade(T)
+```
+
+显式交易所不读取也不要求另一市场，不向另一市场 fallback。`exchange` 不接受其他字符串或
+类型。所选对象全部加载 Meta，验证 slice 覆盖 Parquet 总行数，并拒绝所选对象间重复 symbol；
+任一必要对象缺失或无效时整个请求失败，不能返回部分市场。
+
+`trades()` 只读取与显式请求 slice 相交的 row groups，再按 Meta 的全局行区间裁出每个 symbol
+的表。`symbols` 继续必填，返回字典保持请求顺序；空请求返回空字典且不读取对象。请求 symbol
+必须存在于所选市场范围，显式交易所不能从另一市场取得同名或缺失 symbol。
 
 调用方通过 `level2_universe()` 取得研究集合后，可以把其中需要研究的有限 symbols
 传给 `trades()`。`trades()` 不重复执行 universe 的上市、ST 或停牌过滤；请求 symbol
@@ -203,7 +228,7 @@ symbol。`trades()` 只读取与显式请求 slice 相交的 row groups，再按
 ## 错误归属
 
 - 非法日期、版本、窗口大小、请求 symbol 和上市自然日参数在 public 边界以
-  `TypeError` 或 `ValueError` 失败。
+  `TypeError` 或 `ValueError` 失败；非法 Level-2 exchange 使用相同错误边界。
 - 必要 Meta、payload 或直接 upstream 文件缺失时，在首次消费该对象的边界以
   `FileNotFoundError` 失败。
 - 请求 symbol 没有对应正式行或 Level-2 slice 时以 `KeyError` 失败。

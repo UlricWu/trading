@@ -71,20 +71,15 @@ class FeatureBuildStep:
         """
         for trade_date in context.trade_dates:
             for (feature_set, version), builder in self._builders.items():
-                output_meta = self._pm.feature_meta(
-                    feature_set=feature_set,
-                    version=version,
-                    trade_date=trade_date,
-                )
-                output_path = self._pm.feature_data(
+                output_paths = self._pm.feature_object(
                     feature_set=feature_set,
                     version=version,
                     trade_date=trade_date,
                 )
                 rows = _publish_derived_partition(
                     pm=self._pm,
-                    meta_path=output_meta,
-                    output_path=output_path,
+                    meta_path=output_paths.meta_path,
+                    output_path=output_paths.payload_path,
                     build=lambda builder=builder, trade_date=trade_date: builder.build(
                         access=self._access,
                         trade_dates=tuple(

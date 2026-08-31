@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import ClassVar
+from typing import ClassVar, Literal
 
 import pandas as pd
 import pyarrow as pa
@@ -251,7 +251,8 @@ class Access:
         symbols = [
             symbol
             for symbol_slices in self._load_level2_index(
-                trade_date=validated_date
+                trade_date=validated_date,
+                exchange=None,
             ).values()
             for symbol in symbol_slices
         ]
@@ -259,6 +260,38 @@ class Access:
             symbols=symbols,
             trade_date=validated_date,
             min_listing_calendar_days=min_listing_calendar_days,
+        )
+
+    def level2_symbols(
+        self,
+        *,
+        trade_date: str,
+        exchange: Literal["sh", "sz"] | None = None,
+    ) -> tuple[str, ...]:
+        """Return observed Level-2 symbols for one market scope.
+
+        ``exchange=None`` requires both markets and returns their sorted union.
+
+        Example:
+            sh_symbols = access.level2_symbols(
+                trade_date="2026-05-06",
+                exchange="sh",
+            )
+        """
+        validated_date = DateTimeUtils.require_system_date(
+            trade_date,
+            field_name="trade_date",
+        )
+        validated_exchange = _validated_level2_exchange(exchange)
+        return tuple(
+            sorted(
+                symbol
+                for symbol_slices in self._load_level2_index(
+                    trade_date=validated_date,
+                    exchange=validated_exchange,
+                ).values()
+                for symbol in symbol_slices
+            )
         )
 
     def daily_bars(
@@ -356,13 +389,18 @@ class Access:
         *,
         trade_date: str,
         symbols: Sequence[str],
+        exchange: Literal["sh", "sz"] | None = None,
     ) -> dict[str, pa.Table]:
-        """Return requested Level-2 trades in request order.
+        """Return requested Level-2 trades in request order and market scope.
+
+        ``exchange=None`` requires both markets. An explicit exchange only
+        reads that market and does not fall back to the other one.
 
         Example:
             trades_by_symbol = access.trades(
                 trade_date="2026-05-06",
-                symbols=("600000", "000001"),
+                symbols=("600000",),
+                exchange="sh",
             )
             sh_trades = trades_by_symbol["600000"]
         """
@@ -370,11 +408,15 @@ class Access:
             trade_date,
             field_name="trade_date",
         )
+        validated_exchange = _validated_level2_exchange(exchange)
         requested_symbols = _validated_symbols(symbols)
         if not requested_symbols:
             return {}
 
-        level2_index = self._load_level2_index(trade_date=validated_date)
+        level2_index = self._load_level2_index(
+            trade_date=validated_date,
+            exchange=validated_exchange,
+        )
         path_by_symbol = {
             symbol: output_path
             for output_path, symbol_slices in level2_index.items()
@@ -564,20 +606,15 @@ class Access:
         )
 
     def _read_calendar_year(self, calendar_year: int) -> pd.DataFrame:
-        meta_path = self._pm.processed_year_meta(
-            dataset_name="trade_calendar",
-            version=self._processed_version,
-            calendar_year=calendar_year,
-        )
-        output_path = self._pm.processed_year_data(
+        paths = self._pm.processed_year_object(
             dataset_name="trade_calendar",
             version=self._processed_version,
             calendar_year=calendar_year,
         )
         loaded = meta.require(
             pm=self._pm,
-            meta_path=meta_path,
-            expected_payload_path=output_path,
+            meta_path=paths.meta_path,
+            expected_payload_path=paths.payload_path,
         )
         return pq.ParquetFile(loaded.payload_path).read().to_pandas()
 
@@ -587,30 +624,32 @@ class Access:
         trade_date: str,
         dataset_name: str,
     ) -> meta.MetaRecord:
-        meta_path = self._pm.processed_meta(
-            dataset_name=dataset_name,
-            version=self._processed_version,
-            trade_date=trade_date,
-        )
-        output_path = self._pm.processed_data(
+        paths = self._pm.processed_object(
             dataset_name=dataset_name,
             version=self._processed_version,
             trade_date=trade_date,
         )
         return meta.require(
             pm=self._pm,
-            meta_path=meta_path,
-            expected_payload_path=output_path,
+            meta_path=paths.meta_path,
+            expected_payload_path=paths.payload_path,
         )
 
     def _load_level2_index(
         self,
         *,
         trade_date: str,
+        exchange: Literal["sh", "sz"] | None,
     ) -> dict[Path, Mapping[str, range]]:
         level2_index: dict[Path, Mapping[str, range]] = {}
         seen_symbols: set[str] = set()
-        for dataset_name in self._LEVEL2_DATASETS:
+        if exchange is None:
+            dataset_names = self._LEVEL2_DATASETS
+        elif exchange == "sh":
+            dataset_names = ("sh_trade",)
+        else:
+            dataset_names = ("sz_trade",)
+        for dataset_name in dataset_names:
             loaded = self._load_processed_meta(
                 trade_date=trade_date,
                 dataset_name=dataset_name,
@@ -640,6 +679,18 @@ class Access:
             seen_symbols.update(loaded.symbol_slices)
             level2_index[loaded.payload_path] = loaded.symbol_slices
         return level2_index
+
+
+def _validated_level2_exchange(
+    exchange: Literal["sh", "sz"] | None,
+) -> Literal["sh", "sz"] | None:
+    if exchange is None:
+        return None
+    if not isinstance(exchange, str):
+        raise TypeError("exchange must be 'sh', 'sz', or None")
+    if exchange not in ("sh", "sz"):
+        raise ValueError("exchange must be 'sh', 'sz', or None")
+    return exchange
 
 
 def _validated_symbols(symbols: Sequence[str]) -> list[str]:

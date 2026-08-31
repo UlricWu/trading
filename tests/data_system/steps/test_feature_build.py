@@ -93,19 +93,15 @@ def test_feature_step_binds_builder_and_materializes_each_date(
     assert step.run(context) is context
     assert step.run(context) is context
 
-    output_path = path_manager.feature_data(
+    output_paths = path_manager.feature_object(
         feature_set="daily",
         version="v1",
         trade_date="2026-07-20",
     )
     meta.require(
         pm=path_manager,
-        meta_path=path_manager.feature_meta(
-            feature_set="daily",
-            version="v1",
-            trade_date="2026-07-20",
-        ),
-        expected_payload_path=output_path,
+        meta_path=output_paths.meta_path,
+        expected_payload_path=output_paths.payload_path,
     )
     assert resolutions == [("daily", "v1")]
     assert builder.build_windows == [
@@ -115,7 +111,7 @@ def test_feature_step_binds_builder_and_materializes_each_date(
         end_date="2026-07-20",
         sessions=3,
     )
-    assert pq.read_table(output_path).to_pydict() == {"feature": [1]}
+    assert pq.read_table(output_paths.payload_path).to_pydict() == {"feature": [1]}
     assert [call.args[0] for call in logger.info.call_args_list] == [
         "✅ feature publish; feature_set=daily version=v1 "
         "trade_date=2026-07-20 rows=1",
@@ -167,41 +163,29 @@ def test_feature_step_keeps_completed_partitions_and_resumes_from_meta_miss(
     with pytest.raises(RuntimeError, match="candidate failure"):
         step.run(context)
 
-    first_payload = path_manager.feature_data(
+    first_paths = path_manager.feature_object(
         feature_set="daily",
         version="v1",
         trade_date="2026-07-17",
     )
     meta.require(
         pm=path_manager,
-        meta_path=path_manager.feature_meta(
-            feature_set="daily",
-            version="v1",
-            trade_date="2026-07-17",
-        ),
-        expected_payload_path=first_payload,
+        meta_path=first_paths.meta_path,
+        expected_payload_path=first_paths.payload_path,
     )
-    assert not path_manager.feature_meta(
+    second_paths = path_manager.feature_object(
         feature_set="daily",
         version="v1",
         trade_date="2026-07-20",
-    ).exists()
+    )
+    assert not second_paths.meta_path.exists()
 
     assert step.run(context) is context
 
-    second_payload = path_manager.feature_data(
-        feature_set="daily",
-        version="v1",
-        trade_date="2026-07-20",
-    )
     meta.require(
         pm=path_manager,
-        meta_path=path_manager.feature_meta(
-            feature_set="daily",
-            version="v1",
-            trade_date="2026-07-20",
-        ),
-        expected_payload_path=second_payload,
+        meta_path=second_paths.meta_path,
+        expected_payload_path=second_paths.payload_path,
     )
     assert builder.build_windows == [
         ("2026-07-16", "2026-07-17"),

@@ -19,7 +19,7 @@ from src.data_system.context import DataContext
 from src.data_system.normalize import NormalizeOutput
 from src.data_system.steps import fact_materialize as fact_module
 from src.data_system.steps.fact_materialize import FactMaterializeStep
-from src.utils.path import PathManager
+from src.utils.path import ObjectPaths, PathManager
 
 
 def _source(raw_object: str, *, outputs: list[str] | None = None) -> SourceConfig:
@@ -219,7 +219,7 @@ def test_fact_step_uses_matching_staging_payload_for_normalization(
     step.run(_context(trade_date))
 
     assert selected_inputs == [staging_path]
-    output_path = path_manager.processed_data(
+    output_paths = path_manager.processed_object(
         dataset_name="output",
         version="v1",
         trade_date=trade_date,
@@ -229,17 +229,12 @@ def test_fact_step_uses_matching_staging_payload_for_normalization(
         source_name="source",
         trade_date=trade_date,
     )
-    processed_meta_path = path_manager.processed_meta(
-        dataset_name="output",
-        version="v1",
-        trade_date=trade_date,
-    )
     assert [call.args[0] for call in logger.info.call_args_list] == [
         f"♻️ raw meta hit; source=source broker=broker trade_date={trade_date} "
         f"meta={raw_meta_path}",
         f"✅ processed publish; target=output source=source "
         f"trade_date={trade_date} rows=1 normalize_seconds=0.500 "
-        f"output={output_path}",
+        f"output={output_paths.payload_path}",
         f"✅ fact date; trade_date={trade_date} elapsed_seconds=2.000",
         "\n".join(
             (
@@ -253,7 +248,7 @@ def test_fact_step_uses_matching_staging_payload_for_normalization(
         f"♻️ raw meta hit; source=source broker=broker trade_date={trade_date} "
         f"meta={raw_meta_path}",
         f"♻️ processed meta hit; target=output source=source "
-        f"trade_date={trade_date} meta={processed_meta_path}",
+        f"trade_date={trade_date} meta={output_paths.meta_path}",
         f"✅ fact date; trade_date={trade_date} elapsed_seconds=0.100",
         "✅ fact materialize; trade_dates=1 raw_reused=1 raw_fetched=0 "
         "processed_reused=1 processed_published=0 unavailable=0",
@@ -292,11 +287,9 @@ def test_fact_step_times_each_real_ingest_and_normalize_run(
     path_manager.raw_payload.side_effect = lambda **kwargs: Path(
         f"/raw/{kwargs['trade_date']}/{kwargs['payload_file']}"
     )
-    path_manager.processed_meta.side_effect = lambda **kwargs: Path(
-        f"/processed/{kwargs['trade_date']}/meta.json"
-    )
-    path_manager.processed_data.side_effect = lambda **kwargs: Path(
-        f"/processed/{kwargs['trade_date']}/data.parquet"
+    path_manager.processed_object.side_effect = lambda **kwargs: ObjectPaths(
+        payload_path=Path(f"/processed/{kwargs['trade_date']}/data.parquet"),
+        meta_path=Path(f"/processed/{kwargs['trade_date']}/meta.json"),
     )
     path_manager.staging_payload.side_effect = lambda **kwargs: Path(
         f"/staging/{kwargs['trade_date']}/{kwargs['payload_file']}"
@@ -423,24 +416,19 @@ def test_fact_step_publishes_allowed_empty_outputs(
 
     context = step.run(_context(trade_date))
 
-    processed_path = path_manager.processed_data(
-        dataset_name=empty_source,
-        version="v1",
-        trade_date=trade_date,
-    )
-    processed_meta = path_manager.processed_meta(
+    processed_paths = path_manager.processed_object(
         dataset_name=empty_source,
         version="v1",
         trade_date=trade_date,
     )
     loaded = meta.require(
         pm=path_manager,
-        meta_path=processed_meta,
-        expected_payload_path=processed_path,
+        meta_path=processed_paths.meta_path,
+        expected_payload_path=processed_paths.payload_path,
     )
     assert context == _context(trade_date)
-    assert loaded.payload_path == processed_path
-    assert pq.ParquetFile(processed_path).read().num_rows == 0
+    assert loaded.payload_path == processed_paths.payload_path
+    assert pq.ParquetFile(processed_paths.payload_path).read().num_rows == 0
 
 
 def test_fact_step_rejects_an_empty_non_event_output(tmp_path: Path) -> None:
@@ -488,11 +476,11 @@ def test_fact_step_rejects_an_empty_non_event_output(tmp_path: Path) -> None:
     ):
         step.run(_context(trade_date))
 
-    processed_meta = path_manager.processed_meta(
+    processed_meta = path_manager.processed_object(
         dataset_name="daily_bar",
         version="v1",
         trade_date=trade_date,
-    )
+    ).meta_path
     assert meta.find(pm=path_manager, meta_path=processed_meta) is None
 
 
