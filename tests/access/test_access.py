@@ -6,6 +6,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import cast
+from unittest.mock import Mock
 
 import pandas as pd
 import pyarrow as pa
@@ -15,6 +16,24 @@ import pytest
 from src.access import Access, meta
 from src.access import access as access_module
 from src.utils.path import PathManager
+
+_STOCK_MINUTE_SCHEMA = pa.schema(
+    [
+        pa.field("symbol", pa.string(), nullable=False),
+        pa.field("trade_date", pa.string(), nullable=False),
+        pa.field("minute_start_ts_utc", pa.int64(), nullable=False),
+        pa.field("phase", pa.int8(), nullable=False),
+        pa.field("open", pa.float64(), nullable=False),
+        pa.field("high", pa.float64(), nullable=False),
+        pa.field("low", pa.float64(), nullable=False),
+        pa.field("close", pa.float64(), nullable=False),
+        pa.field("volume_sum", pa.int64(), nullable=False),
+        pa.field("notional_sum", pa.float64(), nullable=False),
+        pa.field("trade_count", pa.int64(), nullable=False),
+        pa.field("tick_signed_volume_sum", pa.int64(), nullable=False),
+        pa.field("tick_signed_notional_sum", pa.float64(), nullable=False),
+    ]
+)
 
 
 def test_access_requires_safe_processed_version(tmp_path: Path) -> None:
@@ -204,6 +223,58 @@ def test_trade_dates_read_annual_calendar_objects_in_ascending_order(
     ]
 
 
+@pytest.mark.parametrize("source", ("calendar", "factor"))
+@pytest.mark.parametrize("read_fails", (False, True))
+def test_calendar_and_factor_readers_close_on_success_and_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    source: str,
+    read_fails: bool,
+) -> None:
+    pm = PathManager(tmp_path)
+    trade_date = "2026-05-06"
+    _write_calendar_year(
+        pm, 2026, pd.DataFrame({"trade_date": [trade_date], "is_open": [True]})
+    )
+    _write_processed_frame(
+        pm,
+        trade_date,
+        "adj_factor",
+        pd.DataFrame(
+            {"symbol": ["000001"], "trade_date": [trade_date], "adj_factor": [1.0]}
+        ),
+    )
+    parquet_file = pq.ParquetFile
+    opened_readers: list[pq.ParquetFile] = []
+    failure = OSError("cannot read Parquet")
+
+    def _track_reader(path: Path) -> pq.ParquetFile:
+        reader = parquet_file(path)
+        opened_readers.append(reader)
+        if read_fails:
+            monkeypatch.setattr(reader, "read", Mock(side_effect=failure))
+        return reader
+
+    monkeypatch.setattr(access_module.pq, "ParquetFile", _track_reader)
+    access = Access(pm=pm, processed_version="v1")
+    operation = (
+        (lambda: access.trade_dates(start_date=trade_date, end_date=trade_date))
+        if source == "calendar"
+        else (lambda: access.adjustment_factors(trade_date=trade_date))
+    )
+
+    if read_fails:
+        with pytest.raises(OSError) as caught:
+            operation()
+        assert caught.value is failure
+    else:
+        result = operation()
+        assert len(result) == 1
+
+    assert len(opened_readers) == 1
+    assert opened_readers[0].closed
+
+
 def test_trade_dates_requires_every_requested_calendar_year(tmp_path: Path) -> None:
     pm = PathManager(tmp_path)
     _write_calendar_year(
@@ -222,6 +293,180 @@ def test_trade_dates_requires_every_requested_calendar_year(tmp_path: Path) -> N
             start_date="2025-12-31",
             end_date="2026-01-01",
         )
+
+
+def test_next_trade_date_crosses_calendar_year_and_rejects_closed_date(
+    tmp_path: Path,
+) -> None:
+    pm = PathManager(tmp_path)
+    _write_calendar_year(
+        pm,
+        2025,
+        pd.DataFrame(
+            {
+                "trade_date": ["2025-12-30", "2025-12-31"],
+                "is_open": [False, True],
+            }
+        ),
+    )
+    _write_calendar_year(
+        pm,
+        2026,
+        pd.DataFrame(
+            {
+                "trade_date": ["2026-01-01", "2026-01-05"],
+                "is_open": [False, True],
+            }
+        ),
+    )
+    access = Access(pm=pm, processed_version="v1")
+
+    assert access.next_trade_date(trade_date="2025-12-31") == "2026-01-05"
+    with pytest.raises(ValueError, match="not a formal trade date"):
+        access.next_trade_date(trade_date="2025-12-30")
+
+
+def test_stock_trade_minutes_requires_both_markets_and_returns_key_order(
+    tmp_path: Path,
+) -> None:
+    pm = PathManager(tmp_path)
+    trade_date = "2026-05-06"
+    _write_stock_minutes(
+        pm,
+        trade_date,
+        "sh_stock_trade_1m",
+        [
+            _stock_minute_row("600000", trade_date, minute_start=2),
+            _stock_minute_row("600000", trade_date, minute_start=3),
+        ],
+    )
+    access = Access(pm=pm, processed_version="v1")
+
+    with pytest.raises(FileNotFoundError, match="required Meta"):
+        access.stock_trade_minutes(trade_date=trade_date)
+
+    _write_stock_minutes(
+        pm,
+        trade_date,
+        "sz_stock_trade_1m",
+        [_stock_minute_row("000001", trade_date, minute_start=1)],
+    )
+    output = access.stock_trade_minutes(trade_date=trade_date)
+
+    assert output.schema.equals(_STOCK_MINUTE_SCHEMA, check_metadata=False)
+    assert output.select(["symbol", "minute_start_ts_utc"]).to_pydict() == {
+        "symbol": ["000001", "600000", "600000"],
+        "minute_start_ts_utc": [1, 2, 3],
+    }
+
+
+def test_stock_trade_minutes_rejects_cross_market_symbol_collision(
+    tmp_path: Path,
+) -> None:
+    pm = PathManager(tmp_path)
+    trade_date = "2026-05-06"
+    for dataset_name in ("sh_stock_trade_1m", "sz_stock_trade_1m"):
+        _write_stock_minutes(
+            pm,
+            trade_date,
+            dataset_name,
+            [_stock_minute_row("000001", trade_date, minute_start=1)],
+        )
+
+    with pytest.raises(RuntimeError, match="duplicate stock minute symbols"):
+        Access(pm=pm, processed_version="v1").stock_trade_minutes(trade_date=trade_date)
+
+
+@pytest.mark.parametrize("invalid_date", (False, True))
+def test_stock_trade_minutes_closes_payloads_on_success_and_invalid_input(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    invalid_date: bool,
+) -> None:
+    pm = PathManager(tmp_path)
+    trade_date = "2026-05-06"
+    for dataset_name, symbol in (
+        ("sh_stock_trade_1m", "600000"),
+        ("sz_stock_trade_1m", "000001"),
+    ):
+        _write_stock_minutes(
+            pm,
+            trade_date,
+            dataset_name,
+            [
+                _stock_minute_row(
+                    symbol,
+                    "2026-05-07" if invalid_date else trade_date,
+                    minute_start=1,
+                )
+            ],
+        )
+    parquet_file = pq.ParquetFile
+    opened_readers: list[pq.ParquetFile] = []
+
+    def _track_parquet_open(path: Path) -> pq.ParquetFile:
+        reader = parquet_file(path)
+        opened_readers.append(reader)
+        return reader
+
+    monkeypatch.setattr(access_module.pq, "ParquetFile", _track_parquet_open)
+    access = Access(pm=pm, processed_version="v1")
+    if invalid_date:
+        with pytest.raises(ValueError, match="trade_date must equal requested"):
+            access.stock_trade_minutes(trade_date=trade_date)
+    else:
+        assert access.stock_trade_minutes(trade_date=trade_date).num_rows == 2
+
+    assert opened_readers
+    assert all(reader.closed for reader in opened_readers)
+
+
+@pytest.mark.parametrize("invalid_identity", ("duplicate_key", "key_order", "schema"))
+def test_stock_trade_minutes_rejects_invalid_persisted_identity(
+    tmp_path: Path,
+    invalid_identity: str,
+) -> None:
+    pm = PathManager(tmp_path)
+    trade_date = "2026-05-06"
+    minutes = pa.Table.from_pylist(
+        [
+            _stock_minute_row("600000", trade_date, minute_start=1),
+            _stock_minute_row("600000", trade_date, minute_start=2),
+        ],
+        schema=_STOCK_MINUTE_SCHEMA,
+    )
+    if invalid_identity == "duplicate_key":
+        minutes = minutes.take([0, 0])
+        expected_error = "unique"
+    elif invalid_identity == "key_order":
+        minutes = minutes.take([1, 0])
+        expected_error = "key order"
+    else:
+        minutes = minutes.drop_columns(["high"])
+        expected_error = "schema"
+    paths = pm.processed_object(
+        dataset_name="sh_stock_trade_1m", version="v1", trade_date=trade_date
+    )
+    paths.payload_path.parent.mkdir(parents=True)
+    pq.write_table(minutes, paths.payload_path)
+    meta.commit(pm=pm, payload_path=paths.payload_path)
+
+    with pytest.raises(ValueError, match=expected_error):
+        Access(pm=pm, processed_version="v1").stock_trade_minutes(trade_date=trade_date)
+
+
+def test_stock_trade_minutes_preserves_two_valid_empty_markets(tmp_path: Path) -> None:
+    pm = PathManager(tmp_path)
+    trade_date = "2026-05-06"
+    for dataset_name in ("sh_stock_trade_1m", "sz_stock_trade_1m"):
+        _write_stock_minutes(pm, trade_date, dataset_name, ())
+
+    output = Access(pm=pm, processed_version="v1").stock_trade_minutes(
+        trade_date=trade_date
+    )
+
+    assert output.num_rows == 0
+    assert output.schema.equals(_STOCK_MINUTE_SCHEMA, check_metadata=False)
 
 
 def test_universe_applies_listing_st_and_suspension_filters(
@@ -857,3 +1102,45 @@ def _write_l2_object(
         payload_path=path,
         symbol_slices=symbol_slices,
     )
+
+
+def _stock_minute_row(
+    symbol: str,
+    trade_date: str,
+    *,
+    minute_start: int,
+) -> dict[str, object]:
+    return {
+        "symbol": symbol,
+        "trade_date": trade_date,
+        "minute_start_ts_utc": minute_start,
+        "phase": 2,
+        "open": 10.0,
+        "high": 10.0,
+        "low": 10.0,
+        "close": 10.0,
+        "volume_sum": 100,
+        "notional_sum": 1_000.0,
+        "trade_count": 1,
+        "tick_signed_volume_sum": 0,
+        "tick_signed_notional_sum": 0.0,
+    }
+
+
+def _write_stock_minutes(
+    pm: PathManager,
+    trade_date: str,
+    dataset_name: str,
+    rows: Sequence[Mapping[str, object]],
+) -> None:
+    paths = pm.processed_object(
+        dataset_name=dataset_name,
+        version="v1",
+        trade_date=trade_date,
+    )
+    paths.payload_path.parent.mkdir(parents=True, exist_ok=True)
+    pq.write_table(
+        pa.Table.from_pylist(list(rows), schema=_STOCK_MINUTE_SCHEMA),
+        paths.payload_path,
+    )
+    meta.commit(pm=pm, payload_path=paths.payload_path)

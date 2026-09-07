@@ -15,7 +15,6 @@ import pytest
 from src.config.app_config import AppConfig
 from src.config.data_config import DownloadBackend
 from src.data_system.brokers import level2 as level2_module
-from src.data_system.brokers.base import DownloadPlan
 from src.data_system.brokers.level2 import FtpEndpoint, Level2Broker
 from src.utils.path import PathManager
 
@@ -142,18 +141,22 @@ def test_level2_broker_downloads_and_publishes_source_native_payload(
     path_manager = PathManager(tmp_path)
     broker = _build_level2_broker()
 
-    downloaded_plan = broker.fetch(
-        record=DownloadPlan(
-            source_name="sz_trade",
-            trade_date="2026-07-20",
-            broker="level2_ftp",
-            raw_object="SZ_Trade",
-        ),
+    downloaded_path = broker.fetch(
+        source_name="sz_trade",
+        trade_date="2026-07-20",
+        raw_object="SZ_Trade",
         pm=path_manager,
     )
 
-    assert downloaded_plan is not None
-    assert downloaded_plan.payload_file == remote_file
+    assert downloaded_path is not None
+    assert downloaded_path.name == remote_file
+    assert downloaded_path == path_manager.raw_payload(
+        broker="level2_ftp",
+        source_name="sz_trade",
+        trade_date="2026-07-20",
+        payload_file=remote_file,
+    )
+    assert downloaded_path.read_bytes() == payload
     assert ftp.cwd_calls == ["level2", "2026-07-20"]
     assert ftp.retrievals == [(f"RETR {remote_file}", None)]
     assert ftp.is_closed is True
@@ -199,17 +202,14 @@ def test_level2_broker_resumes_a_partial_download(
     part_file = staging_file.with_name(f"{staging_file.name}.part")
     part_file.write_bytes(payload[:resume_offset_bytes])
 
-    downloaded_plan = _build_level2_broker().fetch(
-        record=DownloadPlan(
-            source_name="sz_trade",
-            trade_date="2026-07-20",
-            broker="level2_ftp",
-            raw_object="SZ_Trade",
-        ),
+    downloaded_path = _build_level2_broker().fetch(
+        source_name="sz_trade",
+        trade_date="2026-07-20",
+        raw_object="SZ_Trade",
         pm=path_manager,
     )
 
-    assert downloaded_plan is not None
+    assert downloaded_path is not None
     assert ftp.retrievals == [(f"RETR {remote_file}", resume_offset_bytes)]
     assert staging_file.read_bytes() == payload
     assert not part_file.exists()
@@ -244,17 +244,14 @@ def test_level2_broker_reuses_a_complete_staging_payload(
     staging_file.parent.mkdir(parents=True, exist_ok=True)
     staging_file.write_bytes(payload)
 
-    downloaded_plan = _build_level2_broker().fetch(
-        record=DownloadPlan(
-            source_name="sz_trade",
-            trade_date="2026-07-20",
-            broker="level2_ftp",
-            raw_object="SZ_Trade",
-        ),
+    downloaded_path = _build_level2_broker().fetch(
+        source_name="sz_trade",
+        trade_date="2026-07-20",
+        raw_object="SZ_Trade",
         pm=path_manager,
     )
 
-    assert downloaded_plan is not None
+    assert downloaded_path is not None
     assert ftp.retrievals == []
     assert staging_file.read_bytes() == payload
 
@@ -289,17 +286,14 @@ def test_level2_broker_restarts_an_oversized_partial_download(
     part_file = staging_file.with_name(f"{staging_file.name}.part")
     part_file.write_bytes(payload + b"oversized")
 
-    downloaded_plan = _build_level2_broker().fetch(
-        record=DownloadPlan(
-            source_name="sz_trade",
-            trade_date="2026-07-20",
-            broker="level2_ftp",
-            raw_object="SZ_Trade",
-        ),
+    downloaded_path = _build_level2_broker().fetch(
+        source_name="sz_trade",
+        trade_date="2026-07-20",
+        raw_object="SZ_Trade",
         pm=path_manager,
     )
 
-    assert downloaded_plan is not None
+    assert downloaded_path is not None
     assert ftp.retrievals == [(f"RETR {remote_file}", None)]
     assert staging_file.read_bytes() == payload
 
@@ -327,12 +321,9 @@ def test_level2_broker_rejects_a_download_size_mismatch_and_closes_session(
 
     with pytest.raises(RuntimeError, match="FTP download size mismatch"):
         _build_level2_broker().fetch(
-            record=DownloadPlan(
-                source_name="sz_trade",
-                trade_date="2026-07-20",
-                broker="level2_ftp",
-                raw_object="SZ_Trade",
-            ),
+            source_name="sz_trade",
+            trade_date="2026-07-20",
+            raw_object="SZ_Trade",
             pm=PathManager(tmp_path),
         )
 
@@ -362,20 +353,19 @@ def test_level2_broker_accepts_a_control_timeout_after_the_full_payload(
     )
     monkeypatch.setattr(level2_module, "logs", logger)
 
-    downloaded_plan = _build_level2_broker().fetch(
-        record=DownloadPlan(
-            source_name="sz_trade",
-            trade_date="2026-07-20",
-            broker="level2_ftp",
-            raw_object="SZ_Trade",
-        ),
+    downloaded_path = _build_level2_broker().fetch(
+        source_name="sz_trade",
+        trade_date="2026-07-20",
+        raw_object="SZ_Trade",
         pm=PathManager(tmp_path),
     )
 
-    assert downloaded_plan is not None
+    assert downloaded_path is not None
     assert logger.warning_messages == [
-        "⚠️ download; reason=control_response_timeout "
-        "remote_file=SZ_Trade.csv.7z payload_complete=true"
+        (
+            "⚠️ download; reason=control_response_timeout "
+            "remote_file=SZ_Trade.csv.7z payload_complete=true"
+        )
     ]
 
 
@@ -399,17 +389,14 @@ def test_level2_broker_reports_an_empty_remote_directory_without_payload_names(
     )
     monkeypatch.setattr(level2_module, "logs", logger)
 
-    downloaded_plan = _build_level2_broker().fetch(
-        record=DownloadPlan(
-            source_name="sz_trade",
-            trade_date="2026-07-20",
-            broker="level2_ftp",
-            raw_object="SZ_Trade",
-        ),
+    downloaded_path = _build_level2_broker().fetch(
+        source_name="sz_trade",
+        trade_date="2026-07-20",
+        raw_object="SZ_Trade",
         pm=PathManager(tmp_path),
     )
 
-    assert downloaded_plan is None
+    assert downloaded_path is None
     assert ftp.is_closed is True
     assert logger.warning_messages == [
         "⚠️ Level-2 remote directory; reason=empty trade_date=2026-07-20"

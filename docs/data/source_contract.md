@@ -29,10 +29,27 @@ Feature 与 label 配置不使用 source group；其固定身份与字段语义�
 [`docs/data/daily_feature_label_contract.md`](daily_feature_label_contract.md) 所有，执行编排
 由 [`docs/offline_workflow_contract.md`](../offline_workflow_contract.md) 所有。
 
-Broker implementation 使用不可变的 `broker name -> broker implementation class`
-mapping。该 mapping 只解析执行实现，不选择 source。运行时不得建立可变 register/freeze
-registry。Raw Meta hit 前不得构造 broker adapter；首次 miss 时构造并在同一 workflow 内
-按 broker 复用。
+Broker implementation 的选择与绑定由
+[`docs/offline_workflow_contract.md`](../offline_workflow_contract.md) 所有。Broker name
+保留配置引用和 source identity 语义。运行时不得建立可变 register/freeze registry。
+Raw Meta hit 前不得构造 broker adapter；首次 miss 时构造并在同一 workflow 内按 broker 复用。
+
+单日下载能力的调用形式为：
+
+```python
+payload_path: Path | None = broker.fetch(
+    source_name=source_name,
+    raw_object=raw_object,
+    trade_date=trade_date,
+    pm=path_manager,
+)
+```
+
+`source_name`、`raw_object` 和交易日由调用方提供；broker identity 由具体 Broker 的
+`name` 提供，source-native payload basename 由 Broker 确定。成功时直接返回已经写完的
+正式 raw payload 路径；返回路径不表示 Meta 已提交，raw Meta 仍由 Step 提交。调用方不再
+传递或接收 `DownloadPlan`，也不根据下载结果重新拼装 raw 路径。`None` 只表达本 owner
+及 FTP transport owner 定义的源端无数据，不表达请求、文件写入或其他执行失败。
 
 Broker 到 normalize callable 的关系固定为：
 
@@ -152,7 +169,7 @@ Workflow 不为 `is_open=false` 的日期请求 `daily_bar`。`is_open=true` 时
 ## Source no-data 边界
 
 单日 Tushare source 成功返回 `DataFrame` 即表示已取得 payload；零行 `DataFrame` 是有效
-空记录集合，Broker 必须照常写入 raw payload 并返回 `DownloadPlan`，不得把它转换为下载
+空记录集合，Broker 必须照常写入 raw payload 并返回该文件的 `Path`，不得把它转换为下载
 失败。只有源端返回 `None` 时，单日 Tushare Broker 才返回 `None`。
 
 `stock_st` 的 `2019-04-01` 是该边界的正式案例：源端成功响应且记录集合为零行，返回的
