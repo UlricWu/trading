@@ -1,4 +1,5 @@
 # filepath: src/utils/download_utils.py
+
 from __future__ import annotations
 
 import math
@@ -17,8 +18,7 @@ _BINARY_UNIT_BASE = 1024
 class DownloadProgress:
     """Aggregate byte counts and emit bounded download progress records.
 
-    ``total_bytes=None`` means the source did not provide a total. The caller
-    owns the injected logger; this object never closes it.
+    ``total_bytes=None`` means the source did not provide a total.
     """
 
     def __init__(
@@ -65,23 +65,17 @@ class DownloadProgress:
         self._started_at_seconds = self._read_clock_seconds()
         self._last_reported_at_seconds = self._started_at_seconds
 
-    @property
-    def total_bytes(self) -> int | None:
-        """Return the explicit total, or ``None`` when the source omitted it."""
-        return self._total_bytes
-
-    @property
-    def filename(self) -> str:
-        """Return the validated filename used as non-sensitive log context."""
-        return self._filename
-
-    @property
-    def downloaded_bytes(self) -> int:
-        """Return the accumulated byte count."""
-        return self._downloaded_bytes
-
     def update(self, chunk_size_bytes: int) -> None:
-        """Add a non-negative chunk and report after the configured interval."""
+        """Add a non-negative chunk and report after the configured interval.
+
+        Example:
+            progress = DownloadProgress(
+                4096,
+                "data.7z",
+                logger=logs,
+            )
+            progress.update(4096)
+        """
         if type(chunk_size_bytes) is not int:
             raise TypeError("field 'chunk_size_bytes' must be an integer")
         if chunk_size_bytes < 0:
@@ -96,15 +90,24 @@ class DownloadProgress:
         self._last_reported_at_seconds = now_seconds
         status = self._format_status(now_seconds=now_seconds)
         self._logger.info(
-            f"download progress; filename={self._filename} status={status}"
+            f"⏳ download; filename={self._filename} status={status}"
         )
 
     def finish(self) -> None:
-        """Emit one final aggregate progress record."""
+        """Emit one final aggregate progress record.
+
+        Example:
+            progress = DownloadProgress(
+                4096,
+                "data.7z",
+                logger=logs,
+            )
+            progress.finish()
+        """
         now_seconds = self._read_clock_seconds()
         status = self._format_status(now_seconds=now_seconds)
         self._logger.info(
-            f"download complete; filename={self._filename} status={status}"
+            f"✅ download; filename={self._filename} status={status}"
         )
 
     def _read_clock_seconds(self) -> float:
@@ -144,9 +147,9 @@ class DownloadProgress:
     @staticmethod
     def _format_speed(bytes_per_second: float) -> str:
         if bytes_per_second >= _BINARY_UNIT_BASE**2:
-            return f"{bytes_per_second / _BINARY_UNIT_BASE**2:.2f} MB/s"
+            return f"{bytes_per_second / _BINARY_UNIT_BASE**2:.2f} MiB/s"
         if bytes_per_second >= _BINARY_UNIT_BASE:
-            return f"{bytes_per_second / _BINARY_UNIT_BASE:.2f} KB/s"
+            return f"{bytes_per_second / _BINARY_UNIT_BASE:.2f} KiB/s"
         return f"{bytes_per_second:.2f} B/s"
 
     @staticmethod
