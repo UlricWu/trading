@@ -7,7 +7,7 @@
 
 ## 共同边界
 
-`src/workflows` 只提供七个 workflow composition root：
+`src/workflows` 只提供八个 workflow composition root：
 
 ```python
 run_trade_calendar_bootstrap(
@@ -33,6 +33,11 @@ run_feature_backfill(
 run_level2_minute_backfill(
     *, path_manager: PathManager,
     submission: Level2MinuteBackfillSubmission,
+) -> None
+
+run_stock_1430_backfill(
+    *, path_manager: PathManager,
+    submission: Stock1430BackfillSubmission,
 ) -> None
 
 run_offline_training(
@@ -62,8 +67,9 @@ Pipeline/Workflow 基类、DAG、step registry、依赖声明、priority 或 bef
 
 `src/data_system/steps` 是 offline data 业务行为的唯一实现目录；日期循环和 operation
 调度由具体 Step 拥有。Feature 与 label Step 共用一个 private derived-partition 发布函数，
-该函数唯一拥有 Meta reuse、非空检查、payload 先于 Meta 的发布顺序；它不拥有日期、
-dataset identity、日志或计算。Broker、builder 与 normalize 分别保留在
+该函数唯一拥有 Meta reuse、非空检查、payload 先于 Meta 的发布顺序；Feature/Label 的
+已有 Meta 包含 `upstream` 或 `symbol_slices` 时失败，不能覆盖或降级为 miss。该函数不拥有
+日期、dataset identity、日志或计算。Broker、builder 与 normalize 分别保留在
 `src/data_system/brokers`、`builders` 与 `normalize`，这些
 目录本身就是 Step 调用的具体执行能力，不再外包一层通用 `engines` 目录。跨多个
 normalize 模块复用的 Arrow 原语只允许作为 `normalize` 的 private module；不得建立公共
@@ -132,7 +138,7 @@ Instrumentation 衡量 workflow 显式组装的 step，返回 `step.run(context)
 
 ```text
 CalendarMaterializeStep, FactMaterializeStep, FeatureBuildStep, LabelBuildStep,
-Level2MinuteBuildStep, DatasetBuildStep, PreprocessStep, ModelTrainStep, ICEvaluateStep,
+Level2MinuteBuildStep, Stock1430BuildStep, DatasetBuildStep, PreprocessStep, ModelTrainStep, ICEvaluateStep,
 ArtifactPersistStep, SignalStep, SignalEvalStep, TradableAlphaEvalStep,
 PortfolioStep, RiskEvalStep, ExecutionEvalStep, AccountingStep,
 FullBacktestStep, MetricsPersistStep, ReportStep
@@ -337,6 +343,42 @@ start、end 与 targets。Step 对有效输出记录 `♻️ Level-2 minute fact
 `⏳ Level-2 minute fact`，发布后记录 `✅ Level-2 minute fact publish`。这些日志携带 target、
 trade_date 和与事件直接相关的 symbols、进度、tick、行数、耗时或路径，不建立额外 stage
 状态机，也不由 Access 或 builder 重复记录。
+
+## 14:30 Feature/Label backfill workflow
+
+`run_stock_1430_backfill` 是 CLI-only `data-stock-1430-backfill` 的唯一 workflow，直接消费
+已校验的 `Stock1430BackfillSubmission(start, end)`。闭区间精确表示目标 `T` 分区，不表示
+H02 分钟或日频 factor 的生产范围。
+
+Workflow 从收到的 `PathManager` 创建唯一固定 `processed_version=v1` Access，通过正式 trade
+calendar 把闭区间解析为升序目标 session，只显式组装一个 `Stock1430BuildStep` 并调用一次
+`DataPipeline.run()`。它不读取配置中的 source、Feature 或 Label registry，不组装 Calendar、
+Fact、通用 Feature/Label 或分钟 Step，不创建 broker adapter，也不写 raw、processed、
+experiment 或 Job 状态。目标 session 集为空时 Step 仍执行一次并自然成功。
+
+`Stock1430BuildStep` 对每个 `T` 固定先处理 `l2_stock_1430/v1` Feature，再处理
+`l2_stock_1430_t1_vwap_rank/v1` Label。Feature Meta miss 才通过 Access 读取 `T` 两市分钟事实；
+Label Meta miss 才通过 `meta.require` 取得已提交 Feature payload，只读取三字段 key，
+再解析下一正式 session `T+1`，并读取 T/T+1
+两市分钟事实及 adjustment factor。固定时间、universe、schema、计算和 null 语义由
+[`docs/data/stock_1430_feature_label_contract.md`](data/stock_1430_feature_label_contract.md)
+所有。
+
+有效 H03 Meta hit 只校验该对象自身 Meta/payload identity，不读取分钟、factor、Feature payload
+或当前上游状态。Feature 成功后 Label 失败、或较早目标成功后较晚目标失败时，已经提交的分区
+保留；重跑按每个对象 Meta 从首个 miss 续建。H03 Meta 不写 `upstream` 或 `symbol_slices`，
+已有关系字段时失败，不覆盖或降级为 miss。
+
+Workflow Instrumentation identity 固定为：
+
+```text
+data-stock-1430-backfill_{start}_{end}
+```
+
+目标日期解析完成后记录 `▶️ workflow`，成功返回后记录 `✅ workflow`；两条日志携带 kind、
+start、end 与 targets。Step 为每个对象提供以 `stock 14:30 Feature` 或 `stock 14:30 Label`
+为具名对象、携带 trade_date 和 version 的 `who`；private 发布函数返回复用或发布结果，
+由 Step 按共同规则记录，发布时追加行数。错误原样传播。
 
 ## Training workflow
 

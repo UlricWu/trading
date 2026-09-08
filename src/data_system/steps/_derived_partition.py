@@ -1,5 +1,5 @@
 # filepath: src/data_system/steps/_derived_partition.py
-"""Shared publication boundary for derived daily partitions."""
+"""Shared publication boundary for Feature and Label partitions."""
 
 from __future__ import annotations
 
@@ -22,14 +22,21 @@ def _publish_derived_partition(
     build: Callable[[], pa.Table],
     who: str,
 ) -> int | None:
-    if (
-        meta.find(
-            pm=pm,
-            meta_path=meta_path,
-            expected_payload_path=output_path,
-        )
-        is not None
-    ):
+    existing = meta.find(
+        pm=pm,
+        meta_path=meta_path,
+        expected_payload_path=output_path,
+    )
+    if existing is not None:
+        if existing.upstream is not None:
+            raise RuntimeError(
+                f"derived partition Meta must not contain upstream: meta_path={meta_path}"
+            )
+        if existing.symbol_slices is not None:
+            raise RuntimeError(
+                f"derived partition Meta must not contain symbol_slices: "
+                f"meta_path={meta_path}"
+            )
         return None
 
     table = build()

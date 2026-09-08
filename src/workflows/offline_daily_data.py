@@ -24,11 +24,13 @@ from src.data_system.steps.fact_materialize import FactMaterializeStep
 from src.data_system.steps.feature_build import FeatureBuildStep
 from src.data_system.steps.label_build import LabelBuildStep
 from src.data_system.steps.level2_minute_build import Level2MinuteBuildStep
+from src.data_system.steps.stock_1430_build import Stock1430BuildStep
 from src.jobs.requests import (
     DataSubmission,
     FeatureBackfillSubmission,
     Level2MinuteBackfillSubmission,
     StandardFactBootstrapSubmission,
+    Stock1430BackfillSubmission,
 )
 from src.observability.instrumentation import Instrumentation
 from src.pipeline import PipelineStep
@@ -341,6 +343,55 @@ def run_level2_minute_backfill(
     )
     logs.info(
         f"✅ workflow; kind=data-level2-minute-backfill "
+        f"start={submission.start} end={submission.end} "
+        f"targets={len(target_dates)}"
+    )
+
+
+def run_stock_1430_backfill(
+    *,
+    path_manager: PathManager,
+    submission: Stock1430BackfillSubmission,
+) -> None:
+    """Backfill the fixed H03 Feature/Label pair from formal inputs.
+
+    Example:
+        run_stock_1430_backfill(
+            path_manager=path_manager,
+            submission=Stock1430BackfillSubmission(
+                start="2026-05-06",
+                end="2026-05-06",
+            ),
+        )
+    """
+    access = Access(pm=path_manager, processed_version=PROCESSED_VERSION)
+    target_dates = tuple(
+        access.trade_dates(
+            start_date=submission.start,
+            end_date=submission.end,
+        )
+    )
+    step = Stock1430BuildStep(pm=path_manager, access=access)
+    pipeline = DataPipeline(
+        steps=(step,),
+        instrumentation=Instrumentation(
+            f"data-stock-1430-backfill_{submission.start}_{submission.end}"
+        ),
+    )
+    logs.info(
+        f"▶️ workflow; kind=data-stock-1430-backfill "
+        f"start={submission.start} end={submission.end} "
+        f"targets={len(target_dates)}"
+    )
+    pipeline.run(
+        DataContext(
+            start=submission.start,
+            end=submission.end,
+            trade_dates=target_dates,
+        )
+    )
+    logs.info(
+        f"✅ workflow; kind=data-stock-1430-backfill "
         f"start={submission.start} end={submission.end} "
         f"targets={len(target_dates)}"
     )

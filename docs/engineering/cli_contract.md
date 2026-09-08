@@ -8,7 +8,8 @@
 ## 通用边界
 
 CLI 只把不可信文本解析为 `src.jobs.requests` 已构造的 data、fact bootstrap、Feature
-backfill、Level-2 minute backfill、training 或 backtest submission，加载一次 `AppConfig`，
+backfill、Level-2 minute backfill、H03 14:30 backfill、training 或 backtest submission，
+加载一次 `AppConfig`，
 创建 `PathManager` 并调用一次工作流。HTTP Job API
 也必须复用同一构造边界，不得各自实现日期、mode、model experiment 或 strategy 校验。
 CLI 在命令分派前按日志技术 owner 配置一次公共 logger 的 stderr sink；它不记录
@@ -34,7 +35,7 @@ start/done 或原始 JSON，workflow 负责业务运行日志。Typer 负责参�
 `override` 只能包含 `data`、`model` 或 `backtest` 根键；因此不能改变
 `environment`、`storage_root` 或 `secret`。mapping 递归合并，标量、列表和显式
 `None` 直接替换，不定义字段级特殊合并规则。合并后必须校验完整 `AppConfig`。HTTP Job
-API 和八个 CLI 命令都不得用 request runtime 字段构造 config override。配置读取、
+API 和九个 CLI 命令都不得用 request runtime 字段构造 config override。配置读取、
 override 拒绝和最终 schema 校验错误均归 `AppConfig.load()`，不在下游组件重复校验。
 
 ## Data
@@ -45,6 +46,8 @@ python -m src.cli data-standard-bootstrap --start YYYY-MM-DD --end YYYY-MM-DD
 python -m src.cli data-standard --start YYYY-MM-DD --end YYYY-MM-DD
 python -m src.cli data-level2 --start YYYY-MM-DD --end YYYY-MM-DD
 python -m src.cli data-level2-minute-backfill \
+  --start YYYY-MM-DD --end YYYY-MM-DD
+python -m src.cli data-stock-1430-backfill \
   --start YYYY-MM-DD --end YYYY-MM-DD
 python -m src.cli data-feature-backfill \
   --feature-set FEATURE_SET --version VERSION \
@@ -81,6 +84,16 @@ Feature、Label 或 experiment。范围内没有正式交易 session 时成功�
 version、batch size、group 或 experiment identity，不属于 HTTP Job API、cron 或 MQTT。
 分钟对象的 schema、聚合和 lineage 由
 [`docs/data/level2_minute_contract.md`](../data/level2_minute_contract.md) 所有。
+
+`data-stock-1430-backfill` 是 CLI-only 的固定 H03 Feature/Label 回填入口。`start/end` 闭区间
+只表示目标 `T` 分区；它构造 `Stock1430BackfillSubmission` 并只调用一次
+`run_stock_1430_backfill`。Workflow 只消费已提交的 calendar、两市
+`stock_trade_1m/v1`、`adj_factor/v1` 和在同次执行中先复用或发布的 H03 Feature，不调用
+broker，不写 raw、processed、experiment 或 Job 状态。范围内没有正式交易 session 时成功；
+显式目标缺少下一正式 session、任一必要整日对象或构建发布失败时退出 `1`。命令不接受
+dataset、version、exchange、grid、feature set、label set、batch size 或 experiment identity，
+不属于 HTTP Job API、cron 或 MQTT。固定 identity、时间、计算、Meta reuse 和错误边界由
+[`stock_1430_feature_label_contract.md`](../data/stock_1430_feature_label_contract.md) 所有。
 
 `data-feature-backfill` 是 CLI-only 的单 Feature 历史回填入口。`FEATURE_SET` 与 `VERSION`
 共同选择一个精确 registry identity，`start/end` 闭区间只表示目标 Feature 分区。它构造

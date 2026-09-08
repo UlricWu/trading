@@ -21,20 +21,22 @@ H02 minute_facts → H03 l2_datasets → H04 fusion → H05 training → H06 rep
 H01 与 H02 没有相互依赖，可以并行判断。H03–H06 可以在上游仍为 open 时继续研究，但不得把
 候选上游当作正式行为；上游被拒绝或语义实质变化时，下游必须重建基线并重验相关证据。
 
-## 当前背景
+## 当前背景（2026-09-08，本地 `dev@57d94ea`）
 
-- H01 建立时，目标分支正式
-  [`tushare_daily_basic/v1`](../../docs/data/daily_feature_label_contract.md) 已定义 schema、公式和
-  builder，但 [`data-standard`](../../docs/offline_workflow_contract.md) 对 Feature 与 Label 使用
-  空 operation 集，也没有独立的历史 Feature 回填入口。
-- 正式 Level2 链路已经产生 `sh_trade/v1`、`sz_trade/v1` 逐笔正成交事实，但尚无可复用的
-  stock minute fact。
+- H01 的日常 enabled Feature/成熟 Label、显式 Standard facts 冷启动和 Feature 历史回填
+  已随 `2ae615e` 合入 `dev`，正式行为由
+  [`daily_feature_label_contract.md`](../../docs/data/daily_feature_label_contract.md) 和
+  [`offline_workflow_contract.md`](../../docs/offline_workflow_contract.md) 拥有。
+- H02 的两市股票分钟事实及 CLI-only 回填已随 `57d94ea` 合入 `dev`；正式行为由
+  [`level2_minute_contract.md`](../../docs/data/level2_minute_contract.md) 拥有。
+- H03 已有 `feature/1430@cd88f0c` 的候选实现、隔离验收和正式路径回填证据。本轮在当前
+  feature 分支整理最小差异，尚未合入 `dev`；回填事实不等于正式采用。
 - 当前训练和回测以日频二字段 key 和 daily timing 为正式语义，不能直接证明 14:30 三字段
   key、完整 timestamp maturity 或 post-decision execution 隔离。
 - 当前 experiment artifact 没有完整保存 resolved config、代码版本、输入 manifest、环境和
   随机性信息，不能直接作为本研究的完整可复现证据。
-- 本卷宗建立时没有绑定当前假设的 Notebook 或运行事实，因此没有因子有效性、模型效果或
-  回放收益结论。需要计算或比较时才创建 Notebook，并将确定版本引用写回对应 Change。
+- H03 已保存可恢复的 Notebook 和运行证据，其结果只证明相应版本的数据构建行为；目前仍
+  没有因子有效性、模型效果或回放收益结论。
 
 ## Change 索引
 
@@ -248,10 +250,10 @@ required sessions = T-61 ... T，共 62 个正式 session
   [`cli_contract.md`](../../docs/engineering/cli_contract.md)、
   [`job_api_contract.md`](../../docs/engineering/job_api_contract.md) 和
   [`offline_workflow_contract.md`](../../docs/offline_workflow_contract.md)。
-- **Next**：正式派生回填已完成。当前 Adoption commit 尚未 push 或合入 `dev`，测试服务也尚未
-  部署本次代码；本段 `adopted` 状态随 Adoption PR 合入目标分支才成为目标分支事实。后续
-  push、merge、release 与 deploy 继续按各自独立授权和发布契约处理，不作为已完成数据回填的
-  前置或证明。
+- **Next**：本段记录的正式派生回填已完成；owner、实现和测试已随 PR #12 的
+  `2ae615ee652f896c58d16ae398d75bcefd542c97` 合入 `dev`。2026-09-08 只按本地 Git
+  可恢复状态校正记录，未重新核验 release、deploy 或当前正式数据内容；后续新反例按独立
+  Change 处理。
 
 ## H02
 
@@ -486,10 +488,11 @@ microseconds 对 `60_000_000` 向下取整；OHLC 在每个完整 key 内按
   [`job_api_contract.md`](../../docs/engineering/job_api_contract.md)、
   [`storage_layout.md`](../../docs/data/storage_layout.md) 和
   [`offline_workflow_contract.md`](../../docs/offline_workflow_contract.md)。
-- **Next**：正式分钟事实已覆盖当前范围内 196 个两市输入完整 session；`2025-11-25` 按明确授权
-  保持没有分钟分区。当前 Adoption diff 仍位于 dirty feature 工作树；本段 `adopted` 状态随
-  Adoption PR 合入 `dev` 才成为目标分支事实。commit、push、merge、release 与 deploy 继续按
-  各自独立授权和状态判断。
+- **Next**：2026-08-31 的正式回填记录覆盖当次范围内 196 个两市输入完整 session，
+  `2025-11-25` 按当次授权保留缺口。Owner、实现和测试已随 PR #13 的
+  `57d94ea073d1736e9d40e1126933f37978d6be48` 合入 `dev`。2026-09-08 只按本地 Git
+  可恢复状态校正记录，未重新核验 release、deploy 或全部正式数据；H03 后续上游补齐事实
+  记录在 H03，不改写本段历史验收范围。
 
 ## H03
 
@@ -500,7 +503,7 @@ microseconds 对 `60_000_000` 向下取整；OHLC 在每个完整 key 内按
 - **Why**：完整日 Level2 universe、T+1 成交是否存在或 14:30 后数据都不能反向决定 T 日 14:30
   样本；整数 session lookahead 也不能表达 Label 到 T+1 14:36 才成熟。
 - **Scope**：一对共同采用的 V1 Feature/Label、固定三字段 key、14:30 universe、32 个 Feature、
-  T/T+1 VWAP rank Label、完整 timestamp maturity、多直接 upstream lineage 和 CLI-only 回填。
+  T/T+1 VWAP rank Label、完整 timestamp maturity、无 upstream 的对象 Meta 和 CLI-only 回填。
 - **Not included**：日频融合、模型、组合、交易、order-book、ST/停牌/上市天数过滤、多决策时点、
   成本、滑点、HTTP、cron、实时源或未来版本。
 - **Depends on**：H02。上游未 adopted 时可以研究候选，但 H02 语义变化会使本 Change 证据失效。
@@ -542,18 +545,349 @@ gross_return = exit_raw_vwap(T+1) * adj_factor(T+1)
 y_rank_return = gross_return 在 Feature universe 内的 ascending percentile rank
 ```
 
+V1 固定绑定 `sh_stock_trade_1m/v1`、`sz_stock_trade_1m/v1` 与 `adj_factor/v1` 的计算语义，
+但不把输入 identity 写入 H03 Meta，也不在 Meta hit 时读取当前上游证明是否仍可复用。固定
+Feature/Label identity、version 和日期下，有效 Meta 就表示该对象可复用；输入版本或计算语义
+变化必须产生新的 H03 version，不能在 `v1` 内动态失效旧对象。同版本输入内容修订不会自动
+使旧输出失效；同尺寸内容替换也不属于当前 Meta 的检测保证。实际输入摘要、可恢复内容、源码
+和环境由研究证据保存，不能以固定 `v1` 名称替代。候选完整契约位于
+[`stock_1430_feature_label_contract.md`](../../docs/data/stock_1430_feature_label_contract.md)。
+
 **Acceptance**：
 
 - decision、visibility、entry、exit、maturity 和三字段 key 无歧义；
 - 修改 14:30 及以后数据不改变 Feature，修改 entry/exit 窗口外数据不改变 Label；
 - Feature 固定 32 列，计划窗口、null、tie/rank 和 signed proxy 解释通过手算测试；
 - Label 与 Feature 的行、key、顺序完全一致，无效监督值保留 null；
-- 多 upstream Meta 与现有无/单 upstream 对象兼容，任一直接输入变化禁止 reuse；
-- 多个真实 T/T+1 对记录 universe、coverage、key digest、输入 identity、耗时和峰值内存；
+- 有效 Feature/Label Meta hit 不读取分钟、factor、Feature payload 或当前上游，直接 reuse；
+- 多个真实 T/T+1 对记录 universe、coverage、key digest、实际输入 identity、内容摘要及
+  可恢复位置、耗时和峰值内存；
 - adoption 同步正式 owner、实现和测试，并由用户明确决定。
 
-- **Next**：H02 候选语义稳定后，在独立实现分支中固定真实 T/T+1 验收样本，先完成时间泄漏
-  变形测试，再判断 32 个候选量的数据质量；不得据此提前宣称 alpha。
+**Implementation / Validation Evidence（2026-08-31）**：
+
+- `feature/1430` 在基线 `57d94ea073d1736e9d40e1126933f37978d6be48` 上实现固定 V1
+  Access、纯 Feature/Label builder、Feature-before-Label Step、CLI-only workflow 和请求构造。
+  验收时七个 runtime 文件按
+  `src/access/access.py`、`src/cli.py`、`src/data_system/builders/stock_1430.py`、
+  `src/data_system/steps/_derived_partition.py`、`src/data_system/steps/stock_1430_build.py`、
+  `src/jobs/requests.py`、`src/workflows/offline_daily_data.py` 顺序取得的 `sha256sum` 输出再做
+  SHA-256，摘要为 `7d0af787258d30f9e0305d6281022d18fbb72458b9873a5a5b4ca44c6f9b47dc`。
+- 手算、精确边缘分钟、tie/rank、窗口外变形、全 null Label、两市 Access、跨年下一 session、
+  Meta-hit 零输入读取、关系字段拒绝、Feature 成功后 Label 失败续建、workflow、request 和 CLI
+  回归均已覆盖。最终 `uv run pytest -q -W default` 为 `561 passed, 1 warning`；唯一 warning
+  来自既有 parallel test 的 Python 3.13 `fork()` deprecation。
+  `uv run python -m compileall -q src tests` 与 `git diff --check` 均成功。
+- 可复跑记录为 `cd88f0c:research/stock-1430/h03_validation.ipynb`。Notebook 先通过正式 Meta
+  `require()` 校验输入，再把 30 个 calendar/minute/factor payload 逐字节复制到
+  `/tmp/stock-1430-h03-_uflhd74` 并重提隔离 Meta；规范输入 manifest SHA-256 为
+  `cfe55cf061bb6b42cecf8c6e0520d9680ec90aab0ece38b1b6405a7dd14b54e7`。唯一缺失输入精确为
+  `2025-11-25` 的两市 H02 minute；正式输入的 60 个 Meta/payload 文件在运行前后 SHA-256、
+  size 和 mtime 全部不变。
+
+| case | T -> T+1 | rows | valid labels | label null | key SHA-256 | first wall / peak RSS KiB |
+| --- | --- | ---: | ---: | ---: | --- | ---: |
+| smoke | `2025-11-18 -> 2025-11-19` | 5,157 | 5,149 | 0.1551% | `3dc21f7b20b78dcac96c8c2aa099010ba7d81757d3e4fd61b58f6a087601a777` | 4.412s / 1,061,452 |
+| final year boundary | `2025-12-31 -> 2026-01-05` | 5,170 | 5,158 | 0.2321% | `ac408d882baf848e83137e37295e4509740d86ba1e69e8d5a8370bed0e874f5d` | 4.363s / 1,078,640 |
+| final holiday boundary | `2026-04-30 -> 2026-05-06` | 5,150 | 5,136 | 0.2718% | `f43c2e1e5ab369f0ce71ec04ce1cd97c8ed4fb3199ddff806850a4591134b849` | 4.569s / 1,068,188 |
+| final regular pair | `2026-07-27 -> 2026-07-28` | 5,192 | 5,188 | 0.0770% | `abd4432917ecbb68f9f4d509c607fa3d475ec62647a3be27de076032e0d5921e` | 4.567s / 1,079,588 |
+
+- 四个成功样本的 35/4 列 schema、非空唯一有序 key、Feature/Label key 精确相等、rank
+  范围和无关系字段 Meta 全部通过。各日期/窗口的 observed-minute 平均覆盖为
+  `96.874%..98.800%`；最高 Feature null rate 是 `2026-07-27` 的 60m edge rank
+  `4.5069%`，符合“精确首尾分钟同时存在”规则，不使用 fallback。没有预定义资源 SLA，
+  因此 wall/RSS 只记录为事实，不提升为性能通过声明。
+- 已知负例 `2025-11-24 -> 2025-11-25` 返回非零：Feature Meta 已提交，Label Meta 不存在，
+  错误精确来自缺少 T+1 两市 minute。四个成功目标原样 Meta-hit 重跑为
+  `1.189s..1.228s`、`242,268..242,612 KiB`；Feature/Label payload 与 Meta 的 SHA-256、
+  size 和 mtime 全部未变化。单元测试另以 fail-fast double 证明命中路径不读取分钟、factor、
+  下一 session 或 Feature payload。
+
+**Acceptance Review（2026-09-05，当前候选工作树）**：
+
+- 本轮开始时七个 runtime 文件摘要与上述 `7d0af787...` 完全一致。按既有 H03 语义补强验收，
+  修复分钟 Access 与 Label 读取 Feature 时未显式关闭 Parquet 的问题；删除 builder 对 Access
+  已建立的分钟/factor 对象契约、合并后唯一性及 Step 对已验证 Feature Meta 的重复检查。
+  输入校验责任保持在既定读取边界，输出公式、行集合和发布语义不变。
+- 新增或加强四种计划窗口、独立 entry/exit 边界与 auction 排除、非等量成交 VWAP、两日不同
+  factor、average-tie rank、无效 factor 保留 null、输入所有权、UTC decision key、有效空市场、
+  空 Feature 拒绝、全 null Label 发布，以及两种对象的无效 Meta 不覆盖测试。最终版本的四个
+  资源生命周期场景在验收前实现上全部失败，在修正后的实现上全部通过。
+- 锁定环境为 Python `3.13.13`、NumPy `2.5.1`、Pandas `3.0.2`、PyArrow `25.0.0`；
+  `uv.lock` SHA-256 为 `96125da32034e999352f8a0326f6bddb0c5a9408c8880a9197f2faebf5d4f512`。
+  最终七文件按上述相同算法得到 runtime SHA-256
+  `92c445cac375979a6b6082e30bcf434ab238dd0870343834456bc7d9a899ccee`；运行前后 226 个
+  source/test/config 文件摘要不变，完整清单保存在 `code-manifest.json`。
+- `uv lock --check`、`uv run --locked --no-python-downloads python -m pytest -q -W default`
+  通过，结果为 **595 passed, 1 warning**；warning 仍是既有 parallel test 的 `fork()` 弃用提示。
+  `compileall`、`git diff --check`、13 个 Python 文件的 filepath/测试 owner 镜像检查、11 个
+  新增或修改 public API 的类型与具体 `Example:` 检查均通过。
+- 使用临时工具环境中的 Ruff `0.16.6` 复核，H03 变更范围没有 lint 或格式问题。整文件扫描
+  留有与 `dev` 基线逐项一致的 20 项 lint 告警，以及两个既有测试段落的格式差异；它们不属于
+  本次 H03 语义单元，未借验收重写。仓库没有配置 type checker，环境也没有 Mypy/Pyright，
+  因而未运行类型检查器，不声明全仓静态检查通过。
+- `cd88f0c:research/stock-1430/h03_validation.ipynb` 已使用项目 `.venv/bin/python` 的 kernel
+  从头执行。CLI 在复制的候选源码中使用固定无效凭证运行，只向独立存储写入；输入仍为原先
+  固定的 30 个对象，manifest 摘要仍为 `cfe55cf0...`。没有重新选择日期、扩大样本范围或使用
+  正式写凭证。
+
+| T → T+1 | Feature 行数 | 有效 Label | 首次 wall 秒 | peak RSS KiB |
+| --- | ---: | ---: | ---: | ---: |
+| `2025-11-18 → 2025-11-19` | 5,157 | 5,149 | 2.655 | 1,165,928 |
+| `2025-12-31 → 2026-01-05` | 5,170 | 5,158 | 2.585 | 1,134,980 |
+| `2026-04-30 → 2026-05-06` | 5,150 | 5,136 | 2.531 | 1,121,072 |
+| `2026-07-27 → 2026-07-28` | 5,192 | 5,188 | 2.598 | 1,119,208 |
+
+- 四组样本独立核对了正式下一 session、14:30 前 universe、decision timestamp、35/4 列 schema、
+  key/顺序、rank 范围与 coverage；行数、有效 Label、key 摘要和 null coverage 与前表一致。
+  四次 Meta-hit 为 `1.049..1.091s`、`244,300..244,808 KiB`，输出 payload/Meta 的摘要、大小与
+  mtime 未变。缺失 `2025-11-25` 两市分钟的负例仍保留 Feature 并使 Label 失败；60 个正式输入
+  文件前后不变。资源用量没有预设 SLA，不作性能达标或提速结论。
+- 另将验收前源码恢复到隔离目录，以相同锁定环境和固定输入重新构建四组样本；得到的全部
+  **8 个 Feature/Label payload 与最终实现字节完全一致**。该对照证明本轮清理没有改变这四组
+  输出。2026-08-31 的旧临时输出已不存在，旧 Notebook 未保存完整依赖快照，且其 payload
+  字节摘要与本轮不同；本轮证据独立绑定当前版本，不把旧摘要当作跨环境字节复现证明。
+- 当前执行目录是 `/tmp/stock-1430-h03-acceptance-cz7ci0tg/run-8bc8bkvg`。代码、Notebook、
+  固定输入与输出、manifest、环境、完整 CLI 命令/失败 stderr、回归日志和源码对照记录归档于
+  `/home/wsw/app/research-evidence/stock-1430-h03-2026-09-05-8bc8bkvg.tar.gz`。归档内容可恢复，
+  配套 `.sha256` 文件校验归档；至少保留至 H03 采用/拒绝决定及对应证据审查结束，不依赖旧
+  `/tmp` 目录的存续。
+
+**共享发布边界维护（2026-09-06）**：
+
+- 用户确认将共享函数改为无返回值的 `_publish_partition`，Calendar 也使用该边界；
+  H03 的两个调用继续按 Feature-before-Label 顺序执行，不消费发布状态。模块从
+  `_derived_partition.py` 改名为 `_partition.py`，Notebook 的 runtime 文件清单已同步。
+  上述七文件算法使用新路径所得 runtime SHA-256 为
+  `3791482ad34cd68b0cde25842186047313df8024ce7f3e5174565d0a5f5c1ab9`。
+- 共享边界与 Calendar 回归覆盖新发布、Meta 复用、直接 upstream、空输出、构建/写入/Meta
+  提交失败；空 raw 日历场景先在旧实现复现失败断言，再由修正后的实现通过。
+  `uv run --locked --no-python-downloads pytest -q -W default` 为 **605 passed, 1 warning**；
+  warning 仍来自既有 parallel test 的 `fork()`。本次七个 Python 文件的 Ruff lint/format、
+  filepath/测试 owner 镜像检查，以及 `compileall`、`git diff --check` 通过。
+- 本轮未重跑真实数据 Notebook；保存的输出仍属于 2026-09-05 的归档版本，Notebook 已显式
+  标明这一点。历史实测结果不自动证明改名后的当前版本通过 H03 实测验收。
+
+**第一性原理重设计与验证（2026-09-07）**：
+
+- 用户确认以 H03 数据准备为核心，明确与现行回放的衔接和缺口，并授权执行评审方案。
+  业务基线仍是 `dev` 的 owner；本轮在现有 `feature/1430` 候选中实施，不创建第二个研究入口，
+  不把未合入的 H03、共享发布调整或 H04–H06 写成当前正式语义。
+- 保留 workflow 的依赖组装、DataPipeline/Instrumentation 的执行边界，以及只承载 start、
+  end、trade_dates 的 DataContext。具体 Step 拥有日期、身份、输入准备和结果日志；两个纯
+  builder 拥有 Feature/Label 计算。没有新增 engine、meta/context 对象、结果包装或缓存。
+- `build_stock_1430_features` 的日期改为 `datetime.date`；`build_stock_1430_labels` 改为
+  接收 `feature_keys` 和两个 `date`。调用链在 Step 转换 Access 已解析的 session，下一 session
+  只由 Access 确定。删除重复字符串日期解析、`T+1 > T` 检查、数值字符串 coercion 和输出自检；
+  持久化 Feature key 的类型、缺失、唯一性、日期、时间和顺序校验保留在 Label builder。
+- H02 schema/key 由 `level2_stock_trade_1m.py` 的 `STOCK_TRADE_1M_SCHEMA` /
+  `STOCK_TRADE_1M_KEY` 声明，Access 复用同一份定义；H03 三字段 key schema 由
+  `STOCK_1430_KEY_SCHEMA` 供两种输出与 Step 投影共用。Label 先 `meta.require()`，再通过返回的
+  payload 路径只读 key 列。Calendar 和 adjustment-factor Parquet reader 在成功及异常时都关闭。
+- 修复合法分钟整数在窗口内求和的溢出：以 `decimal128(38, 0)` 批量聚合，trade count 在精确
+  总量上排名，除法才转换为 float64。`_sum_window_integers` 独立承担这一领域保证，Feature
+  和 Label 共用；最长 60 个 H02 分钟的 int64 总量落在该精度范围内。Feature universe 仍来自
+  全部可见分钟，但 Pandas 数值计算只转换最长窗口及其需要的列。
+- `_publish_partition` 合并 reuse、miss 时同步调用构建能力、非空检查和发布，返回 `int | None`
+  供 Step 日志消费。它保留 `_publish_parquet_object` 的 payload-before-Meta 实现，Calendar、
+  Feature、Label 和 H03 同步更新必要调用方；Fact/Level-2 的既有发布调用和其他 broker 候选
+  不变。两个局部 Feature callback 负责 miss 时的输入准备，绑定当前日期/已选 builder；Label
+  直接绑定已有构建能力。没有加入第二套分区发布规则。
+- `♻️` / `✅` 消息内容、次数和顺序保留，日志 source location 回到具体 Step。错误原样传播，
+  无效 Meta 不覆盖，空 Feature 拒绝，全 null 非空 Label 可发布；Feature 已提交而 Label
+  失败时仍保留 Feature。新 API 不兼容旧字符串日期或旧 `features=`，不保留旧不支持输入的
+  异常文本。直接用 Arrow key 数组构造 Label 后不再写入 Pandas schema metadata，因而新建
+  Label 的文件字节变化；规范 Arrow schema、行、值和顺序不变。有效 Meta 命中不迁移旧制品。
+- `_local_epoch_us`、`_finite_values`、三种输出自检 helper、只供自检的派生列清单及独立的
+  `_reuse_existing_partition` 删除。时间转换由既有 DateTimeUtils 承担，有限/null 规则在公式
+  处建立，输出由固定 Arrow schema 构造。`_label_window_vwap` 和正数/带符号比率计算保留
+  各自不同的领域规则；`_build_label` 保留持久化消费及跨 session 输入准备责任。
+
+验证绑定如下：
+
+- HEAD 为 `57d94ea073d1736e9d40e1126933f37978d6be48`；执行前源码另有完整快照，不能只用
+  HEAD 代表 dirty 候选。最终 runtime 清单按 `access.py`、`cli.py`、`stock_1430.py`、
+  `level2_stock_trade_1m.py`、`_partition.py`、`stock_1430_build.py`、`requests.py`、
+  `offline_daily_data.py` 的仓库路径顺序，用上述双空格 `sha256sum` 清单算法得到
+  `762624ec042906b7c6bcde36baf40c4bde4cd51a4bbc2e830b438dd42d0ea4bb`。
+  此次是八文件摘要，不能与历史七文件摘要直接等同。完整 226 个源码、测试和依赖文件另有
+  `code-manifest.json`，Notebook 运行前后及复制的代码快照中均未变化。
+- 先在旧实现复现 12 个失败：正/负 signed-volume 大整数、相差 1 的跨 int64 trade-count
+  总量、entry/exit 大 volume、Calendar/factor 成功与失败时的 reader 生命周期、两个 Label
+  发布场景的 key 投影及 required Meta 失败传播。归档另保留适配旧 API 的回归源码、命令及
+  重新执行结果 `12 failed, 78 deselected`，可独立恢复，不用旧失败日志替代可运行版本。
+  新增的 6 类持久化 key 失效测试验证保留边界没有被输出自检删除误伤。
+- 最终 `.venv/bin/python -B -m pytest -q -p no:cacheprovider -W default` 为
+  **636 passed, 1 warning**；warning 仍是既有 parallel test 的 Python 3.13 `fork()` 提示。
+  本次 12 个 Python 文件的 filepath、测试镜像、语法，以及 public API 的类型和 `Example:`
+  检查通过；`git diff --check` 通过。
+- Ruff `0.16.6` 的六条 lint 告警和两个文件的既有格式差异，按文件、规则、内容及变更前
+  快照逐项比对一致，本次没有新增告警或格式差异；没有重写无关测试/聚合段落。
+  隔离 uv 工具环境中的 Mypy `2.3.1` 检查本次 8 个源码文件通过，参数包括
+  `--follow-imports=silent --ignore-missing-imports --no-incremental`，并使用项目解释器的类型
+  依赖。该结果不声明无 stub 的 PyArrow 或全仓均通过完整静态检查。静态检查过程发现的
+  callable 类型推断问题已用有类型的局部 callback 和 `partial` 修正，最终版本重新测试。
+- Python `3.13.13`、NumPy `2.5.1`、Pandas `3.0.2`、PyArrow `25.0.0` 和 uv.lock 摘要保持上述
+  2026-09-05 环境。Notebook 用项目 kernel 从头运行，只复制既定 30 个对象到隔离存储，
+  input manifest 仍为 `cfe55cf061bb6b42cecf8c6e0520d9680ec90aab0ece38b1b6405a7dd14b54e7`；
+  CLI 使用固定无效凭证，正式输入的 60 个文件 SHA-256、size、mtime 前后不变。
+
+| T → T+1 | Feature 行数 | 有效 Label | 首次 wall 秒 | peak RSS KiB |
+| --- | ---: | ---: | ---: | ---: |
+| `2025-11-18 → 2025-11-19` | 5,157 | 5,149 | 2.725 | 1,097,312 |
+| `2025-12-31 → 2026-01-05` | 5,170 | 5,158 | 2.704 | 1,074,608 |
+| `2026-04-30 → 2026-05-06` | 5,150 | 5,136 | 2.730 | 1,128,264 |
+| `2026-07-27 → 2026-07-28` | 5,192 | 5,188 | 2.667 | 1,087,764 |
+
+- 四组 key 摘要、coverage、35/4 列 schema 与已登记样本一致。将执行前源码在同一隔离输入上
+  重建：8 个输出逐字段 schema/值/行序全部相等；4 个 Feature payload 字节也完全相等，
+  4 个 Label 仅因不再携带 Pandas metadata 而字节不同。大整数修复由上述专门反例证明，
+  不用普通样本输出相同推断该缺陷不存在。
+- 已知 `2025-11-24 → 2025-11-25` 缺失输入负例仍返回非零、保留 Feature、不提交 Label。
+  四组 Meta-hit 耗时 `1.061..1.105s`、peak RSS `244,096..244,516 KiB`，payload/Meta 摘要、
+  size 和 mtime 不变。没有预设资源 SLA，不声称性能达标或 alpha 有效。
+- 最终执行目录为 `/tmp/stock-1430-h03-redesign-cb53htly/run-cxq87ato`。最终代码/Notebook、
+  固定输入和两版输出、执行前源码、回归失败、工具结果及完整命令记录归档于
+  `/home/wsw/app/research-evidence/stock-1430-h03-2026-09-07-cxq87ato.tar.gz`，配套 `.sha256`
+  文件校验归档；至少保留至 H03 采用/拒绝决定及证据审查结束。
+- 现行 daily replay 的日级 schedule、两字段数据加载、模型 cutoff 和成交时点不能直接表达
+  H03 的三字段 grid 与 Label maturity。衔接仍分别由 H04 的可见融合输入、H05 的 timestamp
+  训练/模型制品、H06 的 snapshot/执行隔离负责；它们保持 `open`，本轮没有新增回放默认值、
+  模型选择或交易副作用。
+
+
+**正式路径回填证据（2026-09-07 执行，2026-09-08 补记）**：
+
+- **版本边界**：以下事实绑定 `feature/1430` 的
+  `cd88f0cab024af8d1c2f5e5d0bb762badeb9d5ed`。该执行版本的 H03 Meta 只有 `payload` 和
+  `size_bytes`，不写 `upstream` 或 `symbol_slices`，有效 Meta 直接复用。2026-09-08 补记时，当前分支的
+  Scope/Acceptance 仍要求多直接 upstream 与输入变化失效；补记只记录历史事实，没有选择
+  设计。本轮收敛决定见下文；以下统计仍只属于该执行版本，不自动证明本轮修改通过验收。
+- **执行授权与状态**：用户要求 H03 回填至正式路径，确认只回填输入完整的日期并记录缺口，
+  随后要求优先补齐 `2026-08-25`。当次执行前工作树干净，运行代码未改；H03 研究状态为
+  `open`，当次未执行 commit、push、merge、release 或 deploy。
+- **代码与环境**：证据目录中的 `source.tar` 保存该 commit 的完整源码快照；八文件
+  `runtime.sha256` 清单的 SHA-256 为
+  `762624ec042906b7c6bcde36baf40c4bde4cd51a4bbc2e830b438dd42d0ea4bb`。
+  实际环境为 Python `3.13.13`、NumPy `2.5.1`、Pandas `3.0.2`、PyArrow `25.0.0`，
+  `uv.lock` SHA-256 为 `96125da32034e999352f8a0326f6bddb0c5a9408c8880a9197f2faebf5d4f512`。
+  执行前 H03 相关测试 **116 passed**，所涉及的 broker、normalize、分钟与 Fact 测试
+  **109 passed**；命令与结果保存在 `tests.json`。H03 和分钟 CLI 从源码快照运行，使用无效
+  占位凭证；补齐上游的 FTP 下载使用当时的开发环境配置，证据不保存真实凭证。
+- **补齐 `2026-08-25`**：本日分钟与 factor 已齐，缺少的是下一正式 session `2026-08-26`
+  的两市逐笔及分钟对象。通过既有 `FactMaterializeStep` 只选择 `sh_stock_ordertrade` 和
+  `sz_trade`，发布两个 raw、两个 processed 对象，再运行单日分钟回填 CLI。新增 SH/SZ
+  分钟分别为 **538,805 / 680,782 行**，对应 **58,763,510 / 74,714,133** 笔 stock trades。
+  完整分钟结构检查通过；扫描两市逐笔后，trade count、volume、signed volume 精确守恒，
+  notional 与 signed notional 在预定 `rel_tol=1e-12, abs_tol=0` 下守恒。分钟 CLI 复跑命中
+  两个 Meta，四个分钟 payload/Meta 的内容和文件身份保持不变。
+- **正式路径与范围**：H03 写入 `/home/wsw/app/data` 下的
+  `features/l2_stock_1430/v1/trade_date=T/{data.parquet,meta.json}` 与
+  `labels/l2_stock_1430_t1_vwap_rank/v1/trade_date=T/{data.parquet,meta.json}`。
+  按以下顺序执行 `data-stock-1430-backfill --start S --end E`，三次退出码均为 `0`：
+
+  | 目标闭区间 | Feature/Label 对数 | process wall 秒 | peak RSS KiB |
+  | --- | ---: | ---: | ---: |
+  | `2026-08-25..2026-08-25` | 1 | 2.766 | 1,099,740 |
+  | `2025-11-05..2025-11-21` | 13 | 23.104 | 1,282,056 |
+  | `2025-11-26..2026-08-24` | 181 | 326.863 | 1,418,240 |
+
+- **输出与校验**：共 **195 对、390 个对象**，Feature 与 Label 各 **1,010,042 行**；
+  有效 Label **1,008,708**，null **1,334**，每日有效覆盖率 **99.0342%..100%**。
+  `2026-08-25` 的两种输出各 **5,207 行**，有效 Label **5,203**，null **4**。全部对象经
+  Meta 取得 payload 后完整读回，35/4 列精确 schema、三字段 key、分区日期与 14:30 时间、
+  顺序和唯一性、逐行 Feature/Label 对齐、有限值及 rank/observed ratio 范围均通过。
+  原样复跑三次调用，共 **390 次 Meta reuse、0 次发布**；**780 个 payload/Meta** 的 SHA-256、
+  size、mtime 和 inode 全部不变，优先生成的 `2026-08-25` 分区也保持不变。
+- **输入身份**：所需输入覆盖 197 个 session 和两个年度日历，共 **593 个直接对象、
+  1,186 个文件**。`inputs-ready.json` 与 `inputs-final.json` 内容相同，SHA-256 均为
+  `b47bbf9cd1cc49676b4bc78345b0841f433a7d6bccab88b22a7b0ed4341da144`。清单保存直接
+  payload/Meta 的内容摘要及文件身份，并记录读取边界涉及的直接 upstream Meta 摘要与
+  payload 文件身份；补齐前已有输入也与 `inputs-initial.json` 一致。
+- **保留缺口**：`2025-11-24` 缺少 T+1 `2025-11-25` 的两市分钟输入；`2025-11-25` 缺少
+  本日两市分钟输入。两日 H03 Feature/Label 分区均未生成。这是用户确认的本次日期范围，
+  不建立自动跳过、替代输入或整日缺失转 null 的规则。
+- **可恢复证据**：目录为
+  `/home/wsw/app/research-evidence/stock-1430-h03-formal-backfill-2026-09-07-be972d1_/`。
+  `run.json` 保存授权、版本、环境和结果；`source.tar` 与 `runtime.sha256` 绑定源码；
+  `*.command.json`、对应 `.log` 和 `.time.txt` 保存命令、退出码及资源观测；
+  `upstream-validation.json`、`upstream-reuse.json` 保存新增上游的摘要、守恒和复用结果；
+  `h03-validation.json`、`h03-aug25-validation.json`、`h03-reuse.json` 保存逐日期结果与
+  逐文件身份。实际验证脚本和输入清单均保留于同一目录。`SHA256SUMS` 覆盖 333 个证据文件，
+  其自身 SHA-256 为 `9713870d8c80bfe1e9fa169a8bc34e52cd690ae2e3c916d14f24128e75150327`；
+  2026-09-08 补记时校验通过，统计与清单一致。证据至少保留至 H03 采用/拒绝决定及对应审查结束。
+  本次未重新回填或运行历史测试，以上数据状态与测试结果均属于所绑定的 2026-09-07 执行。
+
+**最小实现收敛（2026-09-08）**：
+
+- **Decision**：用户在复核差异后要求执行建议，确认 H03 V1 使用无 upstream 的 Meta、固定
+  版本和有效对象直接复用；本轮不保留“任意直接输入变化禁止 reuse”的候选要求。该选择不改变
+  时间、universe、32 列、VWAP、rank 或 null 规则，也不检测同版本上游修订。
+- **Scope**：以 `dev@57d94ea073d1736e9d40e1126933f37978d6be48` 为基线，在
+  `feature/intraday_feature` 中整理 H03 最小实现。沿用 `cd88f0c` 的 Access、builder、Step 和
+  CLI 行为，但复用现有 `_publish_derived_partition`，并按正式存储契约拒绝 Feature/Label
+  Meta 的 `upstream` / `symbol_slices`。Broker API、Calendar/Fact 装配及通用发布重构仍只保留
+  在 `feature/1430@cd88f0c`，不属于本轮采用差异；H04–H06 仍独立 open。
+- **验证范围（运行前固定）**：锁定现有依赖，执行全量回归；真实验证继续使用
+  `2025-11-18 → 2025-11-19`、`2025-12-31 → 2026-01-05`、
+  `2026-04-30 → 2026-05-06`、`2026-07-27 → 2026-07-28` 四组既定样本，以及
+  `2025-11-24 → 2025-11-25` 缺少分钟输入的负例。只使用归档的固定 30 个输入对象，
+  只向隔离存储写入；四组新建输出与 `cd88f0c` 在相同输入/环境下逐字段 schema、值和顺序
+  精确相等，Meta 精确无关系字段，重跑不改写输出，缺失负例保留 Feature 并使 Label 失败。
+  任一断言失败即停止验收、保留失败并修复，不替换样本、放宽比较或宣称 alpha；wall/RSS
+  只作观测。本轮不重填正式路径，不补齐 `2025-11-25`，不选择模型或收益阈值。
+
+**本轮 Evidence（2026-09-08）**：
+
+- 证据目录为 `/home/wsw/app/research-evidence/stock-1430-h03-alignment-2026-09-08-3v8icszm/`。
+  本轮源码仍是 `57d94ea` 上的未提交修改；`source.tar` 保存最终源码，`runtime.sha256` 绑定
+  全部源码、测试及依赖文件，其 SHA-256 为
+  `f02d9e45dceaaeaeeffe58551ecdc90b131beb0e83c7dd9c4d01593a318b6aa6`。
+  `unit-run-1/source` 是全量测试和真实验证实际使用的代码快照；与最终工作树的 runtime、
+  tests、`pyproject.toml`、`uv.lock` 内容逐文件一致，后续只补充文档与证据记录。
+- `uv lock --check` 通过；项目 uv 环境的 Python `3.13.13`、NumPy `2.5.1`、Pandas `3.0.2`、
+  PyArrow `25.0.0` 与既定基线一致，`uv.lock` 摘要仍为 `96125da3...f512`。
+  `.venv/bin/python -B -m pytest -q -p no:cacheprovider -W default` 在代码快照上为
+  **613 passed, 1 warning**；warning 仍来自既有 parallel test 的 Python 3.13 `fork()` 提示。
+  新增两个关系字段拒绝场景在 `57d94ea` 上先复现 **2 failed**；带入的 Calendar/factor
+  reader 成功与异常关闭场景在该基线上复现 **4 failed**，六项在最终全量回归中均通过。
+- Ruff `0.16.6` 的当前 20 项 lint 告警与基线逐文件、规则、消息一致；三个文件的格式差异
+  在基线也存在，本轮未改写无关段落。Mypy `2.3.1` 检查八个源码文件，保留
+  `create_backtest_submission.normalized_strategy` 的一项既有 `var-annotated` 告警，已在
+  `57d94ea` 复现；没有新增类型告警，但不声明全部静态检查通过。15 个 Python 文件的语法、
+  filepath、测试 owner 镜像及新增 public API 的类型与 `Example:` 检查通过。
+- 真实验证使用既定 30 个归档输入，manifest SHA-256 仍为
+  `cfe55cf061bb6b42cecf8c6e0520d9680ec90aab0ece38b1b6405a7dd14b54e7`。输入归档为
+  `/home/wsw/app/research-evidence/stock-1430-h03-2026-09-07-cxq87ato.tar.gz`，其 SHA-256
+  为 `91397bf2352cb16c19ce62df62a6e0868149c36d5db8c10094c672975a6d0997`；本轮所有输入和
+  输出也保存在证据目录。CLI 只使用隔离存储和无效占位凭证，不继承生产凭证，不写正式路径。
+- 第一轮验证脚本用制表符序列化 key，而历史 Notebook 的 `_key_digest` 使用 `|`，因此在
+  历史摘要比较处失败。按 `cd88f0c` 中的原算法修正验证脚本后完整重跑；运行代码、输入、
+  样本和验收断言均未改变。`validate_alignment_v1.py`、`real-run-1`、对应失败日志与命令
+  保留，修正依据在 `validation-script-correction.json`，成功运行记录在 `real-run-2`。
+
+| 目标 T | Feature/Label 各行数 | 有效 Label | 首次 wall 秒 | peak RSS KiB |
+| --- | ---: | ---: | ---: | ---: |
+| `2025-11-18` | 5,157 | 5,149 | 2.73 | 1,089,156 |
+| `2025-12-31` | 5,170 | 5,158 | 2.75 | 1,110,004 |
+| `2026-04-30` | 5,150 | 5,136 | 2.73 | 1,105,080 |
+| `2026-07-27` | 5,192 | 5,188 | 2.70 | 1,089,456 |
+
+- 四组共八个新建 payload 与同一输入/环境下重建的 `cd88f0c` 输出，逐字段 schema、值和行序
+  精确相等；三 key、历史 key digest、35/4 列 schema、rank 范围、null coverage 与记录一致。
+  新实现分别复用旧版本和本轮版本的四组输出，共 16 个对象、32 个 payload/Meta 文件的
+  SHA-256、size、mtime 与 inode 全部不变。三个隔离输入副本的内容和文件身份也前后不变。
+  `2025-11-24` 负例因缺少 `2025-11-25` 分钟返回 `1`，Feature 保留，Label payload/Meta
+  均未发布。资源观测不构成 SLA 或 alpha 结论。
+- `validate_alignment.py`、命令、环境、输入 manifest、新旧输出、复用和失败记录均可恢复；
+  `SHA256SUMS` 覆盖本轮证据文件。证据至少保留至 H03 采用/拒绝决定及对应审查结束。
+
+- **Conclusion**：H03 的无 upstream 方向已确认，本轮最小实现通过上述技术验收；历史 195 对
+  回填仍只属于 `cd88f0c` 的执行事实。本轮未验证全历史质量或收益，正式化尚未合入，状态
+  保持 `open`。
+- **Next**：将本轮最终拟议 owner、实现、测试和可恢复证据同步送审；采用修改合入 `dev` 后
+  才成为正式采用事实。当前工作树为 `feature/intraday_feature` 上的未提交修改；本轮未执行
+  commit、push、merge、release、deploy 或正式回填。
 
 ## H04
 
@@ -604,8 +938,10 @@ close return 5d as-of P-1, turnover-rate mean 20d as-of P-1
 - 多个真实 P/T 对记录七列 coverage、schema/key digest、耗时和峰值内存；
 - adoption 同步正式 owner、实现和测试，并由用户明确决定。
 
-- **Next**：H01/H03 的候选 schema 稳定后，在独立实现分支中完成 P/T 无泄漏和 key 对齐验证；
-  在 H05 预注册比较前不选择或删除七个日频量。
+- **Next**：先独立决定本 Change 的 two-upstream 要求。H03 V1 的无 upstream 选择不自动
+  改变 H04；现行存储 owner 只支持单 upstream 且 Feature/Label 不写该字段，若保留本候选
+  要求，必须先定义输入 identity、失效及已有对象处理的存储契约，再实现融合。H03 schema
+  稳定后，在独立实现分支验证 P/T 无泄漏和 key 对齐；在 H05 预注册比较前不选择或删除七列。
 
 ## H05
 
