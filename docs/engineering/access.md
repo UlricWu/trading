@@ -2,8 +2,8 @@
 
 - **状态**：正式 owner
 - **适用范围**：`src/access/access.py::Access` 的正式 processed 市场数据读取、
-  可用交易日、日频行情/复权因子/换手率、日频 universe、Level-2 universe 和 Level-2
-  symbol/trade 市场范围读取。
+  可用交易日及下一正式交易日、日频行情/复权因子/换手率、日频 universe、Level-2
+  universe、Level-2 symbol/trade 市场范围读取和两市股票分钟事实读取。
 
 ## 身份与职责
 
@@ -41,6 +41,8 @@ class Access:
         end_date: str,
         sessions: int,
     ) -> list[str]: ...
+
+    def next_trade_date(self, *, trade_date: str) -> str: ...
 
     def universe(
         self,
@@ -84,6 +86,8 @@ class Access:
         symbols: Sequence[str] | None = None,
     ) -> pd.DataFrame: ...
 
+    def stock_trade_minutes(self, *, trade_date: str) -> pa.Table: ...
+
     def trades(
         self,
         *,
@@ -124,6 +128,10 @@ symbol, trade_date, turnover_rate
 `recent_trade_dates(end_date=E, sessions=N)` 要求 `E` 是正式交易日，并返回截至且包含
 `E` 的最近 `N` 个正式交易日，按日期升序。该方法从 `E` 所在年度开始按需向前读取连续
 年度对象；`N` 必须为正整数，`E` 休市、年度对象断档或历史不足时整体失败。
+
+`next_trade_date(trade_date=T)` 要求 `T` 是正式交易日，返回其后第一个正式交易日。该方法
+从 `T` 所在年度开始按需向后读取连续年度对象；`T` 休市、所需年度对象断档或没有可表示的
+后续 session 时整体失败。它只解析已提交日历，不预测未来开市安排。
 
 ## Universe
 
@@ -224,6 +232,19 @@ exchange="sz"  -> 只要求 sz_trade(T)
 调用方通过 `level2_universe()` 取得研究集合后，可以把其中需要研究的有限 symbols
 传给 `trades()`。`trades()` 不重复执行 universe 的上市、ST 或停牌过滤；请求 symbol
 没有正式 Level-2 slice 时，整个请求失败，不返回部分结果。
+
+## Level-2 股票分钟事实
+
+`stock_trade_minutes(T)` 固定读取同一 Access processed version 下的
+`sh_stock_trade_1m(T)` 与 `sz_stock_trade_1m(T)`，不接受 dataset、version、exchange 或
+symbol 参数。两个对象都必须具有有效 Meta 和 payload；任一对象缺失或无效时整体失败，不能
+返回单一市场。
+
+每个对象必须精确匹配 [`level2_minute_contract.md`](../data/level2_minute_contract.md) 的 V1
+Arrow schema、请求日期和完整唯一 key，并已按
+`(symbol, trade_date, minute_start_ts_utc, phase)` 升序。两市对象出现重复 symbol 或合并后
+重复 key 时失败。返回值保留同一 schema，并按完整 key 全局升序；有效的两市空对象返回固定
+schema 零行表。Access 不执行 14:30 universe、窗口、Feature 或 Label 计算。
 
 ## 错误归属
 

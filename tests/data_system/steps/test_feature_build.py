@@ -11,6 +11,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
+from src import logs
 from src.access import Access, meta
 from src.data_system.context import DataContext
 from src.data_system.steps import feature_build as feature_module
@@ -70,7 +71,7 @@ def test_feature_step_binds_builder_and_materializes_each_date(
         return builder
 
     logger = Mock()
-    monkeypatch.setattr(feature_module, "logs", logger)
+    monkeypatch.setattr(logs, "info", logger.info)
     monkeypatch.setattr(feature_module, "get_feature_builder", get_builder)
     path_manager = PathManager(tmp_path)
     access = Mock(spec=Access)
@@ -113,9 +114,9 @@ def test_feature_step_binds_builder_and_materializes_each_date(
     )
     assert pq.read_table(output_paths.payload_path).to_pydict() == {"feature": [1]}
     assert [call.args[0] for call in logger.info.call_args_list] == [
-        "✅ feature publish; feature_set=daily version=v1 "
+        "✅ feature; feature_set=daily version=v1 "
         "trade_date=2026-07-20 rows=1",
-        "♻️ feature meta hit; feature_set=daily version=v1 trade_date=2026-07-20",
+        "♻️ feature; feature_set=daily version=v1 trade_date=2026-07-20",
     ]
 
 

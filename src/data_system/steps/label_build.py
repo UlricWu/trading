@@ -4,12 +4,13 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from functools import partial
 
 from src import logs
 from src.access import Access
 from src.data_system.builders.registry import get_label_builder
 from src.data_system.context import DataContext
-from src.data_system.steps._derived_partition import _publish_derived_partition
+from src.data_system.steps._partition import _publish_partition
 from src.utils.path import PathManager
 
 
@@ -83,27 +84,22 @@ class LabelBuildStep:
                     version=version,
                     trade_date=target_date,
                 )
-                rows = _publish_derived_partition(
+                who = (
+                    f"label; label_set={label_set} version={version} "
+                    f"trade_date={target_date} maturity_date={input_dates[-1]}"
+                )
+                rows = _publish_partition(
                     pm=self._pm,
-                    meta_path=output_paths.meta_path,
-                    output_path=output_paths.payload_path,
-                    build=lambda builder=builder, input_dates=input_dates: (
-                        builder.build(
-                            access=self._access,
-                            trade_dates=input_dates,
-                        )
+                    paths=output_paths,
+                    who=who,
+                    build=partial(
+                        builder.build,
+                        access=self._access,
+                        trade_dates=input_dates,
                     ),
-                    who=(f"LabelBuild label_set={label_set} trade_date={target_date}"),
                 )
                 if rows is None:
-                    logs.info(
-                        f"♻️ label meta hit; label_set={label_set} version={version} "
-                        f"trade_date={target_date} maturity_date={input_dates[-1]}"
-                    )
+                    logs.info(f"♻️ {who}")
                 else:
-                    logs.info(
-                        f"✅ label publish; label_set={label_set} version={version} "
-                        f"trade_date={target_date} maturity_date={input_dates[-1]} "
-                        f"rows={rows}"
-                    )
+                    logs.info(f"✅ {who} rows={rows}")
         return context

@@ -9,9 +9,14 @@ from typing import ClassVar, Literal
 
 import pandas as pd
 import pyarrow as pa
+import pyarrow.compute as pc
 import pyarrow.parquet as pq
 
 from src.access import meta
+from src.data_system.builders.level2_stock_trade_1m import (
+    STOCK_TRADE_1M_KEY,
+    STOCK_TRADE_1M_SCHEMA,
+)
 from src.utils import table_ops
 from src.utils.datetime_utils import DateTimeUtils
 from src.utils.path import PathManager
@@ -41,6 +46,10 @@ class Access:
     """
 
     _LEVEL2_DATASETS: ClassVar[tuple[str, ...]] = ("sh_trade", "sz_trade")
+    _STOCK_MINUTE_DATASETS: ClassVar[tuple[str, ...]] = (
+        "sh_stock_trade_1m",
+        "sz_stock_trade_1m",
+    )
 
     def __init__(
         self,
@@ -180,6 +189,40 @@ class Access:
             f"insufficient trade-calendar history: "
             f"trade_date={validated_end}, required={sessions}, "
             f"available={len(selected)}"
+        )
+
+    def next_trade_date(self, *, trade_date: str) -> str:
+        """Return the formal session immediately after ``trade_date``.
+
+        Example:
+            next_date = access.next_trade_date(trade_date="2025-12-31")
+        """
+        validated_date = DateTimeUtils.require_system_date(
+            trade_date,
+            field_name="trade_date",
+        )
+        calendar_year = int(validated_date[:4])
+        calendar = self._read_calendar_year(calendar_year)
+        open_dates = sorted(calendar.loc[calendar["is_open"], "trade_date"].tolist())
+        if validated_date not in open_dates:
+            raise ValueError(
+                f"trade_date is not a formal trade date: trade_date={validated_date}"
+            )
+
+        later_dates = [value for value in open_dates if value > validated_date]
+        if later_dates:
+            return later_dates[0]
+
+        for next_year in range(calendar_year + 1, 10_000):
+            next_calendar = self._read_calendar_year(next_year)
+            next_open_dates = sorted(
+                next_calendar.loc[next_calendar["is_open"], "trade_date"].tolist()
+            )
+            if next_open_dates:
+                return next_open_dates[0]
+
+        raise RuntimeError(
+            f"no later formal trade date is representable: trade_date={validated_date}"
         )
 
     def universe(
@@ -384,6 +427,79 @@ class Access:
         )
         return frame.loc[:, list(columns)].copy()
 
+    def stock_trade_minutes(self, *, trade_date: str) -> pa.Table:
+        """Return both formal stock minute objects as one canonical table.
+
+        Both Shanghai and Shenzhen objects are required. The result preserves
+        the H02 schema and is sorted by its complete minute key.
+
+        Example:
+            minutes = access.stock_trade_minutes(trade_date="2026-05-06")
+            symbols = minutes.column("symbol").unique()
+        """
+        validated_date = DateTimeUtils.require_system_date(
+            trade_date,
+            field_name="trade_date",
+        )
+        minute_tables: list[pa.Table] = []
+        seen_symbols: set[str] = set()
+        for dataset_name in self._STOCK_MINUTE_DATASETS:
+            loaded = self._load_processed_meta(
+                trade_date=validated_date,
+                dataset_name=dataset_name,
+            )
+            with pq.ParquetFile(loaded.payload_path) as parquet_file:
+                table = parquet_file.read()
+            if not table.schema.equals(STOCK_TRADE_1M_SCHEMA, check_metadata=False):
+                raise ValueError(
+                    f"{dataset_name}: schema does not match H02 stock minute v1"
+                )
+            table_ops.require_nonempty_strings(
+                table,
+                ("symbol", "trade_date"),
+                who=dataset_name,
+            )
+            table_ops.require_non_null(
+                table,
+                ("minute_start_ts_utc", "phase"),
+                who=dataset_name,
+            )
+            if (
+                table.num_rows > 0
+                and pc.all(
+                    pc.equal(
+                        table.column("trade_date"),
+                        pa.scalar(validated_date, type=pa.string()),
+                    )
+                ).as_py()
+                is not True
+            ):
+                raise ValueError(
+                    f"{dataset_name}.trade_date must equal requested date: "
+                    f"trade_date={validated_date}"
+                )
+            table_ops.require_unique(table, STOCK_TRADE_1M_KEY, who=dataset_name)
+            ordered = table.sort_by(
+                [(column, "ascending") for column in STOCK_TRADE_1M_KEY]
+            )
+            if not table.equals(ordered):
+                raise ValueError(f"{dataset_name}: rows must use H02 key order")
+
+            symbols = set(pc.unique(table.column("symbol")).to_pylist())
+            duplicates = seen_symbols.intersection(symbols)
+            if duplicates:
+                raise RuntimeError(
+                    f"duplicate stock minute symbols across datasets: "
+                    f"trade_date={validated_date}, symbols={sorted(duplicates)}"
+                )
+            seen_symbols.update(symbols)
+            minute_tables.append(table)
+
+        output = pa.concat_tables(minute_tables).sort_by(
+            [(column, "ascending") for column in STOCK_TRADE_1M_KEY]
+        )
+        return output
+
     def trades(
         self,
         *,
@@ -560,7 +676,8 @@ class Access:
             trade_date=trade_date,
             dataset_name=dataset_name,
         )
-        return pq.ParquetFile(loaded.payload_path).read().to_pandas()
+        with pq.ParquetFile(loaded.payload_path) as parquet_file:
+            return parquet_file.read().to_pandas()
 
     def _read_daily_object(
         self,
@@ -616,7 +733,8 @@ class Access:
             meta_path=paths.meta_path,
             expected_payload_path=paths.payload_path,
         )
-        return pq.ParquetFile(loaded.payload_path).read().to_pandas()
+        with pq.ParquetFile(loaded.payload_path) as parquet_file:
+            return parquet_file.read().to_pandas()
 
     def _load_processed_meta(
         self,

@@ -11,6 +11,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
+from src import logs
 from src.access import Access, meta
 from src.data_system.context import DataContext
 from src.data_system.steps import label_build as label_module
@@ -52,7 +53,7 @@ def test_label_step_runs_each_single_maturity_set_independently(
         return builders[label_set]
 
     logger = Mock()
-    monkeypatch.setattr(label_module, "logs", logger)
+    monkeypatch.setattr(logs, "info", logger.info)
     monkeypatch.setattr(label_module, "get_label_builder", get_builder)
     path_manager = PathManager(tmp_path)
     windows = {
@@ -110,12 +111,12 @@ def test_label_step_runs_each_single_maturity_set_independently(
         assert builder.build_dates == tuple(windows[builder.lookahead + 1])
     messages = [call.args[0] for call in logger.info.call_args_list]
     assert [message.split(";", 1)[0] for message in messages] == [
-        "✅ label publish",
-        "✅ label publish",
-        "✅ label publish",
-        "♻️ label meta hit",
-        "♻️ label meta hit",
-        "♻️ label meta hit",
+        "✅ label",
+        "✅ label",
+        "✅ label",
+        "♻️ label",
+        "♻️ label",
+        "♻️ label",
     ]
 
 

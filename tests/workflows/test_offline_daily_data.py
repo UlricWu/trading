@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import cast
 from unittest.mock import Mock
 
@@ -17,7 +18,11 @@ from src.config.data_config import (
     LabelSetConfig,
     SourceConfig,
 )
+from src.data_system.brokers.level2 import Level2Broker
+from src.data_system.brokers.tushare import TushareBroker
 from src.data_system.context import DataContext
+from src.data_system.normalize.level2 import normalize_level2
+from src.data_system.normalize.tushare import normalize_tushare
 from src.data_system.pipeline import DataPipeline
 from src.jobs.requests import (
     DataJobKind,
@@ -25,6 +30,7 @@ from src.jobs.requests import (
     FeatureBackfillSubmission,
     Level2MinuteBackfillSubmission,
     StandardFactBootstrapSubmission,
+    Stock1430BackfillSubmission,
 )
 from src.utils.path import PathManager
 from src.workflows import offline_daily_data as workflow_module
@@ -33,6 +39,7 @@ from src.workflows.offline_daily_data import (
     run_level2_minute_backfill,
     run_offline_data,
     run_standard_fact_bootstrap,
+    run_stock_1430_backfill,
 )
 
 
@@ -101,9 +108,91 @@ def test_data_workflow_supplies_one_linear_domain_step_sequence(
     ]
 
 
+@pytest.mark.parametrize("kind", ["data-standard", "data-level2"])
+def test_workflow_supplies_lazy_brokers_shared_per_broker_and_isolated_per_run(
+    kind: DataJobKind,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _app_config()
+    tushare_init = Mock(return_value=None)
+    level2_init = Mock(return_value=None)
+    monkeypatch.setattr(TushareBroker, "__init__", tushare_init)
+    monkeypatch.setattr(Level2Broker, "__init__", level2_init)
+    calendar_factory = Mock()
+    fact_factory = Mock()
+    monkeypatch.setattr(workflow_module, "CalendarMaterializeStep", calendar_factory)
+    monkeypatch.setattr(workflow_module, "FactMaterializeStep", fact_factory)
+    monkeypatch.setattr(workflow_module, "DataPipeline", Mock())
+    calendar_brokers = []
+    fact_brokers = []
+
+    for run in range(2):
+        run_offline_data(
+            app_config=config,
+            path_manager=cast("PathManager", object()),
+            submission=DataSubmission(kind=kind, start="2026-07-20", end="2026-07-20"),
+        )
+        assert tushare_init.call_count == run
+        assert level2_init.call_count == (run if kind == "data-level2" else 0)
+        get_calendar_broker = calendar_factory.call_args.kwargs["get_broker"]
+        get_fact_broker = fact_factory.call_args.kwargs["get_broker"]
+        calendar_broker = get_calendar_broker()
+        fact_broker = get_fact_broker()
+        assert get_calendar_broker() is calendar_broker
+        assert get_fact_broker() is fact_broker
+        if kind == "data-standard":
+            assert fact_broker is calendar_broker
+        else:
+            assert isinstance(fact_broker, Level2Broker)
+            assert fact_broker is not calendar_broker
+        calendar_brokers.append(calendar_broker)
+        fact_brokers.append(fact_broker)
+
+    assert calendar_brokers[0] is not calendar_brokers[1]
+    assert fact_brokers[0] is not fact_brokers[1]
+    assert tushare_init.call_count == 2
+    assert level2_init.call_count == (2 if kind == "data-level2" else 0)
+    tushare_init.assert_called_with(app_cfg=config)
+    if kind == "data-level2":
+        level2_init.assert_called_with(app_cfg=config)
+
+
+def test_workflow_broker_construction_failure_propagates_without_caching(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    failure = RuntimeError("broker construction failed")
+    broker_init = Mock(side_effect=[failure, None])
+    monkeypatch.setattr(TushareBroker, "__init__", broker_init)
+    calendar_factory = Mock()
+    fact_factory = Mock()
+    monkeypatch.setattr(workflow_module, "CalendarMaterializeStep", calendar_factory)
+    monkeypatch.setattr(workflow_module, "FactMaterializeStep", fact_factory)
+    monkeypatch.setattr(workflow_module, "DataPipeline", Mock())
+
+    run_standard_fact_bootstrap(
+        app_config=_app_config(),
+        path_manager=cast("PathManager", object()),
+        submission=StandardFactBootstrapSubmission(
+            start="2026-07-20", end="2026-07-20"
+        ),
+    )
+    get_calendar_broker = calendar_factory.call_args.kwargs["get_broker"]
+    get_fact_broker = fact_factory.call_args.kwargs["get_broker"]
+    broker_init.assert_not_called()
+
+    with pytest.raises(RuntimeError) as caught:
+        get_fact_broker()
+
+    assert caught.value is failure
+    broker = get_calendar_broker()
+    assert get_fact_broker() is broker
+    assert broker_init.call_count == 2
+
+
 def test_standard_sources_come_only_from_the_tushare_active_manifest(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(TushareBroker, "__init__", Mock(return_value=None))
     pipeline = Mock(spec=DataPipeline)
     pipeline.run.side_effect = lambda context: context
     fact_step_factory = Mock()
@@ -136,11 +225,16 @@ def test_standard_sources_come_only_from_the_tushare_active_manifest(
         source.raw_object == name and source.outputs == [name]
         for name, source in fact_sources.items()
     )
+    assert isinstance(fact_step_factory.call_args.kwargs["get_broker"](), TushareBroker)
+    assert (
+        fact_step_factory.call_args.kwargs["normalize_operation"] is normalize_tushare
+    )
 
 
 def test_level2_sources_come_only_from_enabled_file_config(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(Level2Broker, "__init__", Mock(return_value=None))
     config = _app_config()
     config.data.sources["disabled"] = SourceConfig(
         enabled=False,
@@ -171,6 +265,56 @@ def test_level2_sources_come_only_from_enabled_file_config(
 
     fact_sources = fact_step_factory.call_args.kwargs["sources"]
     assert list(fact_sources) == ["sh_trade"]
+    assert isinstance(fact_step_factory.call_args.kwargs["get_broker"](), Level2Broker)
+    assert fact_step_factory.call_args.kwargs["normalize_operation"] is normalize_level2
+
+
+@pytest.mark.parametrize(
+    "kind", ["data-standard", "data-level2", "data-standard-bootstrap"]
+)
+def test_workflow_rejects_empty_fact_selection_before_step_construction(
+    kind: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _app_config()
+    config.data.sources = {}
+    monkeypatch.setattr(
+        TushareBroker,
+        "active_source_names",
+        Mock(return_value=("trade_calendar",)),
+    )
+    calendar_step_factory = Mock()
+    fact_step_factory = Mock()
+    pipeline_factory = Mock()
+    monkeypatch.setattr(
+        workflow_module, "CalendarMaterializeStep", calendar_step_factory
+    )
+    monkeypatch.setattr(workflow_module, "FactMaterializeStep", fact_step_factory)
+    monkeypatch.setattr(workflow_module, "DataPipeline", pipeline_factory)
+
+    with pytest.raises(ValueError, match="no fact sources"):
+        if kind == "data-standard-bootstrap":
+            run_standard_fact_bootstrap(
+                app_config=config,
+                path_manager=cast("PathManager", object()),
+                submission=StandardFactBootstrapSubmission(
+                    start="2019-01-01", end="2019-04-03"
+                ),
+            )
+        else:
+            run_offline_data(
+                app_config=config,
+                path_manager=cast("PathManager", object()),
+                submission=DataSubmission(
+                    kind=cast("DataJobKind", kind),
+                    start="2026-07-20",
+                    end="2026-07-20",
+                ),
+            )
+
+    calendar_step_factory.assert_not_called()
+    fact_step_factory.assert_not_called()
+    pipeline_factory.assert_not_called()
 
 
 def test_standard_workflow_uses_only_enabled_feature_and_label_operations(
@@ -269,10 +413,14 @@ def test_standard_workflow_accepts_all_derived_operations_disabled(
     assert feature_step_factory.call_args.kwargs["feature_versions"] == {}
     assert label_step_factory.call_args.kwargs["label_versions"] == {}
     assert [call.args[0] for call in logger.warning.call_args_list] == [
-        "⚠️ workflow selection; kind=data-standard "
-        "operation=feature reason=no_enabled_config",
-        "⚠️ workflow selection; kind=data-standard "
-        "operation=label reason=no_enabled_config",
+        (
+            "⚠️ workflow selection; kind=data-standard "
+            "operation=feature reason=no_enabled_config"
+        ),
+        (
+            "⚠️ workflow selection; kind=data-standard "
+            "operation=label reason=no_enabled_config"
+        ),
     ]
     pipeline.run.assert_called_once()
 
@@ -338,6 +486,7 @@ def test_level2_workflow_keeps_empty_feature_and_label_operations(
 def test_standard_fact_bootstrap_runs_only_calendar_and_standard_facts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(TushareBroker, "__init__", Mock(return_value=None))
     logger = Mock()
     monkeypatch.setattr(workflow_module, "logs", logger)
     pipeline = Mock(spec=DataPipeline)
@@ -373,14 +522,16 @@ def test_standard_fact_bootstrap_runs_only_calendar_and_standard_facts(
         "daily_bar",
         "daily_basic",
     ]
+    assert isinstance(fact_step_factory.call_args.kwargs["get_broker"](), TushareBroker)
+    assert (
+        fact_step_factory.call_args.kwargs["normalize_operation"] is normalize_tushare
+    )
     pipeline.run.assert_called_once_with(
         DataContext(start="2019-01-01", end="2019-04-03")
     )
     assert [call.args[0] for call in logger.info.call_args_list] == [
-        "▶️ workflow; kind=data-standard-bootstrap start=2019-01-01 "
-        "end=2019-04-03",
-        "✅ workflow; kind=data-standard-bootstrap start=2019-01-01 "
-        "end=2019-04-03",
+        "▶️ workflow; kind=data-standard-bootstrap start=2019-01-01 end=2019-04-03",
+        "✅ workflow; kind=data-standard-bootstrap start=2019-01-01 end=2019-04-03",
     ]
 
 
@@ -429,12 +580,16 @@ def test_feature_backfill_resolves_targets_and_runs_only_one_feature_step(
         )
     )
     assert [call.args[0] for call in logger.info.call_args_list] == [
-        "▶️ workflow; kind=data-feature-backfill "
-        "feature_set=tushare_daily_basic version=v1 start=2019-04-04 "
-        "end=2019-04-08 targets=2",
-        "✅ workflow; kind=data-feature-backfill "
-        "feature_set=tushare_daily_basic version=v1 start=2019-04-04 "
-        "end=2019-04-08 targets=2",
+        (
+            "▶️ workflow; kind=data-feature-backfill "
+            "feature_set=tushare_daily_basic version=v1 start=2019-04-04 "
+            "end=2019-04-08 targets=2"
+        ),
+        (
+            "✅ workflow; kind=data-feature-backfill "
+            "feature_set=tushare_daily_basic version=v1 start=2019-04-04 "
+            "end=2019-04-08 targets=2"
+        ),
     ]
 
 
@@ -552,10 +707,74 @@ def test_level2_minute_backfill_runs_only_one_minute_step(
         )
     )
     assert [call.args[0] for call in logger.info.call_args_list] == [
-        "▶️ workflow; kind=data-level2-minute-backfill start=2025-11-18 "
-        f"end=2025-11-19 targets={len(resolved_dates)}",
-        "✅ workflow; kind=data-level2-minute-backfill start=2025-11-18 "
-        f"end=2025-11-19 targets={len(resolved_dates)}",
+        (
+            "▶️ workflow; kind=data-level2-minute-backfill start=2025-11-18 "
+            f"end=2025-11-19 targets={len(resolved_dates)}"
+        ),
+        (
+            "✅ workflow; kind=data-level2-minute-backfill start=2025-11-18 "
+            f"end=2025-11-19 targets={len(resolved_dates)}"
+        ),
+    ]
+
+
+@pytest.mark.parametrize(
+    "resolved_dates",
+    [("2026-05-06", "2026-05-07"), ()],
+)
+def test_stock_1430_backfill_runs_only_the_fixed_h03_step(
+    resolved_dates: tuple[str, ...],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    logger = Mock()
+    monkeypatch.setattr(workflow_module, "logs", logger)
+    access = Mock()
+    access.trade_dates.return_value = list(resolved_dates)
+    access_factory = Mock(return_value=access)
+    monkeypatch.setattr(workflow_module, "Access", access_factory)
+    step = object()
+    step_factory = Mock(return_value=step)
+    monkeypatch.setattr(workflow_module, "Stock1430BuildStep", step_factory)
+    pipeline = Mock(spec=DataPipeline)
+    pipeline.run.side_effect = lambda context: context
+    pipeline_factory = Mock(return_value=pipeline)
+    monkeypatch.setattr(workflow_module, "DataPipeline", pipeline_factory)
+    path_manager = cast("PathManager", object())
+
+    run_stock_1430_backfill(
+        path_manager=path_manager,
+        submission=Stock1430BackfillSubmission(
+            start="2026-05-06",
+            end="2026-05-07",
+        ),
+    )
+
+    access_factory.assert_called_once_with(
+        pm=path_manager,
+        processed_version="v1",
+    )
+    access.trade_dates.assert_called_once_with(
+        start_date="2026-05-06",
+        end_date="2026-05-07",
+    )
+    step_factory.assert_called_once_with(pm=path_manager, access=access)
+    assert pipeline_factory.call_args.kwargs["steps"] == (step,)
+    pipeline.run.assert_called_once_with(
+        DataContext(
+            start="2026-05-06",
+            end="2026-05-07",
+            trade_dates=resolved_dates,
+        )
+    )
+    assert [call.args[0] for call in logger.info.call_args_list] == [
+        (
+            "▶️ workflow; kind=data-stock-1430-backfill start=2026-05-06 "
+            f"end=2026-05-07 targets={len(resolved_dates)}"
+        ),
+        (
+            "✅ workflow; kind=data-stock-1430-backfill start=2026-05-06 "
+            f"end=2026-05-07 targets={len(resolved_dates)}"
+        ),
     ]
 
 

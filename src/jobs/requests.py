@@ -116,6 +116,21 @@ class Level2MinuteBackfillSubmission:
 
 
 @dataclass(frozen=True, slots=True)
+class Stock1430BackfillSubmission:
+    """Describe one validated CLI-only H03 Feature/Label target range.
+
+    Example:
+        submission = Stock1430BackfillSubmission(
+            start="2026-05-06",
+            end="2026-05-06",
+        )
+    """
+
+    start: str
+    end: str
+
+
+@dataclass(frozen=True, slots=True)
 class TrainingSubmission:
     """Describe one validated full-range training workflow execution.
 
@@ -244,6 +259,25 @@ def create_level2_minute_backfill_submission(
     """
     normalized_start, normalized_end = _require_range(start, end)
     return Level2MinuteBackfillSubmission(
+        start=normalized_start,
+        end=normalized_end,
+    )
+
+
+def create_stock_1430_backfill_submission(
+    start: object,
+    end: object,
+) -> Stock1430BackfillSubmission:
+    """Construct one usable CLI-only H03 Feature/Label submission.
+
+    Example:
+        submission = create_stock_1430_backfill_submission(
+            "2026-05-06",
+            "2026-05-06",
+        )
+    """
+    normalized_start, normalized_end = _require_range(start, end)
+    return Stock1430BackfillSubmission(
         start=normalized_start,
         end=normalized_end,
     )

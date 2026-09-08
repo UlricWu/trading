@@ -9,15 +9,15 @@ import pyarrow.compute as pc
 from src.utils import table_ops
 from src.utils.datetime_utils import DateTimeUtils
 
-__all__ = ("build_level2_stock_trade_1m",)
+__all__ = ("STOCK_TRADE_1M_KEY", "STOCK_TRADE_1M_SCHEMA", "build_level2_stock_trade_1m")
 
-_MINUTE_FACT_KEY = (
+STOCK_TRADE_1M_KEY = (
     "symbol",
     "trade_date",
     "minute_start_ts_utc",
     "phase",
 )
-_OUTPUT_SCHEMA = pa.schema(
+STOCK_TRADE_1M_SCHEMA = pa.schema(
     [
         pa.field("symbol", pa.string(), nullable=False),
         pa.field("trade_date", pa.string(), nullable=False),
@@ -105,7 +105,7 @@ def build_level2_stock_trade_1m(
         pc.equal(trades.column("security_type"), pa.scalar("stock"))
     )
     if stock_trades.num_rows == 0:
-        return pa.Table.from_batches([], schema=_OUTPUT_SCHEMA)
+        return pa.Table.from_batches([], schema=STOCK_TRADE_1M_SCHEMA)
 
     table_ops.require_nonempty_strings(
         stock_trades,
@@ -195,7 +195,7 @@ def build_level2_stock_trade_1m(
             ),
             "signed_notional": signed_notional,
         }
-    ).group_by(list(_MINUTE_FACT_KEY), use_threads=False).aggregate(
+    ).group_by(list(STOCK_TRADE_1M_KEY), use_threads=False).aggregate(
         [
             ("price", "first"),
             ("price", "max"),
@@ -237,8 +237,8 @@ def build_level2_stock_trade_1m(
                 safe=True,
             ),
         ],
-        schema=_OUTPUT_SCHEMA,
-    ).sort_by([(column, "ascending") for column in _MINUTE_FACT_KEY])
+        schema=STOCK_TRADE_1M_SCHEMA,
+    ).sort_by([(column, "ascending") for column in STOCK_TRADE_1M_KEY])
     table_ops.require_finite(
         output,
         (

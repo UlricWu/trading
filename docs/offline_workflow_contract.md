@@ -7,7 +7,7 @@
 
 ## 共同边界
 
-`src/workflows` 只提供七个 workflow composition root：
+`src/workflows` 只提供八个 workflow composition root：
 
 ```python
 run_trade_calendar_bootstrap(
@@ -35,6 +35,11 @@ run_level2_minute_backfill(
     submission: Level2MinuteBackfillSubmission,
 ) -> None
 
+run_stock_1430_backfill(
+    *, path_manager: PathManager,
+    submission: Stock1430BackfillSubmission,
+) -> None
+
 run_offline_training(
     *, model_config: ModelConfig, path_manager: PathManager,
     submission: TrainingSubmission, experiment_id: str,
@@ -46,7 +51,7 @@ run_daily_alpha_backtest(
 ) -> None
 ```
 
-`src/workflows` 只负责入口校验、实验身份、日程解析和依赖组装，并通过不可变 tuple 显式
+`src/workflows` 只负责自身拥有的入口前置条件、实验身份、日程解析和依赖组装，并通过不可变 tuple 显式
 声明具体 step 及其顺序。Data 只使用一个 `DataPipeline`，Training 与 Backtest 分别使用
 `TrainingPipeline` 和 `BacktestPipeline`。`DataPipeline` 只拥有 workflow 传入的单一 `steps`
 tuple 和 Instrumentation 作用域，不知道 data kind、日期 schedule、source、step 分类或具体
@@ -61,9 +66,27 @@ step 类型；它必须严格按传入顺序把同一个 Context 交给每个 st
 Pipeline/Workflow 基类、DAG、step registry、依赖声明、priority 或 before/after 规则。
 
 `src/data_system/steps` 是 offline data 业务行为的唯一实现目录；日期循环和 operation
-调度由具体 Step 拥有。Feature 与 label Step 共用一个 private derived-partition 发布函数，
-该函数唯一拥有 Meta reuse、非空检查、payload 先于 Meta 的发布顺序；它不拥有日期、
-dataset identity、日志或计算。Broker、builder 与 normalize 分别保留在
+调度由具体 Step 拥有。`steps` 包内部的 private `_publish_parquet_object` 统一承担
+Calendar、Fact、Feature/Label 与 Level-2 minute 的表制品发布：接收已构建的
+`pyarrow.Table`、`ObjectPaths`、可选的 `upstream_meta_path` 和 `symbol_slices`，先通过
+`write_parquet_atomic` 发布完整 payload，再调用 `meta.commit` 提交 Meta。该顺序遵循
+[存储契约](data/storage_layout.md#object-side-meta)，不构成多文件事务；错误原样传播。
+该函数不判断复用、空表是否合法或具体数据内容，也不选择 broker、执行计算或记录日志。
+Raw payload 已由 broker 写入，Step 直接调用 `meta.commit`，不经该表制品发布函数。
+
+Calendar 的 processed 年度对象与 Feature/Label 分区另共用 private `_publish_partition`。
+该函数唯一拥有这些对象的输出 Meta reuse 校验、miss 后调用构建能力、输出非空检查和发布；
+有效 Meta 返回 `None`，无效 Meta 原样失败，仅 Meta 不存在时同步调用一次 `build()`，再调用
+`_publish_parquet_object` 完成发布并返回行数。构建 callable 不被保存或延迟到本次调用之外。
+具体 Step 决定日期、对象身份及 miss 时所需的输入和计算；根据返回结果记录复用或发布日志。
+发布边界不拥有业务计算或日志，不重复校验 Access 或 producer 已保证的输入内容。
+Calendar 新发布时记录该年度 raw Meta；已有 Calendar Meta 的直接 upstream 继续由
+`meta.find` 按存储契约校验。Feature/Label 不提供 upstream，已有 Meta 包含 `upstream`
+时必须失败；所有这些对象的已有 Meta 包含 `symbol_slices` 时必须失败。Fact 和 Level-2
+minute 的复用条件、空表规则、upstream/index 与日志仍遵循各自 owner；具体 Step 准备表
+及相关参数后调用共享发布函数。
+
+Broker、builder 与 normalize 分别保留在
 `src/data_system/brokers`、`builders` 与 `normalize`，这些
 目录本身就是 Step 调用的具体执行能力，不再外包一层通用 `engines` 目录。跨多个
 normalize 模块复用的 Arrow 原语只允许作为 `normalize` 的 private module；不得建立公共
@@ -106,6 +129,13 @@ step 写入后续 step 所需的 `trade_dates`。Backtest Context 每个 timing 
 Context 的单 window 临时字段在每次迭代前清空。只有确需跨 timing 延续的 backtest 值进入
 `BacktestState`。
 
+Data Context 是可信内部载体，构造时不执行日期校验。请求范围由
+[`CLI 契约`](engineering/cli_contract.md#通用边界)约定的 submission 构造边界保证；
+workflow 自行生成范围时负责在执行准备前建立相同的日期格式与顺序不变量。`start/end`
+在同一次 Step 链中保持不变，Context、DataPipeline 和内部 data Step 不重复校验它们。
+Calendar Step 对该范围执行年度物化与正式交易日解析；Access 的独立 public 请求校验继续由
+[`Access 契约`](engineering/access.md#错误归属)定义。
+
 每个 workflow 必须从收到的同一个 `PathManager` 创建唯一
 `Access(pm=path_manager, processed_version="v1")`，组装对应 Pipeline 后调用一次 `run`；公共
 入口不接受第二个 `Access`，从而不能把不同 storage root 组合到同一次执行。正式 processed
@@ -144,7 +174,8 @@ Workflow 不统一包装异常，不把失败改成空制品或 success，也不
 
 `run_trade_calendar_bootstrap` 是 CLI-only `data-calendar` 的唯一 workflow。CLI 在 composition
 root 读取一次 Asia/Shanghai 当前日期，并以显式 `as_of_date` 传入；workflow 不读取当前
-时间。`as_of_date` 必须是规范系统日期。Bootstrap 范围固定为：
+时间。`as_of_date` 必须是规范系统日期且不早于 `2016-01-01`。早于该日的输入必须在
+依赖组装、Instrumentation、运行日志和 I/O 前以 `ValueError` 失败。Bootstrap 范围固定为：
 
 ```text
 start = 2016-01-01
@@ -174,8 +205,8 @@ Instrumentation 和 I/O 前失败。完整闭区间是一个 workflow 执行单�
 2. Standard 选择 manifest 中除 calendar 外的全部 fact source；Level-2 排除配置中 disabled
    文件 source，并选择剩余全部条目；
 3. 确认当前 kind 至少有一个 fact source；
-4. 绑定固定的 Tushare calendar broker/normalize，并解析所有 fact source 的 broker class
-   和固定 broker normalize callable；
+4. 绑定固定的 Tushare calendar broker/normalize，并由 workflow 按所选 fact source family
+   直接绑定一个 broker class 和一个固定 broker normalize callable；
 5. Standard 从 `app_config.data.feature_sets` 与 `label_sets` 分别选择全部且仅选择
    `enabled=true` 的 operation；Level-2 选择空的 feature 与 label operation 集。
 
@@ -191,9 +222,25 @@ source 在 workflow 准备阶段转换为完整 `SourceConfig` 后直接绑定�
 `FactMaterializeStep`；固定的 Tushare calendar 由 `CalendarMaterializeStep` 按年度对象
 直接承担。
 
+每个 Fact Step 的所选 source 属于同一个 broker。Workflow 拥有 source 非空、source family
+选择和具体执行依赖的绑定。Workflow 在对应 source family 分支直接引用具体 broker class
+与 normalize callable，不经过 broker name 映射表。Standard facts 固定使用 `TushareBroker`，
+Level-2 facts 固定使用 `Level2Broker`；normalize callable 遵循 source owner 的固定对应关系。
+Step 接收已绑定的零参数 `get_broker` callable 与 `normalize_operation`，不接收
+AppConfig、broker class 或 adapter cache，也不重复检查这些已建立的关系；正确绑定由
+workflow 装配测试验证。Calendar 的 callable 返回可用的 `TushareBroker`，Fact 的 callable
+返回当前 family 的可用 `BrokerAdapter`。
+`outputs=[]` 的 source 只执行 raw ingest，不调用已绑定的 normalize callable。
+
 Broker adapter 在首次 raw Meta miss 时才构造，并按 broker 在整个 workflow 内缓存一次。
-全 Meta hit 不构造 adapter。一次 fetch 仍可拥有自己的网络 session。Normalize operation
-在准备阶段绑定 source/profile；日期循环不得重复解析 capability。
+`src/workflows` 的 private `_get_broker` 唯一实现实例查询、构造及成功后的缓存写入；
+workflow 使用 `functools.partial` 绑定具体 class、AppConfig 和本次运行独有的 cache，
+把零参数 callable 交给 Step。Calendar 与 Fact 只在 raw Meta miss 后调用该能力，不再自行
+构造或管理实例。同一 workflow 中每个 broker 名称绑定同一 class 与配置，Standard 的
+Calendar 与 Fact 因而复用同一 Tushare 实例。构造异常原样传播且不写入缓存；不同 workflow
+运行不共享实例。全 Meta hit 不调用供给能力、不构造 adapter。一次 fetch 仍可拥有自己的
+网络 session。Normalize operation 在 workflow 准备阶段绑定；日期循环只调用已绑定的
+callable。
 
 两个 kind 的 workflow 都只显式组装一个线性 step tuple。`CalendarMaterializeStep` 先在自己
 的一次 `run` 中按自然年升序复用或物化完整 `[start, end]` 所需的 `trade_calendar` 年度
@@ -203,21 +250,31 @@ Broker adapter 在首次 raw Meta miss 时才构造，并按 broker 在整个 wo
   ingest 与 normalize；
 - 休市日不执行 fact；只包含休市日的范围成功。
 
-单个日期 ingest 必须尝试全部 selected fact source。已有 raw Meta 与本次成功 payload 都
-表示可用；全部无 payload 返回 `False`，全部可用返回 `True`，部分可用必须在尝试完全部
-source 后抛 `RuntimeError`。两个 kind 的任一正式交易日全部 fact source 缺失都必须失败；
+单个日期 ingest 必须尝试全部 selected fact source。已有 raw Meta 与本次成功提交的 raw
+对象都表示可用。Ingest 保留命中时取得的 `MetaRecord`；新下载直接使用 Broker 返回的 raw
+路径提交 Meta，并取得该记录。成功返回按 `source_name` 对应的全部 raw 记录，全部无
+payload 返回空映射，部分可用必须在尝试完全部 source 后抛 `RuntimeError`。同一次日期
+执行的 normalize 直接消费这些记录，不为每个 output 再读取同一 raw Meta；只有 processed
+Meta miss 才选择物理输入，同一 source 的多个 output 复用本次选定的输入路径。发布边界
+仍按存储契约校验并记录直接 upstream。两个 kind 的任一正式交易日全部 fact source 缺失
+都必须失败；
 `FactMaterializeStep` 必须完成范围内所有正式交易日的尝试后，一次报告全部缺失日期。不得
 返回 workflow 级 skipped 或跳过缺失日期。只包含休市日、因而没有正式交易日的范围成功。
 
-Calendar 的年度 ingest、raw Meta、normalize 和 lineage 由
-`CalendarMaterializeStep` 直接承担；fact 的对应责任由 `FactMaterializeStep` 直接承担。
+Calendar 的 `_materialize_year` 按顺序显式执行：复用合格 processed 年度对象并返回；通过
+`_ensure_raw_calendar` 复用或获取 raw 日历并保证 raw Meta 已提交；调用 `normalize_tushare`
+得到标准表；发布 processed 分区。年度 ingest、raw Meta 和直接 raw 输入选择由
+`_ensure_raw_calendar` 拥有，成功时返回 raw payload 路径。只有 processed Meta miss 才执行
+raw 准备和 normalize，raw Meta hit 也必须经过共享发布边界的输出非空检查。Broker 对空响应
+的拒绝继续发生在 raw 写入前。Fact 的对应责任由 `FactMaterializeStep` 直接承担。
 两个 Step 共享 workflow 的 lazy broker adapter cache。仅当某日全部所选 fact source 可用
 时才 normalize；不得拆分独立 ingest/normalize Pipeline Step，也不得引入 Materializer 或
 其他转发对象。
 
-Calendar 的 processed 与 raw Meta hit 分别记录 `♻️ calendar processed meta hit` 与
-`♻️ calendar raw meta hit`；每个新发布年度记录一次 `✅ calendar publish`，Step 成功后以
-`✅ calendar materialize` 聚合 years、reused、published 与 trade_dates。Fact 不记录逐日
+Calendar 的 processed 分区结果由 Calendar Step 记录，`who` 精确携带
+`calendar; calendar_year=<year> output=<payload_path>`；raw Meta hit 继续由 Calendar
+记录 `♻️ calendar raw meta hit`。Step 成功后以 `✅ calendar materialize` 只聚合 years 与
+trade_dates，不再为日志累计 reused/published。Fact 不记录逐日
 ingest/normalize start 或 finish；每个 raw 与 processed Meta hit 分别记录 `♻️ raw meta hit`
 与 `♻️ processed meta hit`。每个实际 raw ingest 记录 `✅ raw ingest` 及其 elapsed_seconds；
 每个 processed publish 记录 `✅ processed publish` 及其中 normalize_seconds；不可用 source
@@ -239,10 +296,13 @@ partition identity，末日是 maturity。多个 label set（包括不同 lookah
 `LabelBuildStep` 中各自解析窗口、复用 Meta 和发布分区，互不改变对方的 maturity。空
 operation 集自然不产生数据；Pipeline 不隐式扩大请求范围。
 
-Feature/label builder 和 Access 不记录运行日志。Private 发布函数也不记录日志；具体 Step
-在每个 operation 完成后以 `♻️ feature meta hit` / `♻️ label meta hit` 表示复用，以
-`✅ feature publish` / `✅ label publish` 表示发布，label 日志同时携带 partition date 与
-maturity date。调度、计算或发布错误原样传播，不追加重复错误日志。
+Feature/label builder、Access 和 private 发布函数不记录运行日志。分区结果日志由具体 Step
+输出：发布函数返回 `None` 后记录一次 `♻️ {who}`；新分区 Meta 提交成功并返回行数后记录一次
+`✅ {who} rows={rows}`。Feature/Label Step 提供 `who`，以 `feature` 或 `label` 为具名对象，
+以 `;` 分隔数据集、version 和 partition date 上下文；label 同时携带 maturity date。
+发布函数的 `int | None` 只供调用 Step 记录分区结果，不累计通用运行状态。
+Calendar 的 `_materialize_year` 无返回值；各 Step 的 `run` 返回原 `DataContext`。
+调度、计算或发布错误原样传播，失败分区不输出结果日志，也不追加重复错误日志。
 
 两个 kind 的显式 step 顺序都固定为 calendar materialize → fact materialize → feature
 build → label build。Standard 的 derived operation 来自 enabled 配置；Level-2 的两个
@@ -295,7 +355,7 @@ Workflow 从收到的 `PathManager` 创建唯一 Access，先构造一个只含�
 
 Backfill 不组装 Calendar、Fact 或 Label Step，不创建 broker adapter，不下载或写入 raw、
 processed、label、experiment 或 Job 状态。每个目标 Meta miss 的历史依赖、发布和失败语义
-完全由同一个 `FeatureBuildStep`、精确 builder、Access 与 derived-partition 发布边界拥有；
+完全由同一个 `FeatureBuildStep`、精确 builder、Access 与共享分区复用、发布边界拥有；
 有效 Meta hit 不读取历史输入，较早目标已提交而较晚目标失败时保留已提交分区，重跑从 miss
 处续建。
 
@@ -337,6 +397,42 @@ start、end 与 targets。Step 对有效输出记录 `♻️ Level-2 minute fact
 `⏳ Level-2 minute fact`，发布后记录 `✅ Level-2 minute fact publish`。这些日志携带 target、
 trade_date 和与事件直接相关的 symbols、进度、tick、行数、耗时或路径，不建立额外 stage
 状态机，也不由 Access 或 builder 重复记录。
+
+## 14:30 Feature/Label backfill workflow
+
+`run_stock_1430_backfill` 是 CLI-only `data-stock-1430-backfill` 的唯一 workflow，直接消费
+已校验的 `Stock1430BackfillSubmission(start, end)`。闭区间精确表示目标 `T` 分区，不表示
+H02 分钟或日频 factor 的生产范围。
+
+Workflow 从收到的 `PathManager` 创建唯一固定 `processed_version=v1` Access，通过正式 trade
+calendar 把闭区间解析为升序目标 session，只显式组装一个 `Stock1430BuildStep` 并调用一次
+`DataPipeline.run()`。它不读取配置中的 source、Feature 或 Label registry，不组装 Calendar、
+Fact、通用 Feature/Label 或分钟 Step，不创建 broker adapter，也不写 raw、processed、
+experiment 或 Job 状态。目标 session 集为空时 Step 仍执行一次并自然成功。
+
+`Stock1430BuildStep` 对每个 `T` 固定先处理 `l2_stock_1430/v1` Feature，再处理
+`l2_stock_1430_t1_vwap_rank/v1` Label。Feature Meta miss 才通过 Access 读取 `T` 两市分钟事实；
+Label Meta miss 才通过 `meta.require` 取得已提交 Feature payload，只读取三字段 key，
+再解析下一正式 session `T+1`，并读取 T/T+1
+两市分钟事实及 adjustment factor。固定时间、universe、schema、计算和 null 语义由
+[`docs/data/stock_1430_feature_label_contract.md`](data/stock_1430_feature_label_contract.md)
+所有。
+
+有效 H03 Meta hit 只校验该对象自身 Meta/payload identity，不读取分钟、factor、Feature payload
+或当前上游状态。Feature 成功后 Label 失败、或较早目标成功后较晚目标失败时，已经提交的分区
+保留；重跑按每个对象 Meta 从首个 miss 续建。H03 Meta 不写 `upstream` 或 `symbol_slices`，
+已有关系字段时失败，不覆盖或降级为 miss。
+
+Workflow Instrumentation identity 固定为：
+
+```text
+data-stock-1430-backfill_{start}_{end}
+```
+
+目标日期解析完成后记录 `▶️ workflow`，成功返回后记录 `✅ workflow`；两条日志携带 kind、
+start、end 与 targets。Step 为每个对象提供以 `stock 14:30 Feature` 或 `stock 14:30 Label`
+为具名对象、携带 trade_date 和 version 的 `who`；private 发布函数返回复用或发布结果，
+由 Step 按共同规则记录，发布时追加行数。错误原样传播。
 
 ## Training workflow
 

@@ -171,6 +171,6 @@ close-to-close 观测只定义监督目标，不定义入场、退出、成交�
   历史 session 不足时由 Access 的日历边界失败；
 - label maturity 窗口长度与该 set 的 `lookahead` 不一致时由 label producer 失败；正式历史
   session 不足时由 Access 的日历边界失败；
-- 空 feature/label 输出、payload 原子写入和 Meta 提交由 derived-partition 发布边界失败；
+- 空 feature/label 输出、payload 原子写入和 Meta 提交由 `_publish_partition` 发布边界失败；
 - registry identity、model `label_column` 与 label set 不匹配分别在 workflow 准备和 training
   准备边界失败。上述错误都原样传播，不转换为空制品或部分成功。

@@ -14,11 +14,13 @@ from src.jobs.requests import (
     InvalidJobRequest,
     Level2MinuteBackfillSubmission,
     StandardFactBootstrapSubmission,
+    Stock1430BackfillSubmission,
     TrainingSubmission,
     build_cli_command,
     create_feature_backfill_submission,
     create_level2_minute_backfill_submission,
     create_standard_fact_bootstrap_submission,
+    create_stock_1430_backfill_submission,
     parse_job_request,
 )
 
@@ -79,6 +81,13 @@ def test_cli_only_data_ranges_create_distinct_submissions() -> None:
         start="2025-11-18",
         end="2025-11-19",
     )
+    assert create_stock_1430_backfill_submission(
+        "2026-05-06",
+        "2026-05-07",
+    ) == Stock1430BackfillSubmission(
+        start="2026-05-06",
+        end="2026-05-07",
+    )
 
 
 @pytest.mark.parametrize(
@@ -88,6 +97,7 @@ def test_cli_only_data_ranges_create_distinct_submissions() -> None:
         "data-standard-bootstrap",
         "data-feature-backfill",
         "data-level2-minute-backfill",
+        "data-stock-1430-backfill",
     ],
 )
 def test_cli_only_data_kinds_are_not_http_job_kinds(kind: str) -> None:
