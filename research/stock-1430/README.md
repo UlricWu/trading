@@ -21,7 +21,7 @@ H02 minute_facts → H03 l2_datasets → H04 fusion → H05 training → H06 rep
 H01 与 H02 没有相互依赖，可以并行判断。H03–H06 可以在上游仍为 open 时继续研究，但不得把
 候选上游当作正式行为；上游被拒绝或语义实质变化时，下游必须重建基线并重验相关证据。
 
-## 当前背景（2026-09-08，本地 `dev@57d94ea`）
+## 当前背景（2026-09-11，本地 `dev@57d94ea`）
 
 - H01 的日常 enabled Feature/成熟 Label、显式 Standard facts 冷启动和 Feature 历史回填
   已随 `2ae615e` 合入 `dev`，正式行为由
@@ -29,8 +29,9 @@ H01 与 H02 没有相互依赖，可以并行判断。H03–H06 可以在上游�
   [`offline_workflow_contract.md`](../../docs/offline_workflow_contract.md) 拥有。
 - H02 的两市股票分钟事实及 CLI-only 回填已随 `57d94ea` 合入 `dev`；正式行为由
   [`level2_minute_contract.md`](../../docs/data/level2_minute_contract.md) 拥有。
-- H03 已有 `feature/1430@cd88f0c` 的候选实现、隔离验收和正式路径回填证据。本轮在当前
-  feature 分支整理最小差异，尚未合入 `dev`；回填事实不等于正式采用。
+- H03 当前最小候选已提交为 `feature/intraday_feature@5219ae2`，尚未合入本地 `dev`。
+  `feature/1430@cd88f0c` 的候选实现、隔离验收和正式路径回填仍作为历史证据保留；回填事实
+  不等于正式采用。
 - 当前训练和回测以日频二字段 key 和 daily timing 为正式语义，不能直接证明 14:30 三字段
   key、完整 timestamp maturity 或 post-decision execution 隔离。
 - 当前 experiment artifact 没有完整保存 resolved config、代码版本、输入 manifest、环境和
@@ -885,9 +886,10 @@ Feature/Label identity、version 和日期下，有效 Meta 就表示该对象�
 - **Conclusion**：H03 的无 upstream 方向已确认，本轮最小实现通过上述技术验收；历史 195 对
   回填仍只属于 `cd88f0c` 的执行事实。本轮未验证全历史质量或收益，正式化尚未合入，状态
   保持 `open`。
-- **Next**：将本轮最终拟议 owner、实现、测试和可恢复证据同步送审；采用修改合入 `dev` 后
-  才成为正式采用事实。当前工作树为 `feature/intraday_feature` 上的未提交修改；本轮未执行
-  commit、push、merge、release、deploy 或正式回填。
+- **Next（2026-09-11 更新）**：将最终拟议 owner、实现、测试和可恢复证据同步送审。候选实现
+  已提交为 `feature/intraday_feature@5219ae2c7c9fd8430e2e29e34da7d07b05f99d61`，
+  尚未合入本地 `dev@57d94ea`；采用修改合入 `dev` 后才成为正式采用事实。上文 2026-09-08
+  Evidence 中的未提交状态保留为当次运行记录。
 
 ## H04
 
