@@ -57,6 +57,26 @@ H01 与 H02 没有相互依赖，可以并行判断。H03–H06 可以在上游�
 - 如果要据此选择或删除某个独立因子，必须在看到最终结果前固定比较候选、选择数据、最终验证
   数据、指标和停止条件；该选择能够独立关闭时，应新增独立 Change，而不是改写既有结论。
 
+## 验证口径
+
+输入校验表示构建或消费时检查实际读取对象及本阶段的领域契约；复用时上游验证表示已有输出
+有效时，仍回查当前来源来判定是否可复用；证据复现表示绑定实际输入、代码和运行条件。三者
+分别处理，不能用上游数量决定是否需要复用时验证。下表只提供导航，具体约束由各 H 段落及其
+引用的 owner 定义。
+
+| 阶段 | 本阶段产物复用时回查 upstream | 构建或消费时保留的验证 |
+| --- | --- | --- |
+| [H01](#h01) 日频 Feature | 不需要 | 必要历史输入、窗口和输出契约 |
+| [H02](#h02) 分钟事实 | 需要，同交易所同日逐笔对象的一跳验证 | 输入有效性、分钟聚合与输出契约 |
+| [H03](#h03) L2 Feature/Label | 不需要 | 分钟、factor、时间窗口与 Feature/Label key 对齐 |
+| [H04](#h04) 融合 Feature | 不需要 | 精确输入版本、P/T、L2-left join、行序与列规则 |
+| [H05](#h05) 训练 | 不引入 object-side upstream 或级联验证 | 实际 Feature/Label、maturity、输入 manifest 与运行条件 |
+| [H06](#h06) 回放 | 不引入 object-side upstream 或级联验证 | 模型 artifact、Feature 契约、cutoff、执行隔离与实际输入 |
+
+免除复用时回查不免除实际输入校验。H03 构建和 H06 回放读取 H02 分钟对象时，仍由现有
+Meta/Access 边界执行该对象自带的一跳验证，下游不复制检查。已有对象可复用也不证明旧研究
+证据仍适用；影响结果的输入或语义变化后，相关证据按研究工作流重验。
+
 ## H01
 
 - **Title**：日频 Feature 依赖感知回填
@@ -298,7 +318,11 @@ microseconds 对 `60_000_000` 向下取整；OHLC 在每个完整 key 内按
 - 有效上游没有 stock 行时发布固定 schema 的零行 Parquet 和单 upstream Meta；missing 或
   invalid upstream 失败。分钟输出不建立 `symbol_slices`。
 - CLI 固定同时请求 SH、SZ，按日期升序且每个日期固定 SH 后 SZ；首次失败终止。已经提交的
-  较早日期或同日较早交易所对象保留，重跑只复用 direct upstream 未变化的有效输出。
+  较早日期或同日较早交易所对象保留，重跑只复用自身及 direct upstream identity 有效的输出。
+- 一跳验证保留分钟事实 owner 已定义的源对象绑定：同交易所同日逐笔对象的 Meta、payload 和
+  记录字节数必须有效。具体 identity 比较由
+  [`storage_layout.md`](../../docs/data/storage_layout.md) 拥有，不递归追溯更上游，也不检测
+  同尺寸内容替换；这不是对上游内容完全未变的保证。
 
 **Acceptance**：
 
@@ -900,7 +924,7 @@ Feature/Label identity、version 和日期下，有效 Meta 就表示该对象�
 - **Why**：训练和回放临时 join 会分散日期 lag、universe、列顺序和缺失规则；读取 T 日日频
   Feature 则会使用收盘后信息。
 - **Scope**：`stock_1430_daily_l2/v1`、P/T 时间关系、L2-left join、七个日频量在 T universe
-  内重新排名、固定 39 列、two-upstream lineage 和 CLI-only 回填。
+  内重新排名、固定 39 列、无 upstream 的对象 Meta 和 CLI-only 回填。
 - **Not included**：修改上游、构建 Label、模型训练、因子选择、缺失填充、行业/市值中性、
   fallback、HTTP、cron、实时源或未来版本。
 - **Depends on**：H01、H03；H03 同时提供下游训练所需的 Label。
@@ -927,23 +951,30 @@ close return 5d as-of P-1, turnover-rate mean 20d as-of P-1
 
 - 输出 key、行数和顺序逐行继承 L2 T；daily 多余 symbol 被忽略，L2 symbol 缺失 daily 时保留
   行并令七列为 null。
-- 整个 P partition 缺失必须失败；禁止 P-2、最近日、T daily 或 L2-only fallback。
-- 输出只记录 L2 T 与 daily P 两个直接 upstream，不重复展开传递 lineage。
+- 输出 Meta miss 时才读取 L2 T 与 daily P；任一必要分区缺失或无效必须失败。构建时整个 P
+  partition 缺失禁止 P-2、最近日、T daily 或 L2-only fallback。
+- 输出 Meta 只包含 `payload` 和 `size_bytes`。固定 identity、version 和日期下，自身 Meta 与
+  payload identity 有效就直接复用，不读取 L2 T、daily P 或当前上游状态；已有 Meta 无效时
+  必须失败，不覆盖或降级为 miss。
+- V1 固定绑定上述两个输入 set/version 与 P/T 关系；输入版本或计算语义变化必须产生新的
+  H04 version。同版本上游内容修订不会自动使旧输出失效或重建；实际输入由研究证据保存。
 
 **Acceptance**：
 
 - P 由正式 session 解析，跨周末、长假和年度边界正确；
-- 修改或删除 T 日 daily Feature 不影响融合 T，P 缺失时不 fallback；
+- 新建输出时，修改或删除 T 日 daily Feature 不影响融合 T，P 缺失时失败且不 fallback；
 - 输出 key/rows/order 与 L2 T 完全一致，32 个 L2 值不被重算；
 - 七个 source-to-rank 映射、null/tie/valid-count 和最终 39 列顺序通过手算测试；
-- 两个直接 upstream 精确记录并参与 Meta reuse validation；
-- 多个真实 P/T 对记录七列 coverage、schema/key digest、耗时和峰值内存；
+- 输出 Meta 精确只含 `payload` 和 `size_bytes`；有效 Meta hit 不读取两个上游，即使当前上游
+  缺失或变化仍直接复用；已有无效 Meta 失败且不覆盖；
+- 多个真实 P/T 对记录七列 coverage、schema/key digest、实际输入 identity、内容摘要及
+  可恢复位置、耗时和峰值内存；
 - adoption 同步正式 owner、实现和测试，并由用户明确决定。
 
-- **Next**：先独立决定本 Change 的 two-upstream 要求。H03 V1 的无 upstream 选择不自动
-  改变 H04；现行存储 owner 只支持单 upstream 且 Feature/Label 不写该字段，若保留本候选
-  要求，必须先定义输入 identity、失效及已有对象处理的存储契约，再实现融合。H03 schema
-  稳定后，在独立实现分支验证 P/T 无泄漏和 key 对齐；在 H05 预注册比较前不选择或删除七列。
+- **Decision（2026-09-13）**：用户确认 H04 采用无 upstream、有效对象直接复用的候选方向，
+  与 H01/H03 的复用口径一致。该决定只收敛候选语义，实施、验收与正式化仍待完成。
+- **Next**：H03 schema 稳定后，在独立实现分支验证 P/T 无泄漏、key 对齐、无 upstream 的
+  Meta 发布与复用，以及缺失输入和无效输出的失败边界；在 H05 预注册比较前不选择或删除七列。
 
 ## H05
 
@@ -959,6 +990,10 @@ close return 5d as-of P-1, turnover-rate mean 20d as-of P-1
   生产选择、回放或交易。
 - **Depends on**：H03 的 Label 与 H04 的融合 Feature。使用尚未 adopted 的候选输入只能形成
   候选证据；任一上游语义变化后必须重验。
+
+本阶段校验实际消费的 Feature/Label 契约，以 input manifest 和研究证据绑定输入分区、内容
+摘要、可恢复位置及代码、参数和环境；不为训练产物增加 object-side upstream，也不回查
+Feature/Label 的来源来动态判定模型是否失效。
 
 固定 baseline：
 
@@ -1009,6 +1044,10 @@ artifact 只保存最后一个成功 window 的模型，并记录 `model_fit_cut
 - **Not included**：数据或模型构建、真实 broker、实时源、order-book/排队/冲击/成交概率模型、
   自动模型选择、HTTP、cron、公司行动现金与股数转换或长期真实收益声明。
 - **Depends on**：H02 的执行窗口事实、H03 的 Label、H04 的融合 Feature、H05 的完整模型 artifact。
+
+本阶段校验所选模型 artifact 与实际回放输入，保存模型的可恢复引用和本次输入 manifest；
+不为回放产物增加 object-side upstream，也不回查模型的训练输入或逐层追溯数据来源来判定
+模型是否可用。重新复现训练结果时，仍须使用 H05 证据绑定的输入与运行条件。
 
 固定 replay baseline：
 
