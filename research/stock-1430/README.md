@@ -973,8 +973,112 @@ close return 5d as-of P-1, turnover-rate mean 20d as-of P-1
 
 - **Decision（2026-09-13）**：用户确认 H04 采用无 upstream、有效对象直接复用的候选方向，
   与 H01/H03 的复用口径一致。该决定只收敛候选语义，实施、验收与正式化仍待完成。
-- **Next**：H03 schema 稳定后，在独立实现分支验证 P/T 无泄漏、key 对齐、无 upstream 的
-  Meta 发布与复用，以及缺失输入和无效输出的失败边界；在 H05 预注册比较前不选择或删除七列。
+- **实施决定（2026-09-13）**：用户将当前分支视为确定的 H03，并要求执行完整 H04 方案。
+  本轮固定 `62078a4ed313ea97b2d332ef564d5fa921352e66` 为基线，在
+  `feature/stock-1430-daily-l2` 隔离实现；该决定授权候选实施与隔离验收，不表示 H04 已采用。
+  具体输入边界、七列名称和排名、42 列物理 schema 见拟议
+  [`stock_1430_daily_l2_contract.md`](../../docs/data/stock_1430_daily_l2_contract.md)。
+
+**本轮验证预注册（2026-09-13，运行前固定）**：
+
+- 开发联调 P/T：`2025-11-17 → 2025-11-18`；冻结后的最终技术验证 P/T：
+  `2025-12-31 → 2026-01-05`、`2026-04-30 → 2026-05-06`、
+  `2026-07-24 → 2026-07-27`。四组均完整报告；不按 coverage、Label、IC 或收益替换样本。
+- 固定上述两个输入 Feature set/version、2025/2026 年 calendar、七列映射、ascending
+  average-tie valid-only rank 和锁定环境。输入只从正式存储复制到隔离根，记录内容摘要和
+  可恢复副本；候选不写正式数据，也不继承生产凭证。
+- 手算覆盖七个映射、不同有效分母、负数、零、ties、单值、全缺失和 universe 外 symbol；
+  日期覆盖普通日、周末、长假和跨年；失败覆盖输入缺失/无效、重复 key、错误日期/grid、
+  空分区、无效 Meta 及部分成功续建。
+- 四组输出须为固定 3 key + 39 Feature，前三 key 和原 32 列与各自输入逐字段、逐行精确
+  相等；每组七个追加列各至少一个有效值。记录各列 coverage、daily 匹配率和 39 列完整行
+  比例，不追加事后 coverage 门槛。
+- 两个新输出根在相同代码/输入/环境下的 schema、值、null 和顺序精确一致；改动或删除
+  daily T 不影响新建结果。首次发布后隔离上游缺失/变化仍复用已有输出，文件内容及身份
+  不变；无效输出 Meta 失败且不覆盖。目标 calendar 的范围解析不属于免读上游保证。
+- 任一必要断言失败即停止验收，保留失败并修复后重验，不替换样本或放宽断言。wall time
+  和 peak RSS 只作观测；本轮不选择模型、不证明 alpha，也不宣称已验证历史实时就绪。
+- 证据保存可恢复源码、输入/输出、manifest、命令、锁定环境、key/schema digest、coverage、
+  性能及失败结果；至少保留至 H04 采用/拒绝决定及相应审查结束。状态与结论只写回本段。
+
+**验证准备修正（2026-09-13）**：首轮真实 CLI 在读取 calendar 时因归档缺少其既有 Meta
+直接引用的 raw calendar 对象而停止。补齐 2025/2026 两个 raw calendar 的 Meta/payload 后，
+输入归档由 20 个文件变为 24 个；未修改 calendar、Feature、P/T、计算或验收条件。原始输入
+manifest、失败 Notebook、命令及日志保留在证据目录的 `development-failures/04-calendar-upstream-archive/`。
+
+**Evidence（2026-09-13，本地 draft）**：
+
+- 实际代码为 `feature/stock-1430-daily-l2` 上基于上述 H03 commit 的未提交修改；可恢复源码
+  存于 `/home/wsw/app/research-evidence/stock-1430-h04-2026-09-13-gcp_qa0b/source/`。
+  `source_manifest.json` 绑定 284 个文件；`runtime_manifest.json` 绑定 232 个源码、测试和
+  依赖文件，SHA-256 为 `5866bb008098b58a0b15e1b1426b7f69af54a78728134e4182138e7f4d043a73`。
+  最终卷宗副本为 `review-dossier.md`；整个证据根的确定归档为 `verified-evidence.tar.gz`，
+  其摘要保存在同目录 `verified-evidence.tar.gz.sha256`，保留期同上述预注册要求。
+- 同一证据根的 `inputs/` 保存四组 Feature、两个年度 processed calendar 及其直接 raw
+  引用对象；24 文件的 `input_manifest.json` SHA-256 为
+  `576b69eb44b303ba3b4bec2dac070e6fcc12b3b1ffe893d64c91e4b044b0e7ef`。
+  不包含分钟、Label 或模型输入；这些对象不属于本轮实际消费边界。
+- [`h04-validation.ipynb`](h04-validation.ipynb) 的 7 个代码单元从头执行成功；归档同名
+  Notebook、HTML 和 `build_notebook.py` 保留复跑入口。成功运行位于证据根的
+  `validation-ygivxka9/`，`result.json` 绑定 18 次 CLI 命令、环境、schema/key 摘要和输出身份。
+  锁定 Python 3.13.13、NumPy 2.5.1、Pandas 3.0.2、PyArrow 25.0.0；无随机参数。
+- 8 次新建（每组两个独立根）全部成功，schema、值、null 和顺序精确一致；输出继承 H03
+  的三 key 与 32 列，28 个日频排名列与 NumPy 排序/插入位置独立重算逐值精确一致。
+  两个根分别没有 daily T、放入无效 daily T，结果相同。
+- 8 次复用（上游缺失或损坏）全部成功，输出 payload/Meta 的 SHA、size、mtime 和 inode
+  保持不变；新输出缺失 daily P、已有输出 Meta 无效的两次预设失败均退出 1，无错误发布
+  或覆盖。输出 Meta 精确只有 `payload` / `size_bytes`。
+
+下表记录首次 CLI 进程的整体 wall time 和 peak RSS，包含解释器及依赖加载，不作为性能门槛。
+匹配率与完整行比例均以对应 L2 T 行数为分母；完整行要求全部 39 列非缺失且有限。
+
+| P | T | L2/输出行数 | daily 匹配行（比例） | 39 列完整行（比例） | wall 秒 | peak RSS MiB |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| 2025-11-17 | 2025-11-18 | 5157 | 5153（99.92%） | 4845（93.95%） | 1.178 | 317.86 |
+| 2025-12-31 | 2026-01-05 | 5170 | 5166（99.92%） | 4841（93.64%） | 1.149 | 314.11 |
+| 2026-04-30 | 2026-05-06 | 5179 | 5144（99.32%） | 4839（93.44%） | 1.181 | 314.10 |
+| 2026-07-24 | 2026-07-27 | 5192 | 5191（99.98%） | 4673（90.00%） | 1.185 | 318.25 |
+
+七列 coverage 如下，分母仍为各日 L2 universe；源字段对应同名 `_rank` 输出。未因缺失删行。
+
+| P 分区源字段 | 2025-11-18 | 2026-01-05 | 2026-05-06 | 2026-07-27 |
+| --- | ---: | ---: | ---: | ---: |
+| `f_d_close_return_1d` | 99.903% | 99.865% | 98.533% | 99.981% |
+| `f_d_open_gap_1d` | 99.903% | 99.865% | 98.533% | 99.981% |
+| `f_d_log_amount` | 99.922% | 99.923% | 99.324% | 99.981% |
+| `f_d_max_drawdown_20d_asof_tminus1` | 99.186% | 98.646% | 97.026% | 99.307% |
+| `f_d_close_volatility_60d_asof_tminus1` | 97.886% | 97.118% | 95.829% | 95.898% |
+| `f_d_close_return_5d_asof_tminus1` | 99.729% | 99.458% | 97.799% | 99.846% |
+| `f_d_turnover_rate_mean_20d_asof_tminus1` | 99.186% | 98.646% | 97.026% | 99.210% |
+
+工程验证及限制：
+
+- `uv lock --check`、`git diff --check` 通过；H04 与相关 H03/CLI/workflow 定向回归
+  `163 passed`；相同源码快照的全量测试 `674 passed, 1 warning`。警告来自既有
+  multiprocessing fork 测试。完整命令、显式环境和日志保存在证据根。
+- Ruff 0.16.6 对受影响文件的检查与 H03 基线各有 14 条相同诊断，无新增诊断；格式检查
+  在同一个既有 workflow 测试段落失败，新加文件及段落已格式化。Mypy 2.3.1 对受影响运行
+  文件报告 7 条：既有 `normalized_strategy` 标注问题和 6 条 PyArrow 缺少类型声明；
+  基线为 1 条既有问题和 2 条同类 PyArrow 报告。新增四条仅来自两个新模块的 PyArrow
+  import，未屏蔽错误，也未把静态检查称为全部通过。
+- `development-failures/` 保留全部已观察到的准备失败：初始测试夹具使用 Arrow Schema
+  slice、错误消息匹配不准确、全量测试运行器注入存储根覆盖部署夹具、calendar 直接输入
+  归档不完整。均修正相应测试/执行准备后重验，未放宽断言、删样本或改计算口径。
+- Notebook 格式、执行顺序、保存输出和表格数值已校验；当前环境没有可用于检查的图形
+  notebook/browser viewer，未声称完成视觉检查。可在浏览器打开证据根的
+  `h04-validation.html`，检查四行运行汇总、七行 coverage 及长字段名是否完整可读。
+- 本轮仅验证冻结输入上的 H04 计算与对象生命周期。输入 version 和内容摘要不能证明上游
+  从未事后修订，也不能证明历史 14:30 前实际就绪；未完成该 point-in-time 审计，未评估
+  预测效果、全历史 coverage 或生产容量。
+
+- **Conclusion**：在固定 H03 基线、四组预注册 P/T 和上述隔离环境下，H04 的技术验收条件
+  通过：39 列融合、时间截断、对齐/排名、缺失、发布和复用行为均有可恢复证据。
+  采用/正式化条件尚未完成，保持 `open`；这些结果不构成七列增量预测价值的证据。
+- **实际状态**：拟议 owner、实现、测试及研究记录已在隔离工作树准备；没有本轮 commit、
+  push、merge、release 或 deploy，也没有正式 H04 数据回填或生产状态写入。
+- **Next**：审阅上述拟议契约及证据，由用户明确决定 H04 是否采用；采用时同步目标分支的
+  owner、实现、测试与卷宗状态。基线、计算或输入实质改变后重验；在 H05 预注册比较前
+  不选择或删除七列。
 
 ## H05
 

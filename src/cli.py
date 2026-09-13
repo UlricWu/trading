@@ -1,5 +1,5 @@
 # filepath: src/cli.py
-"""Define the nine public CLI composition roots."""
+"""Define the public CLI composition roots."""
 
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ from src.jobs.requests import (
     create_level2_minute_backfill_submission,
     create_standard_fact_bootstrap_submission,
     create_stock_1430_backfill_submission,
+    create_stock_1430_fusion_backfill_submission,
     create_training_submission,
 )
 from src.utils.datetime_utils import DateTimeUtils
@@ -30,6 +31,7 @@ from src.workflows.offline_daily_data import (
     run_offline_data,
     run_standard_fact_bootstrap,
     run_stock_1430_backfill,
+    run_stock_1430_fusion_backfill,
 )
 from src.workflows.offline_training import run_offline_training
 from src.workflows.trade_calendar import run_trade_calendar_bootstrap
@@ -232,6 +234,30 @@ def data_stock_1430_backfill(
 
     app_config = AppConfig.load()
     run_stock_1430_backfill(
+        path_manager=PathManager(app_config.storage_root),
+        submission=submission,
+    )
+
+
+@app.command()
+def data_stock_1430_fusion_backfill(
+    start_date: str = typer.Option(..., "--start"),
+    end_date: str = typer.Option(..., "--end"),
+) -> None:
+    """Backfill the fixed H04 daily/L2 Feature over target sessions.
+
+    Example:
+        data_stock_1430_fusion_backfill(
+            start_date="2026-05-06", end_date="2026-05-06"
+        )
+    """
+    try:
+        submission = create_stock_1430_fusion_backfill_submission(start_date, end_date)
+    except InvalidJobRequest as exc:
+        _raise_bad_parameter(exc, {"start": "--start", "end": "--end"})
+
+    app_config = AppConfig.load()
+    run_stock_1430_fusion_backfill(
         path_manager=PathManager(app_config.storage_root),
         submission=submission,
     )

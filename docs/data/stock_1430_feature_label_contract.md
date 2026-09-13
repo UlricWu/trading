@@ -202,6 +202,9 @@ Label 只消费已提交 Feature 的三字段 key。Step 在 Label miss 时通�
 可消费 payload 路径并用 context manager 读取 key 列；builder 校验类型、非空 key 值、唯一性、
 目标日期、14:30 时间和顺序。`STOCK_1430_KEY_SCHEMA` 在 builder 中声明，供两种输出 schema
 和 Step 投影共同使用；Label 输出直接继承输入 key 数组，不重新构造或排序行集合。
+`STOCK_1430_FEATURE_SCHEMA`、`STOCK_1430_DECISION_TIME` 和
+`require_stock_1430_feature_keys(feature_keys, *, trade_date, decision_ts_utc)` 公开现有的
+schema、时间及持久化 key 校验，供 Label 和 H04 消费边界复用；不改变 H03 数值行为。
 Label 直接由 Arrow 数组构造，不再携带中间 Pandas DataFrame 的 schema metadata；规范 Arrow
 字段、值和顺序保持上述定义，不承诺与旧候选 payload 字节一致。
 

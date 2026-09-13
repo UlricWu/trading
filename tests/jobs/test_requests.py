@@ -15,12 +15,14 @@ from src.jobs.requests import (
     Level2MinuteBackfillSubmission,
     StandardFactBootstrapSubmission,
     Stock1430BackfillSubmission,
+    Stock1430FusionBackfillSubmission,
     TrainingSubmission,
     build_cli_command,
     create_feature_backfill_submission,
     create_level2_minute_backfill_submission,
     create_standard_fact_bootstrap_submission,
     create_stock_1430_backfill_submission,
+    create_stock_1430_fusion_backfill_submission,
     parse_job_request,
 )
 
@@ -98,6 +100,7 @@ def test_cli_only_data_ranges_create_distinct_submissions() -> None:
         "data-feature-backfill",
         "data-level2-minute-backfill",
         "data-stock-1430-backfill",
+        "data-stock-1430-fusion-backfill",
     ],
 )
 def test_cli_only_data_kinds_are_not_http_job_kinds(kind: str) -> None:
@@ -109,6 +112,28 @@ def test_cli_only_data_kinds_are_not_http_job_kinds(kind: str) -> None:
                 "end": "2019-07-01",
             }
         )
+
+
+def test_fusion_backfill_constructs_a_distinct_submission() -> None:
+    assert create_stock_1430_fusion_backfill_submission(
+        "2026-05-06", "2026-05-07"
+    ) == Stock1430FusionBackfillSubmission(start="2026-05-06", end="2026-05-07")
+
+
+@pytest.mark.parametrize(
+    ("start", "end", "field"),
+    (
+        ("2026-5-6", "2026-05-07", "start"),
+        ("2026-05-06", None, "end"),
+        ("2026-05-07", "2026-05-06", "start"),
+    ),
+)
+def test_fusion_backfill_rejects_invalid_ranges(
+    start: object, end: object, field: str
+) -> None:
+    with pytest.raises(InvalidJobRequest) as caught:
+        create_stock_1430_fusion_backfill_submission(start, end)
+    assert caught.value.field == field
 
 
 def test_backtest_command_uses_job_id_as_experiment_id() -> None:

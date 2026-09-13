@@ -25,12 +25,14 @@ from src.data_system.steps.feature_build import FeatureBuildStep
 from src.data_system.steps.label_build import LabelBuildStep
 from src.data_system.steps.level2_minute_build import Level2MinuteBuildStep
 from src.data_system.steps.stock_1430_build import Stock1430BuildStep
+from src.data_system.steps.stock_1430_daily_l2_build import Stock1430DailyL2BuildStep
 from src.jobs.requests import (
     DataSubmission,
     FeatureBackfillSubmission,
     Level2MinuteBackfillSubmission,
     StandardFactBootstrapSubmission,
     Stock1430BackfillSubmission,
+    Stock1430FusionBackfillSubmission,
 )
 from src.observability.instrumentation import Instrumentation
 from src.pipeline import PipelineStep
@@ -394,4 +396,44 @@ def run_stock_1430_backfill(
         f"✅ workflow; kind=data-stock-1430-backfill "
         f"start={submission.start} end={submission.end} "
         f"targets={len(target_dates)}"
+    )
+
+
+def run_stock_1430_fusion_backfill(
+    *,
+    path_manager: PathManager,
+    submission: Stock1430FusionBackfillSubmission,
+) -> None:
+    """Backfill the fixed H04 Feature from committed L2-T and daily-P inputs.
+
+    Example:
+        run_stock_1430_fusion_backfill(
+            path_manager=path_manager,
+            submission=Stock1430FusionBackfillSubmission(
+                start="2026-05-06", end="2026-05-06"
+            ),
+        )
+    """
+    access = Access(pm=path_manager, processed_version=PROCESSED_VERSION)
+    target_dates = tuple(
+        access.trade_dates(start_date=submission.start, end_date=submission.end)
+    )
+    pipeline = DataPipeline(
+        steps=(Stock1430DailyL2BuildStep(pm=path_manager, access=access),),
+        instrumentation=Instrumentation(
+            f"data-stock-1430-fusion-backfill_{submission.start}_{submission.end}"
+        ),
+    )
+    logs.info(
+        f"▶️ workflow; kind=data-stock-1430-fusion-backfill "
+        f"start={submission.start} end={submission.end} targets={len(target_dates)}"
+    )
+    pipeline.run(
+        DataContext(
+            start=submission.start, end=submission.end, trade_dates=target_dates
+        )
+    )
+    logs.info(
+        f"✅ workflow; kind=data-stock-1430-fusion-backfill "
+        f"start={submission.start} end={submission.end} targets={len(target_dates)}"
     )

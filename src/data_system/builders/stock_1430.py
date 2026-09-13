@@ -17,9 +17,12 @@ from src.utils.datetime_utils import DateTimeUtils
 from src.utils.price_utils import apply_asof_price_adjustment
 
 __all__ = (
+    "STOCK_1430_DECISION_TIME",
+    "STOCK_1430_FEATURE_SCHEMA",
     "STOCK_1430_KEY_SCHEMA",
     "build_stock_1430_features",
     "build_stock_1430_labels",
+    "require_stock_1430_feature_keys",
 )
 
 STOCK_1430_KEY_SCHEMA = pa.schema(
@@ -30,7 +33,7 @@ STOCK_1430_KEY_SCHEMA = pa.schema(
     ]
 )
 _FEATURE_WINDOWS_MINUTES = (5, 15, 30, 60)
-_DECISION_TIME = time(14, 30)
+STOCK_1430_DECISION_TIME = time(14, 30)
 _LABEL_WINDOW_START = time(14, 31)
 _LABEL_WINDOW_END = time(14, 36)
 _MINUTE_US = 60_000_000
@@ -56,7 +59,7 @@ _RANK_METRICS = (
 )
 
 
-_FEATURE_SCHEMA = pa.schema(
+STOCK_1430_FEATURE_SCHEMA = pa.schema(
     [
         *STOCK_1430_KEY_SCHEMA,
         *[
@@ -104,7 +107,7 @@ def build_stock_1430_features(
         )
     """
     decision_ts_utc = DateTimeUtils.local_time_to_utc_epoch_us(
-        _DECISION_TIME, trade_date
+        STOCK_1430_DECISION_TIME, trade_date
     )
     visible = minutes.filter(
         pc.and_(
@@ -206,7 +209,7 @@ def build_stock_1430_features(
 
     return pa.Table.from_pandas(
         owned_output,
-        schema=_FEATURE_SCHEMA,
+        schema=STOCK_1430_FEATURE_SCHEMA,
         preserve_index=False,
         safe=True,
     )
@@ -242,9 +245,9 @@ def build_stock_1430_labels(
         )
     """
     expected_decision_ts_utc = DateTimeUtils.local_time_to_utc_epoch_us(
-        _DECISION_TIME, trade_date
+        STOCK_1430_DECISION_TIME, trade_date
     )
-    _require_feature_keys(
+    require_stock_1430_feature_keys(
         feature_keys,
         trade_date=trade_date.isoformat(),
         decision_ts_utc=expected_decision_ts_utc,
@@ -297,12 +300,23 @@ def build_stock_1430_labels(
     )
 
 
-def _require_feature_keys(
+def require_stock_1430_feature_keys(
     feature_keys: pa.Table,
     *,
     trade_date: str,
     decision_ts_utc: int,
 ) -> None:
+    """Validate persisted H03 keys against the consumer's target partition.
+
+    Example:
+        require_stock_1430_feature_keys(
+            feature_keys,
+            trade_date="2026-05-06",
+            decision_ts_utc=DateTimeUtils.local_time_to_utc_epoch_us(
+                STOCK_1430_DECISION_TIME, date(2026, 5, 6)
+            ),
+        )
+    """
     table_ops.require_columns(
         feature_keys, STOCK_1430_KEY_SCHEMA.names, who="stock 14:30 Feature keys"
     )
@@ -340,7 +354,7 @@ def _require_feature_keys(
             ).as_py()
             is not True
         ):
-            raise ValueError("Feature trade_date does not match Label partition")
+            raise ValueError("Feature trade_date does not match target partition")
         if (
             pc.all(
                 pc.equal(
