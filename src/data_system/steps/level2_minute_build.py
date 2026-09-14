@@ -17,7 +17,7 @@ from src.data_system.builders.level2_stock_trade_1m import (
     build_level2_stock_trade_1m,
 )
 from src.data_system.context import DataContext
-from src.utils.parquet_writer import write_parquet_atomic
+from src.data_system.steps._partition import _publish_parquet_object
 from src.utils.path import PathManager
 
 _PROGRESS_INTERVAL_SECONDS = 30.0
@@ -170,9 +170,7 @@ class Level2MinuteBuildStep:
 
         minute_batches: list[pa.Table] = []
         for batch_start in range(0, len(symbols), self._symbol_batch_size):
-            batch_symbols = symbols[
-                batch_start : batch_start + self._symbol_batch_size
-            ]
+            batch_symbols = symbols[batch_start : batch_start + self._symbol_batch_size]
             trades_by_symbol = self._access.trades(
                 trade_date=trade_date,
                 symbols=batch_symbols,
@@ -188,8 +186,7 @@ class Level2MinuteBuildStep:
             now_seconds = monotonic()
             if (
                 symbols_processed < len(symbols)
-                and now_seconds - last_progress_at_seconds
-                >= _PROGRESS_INTERVAL_SECONDS
+                and now_seconds - last_progress_at_seconds >= _PROGRESS_INTERVAL_SECONDS
             ):
                 logs.info(
                     f"⏳ Level-2 minute fact; target={plan.output_dataset} "
@@ -201,10 +198,10 @@ class Level2MinuteBuildStep:
                 last_progress_at_seconds = now_seconds
 
         output = pa.concat_tables(minute_batches)
-        write_parquet_atomic(output_file=output_paths.payload_path, table=output)
-        meta.commit(
+        _publish_parquet_object(
             pm=self._pm,
-            payload_path=output_paths.payload_path,
+            paths=output_paths,
+            table=output,
             upstream_meta_path=input_paths.meta_path,
         )
         stock_ticks = pc.sum(output.column("trade_count")).as_py()

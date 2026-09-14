@@ -3,15 +3,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from types import MappingProxyType
+from functools import partial
 
 from src import logs
 from src.access import Access
 from src.config.app_config import AppConfig
 from src.config.data_config import SourceConfig
 from src.data_system.brokers.base import BrokerAdapter
-from src.data_system.brokers.catalog import BROKER_ADAPTER_CLASSES
 from src.data_system.brokers.level2 import Level2Broker
 from src.data_system.brokers.tushare import TushareBroker
 from src.data_system.context import DataContext
@@ -39,17 +37,11 @@ from src.jobs.requests import (
 from src.observability.instrumentation import Instrumentation
 from src.pipeline import PipelineStep
 from src.utils.path import PathManager
-from src.workflows import PROCESSED_VERSION
+from src.workflows import PROCESSED_VERSION, _get_broker
 
 OFFLINE_STANDARD = "offline_standard"
 OFFLINE_LEVEL2 = "offline_level2"
 _LEVEL2_MINUTE_SYMBOL_BATCH_SIZE = 16
-_NORMALIZE_OPERATIONS: Mapping[str, NormalizeOperation] = MappingProxyType(
-    {
-        TushareBroker.name: normalize_tushare,
-        Level2Broker.name: normalize_level2,
-    }
-)
 
 
 def _require_tushare_source_names() -> tuple[str, ...]:
@@ -99,8 +91,12 @@ def run_offline_data(
         raise ValueError(
             "run_offline_data requires kind='data-standard' or 'data-level2'"
         )
+    broker_class: type[BrokerAdapter]
+    normalize_operation: NormalizeOperation
     if submission.kind == "data-standard":
         fact_sources = _standard_fact_sources()
+        broker_class = TushareBroker
+        normalize_operation = normalize_tushare
         feature_versions = {
             feature_set: config.version
             for feature_set, config in app_config.data.feature_sets.items()
@@ -123,6 +119,8 @@ def run_offline_data(
             )
     else:
         _require_tushare_source_names()
+        broker_class = Level2Broker
+        normalize_operation = normalize_level2
         fact_sources = {}
         for source_name, source_config in app_config.data.sources.items():
             if not source_config.enabled:
@@ -135,27 +133,38 @@ def run_offline_data(
         feature_versions = {}
         label_versions = {}
 
-    if not fact_sources:
-        raise ValueError(f"offline data kind '{submission.kind}' has no fact sources")
+        if not fact_sources:
+            raise ValueError(
+                f"offline data kind '{submission.kind}' has no fact sources"
+            )
 
     access = Access(pm=path_manager, processed_version=PROCESSED_VERSION)
     adapter_cache: dict[str, BrokerAdapter] = {}
+    get_calendar_broker = partial(
+        _get_broker,
+        app_config=app_config,
+        broker_class=TushareBroker,
+        adapter_cache=adapter_cache,
+    )
+    get_fact_broker = partial(
+        _get_broker,
+        app_config=app_config,
+        broker_class=broker_class,
+        adapter_cache=adapter_cache,
+    )
     steps: tuple[PipelineStep[DataContext], ...] = (
         CalendarMaterializeStep(
-            app_config=app_config,
             path_manager=path_manager,
+            get_broker=get_calendar_broker,
             access=access,
             processed_version=PROCESSED_VERSION,
-            adapter_cache=adapter_cache,
         ),
         FactMaterializeStep(
-            app_config=app_config,
             path_manager=path_manager,
             sources=fact_sources,
-            broker_classes=BROKER_ADAPTER_CLASSES,
-            normalize_operations=_NORMALIZE_OPERATIONS,
+            get_broker=get_fact_broker,
+            normalize_operation=normalize_operation,
             processed_version=PROCESSED_VERSION,
-            adapter_cache=adapter_cache,
         ),
         FeatureBuildStep(
             pm=path_manager,
@@ -206,23 +215,25 @@ def run_standard_fact_bootstrap(
     """
     fact_sources = _standard_fact_sources()
     access = Access(pm=path_manager, processed_version=PROCESSED_VERSION)
-    adapter_cache: dict[str, BrokerAdapter] = {}
+    get_broker = partial(
+        _get_broker,
+        app_config=app_config,
+        broker_class=TushareBroker,
+        adapter_cache={},
+    )
     steps: tuple[PipelineStep[DataContext], ...] = (
         CalendarMaterializeStep(
-            app_config=app_config,
             path_manager=path_manager,
+            get_broker=get_broker,
             access=access,
             processed_version=PROCESSED_VERSION,
-            adapter_cache=adapter_cache,
         ),
         FactMaterializeStep(
-            app_config=app_config,
             path_manager=path_manager,
             sources=fact_sources,
-            broker_classes=BROKER_ADAPTER_CLASSES,
-            normalize_operations=_NORMALIZE_OPERATIONS,
+            get_broker=get_broker,
+            normalize_operation=normalize_tushare,
             processed_version=PROCESSED_VERSION,
-            adapter_cache=adapter_cache,
         ),
     )
     pipeline = DataPipeline(

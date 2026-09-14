@@ -214,7 +214,7 @@ Label 直接由 Arrow 数组构造，不再携带中间 Pandas DataFrame 的 sch
 
 ## 发布与复用
 
-Feature 和 Label 分区各自使用 `steps` 包内部共享的 `_publish_derived_partition` 边界：有效 Meta
+Feature 和 Label 分区各自使用 `steps` 包内部共享的 `_publish_partition` 边界：有效 Meta
 返回复用结果；只有 miss 才同步调用构建能力，要求非空，先原子写入单一 Parquet payload，
 再提交同目录 Meta，返回发布行数。具体 Step 记录结果日志。H03 Meta 精确使用通用无 upstream、无 `symbol_slices`
 形式：

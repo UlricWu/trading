@@ -224,9 +224,7 @@ def test_step_requires_both_valid_inputs_and_never_falls_back(
     with pytest.raises((FileNotFoundError, ValueError, RuntimeError)):
         Stock1430DailyL2MaterializeStep(
             pm=pm, access=Access(pm, processed_version="v1")
-        ).run(
-            DataContext(start=target, end=target, trade_dates=(target,))
-        )
+        ).run(DataContext(start=target, end=target, trade_dates=(target,)))
     assert not output.meta_path.exists()
     assert not output.payload_path.exists()
 

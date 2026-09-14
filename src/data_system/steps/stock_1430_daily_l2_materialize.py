@@ -16,7 +16,7 @@ from src.data_system.builders.stock_1430_daily_l2 import (
     build_stock_1430_daily_l2_features,
 )
 from src.data_system.context import DataContext
-from src.data_system.steps._derived_partition import _publish_derived_partition
+from src.data_system.steps._partition import _publish_partition
 from src.utils.path import PathManager
 
 _FEATURE_SET = "stock_1430_daily_l2"
@@ -61,10 +61,9 @@ class Stock1430DailyL2MaterializeStep:
                 feature_set=_FEATURE_SET, version=_VERSION, trade_date=trade_date
             )
             who = f"stock 14:30 daily/L2 Feature; trade_date={trade_date} version={_VERSION}"
-            rows = _publish_derived_partition(
+            rows = _publish_partition(
                 pm=self._pm,
-                meta_path=paths.meta_path,
-                output_path=paths.payload_path,
+                paths=paths,
                 who=who,
                 build=partial(self._build, trade_date=trade_date),
             )

@@ -12,7 +12,6 @@ from typing import ClassVar, cast
 from src import logs
 from src.config.app_config import AppConfig
 from src.config.data_config import DownloadBackend
-from src.data_system.brokers.base import DownloadPlan
 from src.utils.datetime_utils import DateTimeUtils
 from src.utils.download_utils import DownloadProgress
 from src.utils.filesystem import FileSystem
@@ -44,11 +43,17 @@ class Level2Broker:
 
     The adapter resolves one configured raw dataset to one vendor payload,
     downloads it to staging, copies it into the formal raw path, and returns a
-    ``DownloadPlan`` for metadata commit. Archive handling follows
+    raw path for metadata commit. Archive handling follows
     ``docs/engineering/technology_stack_decisions.md``.
 
     Example:
         broker = Level2Broker(app_cfg=AppConfig.load())
+        payload_path = broker.fetch(
+            source_name="sz_trade",
+            raw_object="SZ_Trade",
+            trade_date="2026-07-20",
+            pm=path_manager,
+        )
     """
 
     name: ClassVar[str] = "level2_ftp"
@@ -72,18 +77,28 @@ class Level2Broker:
     def fetch(
         self,
         *,
-        record: DownloadPlan,
+        source_name: str,
+        raw_object: str,
+        trade_date: str,
         pm: PathManager,
-    ) -> DownloadPlan | None:
+    ) -> Path | None:
         """
-        Return one downloaded staging raw file for `raw_object` and `trade_date`.
+        Return one completed formal raw file for `raw_object` and `trade_date`.
 
         `raw_object` is the source-native object selected by `data.sources`;
         Missing remote date directories return `None`, while transport, auth,
         and ambiguous remote selection failures are allowed to fail.
+
+        Example:
+            payload_path = broker.fetch(
+                source_name="sz_trade",
+                raw_object="SZ_Trade",
+                trade_date="2026-07-20",
+                pm=path_manager,
+            )
         """
         trade_date = DateTimeUtils.require_system_date(
-            record.trade_date,
+            trade_date,
             field_name="trade_date",
         )
 
@@ -104,12 +119,11 @@ class Level2Broker:
 
             if not names:
                 logs.warning(
-                    f"⚠️ Level-2 remote directory; reason=empty "
-                    f"trade_date={trade_date}"
+                    f"⚠️ Level-2 remote directory; reason=empty trade_date={trade_date}"
                 )
                 return None
 
-            expected_file = f"{record.raw_object}.csv.7z"
+            expected_file = f"{raw_object}.csv.7z"
             matches = [name for name in names if name == expected_file]
 
             if not matches:
@@ -122,15 +136,15 @@ class Level2Broker:
 
             if len(matches) > 1:
                 raise RuntimeError(
-                    f"ambiguous Level2 remote files raw_object={record.raw_object!r} "
+                    f"ambiguous Level2 remote files raw_object={raw_object!r} "
                     f"trade_date={trade_date!r} matches={matches!r}"
                 )
 
             remote_file = matches[0]
 
             staging_file = pm.staging_payload(
-                broker=record.broker,
-                source_name=record.source_name,
+                broker=self.name,
+                source_name=source_name,
                 trade_date=trade_date,
                 payload_file=remote_file,
             )
@@ -164,21 +178,15 @@ class Level2Broker:
             ftp.close()
 
         raw_path = pm.raw_payload(
-            broker=record.broker,
-            source_name=record.source_name,
+            broker=self.name,
+            source_name=source_name,
             trade_date=trade_date,
             payload_file=remote_file,
         )
 
         FileSystem.copy_file_atomic(staging_file, raw_path)
 
-        return DownloadPlan(
-            source_name=record.source_name,
-            trade_date=record.trade_date,
-            broker=record.broker,
-            raw_object=record.raw_object,
-            payload_file=raw_path.name,
-        )
+        return raw_path
 
     def _download_to_staging(
         self,

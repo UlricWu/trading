@@ -13,7 +13,6 @@ import pytest
 
 from src.config.app_config import AppConfig
 from src.data_system.brokers import tushare as tushare_module
-from src.data_system.brokers.base import DownloadPlan
 from src.data_system.brokers.tushare import TushareBroker
 from src.utils.path import PathManager
 
@@ -47,7 +46,7 @@ def test_tushare_active_manifest_is_the_single_execution_source_list() -> None:
     )
 
 
-def test_tushare_broker_returns_a_plan_for_the_materialized_raw_payload(
+def test_tushare_broker_returns_the_materialized_raw_payload_path(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -60,12 +59,9 @@ def test_tushare_broker_returns_a_plan_for_the_materialized_raw_payload(
     path_manager = PathManager(tmp_path)
 
     fetched = TushareBroker(app_cfg=cast("AppConfig", app_config)).fetch(
-        record=DownloadPlan(
-            source_name="daily_bar",
-            raw_object="daily_bar",
-            trade_date="2026-07-20",
-            broker="tushare",
-        ),
+        source_name="daily_bar",
+        raw_object="daily_bar",
+        trade_date="2026-07-20",
         pm=path_manager,
     )
 
@@ -75,13 +71,7 @@ def test_tushare_broker_returns_a_plan_for_the_materialized_raw_payload(
         trade_date="2026-07-20",
         payload_file="data.parquet",
     )
-    assert fetched == DownloadPlan(
-        source_name="daily_bar",
-        raw_object="daily_bar",
-        trade_date="2026-07-20",
-        broker="tushare",
-        payload_file="data.parquet",
-    )
+    assert fetched == expected_path
     assert client.queries == [("daily", {"trade_date": "20260720"})]
     assert pq.read_table(expected_path).to_pydict() == {"ts_code": ["000001.SZ"]}
 
@@ -106,12 +96,9 @@ def test_tushare_broker_queries_bak_basic_for_stock_basic_source(
     path_manager = PathManager(tmp_path)
 
     fetched = TushareBroker(app_cfg=cast("AppConfig", app_config)).fetch(
-        record=DownloadPlan(
-            source_name="stock_basic",
-            raw_object="stock_basic",
-            trade_date="2026-07-20",
-            broker="tushare",
-        ),
+        source_name="stock_basic",
+        raw_object="stock_basic",
+        trade_date="2026-07-20",
         pm=path_manager,
     )
 
@@ -121,13 +108,7 @@ def test_tushare_broker_queries_bak_basic_for_stock_basic_source(
         trade_date="2026-07-20",
         payload_file="data.parquet",
     )
-    assert fetched == DownloadPlan(
-        source_name="stock_basic",
-        raw_object="stock_basic",
-        trade_date="2026-07-20",
-        broker="tushare",
-        payload_file="data.parquet",
-    )
+    assert fetched == expected_path
     assert client.queries == [("bak_basic", {"trade_date": "20260720"})]
     assert pq.ParquetFile(expected_path).read().to_pydict() == response.to_dict(
         orient="list"
@@ -175,9 +156,7 @@ def test_tushare_broker_queries_one_calendar_year(
             },
         )
     ]
-    assert pq.read_table(expected_path).to_pydict() == response.to_dict(
-        orient="list"
-    )
+    assert pq.read_table(expected_path).to_pydict() == response.to_dict(orient="list")
 
 
 def test_tushare_broker_materializes_an_empty_daily_response(
@@ -194,12 +173,9 @@ def test_tushare_broker_materializes_an_empty_daily_response(
     path_manager = PathManager(tmp_path)
 
     fetched = TushareBroker(app_cfg=cast("AppConfig", app_config)).fetch(
-        record=DownloadPlan(
-            source_name="stock_st",
-            raw_object="stock_st",
-            trade_date="2019-04-01",
-            broker="tushare",
-        ),
+        source_name="stock_st",
+        raw_object="stock_st",
+        trade_date="2019-04-01",
         pm=path_manager,
     )
 
@@ -209,13 +185,7 @@ def test_tushare_broker_materializes_an_empty_daily_response(
         trade_date="2019-04-01",
         payload_file="data.parquet",
     )
-    assert fetched == DownloadPlan(
-        source_name="stock_st",
-        raw_object="stock_st",
-        trade_date="2019-04-01",
-        broker="tushare",
-        payload_file="data.parquet",
-    )
+    assert fetched == expected_path
     assert client.queries == [("stock_st", {"trade_date": "20190401"})]
     table = pq.ParquetFile(expected_path).read()
     assert table.num_rows == 0
@@ -234,12 +204,9 @@ def test_tushare_broker_translates_none_response_to_no_payload(
     )
 
     fetched = TushareBroker(app_cfg=cast("AppConfig", app_config)).fetch(
-        record=DownloadPlan(
-            source_name="daily_bar",
-            raw_object="daily_bar",
-            trade_date="2026-07-20",
-            broker="tushare",
-        ),
+        source_name="daily_bar",
+        raw_object="daily_bar",
+        trade_date="2026-07-20",
         pm=PathManager(tmp_path),
     )
 
@@ -258,9 +225,7 @@ def test_tushare_broker_rejects_an_empty_trade_calendar(
     )
     path_manager = PathManager(tmp_path)
 
-    payload = TushareBroker(
-        app_cfg=cast("AppConfig", app_config)
-    ).fetch_trade_calendar(
+    payload = TushareBroker(app_cfg=cast("AppConfig", app_config)).fetch_trade_calendar(
         calendar_year=2026,
         pm=path_manager,
     )

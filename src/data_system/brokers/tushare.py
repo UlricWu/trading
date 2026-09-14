@@ -13,7 +13,6 @@ import tushare as ts
 
 from src import logs
 from src.config.app_config import AppConfig
-from src.data_system.brokers.base import DownloadPlan
 from src.utils.datetime_utils import DateTimeUtils
 from src.utils.filesystem import FileSystem
 from src.utils.path import PathManager
@@ -36,6 +35,12 @@ class TushareBroker:
 
     Example:
         broker = TushareBroker(app_cfg=AppConfig.load())
+        payload_path = broker.fetch(
+            source_name="daily_bar",
+            raw_object="daily_bar",
+            trade_date="2026-07-20",
+            pm=path_manager,
+        )
     """
 
     name: ClassVar[str] = "tushare"
@@ -81,48 +86,49 @@ class TushareBroker:
     def fetch(
         self,
         *,
-        record: DownloadPlan,
+        source_name: str,
+        raw_object: str,
+        trade_date: str,
         pm: PathManager,
-    ) -> DownloadPlan | None:
+    ) -> Path | None:
         """Fetch one Tushare raw object as raw `data.parquet`.
 
         Example:
-            fetched = broker.fetch(record=download_plan, pm=path_manager)
+            payload_path = broker.fetch(
+                source_name="daily_bar",
+                raw_object="daily_bar",
+                trade_date="2026-07-20",
+                pm=path_manager,
+            )
         """
 
-        if record.raw_object not in self._TUSHARE_SOURCES:
+        if raw_object not in self._TUSHARE_SOURCES:
             raise ValueError(
-                f"TushareBroker does not support raw_object={record.raw_object!r} "
-                f"for source_name={record.source_name!r}"
+                f"TushareBroker does not support raw_object={raw_object!r} "
+                f"for source_name={source_name!r}"
             )
-        if record.raw_object == "trade_calendar":
+        if raw_object == "trade_calendar":
             raise ValueError(
                 "trade_calendar must be fetched with fetch_trade_calendar()"
             )
 
-        api_name = self._TUSHARE_SOURCES[record.raw_object]
-        compact_date = DateTimeUtils.to_compact_date(record.trade_date)
+        api_name = self._TUSHARE_SOURCES[raw_object]
+        compact_date = DateTimeUtils.to_compact_date(trade_date)
         raw_payload = pm.raw_payload(
-            broker=record.broker,
-            trade_date=record.trade_date,
-            source_name=record.source_name,
-            payload_file=record.payload_file,
+            broker=self.name,
+            trade_date=trade_date,
+            source_name=source_name,
+            payload_file="data.parquet",
         )
         if not self._materialize_query(
-            source_name=record.source_name,
+            source_name=source_name,
             api_name=api_name,
             params={"trade_date": compact_date},
             raw_payload=raw_payload,
         ):
             return None
 
-        return DownloadPlan(
-            trade_date=record.trade_date,
-            broker=record.broker,
-            source_name=record.source_name,
-            raw_object=record.raw_object,
-            payload_file=raw_payload.name,
-        )
+        return raw_payload
 
     def fetch_trade_calendar(
         self,

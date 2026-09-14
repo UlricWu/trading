@@ -19,6 +19,10 @@ start/done 或原始 JSON，workflow 负责业务运行日志。Typer 负责参�
 日期必须是规范 `YYYY-MM-DD`。范围必须满足 `start <= end`。Training 和 backtest 的
 `EXPERIMENT_ID` 必须匹配 `[A-Za-z0-9][A-Za-z0-9._-]{0,63}`。
 
+Submission 的日期与范围保证由 `src.jobs.requests` 中相应的 `create_*_submission` 函数
+建立。直接调用 submission dataclass 构造函数不执行校验，只允许可信内部调用者提供
+已经满足契约的值；CLI 和 HTTP 不得通过直接构造绕过该边界。
+
 ## AppConfig
 
 `AppConfig.load()` 是完整应用配置的唯一加载入口。调用者一次获得 `environment`、

@@ -95,7 +95,7 @@ H03 共享的 schema、decision time 和 key 校验只保留一个声明；H04 �
 
 ## 发布、复用与版本
 
-H04 复用 `steps._derived_partition._publish_derived_partition`。Meta 精确只含
+H04 复用 `steps._partition._publish_partition`。Meta 精确只含
 `payload` 和 `size_bytes`；禁止 `upstream` 和 `symbol_slices`。只有 Meta 不存在是 miss；
 孤立 payload 不构成可消费对象。有效输出 Meta 立即复用，不打开其 Parquet 内容，也不解析 P
 或读取两个上游。已有无效 Meta 必须失败，不覆盖、不降级为 miss。

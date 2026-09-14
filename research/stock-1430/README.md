@@ -1174,6 +1174,43 @@ manifest、失败 Notebook、命令及日志保留在证据目录的 `developmen
   owner、实现、测试与卷宗状态。基线、计算或输入实质改变后重验；在 H05 预注册比较前
   不选择或删除七列。
 
+**集成冲突验证预注册（2026-09-14，运行前固定）**：
+
+- 本轮为既定契约维护，将 `origin/dev@10531e17411300accbe4d246c8f5ca764a92fe03` 的已合入实现
+  整合到 `feature/stock-1430-daily-l2@8193ff71296f23ec69b0b1500a39f9b482b3ae70`。
+  保留目标分支的发布、broker 装配及入口校验契约；H03/H04 物化步骤统一复用 `_publish_partition`，
+  保留当前 `MaterializeStep` 命名、H04 39 列计算及 Meta 行为；迁移关系字段拒绝测试并清理重复实现。
+- 使用锁定环境执行全量回归；H04 原 Notebook 的七个代码单元沿用四组 P/T、24 文件输入
+  manifest 和全部断言，仅绑定本轮源码快照及新输出根。H03 沿用 2026-09-13 的
+  `validate_alignment.py`、30 个归档输入、`cd88f0c` 参考源码、四组 T/T+1 与既定缺失负例。
+  任一断言失败均保留原始失败后修正重验，不更换样本或放宽条件；仅写隔离根，使用无效占位凭证。
+- 本轮源码、输入引用及摘要、命令、环境和运行结果保存于
+  `/home/wsw/app/research-evidence/stock-1430-merge-2026-09-14-9hpnfrbl/`，至少保留至 H03/H04 采用决定及对应审查结束。
+  本次不改变研究状态，旧 Notebook 与历史运行结论继续绑定原版本。
+
+**集成 Evidence（2026-09-14，未提交工作树）**：
+
+- 14 个 Git 冲突已解决并暂存。`merged-source.tar` 绑定运行树 `7132d3b523ccfd2e3e7a570add82e5aeeda24415`；
+  `final-source.tar` 绑定最终测试树 `7dd640485bf38e551055a8cbdb62cf79224ba46b`。
+  两者仅有两个测试文件的格式差异，AST 相同，全部运行源码逐字节相同；核对见
+  `final-source-state.json`。运行清单摘要为 `455187283afbd3308214a046e67cbe93472bc3e81a25d52fc7dd9f083f089ae7`。
+- `uv lock --check`、最终 `git diff --check`、14 个相关 Python 文件的 Ruff format 检查通过；
+  最终全量回归为 **699 passed, 1 warning**，警告仍来自既有 multiprocessing fork 测试。
+  首轮隔离 PATH 未包含已安装的 `7zz`，为 698 passed / 1 failed；补齐可执行目录后重跑通过，
+  原日志保留为 `pytest.log`，最终命令、环境和日志见 `pytest-final-command.json` / `pytest-final.log`。
+- H04 的 `h04/validation-xettkugu/result.json` 记录 8 次新建、8 次复用及 2 次预设失败全部
+  符合断言；四组输出还与 2026-09-13 保存结果逐字段 schema、值、null 和行序精确一致。
+  输入 manifest 摘要仍为 `576b69eb44b303ba3b4bec2dac070e6fcc12b3b1ffe893d64c91e4b044b0e7ef`。
+- H03 的 `h03-validation/summary.json` 记录四组共八个 Feature/Label payload 与 `cd88f0c`
+  精确一致；复用后的 32 个 payload/Meta 文件身份不变，缺失分钟负例保留 Feature 且不发布 Label。
+  30 对象输入 manifest 摘要仍为 `cfe55cf061bb6b42cecf8c6e0520d9680ec90aab0ece38b1b6405a7dd14b54e7`。
+- Ruff lint 的 4 条诊断与 `origin/dev@10531e1` 相同。Mypy 保留 9 条诊断：1 条既有
+  `normalized_strategy` 标注问题、8 条 PyArrow 缺少类型声明；相同检查下目标分支为 5 条，
+  额外 4 条来自既有 H04 两个模块的 PyArrow import。未屏蔽诊断，不声明静态检查全部通过。
+- **实际状态**：仅完成本地合并准备、冲突修复和隔离验证；尚未生成本轮 merge commit 或 push，
+  PR 未因本次操作合入 `dev`，未执行 release/deploy，也未写正式数据。H03/H04 研究状态保持原值；
+  本轮结果只支持冲突整合后的技术行为，不构成采用决定或预测价值结论。
+
 ## H05
 
 - **Title**：14:30 融合模型离线训练

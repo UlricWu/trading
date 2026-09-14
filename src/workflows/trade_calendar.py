@@ -3,17 +3,19 @@
 
 from __future__ import annotations
 
+from functools import partial
+
 from src import logs
 from src.access import Access
 from src.config.app_config import AppConfig
-from src.data_system.brokers.base import BrokerAdapter
+from src.data_system.brokers.tushare import TushareBroker
 from src.data_system.context import DataContext
 from src.data_system.pipeline import DataPipeline
 from src.data_system.steps.calendar_materialize import CalendarMaterializeStep
 from src.observability.instrumentation import Instrumentation
 from src.utils.datetime_utils import DateTimeUtils
 from src.utils.path import PathManager
-from src.workflows import PROCESSED_VERSION
+from src.workflows import PROCESSED_VERSION, _get_broker
 
 _CALENDAR_BOOTSTRAP_START = "2016-01-01"
 
@@ -26,6 +28,8 @@ def run_trade_calendar_bootstrap(
 ) -> None:
     """Materialize complete calendar years from 2016 through the as-of year.
 
+    Reject invalid or pre-2016 as-of dates before preparing execution.
+
     Example:
         run_trade_calendar_bootstrap(
             app_config=app_config,
@@ -37,17 +41,23 @@ def run_trade_calendar_bootstrap(
         as_of_date,
         field_name="as_of_date",
     )
+    if validated_as_of < _CALENDAR_BOOTSTRAP_START:
+        raise ValueError(f"as_of_date must be on or after {_CALENDAR_BOOTSTRAP_START}")
     end_date = f"{validated_as_of[:4]}-12-31"
     access = Access(pm=path_manager, processed_version=PROCESSED_VERSION)
-    adapter_cache: dict[str, BrokerAdapter] = {}
+    get_broker = partial(
+        _get_broker,
+        app_config=app_config,
+        broker_class=TushareBroker,
+        adapter_cache={},
+    )
     pipeline = DataPipeline(
         steps=(
             CalendarMaterializeStep(
-                app_config=app_config,
                 path_manager=path_manager,
+                get_broker=get_broker,
                 access=access,
                 processed_version=PROCESSED_VERSION,
-                adapter_cache=adapter_cache,
             ),
         ),
         instrumentation=Instrumentation(

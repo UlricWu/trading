@@ -5,11 +5,16 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
+import pyarrow as pa
+
 from src import logs
 from src.access import Access
+from src.data_system.builders.feature_tushare_daily_basic import (
+    TushareDailyBasicV1Builder,
+)
 from src.data_system.builders.registry import get_feature_builder
 from src.data_system.context import DataContext
-from src.data_system.steps._derived_partition import _publish_derived_partition
+from src.data_system.steps._partition import _publish_partition
 from src.utils.path import PathManager
 
 
@@ -76,32 +81,31 @@ class FeatureBuildStep:
                     version=version,
                     trade_date=trade_date,
                 )
-                rows = _publish_derived_partition(
+                who = (
+                    f"feature; feature_set={feature_set} "
+                    f"version={version} trade_date={trade_date}"
+                )
+
+                def _build_feature(
+                    builder: TushareDailyBasicV1Builder = builder,
+                    trade_date: str = trade_date,
+                ) -> pa.Table:
+                    input_dates = tuple(
+                        self._access.recent_trade_dates(
+                            end_date=trade_date,
+                            sessions=builder.lookback_sessions + 1,
+                        )
+                    )
+                    return builder.build(access=self._access, trade_dates=input_dates)
+
+                rows = _publish_partition(
                     pm=self._pm,
-                    meta_path=output_paths.meta_path,
-                    output_path=output_paths.payload_path,
-                    build=lambda builder=builder, trade_date=trade_date: builder.build(
-                        access=self._access,
-                        trade_dates=tuple(
-                            self._access.recent_trade_dates(
-                                end_date=trade_date,
-                                sessions=builder.lookback_sessions + 1,
-                            )
-                        ),
-                    ),
-                    who=(
-                        f"FeatureBuild feature_set={feature_set} "
-                        f"trade_date={trade_date}"
-                    ),
+                    paths=output_paths,
+                    who=who,
+                    build=_build_feature,
                 )
                 if rows is None:
-                    logs.info(
-                        f"♻️ feature meta hit; feature_set={feature_set} "
-                        f"version={version} trade_date={trade_date}"
-                    )
+                    logs.info(f"♻️ {who}")
                 else:
-                    logs.info(
-                        f"✅ feature publish; feature_set={feature_set} "
-                        f"version={version} trade_date={trade_date} rows={rows}"
-                    )
+                    logs.info(f"✅ {who} rows={rows}")
         return context

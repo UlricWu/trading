@@ -17,7 +17,7 @@ from src.data_system.builders.stock_1430 import (
     build_stock_1430_labels,
 )
 from src.data_system.context import DataContext
-from src.data_system.steps._derived_partition import _publish_derived_partition
+from src.data_system.steps._partition import _publish_partition
 from src.utils.path import ObjectPaths, PathManager
 
 _FEATURE_SET = "l2_stock_1430"
@@ -77,10 +77,9 @@ class Stock1430MaterializeStep:
                     trade_date=session,
                 )
 
-            feature_rows = _publish_derived_partition(
+            feature_rows = _publish_partition(
                 pm=self._pm,
-                meta_path=feature_paths.meta_path,
-                output_path=feature_paths.payload_path,
+                paths=feature_paths,
                 who=feature_who,
                 build=_build_feature,
             )
@@ -95,10 +94,9 @@ class Stock1430MaterializeStep:
                 trade_date=trade_date,
             )
             label_who = f"stock 14:30 Label; trade_date={trade_date} version={_VERSION}"
-            label_rows = _publish_derived_partition(
+            label_rows = _publish_partition(
                 pm=self._pm,
-                meta_path=label_paths.meta_path,
-                output_path=label_paths.payload_path,
+                paths=label_paths,
                 who=label_who,
                 build=partial(
                     self._build_label,
