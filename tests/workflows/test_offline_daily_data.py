@@ -599,7 +599,7 @@ def test_stock_1430_backfill_runs_only_the_fixed_h03_step(
     monkeypatch.setattr(workflow_module, "Access", access_factory)
     step = object()
     step_factory = Mock(return_value=step)
-    monkeypatch.setattr(workflow_module, "Stock1430BuildStep", step_factory)
+    monkeypatch.setattr(workflow_module, "Stock1430MaterializeStep", step_factory)
     pipeline = Mock(spec=DataPipeline)
     pipeline.run.side_effect = lambda context: context
     pipeline_factory = Mock(return_value=pipeline)
@@ -654,13 +654,13 @@ def test_fusion_backfill_runs_one_step_with_formal_target_dates(
     step = Mock()
     step.run.side_effect = lambda context: context
     step_factory = Mock(return_value=step)
-    monkeypatch.setattr(workflow_module, "Stock1430DailyL2BuildStep", step_factory)
+    monkeypatch.setattr(workflow_module, "Stock1430DailyL2MaterializeStep", step_factory)
     for name in (
         "CalendarMaterializeStep",
         "FactMaterializeStep",
         "FeatureBuildStep",
         "LabelBuildStep",
-        "Stock1430BuildStep",
+        "Stock1430MaterializeStep",
         "Level2MinuteBuildStep",
     ):
         monkeypatch.setattr(
@@ -697,7 +697,7 @@ def test_fusion_backfill_propagates_step_failure_without_success_log(
     step = Mock()
     step.run.side_effect = failure
     monkeypatch.setattr(
-        workflow_module, "Stock1430DailyL2BuildStep", Mock(return_value=step)
+        workflow_module, "Stock1430DailyL2MaterializeStep", Mock(return_value=step)
     )
     logger = Mock()
     monkeypatch.setattr(workflow_module, "logs", logger)

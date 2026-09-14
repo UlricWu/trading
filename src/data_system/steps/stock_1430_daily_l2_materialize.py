@@ -1,5 +1,5 @@
-# filepath: src/data_system/steps/stock_1430_daily_l2_build.py
-"""Publish fixed H04 daily/L2 Feature partitions from committed inputs."""
+# filepath: src/data_system/steps/stock_1430_daily_l2_materialize.py
+"""Materialize fixed H04 daily/L2 Feature partitions from committed inputs."""
 
 from __future__ import annotations
 
@@ -23,11 +23,11 @@ _FEATURE_SET = "stock_1430_daily_l2"
 _VERSION = "v1"
 
 
-class Stock1430DailyL2BuildStep:
-    """Build only the fixed H04 Feature over resolved target sessions.
+class Stock1430DailyL2MaterializeStep:
+    """Reuse or publish the fixed H04 Feature over resolved target sessions.
 
     Example:
-        step = Stock1430DailyL2BuildStep(pm=path_manager, access=access)
+        step = Stock1430DailyL2MaterializeStep(pm=path_manager, access=access)
         step.run(
             DataContext(
                 start="2026-05-06", end="2026-05-06",
@@ -40,7 +40,7 @@ class Stock1430DailyL2BuildStep:
         """Bind the output store and its formal calendar Access.
 
         Example:
-            step = Stock1430DailyL2BuildStep(pm=path_manager, access=access)
+            step = Stock1430DailyL2MaterializeStep(pm=path_manager, access=access)
         """
         self._pm = pm
         self._access = access

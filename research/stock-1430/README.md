@@ -519,6 +519,25 @@ microseconds 对 `60_000_000` 向下取整；OHLC 在每个完整 key 内按
   可恢复状态校正记录，未重新核验 release、deploy 或全部正式数据；H03 后续上游补齐事实
   记录在 H03，不改写本段历史验收范围。
 
+**历史证据恢复核对（2026-09-13，记录维护）**：
+
+- 对本段引用的 `/home/wsw/app/h02-validation-tAqNHU/` 做只读清点和内容摘要核对，保留
+  60 个 payload/Meta 文件、56 个不同文件身份。三个最终验收日的六个分钟输出 SHA-256
+  与上表逐项相等，证明这些历史输出仍可逐字节恢复；本轮没有重建 H02 或重新计算守恒。
+- 该证据根只有数据和 Meta，没有当时的验证脚本、命令日志、环境快照或精确 dirty 源码
+  快照。`57d94ea` 的采用代码可从 Git 恢复，但现有记录不能证明它与历史运行工作树精确
+  一致；原记录的输入 Meta 摘要和 payload size 也不能替代历史输入内容绑定。
+- 核对清单为
+  `/home/wsw/app/research-evidence/stock-1430-evidence-2026-09-13-a74ry7d6/h02-recovery-audit.json`，
+  绑定本次所读 `9e5f9bb` 卷宗、现存文件的路径、SHA-256、size、mtime 和 inode。新计算的
+  输入摘要只说明本次观察状态，不回溯证明历史输入未变化。因此本段仍保留完整历史实验
+  无法确认可复跑的限制，不把输出恢复表述为实验恢复。
+- 六个已核对的 payload 及其 Meta 另复制到同一证据根的 `h02-recovered-outputs/`，共
+  12 文件，摘要记入核对清单；该副本只保全原样输出，不包含完整上游或补造历史验证程序。
+- 当前不新增 H02 Notebook：需补查的是历史程序与输入/源码绑定，文件格式不能弥补缺失。
+  若找回这些原始制品，可继续校正稳定引用；若需要新时期、新输入上的实质验证，按研究
+  工作流建立新 Change 并链接 H02。本次不改变既有 `adopted` 状态或历史结论范围。
+
 ## H03
 
 - **Title**：14:30 Level2 Feature 与 T+1 VWAP Rank Label
@@ -914,6 +933,81 @@ Feature/Label identity、version 和日期下，有效 Meta 就表示该对象�
   已提交为 `feature/intraday_feature@5219ae2c7c9fd8430e2e29e34da7d07b05f99d61`，
   尚未合入本地 `dev@57d94ea`；采用修改合入 `dev` 后才成为正式采用事实。上文 2026-09-08
   Evidence 中的未提交状态保留为当次运行记录。
+
+**Notebook 维护验证预注册（2026-09-13，运行前固定）**：
+
+- 用户要求执行证据整理：恢复 H03 的可审阅、可复跑 Notebook，并核对 H02 历史证据的
+  可恢复性。本轮属于既有记录与验证入口维护，不改变 H02/H03 的设计、Acceptance 或状态。
+- 当前代码固定为 `9e5f9bb5472cee6262e32347e4cf6ffb715dcd25`；沿用 2026-09-08 的
+  `validate_alignment.py`、同一 `cd88f0c` 参考源码归档和 30 个输入对象。输入归档 SHA-256
+  仍为 `91397bf2352cb16c19ce62df62a6e0868149c36d5db8c10094c672975a6d0997`。
+- 沿用四组 `2025-11-18 → 2025-11-19`、`2025-12-31 → 2026-01-05`、
+  `2026-04-30 → 2026-05-06`、`2026-07-27 → 2026-07-28` 及
+  `2025-11-24 → 2025-11-25` 缺失输入负例，不重新选样。
+- 两版各构建四对输出，八个 Feature/Label payload 的 schema、值、null 与行序精确相等；
+  三 key、历史 key digest、35/4 列 schema、rank/coverage 和 Meta 规则沿用既定断言。
+  当前实现复用两版共 16 个对象时，32 个 payload/Meta 文件身份保持不变；负例必须保留
+  Feature、拒绝发布 Label。输入副本前后保持不变。
+- 使用锁定项目内核运行 Notebook 及现有 H03 定向回归；Notebook 保存分段结果表、原始
+  命令和失败入口，不复制已有验证算法。只写新的隔离证据根，使用无效占位凭证；任一必要
+  断言失败即停止并保留，不改变输入、实现或验收条件来获得通过。
+- 本轮证据根为 `/home/wsw/app/research-evidence/stock-1430-evidence-2026-09-13-a74ry7d6/`；
+  源码、验证脚本、输入/参考归档、执行结果和环境至少保留至 H03 采用/拒绝及对应审查结束。
+  本轮不验证全历史质量、历史实时就绪、因子效果或收益。
+
+**验证准备修正（2026-09-13）**：
+
+- 初次启动时 authoring 环境未注册 `python3` kernel；改用执行目录内的 kernelspec 指向
+  既有锁定项目解释器，不改变项目依赖。
+- 首轮真实运行 `h03-run-gofg85lg` 完成全部构建、比较和复用，负例退出 1；Rich 将长路径
+  中的 `2025-11-25` 拆成两行，导致历史脚本的日期文本断言失败。单独复现确认
+  `COLUMNS=240` 能保留完整日期后，仅为验证脚本的 CLI 子进程固定该显示参数；所有原有
+  计算、输入、参考版本和断言不变。原脚本、失败 Notebook、失败日志及复现命令均保留。
+
+**Evidence（2026-09-13，Notebook 维护，本地 draft）**：
+
+- 已恢复 [`h03_validation.ipynb`](h03_validation.ipynb)；7 个代码单元在锁定项目内核中从头
+  执行成功，保存运行是上述证据根的 `h03-run-sl1ucp7y/`。现有 H03 builder、Step、Access、
+  CLI、request 和 workflow 定向回归为 **53 passed, 101 deselected**，没有失败或跳过。
+  未修改运行代码，本轮不重复无关全仓测试；历史全量测试仍只属于其对应版本。
+- `candidate-source.tar` 保存 `9e5f9bb` 的 Git 文件树，`source/` 是实际执行快照；
+  `source-manifest.json` 绑定含无效占位配置的 288 个文件，SHA-256 为
+  `e3b4d15371268cb493174ad6b05c8e9a438d94f96c1caf8858c0cb9bc6cf1404`。
+  输入、参考源码及验证脚本由 `artifact-manifest.json` 绑定，其 SHA-256 为
+  `d738a7b1d6267f7d94ad5abf42fe677d584cc05955971a4c5136749f85a2bf61`。
+  实际验证脚本 SHA-256 为 `13700a3c1522442046f32987b81482ce435ac506e613604bcf76177d933957c2`；
+  与原版的唯一执行差异是上述 `COLUMNS=240`，没有修改计算或断言。
+- 四组共八个 Feature/Label payload 与同一输入/环境下的 `cd88f0c` 重建结果逐字段 schema、
+  值、null 和行序精确相等；三 key、历史 key digest、35/4 列 schema、rank 和缺失规则均通过。
+  8 次新建 CLI、8 次复用 CLI、1 次预设失败完整保留在 `validation/commands.json`。
+- 复用两版共 16 个对象后，32 个 payload/Meta 的 SHA-256、size、mtime 和 inode 不变；
+  30 个输入对象的三个隔离副本共 180 文件前后身份不变。缺少 `2025-11-25` 分钟的负例
+  退出 1，保留 `2025-11-24` Feature，Label payload/Meta 均未发布。
+
+下表为本轮当前版本首次 CLI 的观测；资源用量没有预设通过门槛。Notebook 另保存全部
+32 列在四组完整 Feature universe 内的有效值覆盖率。
+
+| T | T+1 | Feature/Label 各行数 | 有效 Label | CLI wall 秒 | peak RSS MiB |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 2025-11-18 | 2025-11-19 | 5157 | 5149 | 2.73 | 1086.96 |
+| 2025-12-31 | 2026-01-05 | 5170 | 5158 | 2.69 | 1125.90 |
+| 2026-04-30 | 2026-05-06 | 5150 | 5136 | 2.75 | 1085.14 |
+| 2026-07-27 | 2026-07-28 | 5192 | 5188 | 2.73 | 1072.73 |
+
+- Notebook 格式、执行顺序、保存输出、Ruff 0.16.6 lint/format 和 `git diff --check` 均通过。
+  `h03-validation.html` 由保存的 Notebook 输出导出；使用 Chromium 151 在 1440px 宽度
+  检查了摘要、四组汇总、32 列覆盖率及生命周期表，中文可读、五张表均无横向裁切。
+  覆盖率明确区分“列有值”与“计划分钟被观察到”，不把 observed-minute-ratio 列的非缺失
+  率 100% 表述为分钟全覆盖。预览环境单独保留依赖清单，不修改项目依赖。
+- `REPRODUCE.md` 提供解包和从头执行命令；同一证据根的 `verified-evidence.tar.gz` 保存
+  最终 Notebook、卷宗快照、源码、输入/参考归档、成功和失败记录，以及 H02 的恢复核对及
+  六个原样输出。逐文件摘要见归档内 `SHA256SUMS`，整体摘要见同目录
+  `verified-evidence.tar.gz.sha256`；保留期同本轮预注册。
+- **当前认识**：这份 Notebook 为 `9e5f9bb` 的 H03 技术复核提供可审阅和可复跑入口；
+  沿用冻结隔离输入的适用边界，不证明历史实时就绪、全历史质量、alpha 或收益，也不替代
+  H02 逐笔守恒或 H04 融合证据。H03 保持 `open`，本轮没有采用或拒绝决定。
+- **实际状态**：本轮只修改研究卷宗和 Notebook；源码、正式 owner 与 H04 Notebook 未改。
+  没有本轮 commit、push、merge、release、deploy 或正式数据写入。
 
 ## H04
 

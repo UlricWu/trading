@@ -24,8 +24,10 @@ from src.data_system.steps.fact_materialize import FactMaterializeStep
 from src.data_system.steps.feature_build import FeatureBuildStep
 from src.data_system.steps.label_build import LabelBuildStep
 from src.data_system.steps.level2_minute_build import Level2MinuteBuildStep
-from src.data_system.steps.stock_1430_build import Stock1430BuildStep
-from src.data_system.steps.stock_1430_daily_l2_build import Stock1430DailyL2BuildStep
+from src.data_system.steps.stock_1430_daily_l2_materialize import (
+    Stock1430DailyL2MaterializeStep,
+)
+from src.data_system.steps.stock_1430_materialize import Stock1430MaterializeStep
 from src.jobs.requests import (
     DataSubmission,
     FeatureBackfillSubmission,
@@ -373,7 +375,7 @@ def run_stock_1430_backfill(
             end_date=submission.end,
         )
     )
-    step = Stock1430BuildStep(pm=path_manager, access=access)
+    step = Stock1430MaterializeStep(pm=path_manager, access=access)
     pipeline = DataPipeline(
         steps=(step,),
         instrumentation=Instrumentation(
@@ -419,7 +421,7 @@ def run_stock_1430_fusion_backfill(
         access.trade_dates(start_date=submission.start, end_date=submission.end)
     )
     pipeline = DataPipeline(
-        steps=(Stock1430DailyL2BuildStep(pm=path_manager, access=access),),
+        steps=(Stock1430DailyL2MaterializeStep(pm=path_manager, access=access),),
         instrumentation=Instrumentation(
             f"data-stock-1430-fusion-backfill_{submission.start}_{submission.end}"
         ),

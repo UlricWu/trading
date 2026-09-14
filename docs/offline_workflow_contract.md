@@ -143,7 +143,7 @@ Instrumentation 衡量 workflow 显式组装的 step，返回 `step.run(context)
 
 ```text
 CalendarMaterializeStep, FactMaterializeStep, FeatureBuildStep, LabelBuildStep,
-Level2MinuteBuildStep, Stock1430BuildStep, Stock1430DailyL2BuildStep,
+Level2MinuteBuildStep, Stock1430MaterializeStep, Stock1430DailyL2MaterializeStep,
 DatasetBuildStep, PreprocessStep, ModelTrainStep, ICEvaluateStep,
 ArtifactPersistStep, SignalStep, SignalEvalStep, TradableAlphaEvalStep,
 PortfolioStep, RiskEvalStep, ExecutionEvalStep, AccountingStep,
@@ -352,17 +352,21 @@ trade_date 和与事件直接相关的 symbols、进度、tick、行数、耗时
 
 ## 14:30 Feature/Label backfill workflow
 
+14:30 两条派生链以 `*_materialize.py` / `*MaterializeStep` 命名按交易日物化分区的执行步骤，
+负责输入读取、Meta 复用和发布。对应 `builders/stock_1430.py` 与
+`builders/stock_1430_daily_l2.py` 中的 `build_*` 纯函数接收内存表并返回计算结果。
+
 `run_stock_1430_backfill` 是 CLI-only `data-stock-1430-backfill` 的唯一 workflow，直接消费
 已校验的 `Stock1430BackfillSubmission(start, end)`。闭区间精确表示目标 `T` 分区，不表示
 H02 分钟或日频 factor 的生产范围。
 
 Workflow 从收到的 `PathManager` 创建唯一固定 `processed_version=v1` Access，通过正式 trade
-calendar 把闭区间解析为升序目标 session，只显式组装一个 `Stock1430BuildStep` 并调用一次
+calendar 把闭区间解析为升序目标 session，只显式组装一个 `Stock1430MaterializeStep` 并调用一次
 `DataPipeline.run()`。它不读取配置中的 source、Feature 或 Label registry，不组装 Calendar、
 Fact、通用 Feature/Label 或分钟 Step，不创建 broker adapter，也不写 raw、processed、
 experiment 或 Job 状态。目标 session 集为空时 Step 仍执行一次并自然成功。
 
-`Stock1430BuildStep` 对每个 `T` 固定先处理 `l2_stock_1430/v1` Feature，再处理
+`Stock1430MaterializeStep` 对每个 `T` 固定先处理 `l2_stock_1430/v1` Feature，再处理
 `l2_stock_1430_t1_vwap_rank/v1` Label。Feature Meta miss 才通过 Access 读取 `T` 两市分钟事实；
 Label Meta miss 才通过 `meta.require` 取得已提交 Feature payload，只读取三字段 key，
 再解析下一正式 session `T+1`，并读取 T/T+1
@@ -391,7 +395,7 @@ start、end 与 targets。Step 为每个对象提供以 `stock 14:30 Feature` �
 `run_stock_1430_fusion_backfill` 是 CLI-only `data-stock-1430-fusion-backfill` 的唯一 workflow。
 它消费已校验的 `Stock1430FusionBackfillSubmission(start, end)`，从唯一 PathManager 创建
 固定 `processed_version=v1` Access，通过正式 calendar 解析升序目标 T，然后只组装一个
-`Stock1430DailyL2BuildStep`，调用一次 `DataPipeline.run()`；空目标集合仍执行一次空 Step。
+`Stock1430DailyL2MaterializeStep`，调用一次 `DataPipeline.run()`；空目标集合仍执行一次空 Step。
 
 Step 对每个 T 先通过共享 derived-partition publisher 检查输出 Meta。有效命中直接复用，
 不解析 P、不读取两个输入或打开输出 Parquet；workflow 的目标范围 calendar 解析仍须完成。

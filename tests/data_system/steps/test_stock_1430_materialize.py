@@ -1,4 +1,4 @@
-# filepath: tests/data_system/steps/test_stock_1430_build.py
+# filepath: tests/data_system/steps/test_stock_1430_materialize.py
 """Behavior tests for H03 Feature/Label materialization."""
 
 from __future__ import annotations
@@ -16,8 +16,8 @@ import pytest
 from src import logs
 from src.access import Access, meta
 from src.data_system.context import DataContext
-from src.data_system.steps import stock_1430_build as step_module
-from src.data_system.steps.stock_1430_build import Stock1430BuildStep
+from src.data_system.steps import stock_1430_materialize as step_module
+from src.data_system.steps.stock_1430_materialize import Stock1430MaterializeStep
 from src.utils.path import PathManager
 
 
@@ -65,7 +65,7 @@ def test_stock_1430_step_publishes_pair_and_reuses_meta_without_input_reads(
         _factors(trade_date),
         _factors(next_trade_date),
     ]
-    step = Stock1430BuildStep(pm=pm, access=access)
+    step = Stock1430MaterializeStep(pm=pm, access=access)
     context = DataContext(
         start=trade_date,
         end=trade_date,
@@ -161,7 +161,7 @@ def test_stock_1430_step_keeps_feature_and_resumes_label_miss(
     access.next_trade_date.return_value = "2026-05-07"
     access.stock_trade_minutes.return_value = pa.table({"source": [1]})
     access.adjustment_factors.return_value = _factors(trade_date)
-    step = Stock1430BuildStep(pm=pm, access=access)
+    step = Stock1430MaterializeStep(pm=pm, access=access)
     context = DataContext(
         start=trade_date,
         end=trade_date,
@@ -210,7 +210,7 @@ def test_stock_1430_step_requires_feature_meta_before_label_input_reads(
     access.next_trade_date.return_value = "2026-05-07"
 
     with pytest.raises(FileNotFoundError) as caught:
-        Stock1430BuildStep(pm=pm, access=access).run(
+        Stock1430MaterializeStep(pm=pm, access=access).run(
             DataContext(start=trade_date, end=trade_date, trade_dates=(trade_date,))
         )
 
@@ -250,7 +250,7 @@ def test_stock_1430_step_rejects_relationship_meta_without_rebuilding(
     access = Mock(spec=Access)
 
     with pytest.raises(RuntimeError, match="must not contain upstream"):
-        Stock1430BuildStep(pm=pm, access=access).run(
+        Stock1430MaterializeStep(pm=pm, access=access).run(
             DataContext(
                 start=trade_date,
                 end=trade_date,
@@ -274,7 +274,7 @@ def test_stock_1430_step_rejects_empty_feature_before_label_io(
     )
 
     with pytest.raises(ValueError, match="at least one row"):
-        Stock1430BuildStep(pm=pm, access=access).run(
+        Stock1430MaterializeStep(pm=pm, access=access).run(
             DataContext(start=trade_date, end=trade_date, trade_dates=(trade_date,))
         )
 
@@ -318,7 +318,7 @@ def test_stock_1430_step_preserves_invalid_meta_and_fails_without_input_reads(
     access = Mock(spec=Access)
 
     with pytest.raises(RuntimeError, match="size|symbol_slices"):
-        Stock1430BuildStep(pm=pm, access=access).run(
+        Stock1430MaterializeStep(pm=pm, access=access).run(
             DataContext(start=trade_date, end=trade_date, trade_dates=(trade_date,))
         )
 

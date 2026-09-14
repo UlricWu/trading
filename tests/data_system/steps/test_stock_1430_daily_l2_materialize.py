@@ -1,4 +1,4 @@
-# filepath: tests/data_system/steps/test_stock_1430_daily_l2_build.py
+# filepath: tests/data_system/steps/test_stock_1430_daily_l2_materialize.py
 """H04 publication, calendar, no-leakage and recovery boundaries."""
 
 from __future__ import annotations
@@ -16,8 +16,10 @@ from src.access import Access, meta
 from src.data_system.builders.stock_1430 import STOCK_1430_FEATURE_SCHEMA
 from src.data_system.builders.stock_1430_daily_l2 import STOCK_1430_DAILY_SOURCE_COLUMNS
 from src.data_system.context import DataContext
-from src.data_system.steps import stock_1430_daily_l2_build as step_module
-from src.data_system.steps.stock_1430_daily_l2_build import Stock1430DailyL2BuildStep
+from src.data_system.steps import stock_1430_daily_l2_materialize as step_module
+from src.data_system.steps.stock_1430_daily_l2_materialize import (
+    Stock1430DailyL2MaterializeStep,
+)
 from src.utils.datetime_utils import DateTimeUtils
 from src.utils.path import ObjectPaths, PathManager
 
@@ -112,7 +114,7 @@ def test_step_resolves_calendar_and_ignores_daily_t_for_new_outputs(
             )
             daily_t.meta_path.parent.mkdir(parents=True)
             daily_t.meta_path.write_text("invalid JSON: must never be read")
-        step = Stock1430DailyL2BuildStep(
+        step = Stock1430DailyL2MaterializeStep(
             pm=pm, access=Access(pm, processed_version="v1")
         )
         context = DataContext(start=target, end=target, trade_dates=(target,))
@@ -147,7 +149,7 @@ def test_step_reuses_without_calendar_upstreams_or_parquet_reads(
     l2, daily, output = _inputs(pm, previous, target)
     context = DataContext(start=target, end=target, trade_dates=(target,))
     access = Access(pm, processed_version="v1")
-    step = Stock1430DailyL2BuildStep(pm=pm, access=access)
+    step = Stock1430DailyL2MaterializeStep(pm=pm, access=access)
     step.run(context)
     before = {
         path: (path.read_bytes(), path.stat())
@@ -220,7 +222,9 @@ def test_step_requires_both_valid_inputs_and_never_falls_back(
         )
 
     with pytest.raises((FileNotFoundError, ValueError, RuntimeError)):
-        Stock1430DailyL2BuildStep(pm=pm, access=Access(pm, processed_version="v1")).run(
+        Stock1430DailyL2MaterializeStep(
+            pm=pm, access=Access(pm, processed_version="v1")
+        ).run(
             DataContext(start=target, end=target, trade_dates=(target,))
         )
     assert not output.meta_path.exists()
@@ -263,7 +267,7 @@ def test_step_rejects_invalid_output_meta_without_overwriting_or_input_reads(
     }
     access = Mock(spec=Access)
     with pytest.raises(RuntimeError):
-        Stock1430DailyL2BuildStep(pm=pm, access=access).run(
+        Stock1430DailyL2MaterializeStep(pm=pm, access=access).run(
             DataContext(
                 start="2026-05-06", end="2026-05-06", trade_dates=("2026-05-06",)
             )
@@ -284,7 +288,9 @@ def test_step_preserves_earlier_partition_and_resumes_after_missing_input(
     saved_meta = missing.meta_path.read_bytes()
     missing.meta_path.unlink()
     context = DataContext(start=sessions[1], end=sessions[2], trade_dates=sessions[1:])
-    step = Stock1430DailyL2BuildStep(pm=pm, access=Access(pm, processed_version="v1"))
+    step = Stock1430DailyL2MaterializeStep(
+        pm=pm, access=Access(pm, processed_version="v1")
+    )
     with pytest.raises(FileNotFoundError):
         step.run(context)
     assert first.meta_path.is_file()
@@ -317,7 +323,9 @@ def test_step_closes_parquet_readers_on_success_and_builder_failure(
         return reader
 
     monkeypatch.setattr(step_module.pq, "ParquetFile", track)
-    step = Stock1430DailyL2BuildStep(pm=pm, access=Access(pm, processed_version="v1"))
+    step = Stock1430DailyL2MaterializeStep(
+        pm=pm, access=Access(pm, processed_version="v1")
+    )
     context = DataContext(
         start="2026-05-06", end="2026-05-06", trade_dates=("2026-05-06",)
     )
@@ -342,7 +350,9 @@ def test_step_rejects_empty_input_without_publishing(
         empty = reader.read().slice(0, 0)
     _publish(pm, paths, empty)
     with pytest.raises(ValueError, match="at least one row"):
-        Stock1430DailyL2BuildStep(pm=pm, access=Access(pm, processed_version="v1")).run(
+        Stock1430DailyL2MaterializeStep(
+            pm=pm, access=Access(pm, processed_version="v1")
+        ).run(
             DataContext(
                 start="2026-05-06", end="2026-05-06", trade_dates=("2026-05-06",)
             )
@@ -362,7 +372,9 @@ def test_step_publishes_all_null_ranks_and_does_not_reuse_orphan_payload(
     _publish(pm, daily, outside_universe)
     output.payload_path.parent.mkdir(parents=True)
     output.payload_path.write_bytes(b"uncommitted payload")
-    Stock1430DailyL2BuildStep(pm=pm, access=Access(pm, processed_version="v1")).run(
+    Stock1430DailyL2MaterializeStep(
+        pm=pm, access=Access(pm, processed_version="v1")
+    ).run(
         DataContext(start="2026-05-06", end="2026-05-06", trade_dates=("2026-05-06",))
     )
     record = meta.require(
@@ -383,7 +395,9 @@ def test_step_requires_previous_year_calendar_on_miss(tmp_path: Path) -> None:
     _calendar(pm, ("2024-12-31", "2026-01-05"))
     _, _, output = _inputs(pm, "2025-12-31", "2026-01-05")
     with pytest.raises(FileNotFoundError):
-        Stock1430DailyL2BuildStep(pm=pm, access=Access(pm, processed_version="v1")).run(
+        Stock1430DailyL2MaterializeStep(
+            pm=pm, access=Access(pm, processed_version="v1")
+        ).run(
             DataContext(
                 start="2026-01-05", end="2026-01-05", trade_dates=("2026-01-05",)
             )
