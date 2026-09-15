@@ -1,5 +1,5 @@
-# filepath: src/data_system/steps/stock_1430_build.py
-"""Publish the fixed V1 14:30 Level-2 Feature and T+1 Label pair."""
+# filepath: src/data_system/steps/stock_1430_materialize.py
+"""Materialize the fixed V1 14:30 Level-2 Feature and T+1 Label pair."""
 
 from __future__ import annotations
 
@@ -25,11 +25,11 @@ _LABEL_SET = "l2_stock_1430_t1_vwap_rank"
 _VERSION = "v1"
 
 
-class Stock1430BuildStep:
-    """Build the fixed H03 Feature then Label for each target session.
+class Stock1430MaterializeStep:
+    """Reuse or publish the fixed H03 Feature then Label for each session.
 
     Example:
-        step = Stock1430BuildStep(pm=path_manager, access=access)
+        step = Stock1430MaterializeStep(pm=path_manager, access=access)
         step.run(
             DataContext(
                 start="2026-05-06",
@@ -43,13 +43,13 @@ class Stock1430BuildStep:
         """Bind the formal store and its fixed V1 processed-data Access.
 
         Example:
-            step = Stock1430BuildStep(pm=path_manager, access=access)
+            step = Stock1430MaterializeStep(pm=path_manager, access=access)
         """
         self._pm = pm
         self._access = access
 
     def run(self, context: DataContext) -> DataContext:
-        """Build target dates in Context order, Feature before Label.
+        """Materialize dates in Context order, Feature before Label.
 
         Example:
             next_context = step.run(

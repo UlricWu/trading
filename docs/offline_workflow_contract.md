@@ -7,7 +7,7 @@
 
 ## 共同边界
 
-`src/workflows` 只提供八个 workflow composition root：
+`src/workflows` 只提供以下 workflow composition root：
 
 ```python
 run_trade_calendar_bootstrap(
@@ -38,6 +38,11 @@ run_level2_minute_backfill(
 run_stock_1430_backfill(
     *, path_manager: PathManager,
     submission: Stock1430BackfillSubmission,
+) -> None
+
+run_stock_1430_fusion_backfill(
+    *, path_manager: PathManager,
+    submission: Stock1430FusionBackfillSubmission,
 ) -> None
 
 run_offline_training(
@@ -162,7 +167,8 @@ Instrumentation 衡量 workflow 显式组装的 step，返回 `step.run(context)
 
 ```text
 CalendarMaterializeStep, FactMaterializeStep, FeatureBuildStep, LabelBuildStep,
-Level2MinuteBuildStep, DatasetBuildStep, PreprocessStep, ModelTrainStep, ICEvaluateStep,
+Level2MinuteBuildStep, Stock1430MaterializeStep, Stock1430DailyL2MaterializeStep,
+DatasetBuildStep, PreprocessStep, ModelTrainStep, ICEvaluateStep,
 ArtifactPersistStep, SignalStep, SignalEvalStep, TradableAlphaEvalStep,
 PortfolioStep, RiskEvalStep, ExecutionEvalStep, AccountingStep,
 FullBacktestStep, MetricsPersistStep, ReportStep
@@ -400,17 +406,21 @@ trade_date 和与事件直接相关的 symbols、进度、tick、行数、耗时
 
 ## 14:30 Feature/Label backfill workflow
 
+14:30 两条派生链以 `*_materialize.py` / `*MaterializeStep` 命名按交易日物化分区的执行步骤，
+负责输入读取、Meta 复用和发布。对应 `builders/stock_1430.py` 与
+`builders/stock_1430_daily_l2.py` 中的 `build_*` 纯函数接收内存表并返回计算结果。
+
 `run_stock_1430_backfill` 是 CLI-only `data-stock-1430-backfill` 的唯一 workflow，直接消费
 已校验的 `Stock1430BackfillSubmission(start, end)`。闭区间精确表示目标 `T` 分区，不表示
 H02 分钟或日频 factor 的生产范围。
 
 Workflow 从收到的 `PathManager` 创建唯一固定 `processed_version=v1` Access，通过正式 trade
-calendar 把闭区间解析为升序目标 session，只显式组装一个 `Stock1430BuildStep` 并调用一次
+calendar 把闭区间解析为升序目标 session，只显式组装一个 `Stock1430MaterializeStep` 并调用一次
 `DataPipeline.run()`。它不读取配置中的 source、Feature 或 Label registry，不组装 Calendar、
 Fact、通用 Feature/Label 或分钟 Step，不创建 broker adapter，也不写 raw、processed、
 experiment 或 Job 状态。目标 session 集为空时 Step 仍执行一次并自然成功。
 
-`Stock1430BuildStep` 对每个 `T` 固定先处理 `l2_stock_1430/v1` Feature，再处理
+`Stock1430MaterializeStep` 对每个 `T` 固定先处理 `l2_stock_1430/v1` Feature，再处理
 `l2_stock_1430_t1_vwap_rank/v1` Label。Feature Meta miss 才通过 Access 读取 `T` 两市分钟事实；
 Label Meta miss 才通过 `meta.require` 取得已提交 Feature payload，只读取三字段 key，
 再解析下一正式 session `T+1`，并读取 T/T+1
@@ -433,6 +443,29 @@ data-stock-1430-backfill_{start}_{end}
 start、end 与 targets。Step 为每个对象提供以 `stock 14:30 Feature` 或 `stock 14:30 Label`
 为具名对象、携带 trade_date 和 version 的 `who`；private 发布函数返回复用或发布结果，
 由 Step 按共同规则记录，发布时追加行数。错误原样传播。
+
+## 14:30 daily/L2 Feature backfill workflow
+
+`run_stock_1430_fusion_backfill` 是 CLI-only `data-stock-1430-fusion-backfill` 的唯一 workflow。
+它消费已校验的 `Stock1430FusionBackfillSubmission(start, end)`，从唯一 PathManager 创建
+固定 `processed_version=v1` Access，通过正式 calendar 解析升序目标 T，然后只组装一个
+`Stock1430DailyL2MaterializeStep`，调用一次 `DataPipeline.run()`；空目标集合仍执行一次空 Step。
+
+Step 对每个 T 先通过共享 `_publish_partition` 检查输出 Meta。有效命中直接复用，
+不解析 P、不读取两个输入或打开输出 Parquet；workflow 的目标范围 calendar 解析仍须完成。
+Miss 才用 `recent_trade_dates(end_date=T, sessions=2)` 取得 `[P,T]`，通过 `meta.require`
+读取精确 `l2_stock_1430/v1(T)` 与 `tushare_daily_basic/v1(P)` payload。输入读取、输出
+schema、对齐和排名由 [`stock_1430_daily_l2_contract.md`](data/stock_1430_daily_l2_contract.md)
+拥有。空输出和原子发布继续由共享发布边界处理，不覆盖已有无效 Meta。
+
+Workflow 不读取 source/Feature/Label registry，不构建上游或 Label，不创建 broker，不写
+raw、processed、labels、experiment 或 Job 状态；不接入 HTTP、日常 data workflow 或 cron。
+任一错误原样传播并终止后续日期；此前已提交分区保留，重跑从 Meta miss 续建。
+
+Instrumentation identity 为 `data-stock-1430-fusion-backfill_{start}_{end}`。
+Workflow 在日期解析后记录 `▶️ workflow`，成功后记录 `✅ workflow`，携带 kind、start、end、
+targets。Step 的 `who` 为 `stock 14:30 daily/L2 Feature`，携带 trade_date 和 version；
+复用记录 `♻️`，发布记录 `✅` 并追加 rows。Access 和 builder 不重复记录分区结果。
 
 ## Training workflow
 

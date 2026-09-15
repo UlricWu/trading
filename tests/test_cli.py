@@ -1,5 +1,5 @@
 # filepath: tests/test_cli.py
-"""Public contract tests for the nine CLI commands."""
+"""Public contract tests for the CLI commands."""
 
 from __future__ import annotations
 
@@ -97,6 +97,57 @@ def test_data_command_passes_one_validated_range_submission(
     assert submission.start == "2026-07-01"
     assert submission.end == "2026-07-20"
     assert isinstance(workflow.call_args.kwargs["path_manager"], PathManager)
+
+
+def test_fusion_backfill_passes_one_validated_target_range(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    load_config = Mock(return_value=SimpleNamespace(storage_root=tmp_path))
+    workflow = Mock()
+    monkeypatch.setattr(cli.AppConfig, "load", load_config)
+    monkeypatch.setattr(cli, "run_stock_1430_fusion_backfill", workflow)
+    result = CliRunner().invoke(
+        cli.app,
+        [
+            "data-stock-1430-fusion-backfill",
+            "--start",
+            "2026-05-06",
+            "--end",
+            "2026-05-07",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    load_config.assert_called_once_with()
+    workflow.assert_called_once()
+    arguments = workflow.call_args.kwargs
+    assert set(arguments) == {"path_manager", "submission"}
+    assert isinstance(arguments["path_manager"], PathManager)
+    assert arguments["submission"].start == "2026-05-06"
+    assert arguments["submission"].end == "2026-05-07"
+
+
+def test_fusion_backfill_propagates_workflow_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        cli.AppConfig, "load", Mock(return_value=SimpleNamespace(storage_root=tmp_path))
+    )
+    failure = FileNotFoundError("required daily P is unavailable")
+    monkeypatch.setattr(
+        cli, "run_stock_1430_fusion_backfill", Mock(side_effect=failure)
+    )
+    result = CliRunner().invoke(
+        cli.app,
+        [
+            "data-stock-1430-fusion-backfill",
+            "--start",
+            "2026-05-06",
+            "--end",
+            "2026-05-06",
+        ],
+    )
+    assert result.exit_code == 1
+    assert result.exception is failure
 
 
 def test_feature_backfill_passes_one_exact_identity_and_target_range(
@@ -380,6 +431,22 @@ def test_empty_runtime_schedule_propagates_as_exit_code_1(
             "2026-05-07",
             "--end",
             "2026-05-06",
+        ],
+        [
+            "data-stock-1430-fusion-backfill",
+            "--start",
+            "2026-05-07",
+            "--end",
+            "2026-05-06",
+        ],
+        [
+            "data-stock-1430-fusion-backfill",
+            "--start",
+            "2026-05-06",
+            "--end",
+            "2026-05-06",
+            "--version",
+            "v2",
         ],
         [
             "train",

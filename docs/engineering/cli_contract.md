@@ -8,7 +8,7 @@
 ## 通用边界
 
 CLI 只把不可信文本解析为 `src.jobs.requests` 已构造的 data、fact bootstrap、Feature
-backfill、Level-2 minute backfill、H03 14:30 backfill、training 或 backtest submission，
+backfill、Level-2 minute backfill、H03 14:30 backfill、H04 fusion backfill、training 或 backtest submission，
 加载一次 `AppConfig`，
 创建 `PathManager` 并调用一次工作流。HTTP Job API
 也必须复用同一构造边界，不得各自实现日期、mode、model experiment 或 strategy 校验。
@@ -39,7 +39,7 @@ Submission 的日期与范围保证由 `src.jobs.requests` 中相应的 `create_
 `override` 只能包含 `data`、`model` 或 `backtest` 根键；因此不能改变
 `environment`、`storage_root` 或 `secret`。mapping 递归合并，标量、列表和显式
 `None` 直接替换，不定义字段级特殊合并规则。合并后必须校验完整 `AppConfig`。HTTP Job
-API 和九个 CLI 命令都不得用 request runtime 字段构造 config override。配置读取、
+API 和所有 CLI 命令都不得用 request runtime 字段构造 config override。配置读取、
 override 拒绝和最终 schema 校验错误均归 `AppConfig.load()`，不在下游组件重复校验。
 
 ## Data
@@ -52,6 +52,8 @@ python -m src.cli data-level2 --start YYYY-MM-DD --end YYYY-MM-DD
 python -m src.cli data-level2-minute-backfill \
   --start YYYY-MM-DD --end YYYY-MM-DD
 python -m src.cli data-stock-1430-backfill \
+  --start YYYY-MM-DD --end YYYY-MM-DD
+python -m src.cli data-stock-1430-fusion-backfill \
   --start YYYY-MM-DD --end YYYY-MM-DD
 python -m src.cli data-feature-backfill \
   --feature-set FEATURE_SET --version VERSION \
@@ -106,6 +108,16 @@ calendar 与 Standard facts，不调用 broker，不写 raw、processed、label 
 每个 Meta miss 的历史输入 session 数只从精确 builder 的 `lookback_sessions` 取得。范围内
 没有正式交易 session 时成功；显式目标缺少完整历史或必要 facts 时退出 `1`，不得跳过或
 缩小范围。该命令不属于 HTTP Job API 或 cron。
+
+`data-stock-1430-fusion-backfill` 是 CLI-only 的固定 H04 Feature 回填入口。它构造
+`Stock1430FusionBackfillSubmission(start, end)`，只调用一次
+`run_stock_1430_fusion_backfill`；闭区间仅表示输出 T。Workflow 只消费已提交的 calendar、
+`l2_stock_1430/v1(T)` 和 `tushare_daily_basic/v1(P)`，P 由正式日历解析。
+它不构建上游或 Label，不调用 broker，不写 raw、processed、labels、experiment 或 Job 状态。
+空目标 session 集成功；必要输入或构建发布失败退出 1，参数错误退出 2。
+命令仅接受 `--start/--end`，不提供 version、feature set、refresh、grid 或 experiment 参数，
+不属于 HTTP Job、日常 data workflow 或 cron。融合领域契约由
+[`stock_1430_daily_l2_contract.md`](../data/stock_1430_daily_l2_contract.md) 拥有。
 
 ## Training
 

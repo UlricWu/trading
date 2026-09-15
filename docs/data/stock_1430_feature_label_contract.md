@@ -41,6 +41,10 @@ adj_factor/v1
 边界、universe、schema、公式、排序、null 或 rank 语义的变化必须使用新的 H03 version；不得
 在 `v1` 下根据当前上游状态动态判定旧输出是否仍可复用。
 
+固定版本只绑定计算语义，不证明同版本输入内容从未修订。V1 不检测上游数据修订，已有输出
+不会因此自动失效或重建；同尺寸 payload 内容替换也不属于当前 Meta 的检测保证。研究验证
+必须另外保存实际输入内容摘要及可恢复内容、代码版本和环境，不能用版本名称替代输入证据。
+
 ## 时间与可见性
 
 全部时间边界均为 `Asia/Shanghai` wall-clock，使用半开区间：
@@ -198,6 +202,9 @@ Label 只消费已提交 Feature 的三字段 key。Step 在 Label miss 时通�
 可消费 payload 路径并用 context manager 读取 key 列；builder 校验类型、非空 key 值、唯一性、
 目标日期、14:30 时间和顺序。`STOCK_1430_KEY_SCHEMA` 在 builder 中声明，供两种输出 schema
 和 Step 投影共同使用；Label 输出直接继承输入 key 数组，不重新构造或排序行集合。
+`STOCK_1430_FEATURE_SCHEMA`、`STOCK_1430_DECISION_TIME` 和
+`require_stock_1430_feature_keys(feature_keys, *, trade_date, decision_ts_utc)` 公开现有的
+schema、时间及持久化 key 校验，供 Label 和 H04 消费边界复用；不改变 H03 数值行为。
 Label 直接由 Arrow 数组构造，不再携带中间 Pandas DataFrame 的 schema metadata；规范 Arrow
 字段、值和顺序保持上述定义，不承诺与旧候选 payload 字节一致。
 
@@ -221,7 +228,7 @@ Feature 和 Label 分区各自使用 `steps` 包内部共享的 `_publish_partit
 
 只有 Meta 不存在表示 miss。对于固定数据集 identity、version 和日期，已有 Meta 的自身 schema、
 payload identity 与 payload size 有效时必须立即复用；不得读取分钟、factor、Feature payload 或
-当前上游状态来重新证明可复用。Meta 已存在但自身无效，或包含 H03 禁止的 `upstream` / 
+当前上游状态来重新证明可复用。Meta 已存在但自身无效，或包含 H03 禁止的 `upstream` /
 `symbol_slices` 时失败，不得覆盖或降级为 miss。
 
 一个目标日期固定先处理 Feature，再处理 Label。Feature 成功提交后 Label 失败时 Feature 保留；

@@ -150,9 +150,10 @@ return_h(symbol, T) = C_hfq(symbol, T+h) / C_hfq(symbol, T) - 1
 y_rank_return       = rank_pct_ascending_average_ties(return_h within T universe)
 ```
 
-rank 只包含 return 有效的 symbol；并列值取平均序位，再除以有效 symbol 数。因此最小有效
-rank 大于零，最大有效 rank 等于 `1.0`。缺少 maturity 行、close 或 factor 的 signal symbol
-仍保留输出行，但 `y_rank_return=null`。
+rank 只包含 return 有效的 symbol；并列值取平均序位，再除以有效 symbol 数。有效 rank 落在
+`(0, 1]`；最高 return 没有并列时，最大有效 rank 等于 `1.0`，否则小于 `1.0`。例如，只有
+两个有效 symbol 且 return 相同时，两者的 rank 均为 `0.75`。缺少 maturity 行、close 或
+factor 的 signal symbol 仍保留输出行，但 `y_rank_return=null`。
 
 `lookahead=h` 同时是目标定义和对象 maturity。以到达日 `A` 运行时，`LabelBuildStep` 取得
 截至 `A` 的最近 `h+1` 个正式交易日，首日为 `T`，末日为 `A=T+h`，并发布 label 分区

@@ -131,6 +131,20 @@ class Stock1430BackfillSubmission:
 
 
 @dataclass(frozen=True, slots=True)
+class Stock1430FusionBackfillSubmission:
+    """Describe one validated CLI-only H04 Feature target range.
+
+    Example:
+        submission = Stock1430FusionBackfillSubmission(
+            start="2026-05-06", end="2026-05-06"
+        )
+    """
+
+    start: str
+    end: str
+
+
+@dataclass(frozen=True, slots=True)
 class TrainingSubmission:
     """Describe one validated full-range training workflow execution.
 
@@ -281,6 +295,21 @@ def create_stock_1430_backfill_submission(
         start=normalized_start,
         end=normalized_end,
     )
+
+
+def create_stock_1430_fusion_backfill_submission(
+    start: object,
+    end: object,
+) -> Stock1430FusionBackfillSubmission:
+    """Construct one usable CLI-only H04 Feature submission.
+
+    Example:
+        submission = create_stock_1430_fusion_backfill_submission(
+            "2026-05-06", "2026-05-06"
+        )
+    """
+    normalized_start, normalized_end = _require_range(start, end)
+    return Stock1430FusionBackfillSubmission(start=normalized_start, end=normalized_end)
 
 
 def create_training_submission(

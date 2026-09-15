@@ -31,6 +31,7 @@ from src.jobs.requests import (
     Level2MinuteBackfillSubmission,
     StandardFactBootstrapSubmission,
     Stock1430BackfillSubmission,
+    Stock1430FusionBackfillSubmission,
 )
 from src.utils.path import PathManager
 from src.workflows import offline_daily_data as workflow_module
@@ -40,6 +41,7 @@ from src.workflows.offline_daily_data import (
     run_offline_data,
     run_standard_fact_bootstrap,
     run_stock_1430_backfill,
+    run_stock_1430_fusion_backfill,
 )
 
 
@@ -734,7 +736,7 @@ def test_stock_1430_backfill_runs_only_the_fixed_h03_step(
     monkeypatch.setattr(workflow_module, "Access", access_factory)
     step = object()
     step_factory = Mock(return_value=step)
-    monkeypatch.setattr(workflow_module, "Stock1430BuildStep", step_factory)
+    monkeypatch.setattr(workflow_module, "Stock1430MaterializeStep", step_factory)
     pipeline = Mock(spec=DataPipeline)
     pipeline.run.side_effect = lambda context: context
     pipeline_factory = Mock(return_value=pipeline)
@@ -796,3 +798,77 @@ def test_data_workflow_rejects_an_invalid_kind_before_preparation(
         )
 
     pipeline_factory.assert_not_called()
+
+
+@pytest.mark.parametrize("resolved_dates", (("2026-05-06", "2026-05-07"), ()))
+def test_fusion_backfill_runs_one_step_with_formal_target_dates(
+    monkeypatch: pytest.MonkeyPatch, resolved_dates: tuple[str, ...]
+) -> None:
+    access = Mock()
+    access.trade_dates.return_value = list(resolved_dates)
+    access_factory = Mock(return_value=access)
+    monkeypatch.setattr(workflow_module, "Access", access_factory)
+    step = Mock()
+    step.run.side_effect = lambda context: context
+    step_factory = Mock(return_value=step)
+    monkeypatch.setattr(
+        workflow_module, "Stock1430DailyL2MaterializeStep", step_factory
+    )
+    for name in (
+        "CalendarMaterializeStep",
+        "FactMaterializeStep",
+        "FeatureBuildStep",
+        "LabelBuildStep",
+        "Stock1430MaterializeStep",
+        "Level2MinuteBuildStep",
+    ):
+        monkeypatch.setattr(
+            workflow_module,
+            name,
+            Mock(side_effect=AssertionError(f"unexpected {name}")),
+        )
+    path_manager = cast("PathManager", object())
+
+    run_stock_1430_fusion_backfill(
+        path_manager=path_manager,
+        submission=Stock1430FusionBackfillSubmission(
+            start="2026-05-06", end="2026-05-07"
+        ),
+    )
+
+    access_factory.assert_called_once_with(pm=path_manager, processed_version="v1")
+    access.trade_dates.assert_called_once_with(
+        start_date="2026-05-06", end_date="2026-05-07"
+    )
+    step_factory.assert_called_once_with(pm=path_manager, access=access)
+    step.run.assert_called_once_with(
+        DataContext(start="2026-05-06", end="2026-05-07", trade_dates=resolved_dates)
+    )
+
+
+def test_fusion_backfill_propagates_step_failure_without_success_log(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    access = Mock()
+    access.trade_dates.return_value = ["2026-05-06"]
+    monkeypatch.setattr(workflow_module, "Access", Mock(return_value=access))
+    failure = FileNotFoundError("daily P unavailable")
+    step = Mock()
+    step.run.side_effect = failure
+    monkeypatch.setattr(
+        workflow_module, "Stock1430DailyL2MaterializeStep", Mock(return_value=step)
+    )
+    logger = Mock()
+    monkeypatch.setattr(workflow_module, "logs", logger)
+    with pytest.raises(FileNotFoundError) as caught:
+        run_stock_1430_fusion_backfill(
+            path_manager=cast("PathManager", object()),
+            submission=Stock1430FusionBackfillSubmission(
+                start="2026-05-06", end="2026-05-06"
+            ),
+        )
+    assert caught.value is failure
+    assert logger.info.call_count == 1
+    assert logger.info.call_args.args[0].startswith(
+        "▶️ workflow; kind=data-stock-1430-fusion-backfill"
+    )
