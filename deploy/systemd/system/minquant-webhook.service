@@ -1,0 +1,30 @@
+[Unit]
+Description=MinQuant GitHub Webhook receiver
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=minquant-webhook
+Group=minquant-deploy
+ExecStart=/usr/bin/python3 /usr/local/libexec/minquant-webhook-receiver
+LoadCredential=github-webhook-secret:/etc/minquant-webhook/github-webhook-secret
+Environment=MINQUANT_WEBHOOK_STATE_DIR=/var/lib/minquant-webhook
+Restart=on-failure
+RestartSec=2s
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+ReadWritePaths=/var/lib/minquant-webhook
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,9 @@
+[Unit]
+Description=Watch for accepted MinQuant deployment deliveries
+
+[Path]
+DirectoryNotEmpty=/var/lib/minquant-webhook/queue
+Unit=minquant-deploy.service
+
+[Install]
+WantedBy=default.target

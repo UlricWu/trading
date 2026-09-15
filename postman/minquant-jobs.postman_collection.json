@@ -1,0 +1,309 @@
+{
+  "info": {
+    "_postman_id": "fc39e20c-21d1-44c2-abe1-9771b39af721",
+    "name": "MinQuant Jobs API",
+    "description": "MinQuant 进程内 Jobs HTTP API。服务端监听 0.0.0.0:5050；Postman 同机访问使用 localhost，异机访问时把 baseUrl 改为服务器真实 IP。创建 Job 后会自动把返回的 job_id 保存到 Collection 变量 jobId。",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Health",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/health",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "health"
+          ]
+        },
+        "description": "检查 API 进程及 release identity。"
+      },
+      "response": []
+    },
+    {
+      "name": "Create Jobs",
+      "item": [
+        {
+          "name": "Create Data Standard Job",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.jobs?.[0]?.job_id) {",
+                  "    pm.collectionVariables.set(\"jobId\", body.jobs[0].job_id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"kind\": \"data-standard\",\n  \"start\": \"2026-08-20\",\n  \"end\": \"2026-08-20\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/jobs",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "jobs"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Create Data Level-2 Job",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.jobs?.[0]?.job_id) {",
+                  "    pm.collectionVariables.set(\"jobId\", body.jobs[0].job_id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"kind\": \"data-level2\",\n  \"start\": \"2026-08-20\",\n  \"end\": \"2026-08-20\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/jobs",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "jobs"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Create Training Job",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.jobs?.[0]?.job_id) {",
+                  "    pm.collectionVariables.set(\"jobId\", body.jobs[0].job_id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"kind\": \"train\",\n  \"start\": \"2026-07-01\",\n  \"end\": \"2026-08-20\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/jobs",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "jobs"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Create Threshold Backtest Job",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.jobs?.[0]?.job_id) {",
+                  "    pm.collectionVariables.set(\"jobId\", body.jobs[0].job_id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"kind\": \"backtest\",\n  \"mode\": \"full_backtest\",\n  \"start\": \"2026-07-01\",\n  \"end\": \"2026-08-20\",\n  \"model_experiment\": \"training-1\",\n  \"strategy\": {\n    \"type\": \"threshold\",\n    \"params\": {\n      \"threshold\": 0.5,\n      \"target_quantity\": 100\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/jobs",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "jobs"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Create Top-K Hysteresis Backtest Job",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.jobs?.[0]?.job_id) {",
+                  "    pm.collectionVariables.set(\"jobId\", body.jobs[0].job_id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"kind\": \"backtest\",\n  \"mode\": \"full_backtest\",\n  \"start\": \"2026-07-01\",\n  \"end\": \"2026-08-20\",\n  \"model_experiment\": \"training-1\",\n  \"strategy\": {\n    \"type\": \"topk_hysteresis\",\n    \"params\": {\n      \"max_positions\": 10,\n      \"entry_threshold\": 0.5,\n      \"exit_threshold\": 0.2,\n      \"rebalance_interval_minutes\": 1,\n      \"keep_winners\": false,\n      \"target_quantity\": 100\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/jobs",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "jobs"
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Get Job",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/jobs/{{jobId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "jobs",
+            "{{jobId}}"
+          ]
+        },
+        "description": "查询最近一次由本 Collection 创建的 Job。"
+      },
+      "response": []
+    },
+    {
+      "name": "Cancel Job",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/jobs/{{jobId}}/cancel",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "jobs",
+            "{{jobId}}",
+            "cancel"
+          ]
+        },
+        "description": "取消最近一次由本 Collection 创建的 Job。"
+      },
+      "response": []
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:5050",
+      "type": "string"
+    },
+    {
+      "key": "jobId",
+      "value": "",
+      "type": "string"
+    }
+  ]
+}

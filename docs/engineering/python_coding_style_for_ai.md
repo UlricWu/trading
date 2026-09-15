@@ -682,7 +682,7 @@ self._write_table(output_path, output.table)
 
 @staticmethod
 def _write_table(path: Path, table: pa.Table) -> None:
-    write_arrow_table_parquet(output_file=path, table=table)
+    write_parquet_atomic(output_file=path, table=table)
 ```
 
 ### 正例
@@ -690,7 +690,7 @@ def _write_table(path: Path, table: pa.Table) -> None:
 无新增语义时直接调用：
 
 ```python
-write_arrow_table_parquet(
+write_parquet_atomic(
     output_file=output_path,
     table=output.table,
 )
@@ -706,7 +706,7 @@ def _publish_snapshot_atomically(
     lineage: LineageRecord,
 ) -> None:
     temporary_path = output_path.with_suffix(".tmp.parquet")
-    write_arrow_table_parquet(output_file=temporary_path, table=table)
+    write_parquet_atomic(output_file=temporary_path, table=table)
     write_lineage_record(temporary_path, lineage)
     temporary_path.replace(output_path)
 ```
@@ -1173,7 +1173,7 @@ def worker_main(job: ImportJob) -> int:
     try:
         run_import_job(job)
     except Exception:
-        logger.exception(f"import job failed; job_id={job.job_id}")
+        logger.exception(f"❌ import job; job_id={job.job_id}")
         return 1
     return 0
 ```
@@ -1206,6 +1206,8 @@ def worker_main(job: ImportJob) -> int:
 ### 必须执行
 
 - 所有 logger 调用必须使用 f-string 生成日志消息，不得使用 `%` 占位符参数化格式或字符串拼接。
+- `src/` 下项目日志必须以前述日志技术 owner 定义的唯一状态符号开头，符号与 logger level
+  必须匹配，正文不得重复符号已经表达的通用状态。
 - 日志中的上下文必须使用稳定的 `key=value` 形式，以便检索和聚合。
 - 日志必须包含必要上下文，但不得输出敏感值。
 - 异常堆栈只能在负责处理或终止任务的边界记录一次。
@@ -1253,7 +1255,7 @@ except RepositoryError:
 
 ```python
 logger.info(
-    f"submitting order; order_id={order.order_id} "
+    f"▶️ order submission; order_id={order.order_id} "
     f"symbol={order.symbol} quantity={order.quantity}"
 )
 ```
@@ -1276,7 +1278,7 @@ def save_order(order: Order) -> None:
 try:
     submit_order_workflow(order)
 except OrderPersistenceError:
-    logger.exception(f"order workflow failed; order_id={order.order_id}")
+    logger.exception(f"❌ order workflow; order_id={order.order_id}")
     raise
 ```
 
@@ -2175,17 +2177,22 @@ def _add_score_in_place(owned_frame: pd.DataFrame) -> None:
 
 ---
 
-## PY-025 注释和 docstring 必须解释契约、原因或不变量
+## PY-025 public API 必须给出具体调用示例
 
 ### 触发条件
 
 新增、修改或保留注释、docstring、TODO、FIXME、弃用说明或 owner doc 引用时触发。
+
+public API 如果只有功能摘要和类型签名，调用者仍然不知道如何构造对象、组合参数或消费
+返回值，必须转而阅读实现并猜测调用关系。这表示公开契约不完整；具体调用示例不是可选
+说明，而是 public API docstring 的组成部分。
 
 ### 必须判断的语义
 
 必须判断文字是否解释：
 
 - 调用契约；
+- public API 的最小实际调用方式；
 - 非显然业务原因；
 - owner doc 来源；
 - 单位、边界或副作用；
@@ -2195,6 +2202,14 @@ def _add_score_in_place(owned_frame: pd.DataFrame) -> None:
 ### 必须执行
 
 - public API 的非显然契约必须写入 docstring 或类型模型。
+- 每个新增或修改的 public class、function 和 method 都必须在自身 docstring 中提供
+  `Example:`，展示至少一次使用当前真实 API 名称和参数的具体调用。
+- public class 的示例必须展示构造；其主要用途是调用方法时，还必须至少展示一条正常
+  方法调用链。public method 的示例必须出现该方法自身的调用，可以复用 class docstring
+  已说明的实例变量。
+- 示例必须表达最小成功路径；返回值需要继续消费才能说明用途时，必须展示该消费关系。
+  不得用签名复述、纯文字“调用此方法”、不存在的 helper、旧 API 或与实现无关的伪代码
+  代替具体调用。
 - 注释必须解释“为什么”或“不变量”，不得复述代码。
 - TODO/FIXME 必须包含 owner、触发条件或删除条件；无 owner 的占位 TODO 不得保留。
 - 代码变化后必须同步更新注释。
@@ -2227,6 +2242,23 @@ for order in orders:
 # result = legacy_calculate(frame)
 ```
 
+不构成 public API 调用示例：
+
+```python
+def universe(
+    self,
+    *,
+    trade_date: str,
+) -> tuple[str, ...]:
+    """Return the universe.
+
+    Example:
+        Call this method to get symbols.
+        symbols = build_symbols()
+    """
+    ...
+```
+
 ### 正例
 
 ```python
@@ -2248,6 +2280,40 @@ def calculate_forward_return(
     ...
 ```
 
+public API 的最小具体调用示例：
+
+```python
+class Access:
+    """Read one processed market-data version.
+
+    Example:
+        pm = PathManager(Path("/absolute/path/to/formal-storage"))
+        access = Access(pm=pm, processed_version="v1")
+        symbols = access.universe(
+            trade_date="2026-05-06",
+            min_listing_calendar_days=20,
+        )
+    """
+```
+
+```python
+def universe(
+    self,
+    *,
+    trade_date: str,
+    min_listing_calendar_days: int,
+) -> tuple[str, ...]:
+    """Return historical-list members with daily bars.
+
+    Example:
+        symbols = access.universe(
+            trade_date="2026-05-06",
+            min_listing_calendar_days=20,
+        )
+    """
+    ...
+```
+
 有退出条件的临时兼容说明：
 
 ```python
@@ -2262,14 +2328,15 @@ legacy_name = payload.get("feature_name")
 - 搜索被注释掉的代码、TODO 和 FIXME。
 - 检查注释中的路径、版本、字段和公式是否仍与实现一致。
 - 检查非显然 public 契约是否由类型、docstring 或 owner doc 引用表达。
+- 检查每个新增或修改的 public API 都有使用真实名称和参数的具体调用示例。
 
 ---
 
-## PY-026 行为变化和缺陷修复必须有可重复测试
+## PY-026 测试必须可重复且镜像源码布局
 
 ### 触发条件
 
-新增功能、修改行为、修复缺陷、调整边界条件、改变异常、重构共享逻辑或删除兼容路径时触发。
+新增、修改、移动、重命名或删除 pytest 测试文件，或新增功能、修改行为、修复缺陷、调整边界条件、改变异常、重构共享逻辑或删除兼容路径时触发。
 
 ### 必须判断的语义
 
@@ -2279,6 +2346,7 @@ legacy_name = payload.get("feature_name")
 - 缺陷的最小复现输入是什么；
 - 应验证返回值、状态、异常、持久化结果还是副作用；
 - 测试是否依赖当前时间、环境、网络、执行顺序或 private helper 名称。
+- 每个测试文件唯一对应哪个 `src/` 源码模块。
 
 ### 必须执行
 
@@ -2286,12 +2354,31 @@ legacy_name = payload.get("feature_name")
 - 每个缺陷修复必须先有能失败的回归场景，再由修复使其通过。
 - 测试必须断言 public 契约或稳定边界，不得把 private helper 的存在当成行为。
 - 时间、随机、环境和外部依赖必须固定或替换为 test double。
+- `tests/` 中直接验证源码模块的 pytest 文件必须镜像该模块在 `src/` 下的相对目录，并使用 `test_<module>.py` 命名。规范映射为：
+
+  ```text
+  src/<relative-directory>/<module>.py
+  tests/<relative-directory>/test_<module>.py
+  ```
+
+  `<relative-directory>` 为空时，测试文件位于 `tests/` 根目录。例如：
+
+  ```text
+  src/api/app.py                         -> tests/api/test_app.py
+  src/data_system/steps/fact_ingest_step.py
+                                         -> tests/data_system/steps/test_fact_ingest_step.py
+  src/cli.py                             -> tests/test_cli.py
+  ```
+
+- 一个 pytest 文件必须具有唯一源码模块 owner。断言分属多个源码模块 public 行为的聚合测试必须按 owner 拆分；共享 fixture 不改变测试文件的源码归属。
+- 跨模块行为若由既有 composition root 或工作流模块拥有，测试必须镜像该 owner 模块；不得仅为归集测试而虚构源码 owner 或无对应源码的聚合测试名。
 
 ### 必须删除或改写
 
 - 只断言 private helper 被调用的测试必须改为断言行为，除非该调用本身是明确外部协议。
 - 依赖真实网络、真实当前时间、真实用户目录或随机顺序的单元测试必须改写。
 - 修复代码但没有复现原问题的测试不得视为完成。
+- 未镜像源码目录、文件名无法映射到唯一源码模块，或混合多个源码 owner 的 pytest 文件必须移动、重命名或拆分。
 
 ### 允许保留
 
@@ -2351,6 +2438,7 @@ def test_rebalance_starts_at_configured_cutoff() -> None:
 - 对缺陷修复确认测试在旧实现上确实失败。
 - 检查测试是否固定时间、seed、配置和输入顺序。
 - 检查断言是否面向 public 行为，而不是 private 实现细节。
+- 将每个新增、修改、移动或重命名的 pytest 文件映射到唯一源码模块，并确认目录与文件名符合镜像规则。
 
 ---
 
@@ -2376,13 +2464,14 @@ def test_rebalance_starts_at_configured_cutoff() -> None:
 
 1. 获取变更文件清单。
 2. 检查所有适用 Python 文件的 filepath 标识。
-3. 检查新增或修改的 private helper，尤其是单调用点转发层。
-4. 检查类型、`None`、容器所有权、稳定数据模型和返回契约。
-5. 检查异常、日志、资源、时间、环境、随机数和全局状态。
-6. 检查继承、God Object、回测/实盘重复、Repository 越界和数值热路径。
-7. 检查无用代码和过期注释。
-8. 运行仓库配置的 formatter、linter、type checker 和 tests。
-9. 在完成汇报中准确列出已运行、未运行和保留例外。
+3. 检查 pytest 文件是否镜像唯一源码模块的目录与文件名。
+4. 检查新增或修改的 private helper，尤其是单调用点转发层。
+5. 检查类型、`None`、容器所有权、稳定数据模型和返回契约。
+6. 检查异常、日志、资源、时间、环境、随机数和全局状态。
+7. 检查继承、God Object、回测/实盘重复、Repository 越界和数值热路径。
+8. 检查无用代码和过期注释。
+9. 运行仓库配置的 formatter、linter、type checker 和 tests。
+10. 在完成汇报中准确列出已运行、未运行和保留例外。
 
 不得把“代码看起来正确”当作复核。
 
@@ -2481,8 +2570,8 @@ rg -n 'def _write_table|_write_table\(' src tests
 [ ] [PY-022] Repository 只承担持久化语义。
 [ ] [PY-023] 数值热路径批量化；保留循环具有真实顺序依赖。
 [ ] [PY-024] DataFrame ownership 和赋值明确。
-[ ] [PY-025] 注释解释契约、原因或不变量；无注释掉的旧代码。
-[ ] [PY-026] 行为变化和缺陷修复有可重复测试。
+[ ] [PY-025] public API 有具体调用示例；注释解释契约、原因或不变量；无注释掉的旧代码。
+[ ] [PY-026] 测试可重复，且 pytest 文件镜像唯一源码模块的目录与文件名。
 [ ] [PY-027] 已运行并准确报告 formatter、linter、type checker 和 tests。
 ```
 

@@ -1,252 +1,358 @@
 # filepath: src/utils/csv7z_batch_source.py
-"""Stream Arrow record batches from one source-native ``.csv.7z`` file."""
+"""Open scoped Arrow batch streams from source-native ``.csv.7z`` files."""
 
 from __future__ import annotations
 
 import csv as standard_csv
 import io
+import shutil
 import subprocess
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Final, cast
 
 import pyarrow as pa
 import pyarrow.csv as arrow_csv
 
-from src.utils.seven_zip import open_extract_stdout
+_MAX_HEADER_BYTES: Final = 1024 * 1024
+_PROCESS_REAP_TIMEOUT_SECONDS: Final = 5.0
+_NULL_VALUES: Final[tuple[str, ...]] = ("", " ", "NULL", "N/A", "nan")
+_UTF8_BOM: Final = b"\xef\xbb\xbf"
 
-_CSV_BLOCK_SIZE_BYTES = 128 * 1024 * 1024
-_MAX_HEADER_BYTES = 1024 * 1024
-_PROCESS_TERMINATION_TIMEOUT_SECONDS = 5.0
 
-
-class _Csv7zReader:
-    """Own one Arrow streaming reader and its decompressor process."""
+class _Utf8BomRejectingStream(io.RawIOBase):
+    """Reject UTF-8 BOM bytes after the already-consumed CSV header."""
 
     def __init__(
         self,
-        reader: arrow_csv.CSVStreamingReader,
-        process: subprocess.Popen[bytes],
+        source: io.BufferedReader,
+        *,
         archive_path: Path,
     ) -> None:
-        self._reader = reader
-        self._process = process
+        super().__init__()
+        self._source = source
         self._archive_path = archive_path
-        self._is_closed = False
+        self._bom_tail = b""
 
-    def __iter__(self) -> Iterator[pa.RecordBatch]:
-        return iter(self._reader)
+    def readable(self) -> bool:
+        return True
 
-    def finish(self) -> None:
-        """Close a fully consumed stream and translate decompressor failure."""
-        initial_cleanup_errors = self._begin_close()
-        if initial_cleanup_errors is None:
-            return
+    def readinto(self, buffer: bytearray) -> int:
+        payload = self._source.read(len(buffer))
+        if not payload:
+            return 0
 
-        cleanup_errors = list(initial_cleanup_errors)
-        try:
-            return_code = self._process.wait()
-            if return_code != 0:
-                cleanup_errors.append(
-                    RuntimeError(
-                        "7z extraction failed; "
-                        f"archive_path={self._archive_path} "
-                        f"return_code={return_code}"
-                    )
-                )
-        except (OSError, subprocess.SubprocessError) as exc:
-            cleanup_errors.append(exc)
+        bom_window = self._bom_tail + payload
+        if _UTF8_BOM in bom_window:
+            raise ValueError(
+                "UTF-8 BOM is only allowed at the start of the CSV; "
+                f"archive_path={self._archive_path}"
+            )
+        self._bom_tail = bom_window[-2:]
 
-        self._complete_close(cleanup_errors)
-
-    def abort(self) -> None:
-        """Close a partially consumed stream and terminate its decompressor."""
-        initial_cleanup_errors = self._begin_close()
-        if initial_cleanup_errors is None:
-            return
-
-        cleanup_errors = list(initial_cleanup_errors)
-        try:
-            _terminate_process(self._process)
-        except (OSError, subprocess.SubprocessError) as exc:
-            cleanup_errors.append(exc)
-
-        self._complete_close(cleanup_errors)
-
-    def _begin_close(self) -> tuple[Exception, ...] | None:
-        """Mark this owner closed and release reader-side stream resources."""
-        if self._is_closed:
-            return None
-        self._is_closed = True
-
-        cleanup_errors: list[Exception] = []
-        try:
-            self._reader.close()
-        except Exception as exc:
-            cleanup_errors.append(exc)
-
-        stdout = self._process.stdout
-        if stdout is not None:
-            try:
-                stdout.close()
-            except OSError as exc:
-                cleanup_errors.append(exc)
-
-        return tuple(cleanup_errors)
-
-    def _complete_close(self, cleanup_errors: Sequence[Exception]) -> None:
-        """Close the remaining process stream and report all cleanup failures."""
-        owned_cleanup_errors = list(cleanup_errors)
-        stderr = self._process.stderr
-        if stderr is not None:
-            try:
-                stderr.close()
-            except OSError as exc:
-                owned_cleanup_errors.append(exc)
-
-        _raise_cleanup_errors(owned_cleanup_errors)
+        buffer[: len(payload)] = payload
+        return len(payload)
 
 
-class Csv7zBatchSource:
-    """Validate and stream a source-native ``.csv.7z`` payload as Arrow batches."""
+def _parse_csv_header(
+    header_bytes: bytes,
+    *,
+    archive_path: Path,
+) -> list[str]:
+    """Return validated column names from the first physical CSV line."""
+    if len(header_bytes) > _MAX_HEADER_BYTES:
+        raise ValueError(
+            "CSV header exceeds 1048576 bytes; "
+            f"archive_path={archive_path}"
+        )
+
+    try:
+        header_text = header_bytes.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise ValueError(
+            f"CSV header must use UTF-8; archive_path={archive_path}"
+        ) from exc
+    if "\ufeff" in header_text:
+        raise ValueError(
+            "UTF-8 BOM is only allowed at the start of the CSV; "
+            f"archive_path={archive_path}"
+        )
+
+    try:
+        header_rows = list(
+            standard_csv.reader(
+                io.StringIO(header_text, newline=""),
+                strict=True,
+            )
+        )
+    except standard_csv.Error as exc:
+        raise ValueError(
+            f"CSV header is structurally invalid; archive_path={archive_path}"
+        ) from exc
+    if len(header_rows) != 1 or not header_rows[0]:
+        raise ValueError(
+            "CSV payload must contain exactly one non-empty header row; "
+            f"archive_path={archive_path}"
+        )
+
+    column_names = header_rows[0]
+    if any(
+        not column_name
+        or column_name.strip() != column_name
+        or "\r" in column_name
+        or "\n" in column_name
+        for column_name in column_names
+    ):
+        raise ValueError(
+            "CSV header column names must be non-empty and unpadded; "
+            f"archive_path={archive_path}"
+        )
+    if len(set(column_names)) != len(column_names):
+        raise ValueError(
+            f"CSV header column names must be unique; archive_path={archive_path}"
+        )
+    return column_names
+
+
+class _Csv7zBatchStream(Iterator[pa.RecordBatch]):
+    """Own one extraction process and expose its Arrow record batches."""
 
     def __init__(self, archive_path: Path) -> None:
-        if not isinstance(archive_path, Path):
-            raise TypeError("field 'archive_path' must be a pathlib.Path")
-        if not archive_path.is_file():
-            raise FileNotFoundError(f"archive file does not exist: {archive_path}")
-        if not archive_path.name.endswith(".csv.7z"):
-            raise ValueError(
-                "field 'archive_path' must identify a source-native .csv.7z file"
-            )
-
         self._archive_path = archive_path
+        self._member_name = archive_path.name.removesuffix(".7z")
+        self._executable: str | None = None
+        self._process: subprocess.Popen[bytes] | None = None
+        self._stdout: io.BufferedReader | None = None
+        self._reader: arrow_csv.CSVStreamingReader | None = None
+        self._extraction_verified = False
 
-    def __iter__(self) -> Iterator[pa.RecordBatch]:
-        """Yield all batches and release the process on every exit path."""
-        owned_reader = self._open_reader()
-        try:
-            yield from owned_reader
-        except BaseException as exc:
-            try:
-                owned_reader.abort()
-            except Exception as cleanup_error:
-                exc.add_note(f"CSV 7z cleanup also failed: {cleanup_error!r}")
-            raise
-        else:
-            owned_reader.finish()
-
-    def _open_reader(self) -> _Csv7zReader:
-        process = open_extract_stdout(self._archive_path)
-        stdout = process.stdout
-        if stdout is None:
-            self._terminate_failed_open(process)
-            raise RuntimeError("7z extraction process did not expose stdout")
+    def _open(self) -> None:
+        for candidate in ("7zz", "7za", "7z"):
+            executable = shutil.which(candidate)
+            if executable is not None:
+                self._executable = executable
+                break
+        if self._executable is None:
+            raise RuntimeError(
+                "7z-compatible CLI not found; install one of [7zz, 7za, 7z] "
+                "and ensure it is on PATH"
+            )
 
         try:
-            header_bytes = stdout.readline(_MAX_HEADER_BYTES + 1)
-            if len(header_bytes) > _MAX_HEADER_BYTES:
-                raise ValueError("CSV header exceeds the maximum supported size")
-            if not header_bytes:
-                return_code = process.wait()
-                if return_code != 0:
-                    raise RuntimeError(
-                        "7z extraction failed before the CSV header; "
-                        f"archive_path={self._archive_path} "
-                        f"return_code={return_code}"
-                    )
-            column_names = self._parse_header(header_bytes)
-            convert_options = arrow_csv.ConvertOptions(
-                column_types={name: pa.string() for name in column_names},
-                strings_can_be_null=True,
-                null_values=["", " ", "NULL", "N/A", "nan"],
-                quoted_strings_can_be_null=True,
+            self._process = subprocess.Popen(
+                [
+                    self._executable,
+                    "x",
+                    "-so",
+                    "-spd",
+                    "-bd",
+                    "-bb0",
+                    "-bso0",
+                    "-bsp0",
+                    "-bse2",
+                    "--",
+                    str(self._archive_path),
+                    self._member_name,
+                ],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
             )
-            read_options = arrow_csv.ReadOptions(
-                autogenerate_column_names=False,
-                column_names=column_names,
-                block_size=_CSV_BLOCK_SIZE_BYTES,
-                use_threads=True,
-            )
-            reader = arrow_csv.open_csv(
-                stdout,
-                read_options=read_options,
-                convert_options=convert_options,
-            )
-        except BaseException as exc:
-            try:
-                self._terminate_failed_open(process)
-            except Exception as cleanup_error:
-                exc.add_note(f"CSV 7z open cleanup also failed: {cleanup_error!r}")
-            raise
+        except OSError as exc:
+            raise RuntimeError(
+                "failed to start 7z extraction; "
+                f"executable={self._executable} "
+                f"archive_path={self._archive_path} "
+                f"member_name={self._member_name}"
+            ) from exc
 
-        return _Csv7zReader(reader, process, self._archive_path)
+        self._stdout = cast(io.BufferedReader, self._process.stdout)
+        try:
+            header_bytes = self._stdout.readline(_MAX_HEADER_BYTES + 1)
+        except OSError as exc:
+            raise RuntimeError(
+                f"failed to read CSV header; archive_path={self._archive_path}"
+            ) from exc
 
-    @staticmethod
-    def _parse_header(header_bytes: bytes) -> list[str]:
         if not header_bytes:
-            raise ValueError("CSV payload must contain a header row")
-        try:
-            header_text = header_bytes.decode("utf-8-sig")
-        except UnicodeDecodeError as exc:
-            raise ValueError("CSV header must use UTF-8 encoding") from exc
-
-        rows = list(standard_csv.reader(io.StringIO(header_text, newline="")))
-        if len(rows) != 1 or not rows[0]:
+            self._verify_extraction()
             raise ValueError(
-                "CSV payload must contain exactly one non-empty header row"
+                "CSV payload must contain a header row; "
+                f"archive_path={self._archive_path} "
+                f"member_name={self._member_name}"
             )
-        column_names = rows[0]
-        if any(
-            not column_name or column_name.strip() != column_name
-            for column_name in column_names
-        ):
-            raise ValueError("CSV header column names must be non-empty and unpadded")
-        if len(set(column_names)) != len(column_names):
-            raise ValueError("CSV header column names must be unique")
-        return column_names
 
-    @staticmethod
-    def _terminate_failed_open(process: subprocess.Popen[bytes]) -> None:
-        cleanup_errors: list[Exception] = []
-        stdout = process.stdout
-        if stdout is not None:
-            try:
-                stdout.close()
-            except OSError as exc:
-                cleanup_errors.append(exc)
+        column_names = _parse_csv_header(
+            header_bytes,
+            archive_path=self._archive_path,
+        )
+        try:
+            has_body = bool(self._stdout.peek(1))
+        except OSError as exc:
+            raise RuntimeError(
+                f"failed to read CSV body; archive_path={self._archive_path}"
+            ) from exc
+        if not has_body:
+            return
+
+        body_stream = _Utf8BomRejectingStream(
+            self._stdout,
+            archive_path=self._archive_path,
+        )
+        try:
+            self._reader = arrow_csv.open_csv(
+                body_stream,
+                read_options=arrow_csv.ReadOptions(
+                    autogenerate_column_names=False,
+                    column_names=column_names,
+                ),
+                parse_options=arrow_csv.ParseOptions(
+                    delimiter=",",
+                    quote_char='"',
+                    double_quote=True,
+                    escape_char=False,
+                    newlines_in_values=False,
+                    ignore_empty_lines=False,
+                ),
+                convert_options=arrow_csv.ConvertOptions(
+                    column_types={name: pa.string() for name in column_names},
+                    strings_can_be_null=True,
+                    null_values=list(_NULL_VALUES),
+                    quoted_strings_can_be_null=True,
+                ),
+            )
+        except pa.ArrowInvalid as exc:
+            raise ValueError(
+                "CSV body is structurally invalid; "
+                f"archive_path={self._archive_path}"
+            ) from exc
+        except OSError as exc:
+            raise RuntimeError(
+                f"failed to read CSV body; archive_path={self._archive_path}"
+            ) from exc
+
+    def __next__(self) -> pa.RecordBatch:
+        if self._extraction_verified:
+            raise StopIteration
+        if self._reader is None:
+            self._verify_extraction()
+            raise StopIteration
 
         try:
-            _terminate_process(process)
-        except (OSError, subprocess.SubprocessError) as exc:
-            cleanup_errors.append(exc)
+            return next(self._reader)
+        except StopIteration:
+            self._verify_extraction()
+            raise
+        except pa.ArrowInvalid as exc:
+            raise ValueError(
+                "CSV body is structurally invalid; "
+                f"archive_path={self._archive_path}"
+            ) from exc
+        except OSError as exc:
+            raise RuntimeError(
+                f"failed to read CSV body; archive_path={self._archive_path}"
+            ) from exc
 
-        stderr = process.stderr
-        if stderr is not None:
+    def _verify_extraction(self) -> None:
+        process = cast("subprocess.Popen[bytes]", self._process)
+        try:
+            return_code = process.wait(timeout=_PROCESS_REAP_TIMEOUT_SECONDS)
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise RuntimeError(
+                "failed to obtain 7z exit status; "
+                f"archive_path={self._archive_path} "
+                f"member_name={self._member_name}"
+            ) from exc
+        if return_code != 0:
+            raise RuntimeError(
+                "7z extraction failed; "
+                f"executable={self._executable} "
+                f"archive_path={self._archive_path} "
+                f"member_name={self._member_name} "
+                f"return_code={return_code}"
+            )
+        self._extraction_verified = True
+
+    def _close(self, primary_error: BaseException | None = None) -> None:
+        cleanup_errors: list[Exception] = []
+        process = self._process
+
+        if process is not None and not self._extraction_verified:
+            process_is_running = True
             try:
-                stderr.close()
+                process_is_running = process.poll() is None
+            except (OSError, subprocess.SubprocessError) as exc:
+                cleanup_errors.append(exc)
+            if process_is_running:
+                try:
+                    process.kill()
+                except (OSError, subprocess.SubprocessError) as exc:
+                    cleanup_errors.append(exc)
+
+        if self._reader is not None:
+            try:
+                self._reader.close()
+            except (OSError, pa.ArrowException) as exc:
+                cleanup_errors.append(exc)
+        if self._stdout is not None:
+            try:
+                self._stdout.close()
             except OSError as exc:
                 cleanup_errors.append(exc)
 
-        _raise_cleanup_errors(cleanup_errors)
+        if process is not None and not self._extraction_verified:
+            try:
+                process.wait(timeout=_PROCESS_REAP_TIMEOUT_SECONDS)
+            except (OSError, subprocess.SubprocessError) as exc:
+                cleanup_errors.append(exc)
+
+        if not cleanup_errors:
+            return
+        if primary_error is not None:
+            for cleanup_error in cleanup_errors:
+                primary_error.add_note(
+                    f"CSV 7z cleanup also failed: {cleanup_error!r}"
+                )
+            return
+
+        cleanup_failure = RuntimeError(
+            f"failed to release CSV 7z reader; archive_path={self._archive_path}"
+        )
+        for cleanup_error in cleanup_errors:
+            cleanup_failure.add_note(repr(cleanup_error))
+        raise cleanup_failure from cleanup_errors[0]
 
 
-def _terminate_process(process: subprocess.Popen[bytes]) -> None:
-    """Terminate one running process and wait until it is reaped."""
-    if process.poll() is not None:
-        return
-    process.terminate()
+@contextmanager
+def open_csv7z_batches(
+    archive_path: Path,
+) -> Iterator[Iterator[pa.RecordBatch]]:
+    """Yield a scoped, single-use iterator for the archive's exact CSV member.
+
+    Usage::
+
+        with open_csv7z_batches(Path("ticks.csv.7z")) as batches:
+            for batch in batches:
+                print(batch.num_rows)
+    """
+    if not isinstance(archive_path, Path):
+        raise TypeError("field 'archive_path' must be a pathlib.Path")
+    if not archive_path.name.endswith(".csv.7z"):
+        raise ValueError(
+            "field 'archive_path' must identify a source-native .csv.7z file"
+        )
+    if not archive_path.is_file():
+        raise FileNotFoundError(f"archive file does not exist: {archive_path}")
+
+    stream = _Csv7zBatchStream(archive_path)
     try:
-        process.wait(timeout=_PROCESS_TERMINATION_TIMEOUT_SECONDS)
-    except subprocess.TimeoutExpired:
-        process.kill()
-        process.wait()
+        stream._open()
+        yield stream
+    except BaseException as exc:
+        stream._close(primary_error=exc)
+        raise
+    else:
+        stream._close()
 
 
-def _raise_cleanup_errors(cleanup_errors: Sequence[Exception]) -> None:
-    if len(cleanup_errors) == 1:
-        raise cleanup_errors[0]
-    if cleanup_errors:
-        raise ExceptionGroup("CSV 7z reader cleanup failed", list(cleanup_errors))
-
-
-__all__ = ["Csv7zBatchSource"]
+__all__ = ["open_csv7z_batches"]
