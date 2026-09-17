@@ -8,3 +8,4 @@
 索引只提供导航，不记录 Change 状态、Acceptance 或结论。
 
 - [股票 14:30 离线研究链路](stock-1430/README.md)
+- [股票标签设计与学习目标](label-design/README.md)

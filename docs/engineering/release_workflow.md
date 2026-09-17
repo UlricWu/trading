@@ -22,8 +22,8 @@
 3. 存在未发布文件变化时，workflow 通过 CI 后把该 commit 镜像到
    `release/auto-release`，并创建或更新指向 `master` 的 release PR。
 4. GitHub 对 `release/auto-release` 的 push 触发测试环境部署。
-5. release PR 经人工确认后合入 `master`；release workflow 通过 CI 后执行
-   semantic-release。正式环境部署尚未实施。
+5. release PR 按下文标准流程取得人工批准且必需 CI 检查通过后合入 `master`；release
+   workflow 通过 CI 后执行 semantic-release。正式环境部署尚未实施。
 6. release workflow 成功后，sync workflow 把 `master` 合入 `dev`。
 7. 回同步后的 `dev` 与 `master` 文件树相同时，auto-release workflow 必须跳过；如果同步
    期间已有新功能进入 `dev`，继续生成下一轮待发布内容是预期行为。
@@ -41,6 +41,56 @@ semantic-release 必须能够分析 `dev` 中的原始 Conventional Commit 类�
 - `fix:`、`perf:`：patch。
 - `docs:`、`test:`、`refactor:`、`chore:`、`build:`、`ci:`、`style:`：不发布。
 - `type!:` header 不作为 breaking release 依据，并由 CI 拒绝。
+
+#### GitHub 保护规则
+
+在仓库 `Settings → Rules → Rulesets` 中配置 `protect-master-release`，保存后生效：
+
+| 配置项 | 标准值 |
+|---|---|
+| Enforcement status | `Active` |
+| Target branches | `master`（`refs/heads/master`） |
+| Require a pull request before merging | 启用 |
+| Required approvals | `1`；由具有 write 或更高权限、且非 PR 作者的审查者批准 |
+| Require status checks to pass | 启用 |
+| Required status check | `run-ci / build-and-test` |
+| 检查来源 | `GitHub Actions` |
+
+该检查由 `.github/workflows/auto_release_pr.yml` 的 `run-ci` job 调用
+`.github/workflows/ci.yaml` 的 `build-and-test` job 产生。auto-release 在当前 `dev`
+commit 上通过 CI 后，将同一 commit 镜像到 `release/auto-release`，因此合并前应核对
+release PR 当前 head SHA 上的检查结果。
+
+必需检查名称必须与实际产生的名称完全一致；修改上述 job 名称时，必须同步更新规则集。
+可复用 workflow 的检查名称格式为 `调用 job / 被调用 job`，见
+[GitHub 必需检查名称说明](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/troubleshooting-rules)。
+
+#### 标准审批与合并操作
+
+1. 打开 auto-release workflow 创建或更新的 release PR，确认来源为
+   `release/auto-release`、目标为 `master`，检查本次发布的变更。
+2. 使用有 write 或更高权限的审查账号，进入 `Files changed`，点击
+   `Review changes → Approve → Submit review`。
+3. 返回 `Conversation`，确认至少一条有效批准，以及当前 head SHA 的
+   `run-ci / build-and-test` 检查成功；所有合并条件满足后继续。
+4. 标准操作选择 `Create a merge commit`，再点击 `Confirm merge`，保留原始提交供
+   semantic-release 分析。
+5. 合并后查看 `Release` workflow 和随后的 `Sync master to dev` workflow；版本发布、
+   分支同步与服务器部署分别按各自结果确认。
+
+普通评论不计入批准记录。PR 作者不能批准自己的 PR；自动 release PR 由
+`github-actions[bot]` 创建，仓库所有者可以使用自己的账号提交批准。操作说明见
+[GitHub PR 审批指南](https://docs.github.com/en/pull-requests/how-tos/review-pull-requests/approving-a-pull-request-with-required-reviews)。
+
+#### 合并阻塞排查
+
+- `Review required`：核对是否通过 `Approve → Submit review` 提交了有效批准，以及
+  审查账号是否有 write 或更高权限；在 `Conversation` 留言不会解除此阻塞。
+- `Expected — Waiting for status to be reported`：规则要求的检查尚未上报结果。先核对
+  PR 当前 head SHA 的检查列表，再核对规则中的检查名称、来源及 workflow 触发条件。
+  当前工作流不产生 `authorize-release-candidate`；若规则仍要求该名称，应在
+  `protect-master-release` 中将其替换为 `run-ci / build-and-test`，来源选择
+  `GitHub Actions`，保存后刷新 PR。重复审批或等待不会产生一个不存在的检查。
 
 ### Research 记录与正式化
 
