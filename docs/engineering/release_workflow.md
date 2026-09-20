@@ -200,10 +200,15 @@ dispatcher 只读取持久化记录并以参数数组执行固定安装路径
   `MINQUANT_PROJECT_ROOT`、`/home/wsw/app/data` 为 `ZERO_STORAGE_ROOT`。
 - 安装时必须显式提供五段 `MINQUANT_OFFLINE_DATA_CRON_SCHEDULE`。仓库不拥有上游数据
   就绪时间或 cron daemon 时区，因而不提供默认时刻。
-- cron 不得固化业务日期；运行器默认通过 `DateTimeUtils.today()` 得到 Asia/Shanghai
-  当日，只有人工单次补跑可以用 `MINQUANT_OFFLINE_DATA_DATE=YYYY-MM-DD` 覆盖。
+- cron 在上游前一日文件齐备后运行，不得固化业务日期。运行器默认通过
+  `DateTimeUtils.days_before(DateTimeUtils.today(), 1)` 取得 Asia/Shanghai 的前一自然日，
+  workflow 再按正式交易日历筛选；休市日自然成功。只有人工单次补跑可以用
+  `MINQUANT_OFFLINE_DATA_DATE=YYYY-MM-DD` 覆盖。运行时刻必须考虑上游在次日供数，
+  不得用系统 UTC 日期或“上一个交易日”替代前一自然日而在休市期间重复生产。
 - 一次运行先提交并等待单日 `data-standard` Job，再提交并等待 `data-level2` Job。Standard
   失败后仍尝试 Level-2，只有二者均为 `SUCCESS` 时返回 0。
+- 两个 Job 的成功包含各自 Data workflow 定义的派生分区生产；Level-2 必须完成分钟事实
+  和当日 Feature/成熟 Label。Cron 不再另行调用人工 backfill 入口，也不生成融合 Feature。
 - 运行器以共享 `flock` 防止重叠，锁冲突返回 75。它必须直接校验 systemd 管理的 API 健康
   身份与当前工作树完整 SHA；API 不可用或身份不符时失败，不得自行启动、停止或接管服务。
 - Job 只存在于 API 内存。部署或服务重启可以中断正在等待的 cron 运行；状态请求失败不得

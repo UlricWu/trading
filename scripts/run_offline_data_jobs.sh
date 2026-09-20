@@ -53,9 +53,9 @@ validate_job_date() {
     if [[ -z "$JOB_DATE" ]]; then
         if ! JOB_DATE="$(
             PYTHONPATH="$REPO_ROOT" "$PYTHON_BIN" -c \
-                'from src.utils.datetime_utils import DateTimeUtils; print(DateTimeUtils.today())'
+                'from src.utils.datetime_utils import DateTimeUtils; print(DateTimeUtils.days_before(DateTimeUtils.today(), 1))'
         )"; then
-            log "failed to resolve the current Asia/Shanghai date"
+            log "failed to resolve the previous Asia/Shanghai calendar date"
             return 1
         fi
     else

@@ -231,9 +231,11 @@ payload identity 与 payload size 有效时必须立即复用；不得读取分�
 当前上游状态来重新证明可复用。Meta 已存在但自身无效，或包含 H03 禁止的 `upstream` /
 `symbol_slices` 时失败，不得覆盖或降级为 miss。
 
-一个目标日期固定先处理 Feature，再处理 Label。Feature 成功提交后 Label 失败时 Feature 保留；
-较早日期成功后较晚日期失败时较早分区保留。重跑时每个有效 Meta 独立命中并从首个 miss 续建，
-不定义跨对象事务。
+同一目标分区的 Feature 必须先于其 Label 提交。人工回填对每个目标日期固定先处理 Feature，
+再处理 Label；日常到达日的 Feature/成熟 Label 安排由
+[`offline_workflow_contract.md`](../offline_workflow_contract.md) 的 Data workflow 拥有。
+Feature 成功提交后 Label 失败时 Feature 保留；较早日期成功后较晚日期失败时较早分区保留。
+重跑时每个有效 Meta 独立命中并从首个 miss 续建，不定义跨对象事务。
 
 ## 错误归属与非目标
 
@@ -251,4 +253,5 @@ payload identity 与 payload size 有效时必须立即复用；不得读取分�
   success。
 
 V1 不定义日频融合、order book、模型、组合、交易、成本、滑点、多决策时点、实时 source、
-HTTP Job、cron、MQTT、正式历史回填状态、旧版本兼容、动态 lineage 校验或未来版本。
+MQTT、正式历史回填状态、旧版本兼容、动态 lineage 校验或未来版本。HTTP Job 与 cron
+通过 Data workflow 消费本契约，入口与调度规则由各自工程 owner 拥有。

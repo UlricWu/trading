@@ -81,6 +81,11 @@ derived 对象，也不根据 Feature lookback 隐式扩大范围。它构造
 experiment。这两个命令成功时都退出 `0`；任一正式交易日 fact 缺失或其他运行错误都退出
 `1`，不得改写成 skipped。
 
+`data-level2` 的闭区间按到达日解释，除 enabled 文件 source 的 raw/逐笔事实外，还构建
+两市股票分钟事实、当日 H03 Feature 和当天成熟的上一 session H03 Label。日期安排、必要
+历史输入、步骤顺序与部分提交语义由工作流 owner 定义；HTTP 与 cron 复用同一入口。
+已有各人工 backfill 命令仍按自身目标分区解释日期，不改成到达日。
+
 `data-level2-minute-backfill` 是 CLI-only 的两市股票一分钟事实历史回填入口。`start/end`
 闭区间只表示目标分钟分区；它构造 `Level2MinuteBackfillSubmission` 并只调用一次
 `run_level2_minute_backfill`。Workflow 只消费已经提交的 calendar、`sh_trade/v1` 与
