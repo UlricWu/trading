@@ -26,6 +26,11 @@ from src.data_system.normalize.level2_security import (
             ["000001", "159001", "131810"],
             ["stock", "etf", "bond_repo"],
         ),
+        (
+            "sz",
+            ["180101", "180999", "181001", "181500", "181999"],
+            ["fund", "fund", "fund", "fund", "fund"],
+        ),
     ],
 )
 def test_resolve_level2_security_type_classifies_exchange_ranges(
@@ -40,11 +45,21 @@ def test_resolve_level2_security_type_classifies_exchange_ranges(
     assert resolved["security_type"].to_pylist() == expected
 
 
-def test_resolve_level2_security_type_rejects_unsupported_segment() -> None:
+@pytest.mark.parametrize("symbol", ["133000", "181001", "181999"])
+def test_resolve_level2_security_type_rejects_unsupported_segment(symbol: str) -> None:
     with pytest.raises(ValueError, match="unsupported security_type segment"):
         resolve_level2_security_type(
-            pa.table({"symbol": ["133000"]}),
+            pa.table({"symbol": [symbol]}),
             exchange="sh",
+        )
+
+
+@pytest.mark.parametrize("symbol", ["181000", "182000"])
+def test_resolve_level2_security_type_rejects_unmatched_segment(symbol: str) -> None:
+    with pytest.raises(ValueError, match="unmatched security_type segment"):
+        resolve_level2_security_type(
+            pa.table({"symbol": [symbol]}),
+            exchange="sz",
         )
 
 
