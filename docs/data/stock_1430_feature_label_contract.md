@@ -1,6 +1,6 @@
 # 14:30 Level-2 Feature 与 T+1 Label 契约
 
-- **状态**：拟议正式 owner（`research/stock-1430` H03 adoption 候选）
+- **状态**：正式 owner
 - **适用范围**：`l2_stock_1430/v1` Feature、
   `l2_stock_1430_t1_vwap_rank/v1` Label 的身份、schema、可见性、计算、发布和复用。
 - **输入 owner**：[`level2_minute_contract.md`](level2_minute_contract.md)、
