@@ -100,6 +100,49 @@ def test_normalize_level2_rejects_invalid_partition_date_before_input_read(
         )
 
 
+def test_normalize_level2_retains_sz_commercial_reits(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    raw_table = pa.table(
+        {
+            "TradeTime": ["2026-09-03 09:30:00.000"] * 3,
+            "SecurityID": ["181001", "000001", "181999"],
+            "TickTime": ["93000000"] * 3,
+            "TradePrice": ["3.0", "10.0", "2.0"],
+            "TradeVolume": ["100"] * 3,
+            "ExecType": ["1"] * 3,
+            "MainSeq": ["1"] * 3,
+            "SubSeq": ["1", "2", "3"],
+            "BuyNo": ["1"] * 3,
+            "SellNo": ["2"] * 3,
+        }
+    )
+    monkeypatch.setattr(
+        level2_module,
+        "open_csv7z_batches",
+        lambda _: nullcontext(iter(raw_table.to_batches(max_chunksize=1))),
+    )
+
+    output = normalize_level2(
+        input_file=tmp_path / "SZ_Trade.csv.7z",
+        output_name=tmp_path / "sz_trade.parquet",
+        raw_object="SZ_Trade",
+        trade_date="2026-09-03",
+        target_name="sz_trade",
+    )
+
+    assert output.table["symbol"].to_pylist() == ["000001", "181001", "181999"]
+    assert output.table["security_type"].to_pylist() == ["stock", "fund", "fund"]
+    assert output.table["phase"].to_pylist() == [2, 2, 2]
+    assert output.table["notional"].to_pylist() == [1_000.0, 300.0, 200.0]
+    assert output.symbol_slices == {
+        "000001": range(0, 1),
+        "181001": range(1, 2),
+        "181999": range(2, 3),
+    }
+
+
 def test_normalize_level2_emits_rate_limited_operational_progress(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -141,6 +141,29 @@ def test_builder_produces_sorted_sparse_phase_aware_ohlc_and_conservation() -> N
     assert math.fsum(output.column("notional_sum").to_pylist()) == 1_173.0
 
 
+def test_builder_excludes_commercial_reits_from_stock_minutes() -> None:
+    output = build_level2_stock_trade_1m(
+        _trade_table(
+            symbol=["000001", "181001"],
+            ts_utc=[_MINUTE_US, _MINUTE_US + 1],
+            main_seq=[1, 1],
+            sub_seq=[1, 2],
+            price=[10.0, 3.0],
+            volume=[10, 1_000],
+            security_type=["stock", "fund"],
+            phase=[2, 2],
+            notional=[100.0, 3_000.0],
+            trade_side=[1, -1],
+        ),
+        trade_date="2026-09-03",
+    )
+
+    assert output["symbol"].to_pylist() == ["000001"]
+    assert output["trade_count"].to_pylist() == [1]
+    assert output["volume_sum"].to_pylist() == [10]
+    assert output["notional_sum"].to_pylist() == [100.0]
+
+
 def test_builder_uses_left_closed_minute_boundaries() -> None:
     output = build_level2_stock_trade_1m(
         _trade_table(
