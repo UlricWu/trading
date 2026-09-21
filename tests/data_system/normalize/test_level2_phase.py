@@ -27,6 +27,94 @@ _SH_OPEN_CALL_BOUNDARY_CASES = (
 )
 
 
+@pytest.mark.parametrize("security_type", ["stock", "cdr"])
+@pytest.mark.parametrize("trade_date", [date(2018, 8, 20), date(2026, 9, 17)])
+def test_resolve_classifies_sh_1457_resume_call_as_auction(
+    security_type: str,
+    trade_date: date,
+) -> None:
+    table = pa.table(
+        {
+            "ts_utc": pa.array(
+                [
+                    DateTimeUtils.local_time_to_utc_epoch_us(moment, trade_date)
+                    for moment in (
+                        time(14, 57),
+                        time(14, 57, 0, 30_000),
+                        time(14, 57, 0, 990_000),
+                    )
+                ],
+                type=pa.int64(),
+            ),
+            "security_type": [security_type] * 3,
+        }
+    )
+
+    resolved = resolve_level2_phase(
+        table=table,
+        exchange="sh",
+        trade_date=trade_date.isoformat(),
+    )
+
+    assert resolved["phase"].to_pylist() == [int(MarketPhase.AUCTION)] * 3
+
+
+@pytest.mark.parametrize("security_type", ["stock", "cdr"])
+def test_resolve_rejects_sh_1457_resume_at_one_second(
+    security_type: str,
+) -> None:
+    trade_date = date(2026, 9, 17)
+    table = pa.table(
+        {
+            "ts_utc": pa.array(
+                [
+                    DateTimeUtils.local_time_to_utc_epoch_us(
+                        time(14, 57, 1),
+                        trade_date,
+                    )
+                ],
+                type=pa.int64(),
+            ),
+            "security_type": [security_type],
+        }
+    )
+
+    with pytest.raises(ValueError, match="outside defined phase intervals"):
+        resolve_level2_phase(
+            table=table,
+            exchange="sh",
+            trade_date=trade_date.isoformat(),
+        )
+
+
+@pytest.mark.parametrize("security_type", ["b_share", "fund", "etf"])
+def test_resolve_does_not_extend_sh_1457_resume_to_other_security_types(
+    security_type: str,
+) -> None:
+    trade_date = date(2026, 9, 17)
+    table = pa.table(
+        {
+            "ts_utc": pa.array(
+                [
+                    DateTimeUtils.local_time_to_utc_epoch_us(
+                        time(14, 57, 0, 30_000),
+                        trade_date,
+                    )
+                ],
+                type=pa.int64(),
+            ),
+            "security_type": [security_type],
+        }
+    )
+
+    with pytest.raises(ValueError, match="outside defined phase intervals"):
+        resolve_level2_phase(
+            table=table,
+            exchange="sh",
+            trade_date=trade_date.isoformat(),
+        )
+
+
 def test_resolve_classifies_observed_sh_delayed_opening_publish_as_auction() -> None:
     trade_date = date(2026, 3, 2)
     delayed_publish = DateTimeUtils.local_time_to_utc_epoch_us(

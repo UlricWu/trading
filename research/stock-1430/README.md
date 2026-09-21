@@ -21,7 +21,7 @@ H02 minute_facts → H03 l2_datasets → H04 fusion → H05 training → H06 rep
 H01 与 H02 没有相互依赖，可以并行判断。H03–H06 可以在上游仍为 open 时继续研究，但不得把
 候选上游当作正式行为；上游被拒绝或语义实质变化时，下游必须重建基线并重验相关证据。
 
-## 当前背景（2026-09-11，本地 `dev@57d94ea`）
+## 背景快照（2026-09-11，本地 `dev@57d94ea`）
 
 - H01 的日常 enabled Feature/成熟 Label、显式 Standard facts 冷启动和 Feature 历史回填
   已随 `2ae615e` 合入 `dev`，正式行为由
@@ -541,15 +541,16 @@ microseconds 对 `60_000_000` 向下取整；OHLC 在每个完整 key 内按
 ## H03
 
 - **Title**：14:30 Level2 Feature 与 T+1 VWAP Rank Label
-- **Status**：`open`
+- **Status**：`adopted`
 - **Hypothesis**：固定 14:30 event-time cutoff、post-decision VWAP 窗口和 Feature 驱动的行集合，
   可以构造无未来泄漏且 key 完全对齐的 Level2 Feature/Label 数据集。
 - **Why**：完整日 Level2 universe、T+1 成交是否存在或 14:30 后数据都不能反向决定 T 日 14:30
   样本；整数 session lookahead 也不能表达 Label 到 T+1 14:36 才成熟。
 - **Scope**：一对共同采用的 V1 Feature/Label、固定三字段 key、14:30 universe、32 个 Feature、
-  T/T+1 VWAP rank Label、完整 timestamp maturity、无 upstream 的对象 Meta 和 CLI-only 回填。
+  T/T+1 VWAP rank Label、完整 timestamp maturity、无 upstream 的对象 Meta、CLI-only 回填
+  及日常 Data workflow 对现有数据集的物化。
 - **Not included**：日频融合、模型、组合、交易、order-book、ST/停牌/上市天数过滤、多决策时点、
-  成本、滑点、HTTP、cron、实时源或未来版本。
+  成本、滑点、独立 HTTP/cron 入口、实时源或未来版本。
 - **Depends on**：H02。上游未 adopted 时可以研究候选，但 H02 语义变化会使本 Change 证据失效。
 
 固定时间与 identity：
@@ -594,7 +595,7 @@ V1 固定绑定 `sh_stock_trade_1m/v1`、`sz_stock_trade_1m/v1` 与 `adj_factor/
 Feature/Label identity、version 和日期下，有效 Meta 就表示该对象可复用；输入版本或计算语义
 变化必须产生新的 H03 version，不能在 `v1` 内动态失效旧对象。同版本输入内容修订不会自动
 使旧输出失效；同尺寸内容替换也不属于当前 Meta 的检测保证。实际输入摘要、可恢复内容、源码
-和环境由研究证据保存，不能以固定 `v1` 名称替代。候选完整契约位于
+和环境由研究证据保存，不能以固定 `v1` 名称替代。完整契约位于
 [`stock_1430_feature_label_contract.md`](../../docs/data/stock_1430_feature_label_contract.md)。
 
 **Acceptance**：
@@ -1008,6 +1009,32 @@ Feature/Label identity、version 和日期下，有效 Meta 就表示该对象�
   H02 逐笔守恒或 H04 融合证据。H03 保持 `open`，本轮没有采用或拒绝决定。
 - **实际状态**：本轮只修改研究卷宗和 Notebook；源码、正式 owner 与 H04 Notebook 未改。
   没有本轮 commit、push、merge、release、deploy 或正式数据写入。
+
+**采用决定与日常接入（2026-09-20）**：
+
+- **Decision**：用户要求只更新已有正式 Feature/Label 数据集，并在 token 实测通过后明确
+  要求执行完整方案：现有 `data-level2` 接入两市分钟、当日 H03 Feature 和当天成熟的 H03
+  Label，恢复每日任务并补齐截至 `2026-09-18` 的输入。该决定采用上述固定 H03 V1；不采用
+  H04，不生成融合 Feature，也不增加告警。
+- **Evidence**：实现基于 `dev@a5021df6a8367aaf43e6e149847b18a5318bd25b`，日常编排及
+  发布复用修改为 `d675500bbbe0e04f821dc270480b965490183f78`。领域 builder、schema、
+  公式及时间边界未改；原有手算、时间可见性、Meta 和 key 回归均纳入本轮测试。修复前复现
+  Job 成功但缺少派生分区，以及 cron 默认日期错误；修复后非 contract 测试 713 项、真实
+  7zip contract 测试 1 项通过。新增场景覆盖跨周末 maturity、缺少历史 Feature/factor 的
+  失败与重试、休市日、复用不重读输入和 cron 的实际请求日期。
+  命令、日志、源码摘要与修复前失败保存在
+  `/home/wsw/app/shared/trading/logs/offline-level2-daily-20260920-99fvnk5b/`；既有冻结输入
+  的可恢复 Notebook 与数据构建证据仍见前述 2026-09-13 记录。证据保留至采用审查及本次
+  部署、回填验收完成。
+- **Conclusion**：采用的是固定数据计算和物化契约。日常调用复用相同领域实现，历史
+  回填仍使用目标日期；本次没有得出因子有效性、模型表现或收益结论。
+- **Formalized in**：[`stock_1430_feature_label_contract.md`](../../docs/data/stock_1430_feature_label_contract.md)
+  拥有数据语义，[`offline_workflow_contract.md`](../../docs/offline_workflow_contract.md)
+  拥有到达日编排；CLI、HTTP 和 cron 各自遵循其工程 owner。
+- **实际状态与 Next**：本段是与 owner、实现及测试共同送审的采用修改，仅在合入 `dev`
+  后生效；feature branch 上的 `adopted` 不证明目标分支已完成转换。之后分别核验自动测试
+  部署、正式数据回填和 cron 安装，不能以本段或 merge 代替运行证据。前述各日期的 `open`
+  与未合入声明保留为历史记录。
 
 ## H04
 

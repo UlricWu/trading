@@ -62,7 +62,7 @@ _SZ_OPEN_AND_CLOSE_CALL = (
     _PhaseInterval(time(15, 0), time(15, 0, 1), False, MarketPhase.AUCTION),
 )
 
-_SZ_1457_RESUME_CALL = (
+_TRADE_1457_RESUME_CALL = (
     _PhaseInterval(time(14, 57), time(14, 57, 1), False, MarketPhase.AUCTION),
 )
 
@@ -80,6 +80,7 @@ _DEFAULT_A_SHARE_TRADE_PHASE_RULES: tuple[_PhaseRule, ...] = (
             ),
             *_TRADE_REGULAR_AM,
             *_TRADE_STOCK_PM,
+            *_TRADE_1457_RESUME_CALL,
             _PhaseInterval(
                 time(15, 0),
                 time(15, 0, 3),
@@ -119,7 +120,7 @@ _DEFAULT_A_SHARE_TRADE_PHASE_RULES: tuple[_PhaseRule, ...] = (
             _SZ_OPEN_AND_CLOSE_CALL
             + _TRADE_REGULAR_AM
             + _TRADE_STOCK_PM
-            + _SZ_1457_RESUME_CALL
+            + _TRADE_1457_RESUME_CALL
         ),
         security_types=("stock",),
     ),
@@ -153,7 +154,7 @@ _DEFAULT_A_SHARE_TRADE_PHASE_RULES: tuple[_PhaseRule, ...] = (
             _SZ_OPEN_AND_CLOSE_CALL
             + _TRADE_REGULAR_AM
             + _TRADE_STOCK_PM
-            + _SZ_1457_RESUME_CALL
+            + _TRADE_1457_RESUME_CALL
         ),
         security_types=("convertible_bond",),
     ),

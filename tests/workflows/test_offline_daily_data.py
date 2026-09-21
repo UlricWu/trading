@@ -7,8 +7,11 @@ from pathlib import Path
 from typing import cast
 from unittest.mock import Mock
 
+import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
 
+from src.access import Access, meta
 from src.config.app_config import AppConfig
 from src.config.data_config import (
     BrokerConfig,
@@ -24,6 +27,7 @@ from src.data_system.context import DataContext
 from src.data_system.normalize.level2 import normalize_level2
 from src.data_system.normalize.tushare import normalize_tushare
 from src.data_system.pipeline import DataPipeline
+from src.data_system.steps import stock_1430_materialize as stock_1430_module
 from src.jobs.requests import (
     DataJobKind,
     DataSubmission,
@@ -68,6 +72,96 @@ def _app_config() -> AppConfig:
     )
 
 
+@pytest.mark.parametrize(
+    ("arrival_date", "previous_date"),
+    [("2026-09-07", "2026-09-04"), ("2026-09-18", "2026-09-17")],
+)
+def test_level2_workflow_publishes_current_feature_and_previous_session_label(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    arrival_date: str,
+    previous_date: str,
+) -> None:
+    pm = PathManager(tmp_path)
+    context = DataContext(
+        start=arrival_date, end=arrival_date, trade_dates=(arrival_date,)
+    )
+    for name in (
+        "CalendarMaterializeStep",
+        "FactMaterializeStep",
+        "Level2MinuteBuildStep",
+    ):
+        step = Mock()
+        step.run.return_value = context
+        monkeypatch.setattr(workflow_module, name, Mock(return_value=step))
+
+    previous_keys = pa.table(
+        {
+            "symbol": ["000001"],
+            "trade_date": [previous_date],
+            "decision_ts_utc": pa.array([1], type=pa.int64()),
+        }
+    )
+    previous_feature = pm.feature_object(
+        feature_set="l2_stock_1430", version="v1", trade_date=previous_date
+    )
+    previous_feature.payload_path.parent.mkdir(parents=True)
+    pq.write_table(previous_keys, previous_feature.payload_path)
+    meta.commit(pm=pm, payload_path=previous_feature.payload_path)
+    current_feature = previous_keys.set_column(
+        1, "trade_date", pa.array([arrival_date])
+    ).append_column("feature", pa.array([0.5]))
+    mature_label = previous_keys.append_column("y_rank_return", pa.array([1.0]))
+    feature_builder = Mock(return_value=current_feature)
+    label_builder = Mock(return_value=mature_label)
+    monkeypatch.setattr(stock_1430_module, "build_stock_1430_features", feature_builder)
+    monkeypatch.setattr(stock_1430_module, "build_stock_1430_labels", label_builder)
+
+    access = Mock(spec=Access)
+    access.recent_trade_dates.return_value = [previous_date, arrival_date]
+
+    def _minutes(*, trade_date: str) -> pa.Table:
+        assert trade_date in (previous_date, arrival_date)
+        return pa.table({"source_date": [trade_date]})
+
+    access.stock_trade_minutes.side_effect = _minutes
+    access.adjustment_factors.side_effect = _minutes
+    access.next_trade_date.side_effect = lambda *, trade_date: {
+        previous_date: arrival_date
+    }[trade_date]
+    monkeypatch.setattr(workflow_module, "Access", Mock(return_value=access))
+
+    run_offline_data(
+        app_config=_app_config(),
+        path_manager=pm,
+        submission=DataSubmission(
+            kind="data-level2", start=arrival_date, end=arrival_date
+        ),
+    )
+
+    feature_paths = pm.feature_object(
+        feature_set="l2_stock_1430", version="v1", trade_date=arrival_date
+    )
+    label_paths = pm.label_object(
+        label_set="l2_stock_1430_t1_vwap_rank", version="v1", trade_date=previous_date
+    )
+    assert feature_paths.meta_path.is_file()
+    assert label_paths.meta_path.is_file()
+    with pq.ParquetFile(feature_paths.payload_path) as reader:
+        assert reader.read().equals(current_feature)
+    with pq.ParquetFile(label_paths.payload_path) as reader:
+        assert reader.read().equals(mature_label)
+    assert not pm.label_object(
+        label_set="l2_stock_1430_t1_vwap_rank", version="v1", trade_date=arrival_date
+    ).meta_path.exists()
+    access.recent_trade_dates.assert_called_once_with(
+        end_date=arrival_date, sessions=2
+    )
+    assert label_builder.call_args.kwargs["feature_keys"].equals(previous_keys)
+    assert label_builder.call_args.kwargs["trade_date"].isoformat() == previous_date
+    assert label_builder.call_args.kwargs["next_trade_date"].isoformat() == arrival_date
+
+
 @pytest.mark.parametrize("kind", ["data-standard", "data-level2"])
 def test_data_workflow_supplies_one_linear_domain_step_sequence(
     kind: str,
@@ -93,14 +187,17 @@ def test_data_workflow_supplies_one_linear_domain_step_sequence(
     )
 
     assert result is None
+    derived_steps = (
+        ["FeatureBuildStep", "LabelBuildStep"]
+        if kind == "data-standard"
+        else ["Level2MinuteBuildStep", "Stock1430DailyMaterializeStep"]
+    )
     assert [
         type(step).__name__ for step in pipeline_factory.call_args.kwargs["steps"]
     ] == [
         "CalendarMaterializeStep",
         "FactMaterializeStep",
-        "FeatureBuildStep",
-        "LabelBuildStep",
-    ]
+    ] + derived_steps
     pipeline.run.assert_called_once()
     context = pipeline.run.call_args.args[0]
     assert context == DataContext(start="2026-07-20", end="2026-07-20")
@@ -452,7 +549,7 @@ def test_standard_workflow_rejects_enabled_unknown_derived_identity_before_io(
     pipeline_factory.assert_not_called()
 
 
-def test_level2_workflow_keeps_empty_feature_and_label_operations(
+def test_level2_workflow_builds_fixed_derivatives_independent_of_daily_registry(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     config = _app_config()
@@ -466,13 +563,20 @@ def test_level2_workflow_keeps_empty_feature_and_label_operations(
     pipeline.run.side_effect = lambda context: context
     feature_step_factory = Mock()
     label_step_factory = Mock()
+    minute_step_factory = Mock()
+    stock_step_factory = Mock()
     monkeypatch.setattr(workflow_module, "DataPipeline", Mock(return_value=pipeline))
     monkeypatch.setattr(workflow_module, "FeatureBuildStep", feature_step_factory)
     monkeypatch.setattr(workflow_module, "LabelBuildStep", label_step_factory)
+    monkeypatch.setattr(workflow_module, "Level2MinuteBuildStep", minute_step_factory)
+    monkeypatch.setattr(
+        workflow_module, "Stock1430DailyMaterializeStep", stock_step_factory
+    )
+    path_manager = cast("PathManager", object())
 
     run_offline_data(
         app_config=config,
-        path_manager=cast("PathManager", object()),
+        path_manager=path_manager,
         submission=DataSubmission(
             kind="data-level2",
             start="2026-07-20",
@@ -480,8 +584,15 @@ def test_level2_workflow_keeps_empty_feature_and_label_operations(
         ),
     )
 
-    assert feature_step_factory.call_args.kwargs["feature_versions"] == {}
-    assert label_step_factory.call_args.kwargs["label_versions"] == {}
+    feature_step_factory.assert_not_called()
+    label_step_factory.assert_not_called()
+    assert minute_step_factory.call_args.kwargs == {
+        "pm": path_manager,
+        "access": stock_step_factory.call_args.kwargs["access"],
+        "processed_version": "v1",
+        "symbol_batch_size": 16,
+    }
+    assert stock_step_factory.call_args.kwargs["pm"] is path_manager
     pipeline.run.assert_called_once()
 
 
