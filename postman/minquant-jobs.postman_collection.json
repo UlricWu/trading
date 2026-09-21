@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "fc39e20c-21d1-44c2-abe1-9771b39af721",
     "name": "MinQuant Jobs API",
-    "description": "MinQuant 进程内 Jobs HTTP API。服务端监听 0.0.0.0:5050；Postman 同机访问使用 localhost，异机访问时把 baseUrl 改为服务器真实 IP。创建 Job 后会自动把返回的 job_id 保存到 Collection 变量 jobId。",
+    "description": "MinQuant 进程内 Jobs HTTP API。调用前明确目标环境：测试环境端口 5050，开发环境端口 5051。本 Collection 的 baseUrl 初始值指向同机测试环境 http://localhost:5050；调用开发环境时显式改为 http://localhost:5051，异机访问时同时替换为目标服务器真实 IP。凭据由目标服务进程 ENV 对应的配置文件决定。创建 Job 后会自动把返回的 job_id 保存到 Collection 变量 jobId。",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "item": [
@@ -21,6 +21,25 @@
           ]
         },
         "description": "检查 API 进程及 release identity。"
+      },
+      "response": []
+    },
+    {
+      "name": "Check Tushare",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/checks/tushare",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "checks",
+            "tushare"
+          ]
+        },
+        "description": "重新读取服务端 token 和 gateway，只查询一次北京时间当天的 daily。成功（含空数据）返回 200 和 {\"ok\": true}；检测未通过返回 503 tushare_check_failed。"
       },
       "response": []
     },

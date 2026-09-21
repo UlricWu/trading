@@ -1,8 +1,8 @@
 # Job API 契约
 
 - **状态**：正式 owner
-- **适用范围**：进程内 Job 身份、HTTP 接口、请求字段、队列、状态机、取消和 CLI
-  子进程边界。
+- **适用范围**：进程内 Job 身份、HTTP 接口、请求字段、队列、状态机、取消、CLI
+  子进程边界和按需 Tushare 可用性检测。
 - **CLI owner**：[`docs/engineering/cli_contract.md`](cli_contract.md)
 - **日志 owner**：[`docs/engineering/technology_stack_decisions.md`](technology_stack_decisions.md)
 
@@ -15,6 +15,7 @@ POST /jobs
 GET  /jobs/<job_id>
 POST /jobs/<job_id>/cancel
 GET  /health
+POST /checks/tushare
 ```
 
 不提供 Job 列表、批次对象、pending clear、kill、job log 下载或其他 Job endpoint。
@@ -43,6 +44,44 @@ Flask 进程运行，多个 worker 进程会形成彼此独立且不一致的队
 分别使用 `dev`、`workspace` 和 `workspace`，只表示本地工作区运行；测试部署必须显式注入
 并校验上例对应的环境、release ref 和目标完整 SHA。Health 只证明当前 API 进程可响应及
 其 release identity，不探测 FTP、Tushare、数据对象或尚未提交的 Job 依赖。
+
+## POST `/checks/tushare`
+
+该接口无请求参数，同步检测服务当前配置的 Tushare 可用性，不创建 Job。每次请求通过
+`AppConfig.load()` 重新加载配置，使用其中的 `TUSHARE_TOKEN` 和 `TUSHARE_GATEWAY`；
+配置加载语义由 [`cli_contract.md`](cli_contract.md#appconfig) 拥有。配置文件更新后，
+下一次检测使用新配置，不缓存 token 或检测结果，也不写入 SDK 的本地 token 文件。
+
+调用时必须明确目标环境，不能默认选择开发服务。同机访问示例：
+
+```bash
+# 测试环境：服务进程 ENV=test，端口 5050
+curl -i -X POST http://127.0.0.1:5050/checks/tushare
+
+# 开发环境：服务进程 ENV=dev，端口 5051
+curl -i -X POST http://127.0.0.1:5051/checks/tushare
+```
+
+检测使用目标服务进程 `ENV` 对应的配置文件；客户端选择端口不会修改服务的 `ENV`。
+Postman 通过 `baseUrl` 选择目标服务，异机访问时同时替换为目标服务器地址。
+
+每次检测只查询一次 `daily`，唯一业务参数为请求时 `Asia/Shanghai` 当天的
+`trade_date=YYYYMMDD`，`fields` 为空。请求地址沿用当前锁定 Tushare SDK 的规则，
+在配置的 gateway 或 SDK 默认地址后追加 `/daily`。连接和读取超时均为 30 秒，不重试、
+不跟随重定向、不查询交易日历或其他日期，也不物化查询结果。
+
+上游 HTTP 状态为 `2xx`，且 JSON object 的 `code` 为整数 `0` 时，固定返回 `200` 和
+`{"ok": true}`。不以数据行数判断成功，非交易日或当天数据尚未更新时的空结果也通过。
+配置加载失败、HTTP 失败、超时、响应解析失败、缺失或无效 `code`、业务 `code != 0`
+均固定返回 `503`：
+
+```json
+{"error": {"code": "tushare_check_failed", "message": "Tushare check failed"}}
+```
+
+失败只表示本次检测未通过，不区分 token 无效、权限、限流或网络原因，不自动更换 token。
+响应和日志不得包含 token、gateway、上游原始响应、异常详情或 traceback。检测沿用 API
+请求与响应状态日志，不增加检测历史、定时任务或告警渠道；`GET /health` 的契约保持不变。
 
 ## POST `/jobs`
 
@@ -173,6 +212,7 @@ Job 完成或取消并释放执行槽后，runtime 必须继续调度 FIFO 中�
 - 请求 JSON、字段或业务参数无效：`400 invalid_job_request`；不得分配 Job 身份。
 - Job 不存在：`404 job_not_found`；不得在 body 回显客户端提供的 ID。
 - Job 已处于不可取消终态：`409 job_not_cancellable`。
+- Tushare 可用性检测未通过：`503 tushare_check_failed`。
 - 未预期服务错误：`500 internal_error`，不得暴露内部异常。
 
 框架产生的其他 HTTP 错误也必须使用同一 JSON envelope，不得返回 Werkzeug HTML。

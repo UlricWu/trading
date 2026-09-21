@@ -5,10 +5,13 @@ import os
 import time
 from pathlib import Path
 
+import requests
+import tushare as ts
 from flask import Flask, Response, g, jsonify, request
 from werkzeug.exceptions import BadRequest, HTTPException, UnsupportedMediaType
 
 from src import logs
+from src.config.app_config import AppConfig
 from src.jobs.requests import InvalidJobRequest, parse_job_request
 from src.jobs.runtime import (
     JobNotCancellableError,
@@ -25,7 +28,7 @@ HttpResponse = Response | tuple[Response, int]
 
 
 def create_app(job_runtime: JobRuntime) -> Flask:
-    """Create the four-endpoint HTTP adapter for one explicit job runtime.
+    """Create the Job HTTP adapter with health and on-demand Tushare checks.
 
     API inputs:
 
@@ -53,6 +56,8 @@ def create_app(job_runtime: JobRuntime) -> Flask:
     - ``GET /jobs/<job_id>`` accepts the Job ID as a path value.
     - ``POST /jobs/<job_id>/cancel`` accepts the Job ID as a path value.
     - ``GET /health`` accepts no input and reports the process release identity.
+    - ``POST /checks/tushare`` accepts no input and checks today's ``daily``
+      query once with the current server configuration. Empty data is valid.
 
     Example:
         with JobRuntime(Path("logs/jobs")) as job_runtime:
@@ -163,6 +168,49 @@ def create_app(job_runtime: JobRuntime) -> Flask:
                 "commit_sha": health_commit_sha,
             }
         )
+
+    @flask_app.post("/checks/tushare")
+    def check_tushare() -> HttpResponse:
+        """Check one current-day query without exposing or persisting credentials.
+
+        Example:
+            response = flask_app.test_client().post("/checks/tushare")
+        """
+        try:
+            secret = AppConfig.load().secret
+            gateway = secret.tushare_gateway
+            if gateway is None:
+                gateway = ts.pro_api(secret.tushare_token)._DataApi__http_url
+            trade_date = DateTimeUtils.to_compact_date(DateTimeUtils.today())
+            # The SDK converts HTTP errors to empty frames; inspect its wire
+            # response so legitimate empty data and transport failures differ.
+            with requests.post(
+                f"{gateway}/daily",
+                json={
+                    "api_name": "daily",
+                    "token": secret.tushare_token,
+                    "params": {"trade_date": trade_date},
+                    "fields": "",
+                },
+                timeout=30,
+                allow_redirects=False,
+            ) as response:
+                if not 200 <= response.status_code < 300:
+                    raise ValueError("Tushare daily HTTP request did not succeed")
+                payload: object = response.json()
+            if (
+                not isinstance(payload, dict)
+                or type(payload.get("code")) is not int
+                or payload["code"] != 0
+            ):
+                raise ValueError("Tushare daily response must contain integer code=0")
+        except Exception:
+            return _error_response(
+                code="tushare_check_failed",
+                message="Tushare check failed",
+                status_code=503,
+            )
+        return jsonify({"ok": True})
 
     return flask_app
 

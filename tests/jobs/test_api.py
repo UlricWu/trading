@@ -5,12 +5,17 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from contextlib import nullcontext
+from datetime import UTC, datetime
 from typing import cast
-from unittest.mock import Mock
+from unittest.mock import MagicMock, Mock, call
 
 import pytest
+import requests
+import tushare as ts
 
 import src.jobs.api as api_module
+from src.config.app_config import AppConfig
+from src.config.secret_config import SecretConfig
 from src.jobs.api import create_app
 from src.jobs.requests import (
     BacktestSubmission,
@@ -96,7 +101,193 @@ def test_route_map_contains_only_the_confirmed_endpoints() -> None:
         ("/jobs/<job_id>", ("GET",)),
         ("/jobs/<job_id>/cancel", ("POST",)),
         ("/health", ("GET",)),
+        ("/checks/tushare", ("POST",)),
     }
+
+
+@pytest.fixture
+def tushare_config(monkeypatch: pytest.MonkeyPatch) -> Mock:
+    secret = SecretConfig(
+        ftp_host="ftp.example.com",
+        ftp_user="user",
+        ftp_password="password",
+        tushare_token="private-tushare-token",
+        tushare_gateway="https://private-gateway.example/dataapi",
+    )
+    load_config = Mock(return_value=Mock(spec=AppConfig, secret=secret))
+    monkeypatch.setattr(AppConfig, "load", load_config)
+    monkeypatch.setattr(
+        api_module.DateTimeUtils,
+        "now_utc",
+        lambda: datetime(2026, 9, 19, 16, 15, tzinfo=UTC),
+    )
+    monkeypatch.setattr(
+        ts,
+        "set_token",
+        Mock(side_effect=AssertionError("check must not persist a token")),
+    )
+    return load_config
+
+
+@pytest.mark.parametrize(
+    ("http_status", "payload", "expected_status"),
+    [
+        (200, {"code": 0, "data": {"fields": ["close"], "items": [[10.0]]}}, 200),
+        (200, {"code": 0, "data": {"fields": ["close"], "items": []}}, 200),
+        (200, {"code": -1, "msg": "private-tushare-token"}, 503),
+        (200, {"code": 2002, "msg": "no permission"}, 503),
+        (401, {"code": 0}, 503),
+        (503, {"code": 0}, 503),
+        (302, {"code": 0}, 503),
+        (200, {}, 503),
+        (200, [], 503),
+        (200, {"code": "0"}, 503),
+        (200, {"code": False}, 503),
+    ],
+)
+def test_tushare_check_uses_one_current_day_request(
+    monkeypatch: pytest.MonkeyPatch,
+    tushare_config: Mock,
+    http_status: int,
+    payload: object,
+    expected_status: int,
+) -> None:
+    upstream = MagicMock(spec=requests.Response)
+    upstream.__enter__.return_value = upstream
+    upstream.status_code = http_status
+    upstream.json.return_value = payload
+    post = Mock(return_value=upstream)
+    monkeypatch.setattr(requests, "post", post)
+    runtime = _StubRuntime()
+    client = create_app(cast(JobRuntime, runtime)).test_client()
+
+    response = client.post("/checks/tushare")
+
+    assert response.status_code == expected_status
+    assert response.get_json() == (
+        {"ok": True}
+        if expected_status == 200
+        else {
+            "error": {
+                "code": "tushare_check_failed",
+                "message": "Tushare check failed",
+            }
+        }
+    )
+    post.assert_called_once_with(
+        "https://private-gateway.example/dataapi/daily",
+        json={
+            "api_name": "daily",
+            "token": "private-tushare-token",
+            "params": {"trade_date": "20260920"},
+            "fields": "",
+        },
+        timeout=30,
+        allow_redirects=False,
+    )
+    upstream.__exit__.assert_called_once()
+    tushare_config.assert_called_once_with()
+    assert runtime.jobs == {}
+    assert runtime.submitted == []
+
+
+@pytest.mark.parametrize(
+    ("failure_phase", "error"),
+    [
+        ("configuration", ValueError("private-tushare-token")),
+        ("request", requests.Timeout("private-tushare-token")),
+        ("request", requests.ConnectionError("private-tushare-token")),
+        ("response", requests.JSONDecodeError("private-tushare-token", "", 0)),
+    ],
+)
+def test_tushare_check_failure_is_private_and_does_not_affect_health(
+    monkeypatch: pytest.MonkeyPatch,
+    tushare_config: Mock,
+    failure_phase: str,
+    error: Exception,
+) -> None:
+    upstream = MagicMock(spec=requests.Response)
+    upstream.__enter__.return_value = upstream
+    upstream.status_code = 200
+    post = Mock(return_value=upstream)
+    monkeypatch.setattr(requests, "post", post)
+    if failure_phase == "configuration":
+        tushare_config.side_effect = error
+    elif failure_phase == "request":
+        post.side_effect = error
+    else:
+        upstream.json.side_effect = error
+    client = create_app(cast(JobRuntime, _StubRuntime())).test_client()
+    messages: list[str] = []
+    sink_id = api_module.logs.add(messages.append, format="{message}")
+    try:
+        response = client.post("/checks/tushare")
+        health = client.get("/health")
+    finally:
+        api_module.logs.remove(sink_id)
+
+    assert response.status_code == 503
+    assert response.get_json() == {
+        "error": {
+            "code": "tushare_check_failed",
+            "message": "Tushare check failed",
+        }
+    }
+    assert "private-tushare-token" not in "".join(messages)
+    assert "private-gateway" not in "".join(messages)
+    assert "Traceback" not in "".join(messages)
+    assert health.status_code == 200
+    assert health.get_json()["ok"] is True
+    tushare_config.assert_called_once_with()
+    assert post.call_count == (0 if failure_phase == "configuration" else 1)
+
+
+def test_tushare_check_reloads_token_and_gateway(
+    monkeypatch: pytest.MonkeyPatch,
+    tushare_config: Mock,
+) -> None:
+    first_secret = tushare_config.return_value.secret.model_copy(
+        update={"tushare_gateway": None}
+    )
+    second_secret = first_secret.model_copy(
+        update={
+            "tushare_token": "rotated-tushare-token",
+            "tushare_gateway": "https://rotated-gateway.example",
+        }
+    )
+    tushare_config.side_effect = [
+        Mock(spec=AppConfig, secret=first_secret),
+        Mock(spec=AppConfig, secret=second_secret),
+    ]
+    upstream = MagicMock(spec=requests.Response)
+    upstream.__enter__.return_value = upstream
+    upstream.status_code = 200
+    upstream.json.return_value = {"code": 0}
+    post = Mock(return_value=upstream)
+    monkeypatch.setattr(requests, "post", post)
+    client = create_app(cast(JobRuntime, _StubRuntime())).test_client()
+
+    assert client.post("/checks/tushare").status_code == 200
+    assert client.post("/checks/tushare").status_code == 200
+
+    assert tushare_config.call_count == 2
+    assert post.call_args_list == [
+        call(
+            f"{gateway}/daily",
+            json={
+                "api_name": "daily",
+                "token": token,
+                "params": {"trade_date": "20260920"},
+                "fields": "",
+            },
+            timeout=30,
+            allow_redirects=False,
+        )
+        for gateway, token in (
+            ("http://api.waditu.com/dataapi", "private-tushare-token"),
+            ("https://rotated-gateway.example", "rotated-tushare-token"),
+        )
+    ]
 
 
 def test_data_range_returns_one_job_and_only_public_fields() -> None:
