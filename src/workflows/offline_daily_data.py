@@ -25,7 +25,10 @@ from src.data_system.steps.level2_minute_build import Level2MinuteBuildStep
 from src.data_system.steps.stock_1430_daily_l2_materialize import (
     Stock1430DailyL2MaterializeStep,
 )
-from src.data_system.steps.stock_1430_materialize import Stock1430MaterializeStep
+from src.data_system.steps.stock_1430_materialize import (
+    Stock1430DailyMaterializeStep,
+    Stock1430MaterializeStep,
+)
 from src.jobs.requests import (
     DataSubmission,
     FeatureBackfillSubmission,
@@ -74,7 +77,7 @@ def run_offline_data(
     path_manager: PathManager,
     submission: DataSubmission,
 ) -> None:
-    """Materialize one complete Standard or Level-2 data range.
+    """Materialize facts and their derived partitions over an arrival-date range.
 
     Example:
         run_offline_data(
@@ -130,9 +133,6 @@ def run_offline_data(
                 )
                 continue
             fact_sources[source_name] = source_config
-        feature_versions = {}
-        label_versions = {}
-
         if not fact_sources:
             raise ValueError(
                 f"offline data kind '{submission.kind}' has no fact sources"
@@ -166,17 +166,30 @@ def run_offline_data(
             normalize_operation=normalize_operation,
             processed_version=PROCESSED_VERSION,
         ),
-        FeatureBuildStep(
-            pm=path_manager,
-            access=access,
-            feature_versions=feature_versions,
-        ),
-        LabelBuildStep(
-            pm=path_manager,
-            access=access,
-            label_versions=label_versions,
-        ),
     )
+    if submission.kind == "data-standard":
+        steps += (
+            FeatureBuildStep(
+                pm=path_manager,
+                access=access,
+                feature_versions=feature_versions,
+            ),
+            LabelBuildStep(
+                pm=path_manager,
+                access=access,
+                label_versions=label_versions,
+            ),
+        )
+    else:
+        steps += (
+            Level2MinuteBuildStep(
+                pm=path_manager,
+                access=access,
+                processed_version=PROCESSED_VERSION,
+                symbol_batch_size=_LEVEL2_MINUTE_SYMBOL_BATCH_SIZE,
+            ),
+            Stock1430DailyMaterializeStep(pm=path_manager, access=access),
+        )
     instrumentation = Instrumentation(
         f"{submission.kind}_{submission.start}_{submission.end}"
     )

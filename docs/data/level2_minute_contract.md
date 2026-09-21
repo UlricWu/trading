@@ -151,6 +151,9 @@ producer 可以在内存中拼接分钟级 batch，但不得因此改变 schema�
 
 ## 非目标
 
+分钟 producer 同时由日常 `data-level2` 和人工 `data-level2-minute-backfill` 复用；入口与
+日期安排由 [`offline_workflow_contract.md`](../offline_workflow_contract.md) 拥有。
+
 当前不定义 order/order-book、撤单、盘口、非股票分钟事实、dense 分钟、Feature、Label、训练、
 回放、HTTP、cron、MQTT、FTP 下载、跨交易所事务、旧 API 兼容或正式历史回填状态。逐笔
 `volume/notional` 的 source-native 数值尺度继续由输入 owner 定义；本契约只拥有同字段在

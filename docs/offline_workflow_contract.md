@@ -167,7 +167,8 @@ Instrumentation 衡量 workflow 显式组装的 step，返回 `step.run(context)
 
 ```text
 CalendarMaterializeStep, FactMaterializeStep, FeatureBuildStep, LabelBuildStep,
-Level2MinuteBuildStep, Stock1430MaterializeStep, Stock1430DailyL2MaterializeStep,
+Level2MinuteBuildStep, Stock1430MaterializeStep, Stock1430DailyMaterializeStep,
+Stock1430DailyL2MaterializeStep,
 DatasetBuildStep, PreprocessStep, ModelTrainStep, ICEvaluateStep,
 ArtifactPersistStep, SignalStep, SignalEvalStep, TradableAlphaEvalStep,
 PortfolioStep, RiskEvalStep, ExecutionEvalStep, AccountingStep,
@@ -214,13 +215,14 @@ Instrumentation 和 I/O 前失败。完整闭区间是一个 workflow 执行单�
 4. 绑定固定的 Tushare calendar broker/normalize，并由 workflow 按所选 fact source family
    直接绑定一个 broker class 和一个固定 broker normalize callable；
 5. Standard 从 `app_config.data.feature_sets` 与 `label_sets` 分别选择全部且仅选择
-   `enabled=true` 的 operation；Level-2 选择空的 feature 与 label operation 集。
+   `enabled=true` 的 operation；Level-2 固定选择两市股票分钟事实以及 H03 14:30
+   Feature/Label，不读取日频 feature/label registry 配置。
 
 Standard 允许 Feature 配置全部 disabled，也允许 Label 配置全部 disabled；任一空 operation
 集都由 workflow 记录一条 `reason=no_enabled_config` warning，再自然成功。Enabled
 identity 必须在 workflow 准备阶段解析到精确 builder，否则在任何日期 I/O 前失败。
-Level-2 暂时仍组装并各执行一次空的 `FeatureBuildStep` 与
-`LabelBuildStep`，但不读写 derived 数据。
+Level-2 不组装通用 `FeatureBuildStep` 或 `LabelBuildStep`；分钟与 H03 派生对象使用
+下述固定步骤，identity、version、计算和 Meta 契约沿用各自数据 owner。
 
 Tushare manifest 是受代码审查的执行清单，不通过配置、Broker 反射或 capability provider
 动态展开。Level-2 配置则只表达文件 identity、启停和输出映射。除 calendar 外的所选
@@ -310,11 +312,27 @@ Feature/label builder、Access 和 private 发布函数不记录运行日志。�
 Calendar 的 `_materialize_year` 无返回值；各 Step 的 `run` 返回原 `DataContext`。
 调度、计算或发布错误原样传播，失败分区不输出结果日志，也不追加重复错误日志。
 
-两个 kind 的显式 step 顺序都固定为 calendar materialize → fact materialize → feature
-build → label build。Standard 的 derived operation 来自 enabled 配置；Level-2 的两个
-derived operation 集为空。其他差异只存在于 workflow 准备阶段选择的 source 与 normalize
-实现。Pipeline 只按 workflow 传入的单一 tuple 执行，不知道
-也不校验这些领域顺序。`stock_basic`、`stock_st` 和 `suspend_d` normalize 产生零行时必须
+Standard 的显式 step 顺序固定为 calendar materialize → fact materialize → feature build →
+label build，derived operation 来自 enabled 配置。Level-2 固定为 calendar materialize →
+fact materialize → `Level2MinuteBuildStep` → `Stock1430DailyMaterializeStep`。每个 Step
+完成整个请求范围后才进入下一 Step，Pipeline 只执行 workflow 传入的单一 tuple，不知道
+也不校验这些领域顺序。
+
+Level-2 请求范围表示到达日 `A`。分钟 Step 复用人工分钟回填的实现、固定 V1 和有限 batch
+边界，为范围内每个正式 session 构建两市分钟事实。每日 H03 Step 按到达日升序先复用或
+发布 `l2_stock_1430/v1(A)`，再通过 `Access.recent_trade_dates(end_date=A, sessions=2)`
+确定上一正式 session `T`，复用或发布 `l2_stock_1430_t1_vwap_rank/v1(T)`；Label 的 maturity
+为 `A=T+1`。例如周一到达时生成周一 Feature 和前一周五 Label，不请求周二输入，也不生产
+周一尚未成熟的 Label。
+
+首个到达日前一 session 的 Feature、两市分钟事实，以及 Label 对应 T/A 的日频 factor，
+都必须已由各自入口提交。每日 Step 不扩大请求范围、不自动补建这些历史或 Standard 输入；
+Label Meta miss 时缺少必要对象必须失败。当前日 Feature 成功后 Label 失败，Feature 保留。
+每日与人工 H03 回填复用同一逐分区读取、发布与日志实现；每日 Step 每次解析 Label 目标
+日期，之后有效 Meta hit 不再读取该对象的分钟、factor 或 Feature 输入。休市日没有到达
+session，不执行分钟或 H03 输入读取。该日常链不生成 H04 融合 Feature。
+
+`stock_basic`、`stock_st` 和 `suspend_d` normalize 产生零行时必须
 把它作为有效空集合发布 payload 并提交 Meta；其他 normalize、feature 或 label 产生零行
 必须失败。
 `stock_basic` 的 `2019-04-01` 是无记录且源 DataFrame 不携带列的正式案例：normalize 必须
