@@ -12,7 +12,7 @@ import tarfile
 import tempfile
 import time
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from datetime import time as wall_time
 from pathlib import Path
@@ -46,6 +46,13 @@ from src.utils.path import ObjectPaths, PathManager
 class _FittedCandidate:
     estimator: Ridge | HistGradientBoostingRegressor
     preprocessor: FittedPreprocessor
+
+
+@dataclass
+class _WalkForwardState:
+    models: dict[str, _FittedCandidate] = field(default_factory=dict)
+    fitted_month: str = ""
+    model_ready_ts: int = 0
 
 
 class _InputFile(TypedDict):
@@ -261,29 +268,35 @@ def _walk_forward(
     rules: Sequence[str],
     output_dir: Path,
     seed: int,
+    training_window: int | None = 60,
+    state: _WalkForwardState | None = None,
 ) -> pd.DataFrame:
     output_dir.mkdir()
     training_days = panel.groupby("trade_date", sort=True)["label_ready_ts"].max()
     metrics: list[dict[str, object]] = []
     schedule: list[dict[str, object]] = []
-    fitted_models: dict[str, _FittedCandidate] = {}
-    fitted_month = ""
-    model_ready_ts = 0
+    # The caller owns a supplied state so a new evaluation segment resumes its model.
+    if state is None:
+        state = _WalkForwardState()
     for target_day in evaluation_dates:
         fit_start = _timestamp(target_day, 8)
         training_dates = _eligible_training_dates(
-            training_days, fit_start=fit_start, count=60
+            training_days,
+            fit_start=fit_start,
+            count=60 if training_window is None else training_window,
         )
+        if training_window is None:
+            training_dates = training_days.index[training_days < fit_start].tolist()
         frame = panel.loc[panel["trade_date"].eq(target_day)]
-        if target_day[:7] != fitted_month:
+        if target_day[:7] != state.fitted_month:
             train = panel.loc[panel["trade_date"].isin(training_dates)]
             assert train["label_ready_ts"].lt(fit_start).all()
             assert train["feature_ready_ts"].le(train["allocation_ts"]).all()
             for candidate in candidates:
                 started = time.perf_counter()
-                fitted_models[candidate] = _fit_candidate(train, candidate, seed)
+                state.models[candidate] = _fit_candidate(train, candidate, seed)
                 elapsed = time.perf_counter() - started
-                fitted = fitted_models[candidate]
+                fitted = state.models[candidate]
                 model_path = output_dir / f"{target_day}-{candidate}.joblib"
                 joblib.dump((fitted.estimator, fitted.preprocessor), model_path)
                 schedule.append(
@@ -305,19 +318,19 @@ def _walk_forward(
                 if elapsed >= 3600:
                     raise RuntimeError("model missed assumed one-hour readiness budget")
                 print(
-                    f"fit {candidate} {target_day}; days=60; seconds={elapsed:.2f}",
+                    f"fit {candidate} {target_day}; days={len(training_dates)}; seconds={elapsed:.2f}",
                     flush=True,
                 )
-            fitted_month = target_day[:7]
-            model_ready_ts = _timestamp(target_day, 9)
+            state.fitted_month = target_day[:7]
+            state.model_ready_ts = _timestamp(target_day, 9)
         _require_model_ready(
-            ready_ts=model_ready_ts, decision_ts=_timestamp(target_day, 9)
+            ready_ts=state.model_ready_ts, decision_ts=_timestamp(target_day, 9)
         )
         prediction_frame = frame.loc[
             :, ["symbol", "trade_date", "y_rank_return"]
         ].copy()
         for candidate in candidates:
-            scores = _predict(fitted_models[candidate], frame)
+            scores = _predict(state.models[candidate], frame)
             prediction_frame[candidate] = scores
             metrics.append(_metric_row(frame, scores, count=50, method=candidate))
         for rule in rules:
@@ -760,4 +773,381 @@ def run_research(
         {"verified_files": len(manifest), "all_content_unchanged": True},
     )
     print(json.dumps(summary, ensure_ascii=False, indent=2), flush=True)
+    return evidence
+
+
+def _paired_summary(
+    metrics: pd.DataFrame, *, candidate: str, comparator: str, seed: int
+) -> dict[str, object]:
+    candidate_rows = metrics.loc[metrics["method"].eq(candidate)].set_index(
+        "trade_date"
+    )
+    comparator_rows = metrics.loc[metrics["method"].eq(comparator)].set_index(
+        "trade_date"
+    )
+    assert candidate_rows.index.equals(comparator_rows.index)
+    differences = (
+        candidate_rows["top_rank_lower"] - comparator_rows["top_rank_upper"]
+    ).to_numpy(dtype=float)
+    intervals: dict[str, dict[str, float]] = {}
+    for block_length in (1, 3, 5):
+        generator = np.random.default_rng(seed)
+        starts = generator.integers(
+            0,
+            len(differences),
+            size=(10000, (len(differences) + block_length - 1) // block_length),
+        )
+        indices = (
+            (starts[:, :, None] + np.arange(block_length)) % len(differences)
+        ).reshape(10000, -1)[:, : len(differences)]
+        means = differences[indices].mean(axis=1)
+        intervals[str(block_length)] = {
+            "one_sided_95_lower": float(np.quantile(means, 0.05)),
+            "two_sided_95_lower": float(np.quantile(means, 0.025)),
+            "two_sided_95_upper": float(np.quantile(means, 0.975)),
+        }
+    candidate_coverage = float(
+        candidate_rows["label_count"].sum() / candidate_rows["selected_count"].sum()
+    )
+    comparator_coverage = float(
+        comparator_rows["label_count"].sum() / comparator_rows["selected_count"].sum()
+    )
+    return {
+        "candidate": candidate,
+        "comparator": comparator,
+        "days": len(differences),
+        "start": str(candidate_rows.index[0]),
+        "end": str(candidate_rows.index[-1]),
+        "candidate_mean_top_rank_observed": float(
+            candidate_rows["top_rank_observed"].mean()
+        ),
+        "comparator_mean_top_rank_observed": float(
+            comparator_rows["top_rank_observed"].mean()
+        ),
+        "mean_conservative_rank_difference": float(differences.mean()),
+        "candidate_label_coverage": candidate_coverage,
+        "comparator_label_coverage": comparator_coverage,
+        "candidate_mean_rank_ic": float(candidate_rows["rank_ic"].mean()),
+        "block_bootstrap_intervals": intervals,
+        "short_window_support": bool(
+            candidate_coverage >= 0.98
+            and comparator_coverage >= 0.98
+            and differences.mean() >= 0.02
+            and intervals["5"]["one_sided_95_lower"] > 0
+        ),
+        "real_time_alignment_verified": False,
+        "net_alpha_verified": False,
+    }
+
+
+def run_revalidation(
+    *,
+    source_root: Path,
+    storage_root: Path,
+    evidence_parent: Path,
+    previous_evidence: Path,
+) -> Path:
+    """Run H04 with a frozen historical selection and the newly available dates.
+
+    Example:
+        evidence = run_revalidation(
+            source_root=Path('/home/wsw/app/dev/trading'),
+            storage_root=Path('/home/wsw/app/data'),
+            evidence_parent=Path('/home/wsw/app/research-evidence'),
+            previous_evidence=Path(
+                '/home/wsw/app/research-evidence/'
+                'subscription-training-2026-09-19-po2l15iv'
+            ),
+        )
+    """
+    evidence = Path(
+        tempfile.mkdtemp(
+            prefix="subscription-revalidation-2026-09-21-", dir=evidence_parent
+        )
+    )
+    print(f"EVIDENCE={evidence}", flush=True)
+    topic = source_root / "research/subscription-training"
+    shutil.copy2(topic / "README.md", evidence / "preregistered-README.md")
+    shutil.copy2(topic / "validate_training.py", evidence / "validate_training.py")
+    with tarfile.open(evidence / "source.tar", "w") as archive:
+        for path in [
+            *sorted((source_root / "src").rglob("*.py")),
+            *sorted((source_root / "tests").rglob("*.py")),
+            source_root / "pyproject.toml",
+            source_root / "uv.lock",
+            source_root / "src/config/base.yml",
+        ]:
+            archive.add(path, arcname=str(path.relative_to(source_root)))
+    seed = 20260919
+    _write_json(
+        evidence / "run.json",
+        {
+            "base_commit": subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], cwd=source_root, text=True
+            ).strip(),
+            "worktree_status_before": subprocess.check_output(
+                ["git", "status", "--short"], cwd=source_root, text=True
+            ),
+            "script_sha256": _sha256(evidence / "validate_training.py"),
+            "preregistration_sha256": _sha256(evidence / "preregistered-README.md"),
+            "source_archive_sha256": _sha256(evidence / "source.tar"),
+            "seed": seed,
+            "source_storage_root": str(storage_root),
+            "previous_evidence": str(previous_evidence),
+            "runtime_versions": {
+                name: importlib.metadata.version(name)
+                for name in (
+                    "numpy",
+                    "pandas",
+                    "pyarrow",
+                    "scikit-learn",
+                    "scipy",
+                    "joblib",
+                )
+            },
+            "readiness": "scenario 22:00, not observed historical timestamps",
+            "retention": "until user adoption/rejection decision and review complete",
+        },
+    )
+    _write_json(evidence / "boundary-checks.json", _boundary_checks())
+    original_pm = PathManager(storage_root)
+    sessions = Access(pm=original_pm, processed_version="v1").trade_dates(
+        start_date="2025-12-19", end_date="2026-09-18"
+    )
+    snapshot_root = evidence / "inputs"
+    snapshot_root.mkdir()
+    for year in (2025, 2026):
+        _snapshot_object(
+            original_pm,
+            original_pm.processed_year_object(
+                dataset_name="trade_calendar", version="v1", calendar_year=year
+            ),
+            snapshot_root,
+        )
+    for position in range(1, len(sessions) - 1):
+        previous_day, target_day = sessions[position - 1 : position + 1]
+        for feature_set in ("l2_stock_1430", "tushare_daily_basic"):
+            _snapshot_object(
+                original_pm,
+                original_pm.feature_object(
+                    feature_set=feature_set, version="v1", trade_date=previous_day
+                ),
+                snapshot_root,
+            )
+        _snapshot_object(
+            original_pm,
+            original_pm.label_object(
+                label_set="l2_stock_1430_t1_vwap_rank",
+                version="v1",
+                trade_date=target_day,
+            ),
+            snapshot_root,
+        )
+    manifest: list[_InputFile] = [
+        {
+            "path": str(path.relative_to(snapshot_root)),
+            "size_bytes": path.stat().st_size,
+            "sha256": _sha256(path),
+        }
+        for path in sorted(snapshot_root.rglob("*"))
+        if path.is_file()
+    ]
+    _write_json(evidence / "input-manifest.json", manifest)
+    panel = _load_panel(PathManager(snapshot_root), sessions)
+    assert panel["feature_ready_ts"].le(panel["allocation_ts"]).all()
+    assert panel["source_date"].lt(panel["trade_date"]).all()
+    table_ops.require_unique(panel, ("symbol", "trade_date"), who="H04 prescreen panel")
+    panel.to_parquet(evidence / "panel.parquet", index=False)
+    _write_json(
+        evidence / "panel-summary.json",
+        {
+            "sessions": len(sessions) - 2,
+            "rows": len(panel),
+            "start": str(panel["trade_date"].min()),
+            "end": str(panel["trade_date"].max()),
+            "labeled_rows": int(panel["y_rank_return"].notna().sum()),
+            "all_inputs": len(manifest),
+            "input_bytes": sum(x["size_bytes"] for x in manifest),
+            "panel_sha256": _sha256(evidence / "panel.parquet"),
+        },
+    )
+    ready = panel.groupby("trade_date", sort=True)["label_ready_ts"].max()
+    development_dates = [
+        day
+        for day in ready.index
+        if day <= "2026-08-24" and int((ready < _timestamp(day, 8)).sum()) >= 60
+    ]
+    old_dates = [day for day in ready.index if "2026-05-06" <= day <= "2026-08-25"]
+    new_dates = [day for day in ready.index if "2026-08-26" <= day <= "2026-09-17"]
+    assert (
+        len(sessions) - 2,
+        len(development_dates),
+        len(old_dates),
+        len(new_dates),
+    ) == (181, 102, 79, 17)
+    assert ready.loc[development_dates].lt(_timestamp(new_dates[0], 9)).all()
+    candidates = ("ridge_daily", "ridge_all", "hist_daily", "hist_all")
+    rules = ("baseline_amount", "baseline_momentum", "baseline_reversal")
+    windows: dict[str, int | None] = {"last60": 60, "expanding": None}
+    states: dict[str, _WalkForwardState] = {}
+    with threadpool_limits(limits=1):
+        old_metrics = _walk_forward(
+            panel,
+            evaluation_dates=old_dates,
+            candidates=("hist_all",),
+            rules=("baseline_amount",),
+            output_dir=evidence / "old-reference",
+            seed=seed,
+        )
+        for day in old_dates:
+            old = pd.read_parquet(
+                previous_evidence / "final" / f"predictions-{day}.parquet"
+            )
+            restored = pd.read_parquet(
+                evidence / "old-reference" / f"predictions-{day}.parquet"
+            )
+            pd.testing.assert_frame_equal(old, restored, check_exact=True)
+        _write_json(
+            evidence / "old-reference-verification.json",
+            {
+                "prediction_dates_exactly_equal": len(old_dates),
+                "previous_prediction_sha256": {
+                    day: _sha256(
+                        previous_evidence / "final" / f"predictions-{day}.parquet"
+                    )
+                    for day in old_dates
+                },
+            },
+        )
+        _write_json(
+            evidence / "old-reference-summary.json",
+            _paired_summary(
+                old_metrics,
+                candidate="hist_all",
+                comparator="baseline_amount",
+                seed=seed,
+            ),
+        )
+        development_parts: list[pd.DataFrame] = []
+        for window_name, window in windows.items():
+            state = _WalkForwardState()
+            part = _walk_forward(
+                panel,
+                evaluation_dates=development_dates,
+                candidates=candidates,
+                rules=rules if window_name == "last60" else (),
+                output_dir=evidence / f"development-{window_name}",
+                seed=seed,
+                training_window=window,
+                state=state,
+            )
+            part["method"] = part["method"].replace(
+                {candidate: f"{candidate}__{window_name}" for candidate in candidates}
+            )
+            development_parts.append(part)
+            states[window_name] = state
+        development = pd.concat(development_parts, ignore_index=True)
+        development.to_parquet(evidence / "development-metrics.parquet", index=False)
+        averages = development.groupby("method")["top_rank_lower"].mean()
+        candidate_ids = [
+            f"{candidate}__{window}" for candidate in candidates for window in windows
+        ]
+        selected = min(candidate_ids, key=lambda name: (-averages[name], name))
+        comparator = min(rules, key=lambda name: (-averages[name], name))
+        selected_candidate, selected_window = selected.split("__")
+        _write_json(
+            evidence / "selection-frozen.json",
+            {
+                "candidate": selected,
+                "comparator": comparator,
+                "development_dates": development_dates,
+                "new_dates": new_dates,
+                "mean_top_rank_lower": averages.to_dict(),
+                "frozen_before_new_predictions": True,
+                "excluded_selection_date": "2026-08-25",
+            },
+        )
+        print(f"FROZEN H04 candidate={selected}; comparator={comparator}", flush=True)
+        jobs = [("primary", selected_candidate, selected_window)]
+        if selected != "hist_all__last60":
+            jobs.append(("reference", "hist_all", "last60"))
+        if selected_candidate.endswith("_all"):
+            jobs.append(
+                (
+                    "ablation",
+                    selected_candidate.replace("_all", "_daily"),
+                    selected_window,
+                )
+            )
+        fresh_parts: list[pd.DataFrame] = []
+        for role, candidate, window_name in jobs:
+            prior_state = states[window_name]
+            state = _WalkForwardState(
+                models=prior_state.models.copy(),
+                fitted_month=prior_state.fitted_month,
+                model_ready_ts=prior_state.model_ready_ts,
+            )
+            assert state.fitted_month == "2026-08"
+            _write_json(
+                evidence / f"resumed-{role}.json",
+                {
+                    "candidate": candidate,
+                    "window": window_name,
+                    "model_ready_ts": state.model_ready_ts,
+                    "model_path": f"development-{window_name}/2026-08-03-{candidate}.joblib",
+                    "model_sha256": _sha256(
+                        evidence
+                        / f"development-{window_name}/2026-08-03-{candidate}.joblib"
+                    ),
+                },
+            )
+            part = _walk_forward(
+                panel,
+                evaluation_dates=new_dates,
+                candidates=(candidate,),
+                rules=(comparator,) if role == "primary" else (),
+                output_dir=evidence / f"new-{role}",
+                seed=seed,
+                training_window=windows[window_name],
+                state=state,
+            )
+            part["method"] = part["method"].replace(
+                {candidate: f"{candidate}__{window_name}"}
+            )
+            fresh_parts.append(part)
+            schedule = json.loads(
+                (evidence / f"new-{role}/fit-schedule.json").read_text()
+            )
+            assert len(schedule) == 1 and schedule[0]["eval_start"] == "2026-09-01"
+        fresh = pd.concat(fresh_parts, ignore_index=True)
+        fresh.to_parquet(evidence / "new-metrics.parquet", index=False)
+    summaries = [
+        _paired_summary(
+            fresh, candidate=f"{candidate}__{window}", comparator=comparator, seed=seed
+        )
+        for _, candidate, window in jobs
+    ]
+    _write_json(
+        evidence / "new-summary.json",
+        {
+            "primary": summaries[0],
+            "predeclared_diagnostics": summaries[1:],
+            "prior_failure_preserved": True,
+            "historical_results_are_development_evidence": True,
+            "new_period_is_retrospective_not_a_live_trial": True,
+        },
+    )
+    for item in manifest:
+        if _sha256(storage_root / item["path"]) != item["sha256"]:
+            raise RuntimeError(
+                f"authoritative input changed since snapshot: {item['path']}"
+            )
+    _write_json(
+        evidence / "input-unchanged.json",
+        {
+            "verified_files": len(manifest),
+            "all_content_unchanged": True,
+        },
+    )
+    print(json.dumps(summaries[0], ensure_ascii=False, indent=2), flush=True)
     return evidence
