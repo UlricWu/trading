@@ -13,7 +13,7 @@
 
 - 默认使用中文回答；用户明确要求其他语言时除外。
 - 回答简洁直接，避免无关铺垫和重复。
-- 任务描述不清晰且不同理解会产生实质差异时，先向用户确认。
+- 先用当前任务、已有授权和 owner 消除歧义；仍会实质改变目标、正式语义、范围或不可逆副作用时，只确认受影响部分，并继续不依赖该答案的已授权工作。
 - 任务范围以用户明确要求及完成该要求不可缺少的工作为边界。
 
 ## 正式语义与 Owner
@@ -21,7 +21,7 @@
 - 当前正式语义只由目标分支 `docs/` 中的 owner docs 定义；研究目标、候选假设、实验引用和结论只记录在 `research/<topic>/README.md`。
 - 根 `AGENTS.md` 只拥有全局执行规则，`docs/engineering/research_workflow.md` 只拥有研究治理；二者都不是业务设计 owner。
 - 代码、测试、配置、Git、PR、CI、部署及运行结果只表示实现状态或证据，不能自行改变正式语义。
-- 每个可执行决策必须有且仅有一个 owner。Owner 必须由文档或 owner 索引明确指定，不得仅凭文件名猜测。
+- 每项正式语义必须有且仅有一个 owner。Owner 必须由文档或 owner 索引明确指定，不得仅凭文件名猜测；不改变正式语义的局部维护沿用所属 owner，不逐项新增设计文档。
 - 实现与 owner 冲突时，默认修复实现；只有任务明确要求改变正式语义时，才按“任务分类”处理。
 - Owner 缺失、冲突或不能确定目标语义时不得猜测：最终设计已明确时补齐 owner；仍需选择或验证时进入 open research；否则停止受影响修改并报告。
 - 拟议 owner 修改在合入目标分支前不属于当前正式语义。
@@ -40,11 +40,13 @@
 
 正式外部语义包括业务规则、公共 API、schema、数据 lineage、状态机、交易与风控行为、持久化副作用、运行入口及发布部署契约；private 命名、局部结构、格式化和无行为变化的重构不属于正式外部语义。
 
+除非正式 owner 已定义客观自动判定条件，直接采用及研究 adoption/rejection 必须由用户明确决定；Acceptance 通过不自动表示已采用。用户已明确指定最终设计并要求实施时，不重复请求同一设计决定。
+
 实施过程中发现必须发明新的正式语义时，停止将其写成正式行为；能够安全隔离时转入 open research，否则停止并报告。
 
 ## 修改准备与专项规则
 
-修改前必须明确：
+修改前按任务影响明确以下相关项；简单文案或格式修改只需确定范围、适用规则和验证方式，不创建计划或研究记录：
 
 - 预期的外部可观察结果、范围和不包含内容；
 - 任务分类及对应 owner 或 change；
@@ -52,34 +54,31 @@
 - 可证伪的完成条件；
 - 是否已有语义等价的领域实现或公共工具。
 
-仅在触发时读取以下专项 owner，不在本文件复制其正文：
+仅在触发时读取以下专项 owner 的相关章节；引用用于定位，不要求递归通读所有文档：
 
 | 路径 | 触发条件 |
 | --- | --- |
-| `docs/engineering/python_coding_style_for_ai.md` | 修改仓库自有 Python |
-| `docs/engineering/utils_catalog.md` | 修改或可能复用 public utility |
-| `docs/engineering/technology_stack_decisions.md` | 触及其拥有的技术栈边界 |
-| `docs/engineering/cli_contract.md` | 修改 CLI 的接口或副作用 |
-| `docs/engineering/release_workflow.md` | 触及 branch、PR、版本、release 或 deploy |
-| `docs/engineering/research_workflow.md` | 创建、修改、验收或关闭研究假设，或修改研究机制 |
+| [Python 编码规范](docs/engineering/python_coding_style_for_ai.md) | 修改仓库自有 Python；先按入口索引选取本次触发的规则 |
+| [Utils 工具注册表](docs/engineering/utils_catalog.md) | 新增、删除、重命名或修改 public utility，或实现通用能力前查找语义等价的工具；按相关条目查阅 |
+| [技术栈决策](docs/engineering/technology_stack_decisions.md) | 修改 Python 依赖/环境、日志、Instrumentation 接口、Parquet 物理写入或 Level-2 CSV7Z ingest/转换 |
+| [CLI 契约](docs/engineering/cli_contract.md) | 修改 CLI 的接口或副作用 |
+| [发布工作流](docs/engineering/release_workflow.md) | 创建或切换分支、准备/操作 PR、修改 CI/发布契约或执行版本/release/deploy；仅查看本地 status/diff/log 不触发 |
+| [研究工作流](docs/engineering/research_workflow.md) | 创建、修改、验收或关闭研究假设，或修改研究机制 |
 
-以上路径是规范路径；路径缺失或出现冲突 owner 时停止，不按文件名猜测。
+以上链接指向规范路径；本次需要的路径缺失或 owner 冲突时，停止受影响修改并报告，继续独立且已授权的工作，不按文件名猜测。
 
 ## 研究与候选隔离
 
-- 研究卷宗、假设、Notebook、依赖、采用、拒绝和保留统一遵循 `docs/engineering/research_workflow.md`。
-- 一个研究目标只有一个 `research/<topic>/README.md` 入口；每个假设必须能够独立采用或拒绝，但默认只是该 README 中的一个段落，不自动创建目录、Notebook、branch 或 worktree。
-- 目标分支可以保存 `research/` 下的 open 假设和实验事实，因为它们不属于正式语义；它们不得改变默认入口、正式 API、schema、registry、定时任务、生产模型选择或生产可发现制品。
+- 研究卷宗、假设、Notebook、依赖、采用、拒绝、保留和关闭 Gate 按任务查阅[研究工作流](docs/engineering/research_workflow.md)，不在此重复维护。
 - 候选实现需要修改共享代码、配置或运行入口时，必须在 `feature/*` branch 或 worktree 中按独立采用边界隔离；默认关闭的 feature flag 和混合候选 PR 都不是隔离。
 - 候选不得写入权威数据、生产队列、真实 broker、正式 registry 或其他生产状态，也不得使用生产写凭证。
-- Notebook 只在需要可执行验证时创建；使用实验作出决定时，必须引用可恢复的确定版本，并记录所有会影响结论的输入。
 - 没有安全隔离边界时停止，不得新增永久候选平台绕过阻塞。
-- 除非正式 owner 已定义客观自动判定条件，直接采用及 adoption/rejection 必须由用户明确决定；Acceptance 通过不自动表示已采用。
 
 ## 安全边界
 
 - 默认只读；用户明确要求修改时，仅获得该任务范围内的修改授权。
-- 删除或覆盖文件、commit、push、merge、release、deploy、写入外部 API、真实下单或修改生产及权威状态前，必须获得对应的明确授权。
+- 该授权包含完成任务所需的可回退本地编辑、必要清理和本地验证；已获授权的删除或覆盖不逐文件重复确认。保留其他协作者的现有改动；无法安全保留时，只暂停冲突部分并说明原因。
+- commit、push、merge、release、deploy、写入外部 API、真实下单或修改生产及权威状态前，必须获得对应的明确授权；本地修改授权不包含这些操作。等待额外授权前，先完成已授权的工作，交付可审查结果。
 - 不输出密钥、Token 或其他敏感凭证；候选验证不得使用生产写凭证。
 
 ## 工程规范
@@ -90,7 +89,6 @@
 - 不创建没有独立业务语义或复用价值的薄封装。没有独立业务语义或边界职责、仅转调另一函数并原样返回的单次使用函数保持内联。具有明确边界职责的短函数不属于薄封装。
 - 默认只针对当前数据模型和 API 实现。除非用户明确要求，否则不为历史数据、复杂旧实现或旧 API 添加兼容逻辑。
 - 不为未改动的代码补充注释、类型标注或文档字符串；仅为不自明的逻辑添加注释。
-- 新增或修改 public class、function 或 method 时，必须按 `docs/engineering/python_coding_style_for_ai.md` 的 PY-025 在自身 docstring 提供使用真实 API 名称和参数的最小成功调用 `Example:`；不得以签名复述、纯文字或伪代码代替。
 - 在本次授权范围内，确认无用的代码直接删除，不保留说明性注释。
 - 测试不得迁就已知错误实现，也不得通过删除断言、扩大容差、跳过失败或缩小验收范围制造通过。
 
@@ -98,6 +96,7 @@
 
 - 对代码行为、实验结果或外部状态的声明，必须绑定准确的代码状态以及所有会影响结果的输入。
 - 缺陷修复必须包含可复现的回归场景；测试应验证公共行为、稳定边界或明确制品。
+- 本地验证按改动选择：文档改动检查内容、路径和引用；代码改动验证受影响行为。相关检查通过后，仅在新修改、失败或未解决风险要求时扩大或重复验证；发布与 CI 的必需检查仍按其 owner 执行。
 - 历史回放、标签、特征和交易模拟不得使用当时不可见的未来数据或事后修正数据。
 - 使用实验选择设计时，必须预先确定候选范围、选择数据、最终验证数据和停止条件，并保留会影响结论的失败结果。
 - 基线、关键实现、影响结果的输入、Scope 或 Acceptance 实质变化后，相关证据失效，必须重新验证。

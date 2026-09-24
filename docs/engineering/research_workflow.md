@@ -103,7 +103,8 @@ open | adopted | rejected
 新的实质实验；新时期、新数据或新反例建立新的 Change，并链接旧结论。
 
 Open Change 必须有可执行的 `Next` 或可客观判断的 `Next trigger`。已经没有可行路径且满足
-预设拒绝条件时必须 rejected 或删除，不得永久保留僵尸 open。
+预设拒绝条件时，按下述 Decision 权限完成 rejected 或删除；尚缺用户决定时，在 `Next` 中
+明确待决定项，不得自行关闭，也不得无后续动作地永久保留 open。
 
 只有正式 owner 已定义客观自动判定条件时，Acceptance 才能自动触发决定；其他 adoption 和
 rejection 必须由用户明确决定。
