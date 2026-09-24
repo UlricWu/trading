@@ -2,6 +2,7 @@
 
 本文件只提供主题导航。研究结构、状态和证据规则以
 [`docs/engineering/research_workflow.md`](../docs/engineering/research_workflow.md) 为准。
+阅读入口与证据的方式见[写入与按需读取](../docs/engineering/research_workflow.md#写入与按需读取)。
 
 ## Topics
 
