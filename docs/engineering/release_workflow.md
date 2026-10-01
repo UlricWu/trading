@@ -94,17 +94,18 @@ release PR 当前 head SHA 上的检查结果。
 
 ### Research 记录与正式化
 
-`research/` 中的 open 假设、Notebook 和结论可以通过普通 feature PR 进入 `dev`，但它们不得
-成为运行时依赖或改变正式行为。同一研究目标的纯记录更新可以位于一个 feature branch；不要求
-一个假设对应一个 branch。
+`research/` 中的研究记录、采用候选、Notebook 和结论可以通过普通 feature PR 进入 `dev`，
+但它们不得成为运行时依赖或改变正式行为。同一研究目标的纯记录更新可以位于一个 feature
+branch；不要求一个假设对应一个 branch。
 
 候选需要修改共享代码、配置或入口时，能够独立采用的实现差异必须使用独立 feature branch 或
-worktree 隔离，且在 adoption 前不得进入 `dev` 的正式实现、默认入口或 registry。采用某项研究
-假设的 PR 必须同步修改最终 owner docs、实现、测试和卷宗中的 `Status`。该 PR 合入 `dev` 前，
-研究状态仍为 `open`；merge、release 和 deploy 继续分别判断。
+worktree 隔离，且在 adoption 前不得进入 `dev` 的正式实现、默认入口或 registry。采用具体候选
+方案的 PR 必须同步修改最终 owner docs、实现、测试和卷宗中该候选的 `Status`。该 PR 合入
+`dev` 前，候选状态仍为 `open`；普通研究记录不使用采用状态。merge、release 和 deploy
+继续分别判断。
 
-研究状态、Evidence 和 adoption 条件由 `research_workflow.md` 拥有。本文件只拥有 branch、PR、
-merge 和目标分支机制，Git 可达性本身不能证明假设已经 adopted。
+研究记录、候选状态、Evidence 和 adoption 条件由 `research_workflow.md` 拥有。本文件只拥有
+branch、PR、merge 和目标分支机制，Git 可达性本身不能证明候选已经 adopted。
 
 ## 测试部署边界
 

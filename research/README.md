@@ -1,12 +1,12 @@
 # Research
 
-本文件只提供主题导航。研究结构、状态和证据规则以
+本文件只提供主题导航。研究记录、候选状态和证据规则以
 [`docs/engineering/research_workflow.md`](../docs/engineering/research_workflow.md) 为准。
 阅读入口与证据的方式见[写入与按需读取](../docs/engineering/research_workflow.md#写入与按需读取)。
 
 ## Topics
 
-索引只提供导航，不记录 Change 状态、Acceptance 或结论。
+索引只提供导航，不记录候选状态、Acceptance 或结论。
 
 - [股票 14:30 数据基础与历史研究记录](stock-1430/README.md)
 - [股票标签设计与学习目标](label-design/README.md)

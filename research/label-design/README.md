@@ -1009,8 +1009,8 @@ IC_T = SpearmanCorrelation(score(i,T), y_rank(i,T)), i in 当日评价集合
 | 停止条件 | 何时结束比较，失败结果如何保留 |
 | 实现与输入 | 精确版本、实际内容和运行条件能否恢复 |
 
-这些问题在当前讨论中尚未全部确定，因此本文不创建带空字段的 Change 或 Notebook。形成
-可证伪、可独立决定的假设后，再按研究工作流记录其 Scope、Acceptance 和 Next。
+这些问题在当前讨论中尚未全部确定，因此本文不创建带空字段的研究记录或 Notebook。形成
+明确问题、有限范围及可验证判据后，再按研究工作流记录其 Scope、Acceptance 和停止条件。
 
 #### 19.4 足以恢复一次结果的证据
 
@@ -1245,7 +1245,7 @@ T 日当时可见数据
 
 ## 参考资料
 
-仓库内语义与研究依据见前面的“当前背景与引用边界”及“关联 Change 索引”。外部技术资料
+仓库内语义与研究依据见前面的“当前背景与引用边界”及“关联研究索引”。外部技术资料
 于 2026-09-16 核对，用于解释数学、API 与执行基准概念，不拥有本仓库的业务语义：
 
 - [IBKR VWAP Algo (Best Efforts)](https://www.interactivebrokers.com/campus/glossary-terms/vwap-algo-best-efforts/)：VWAP 执行基准与偏离、未完全成交的限制。
