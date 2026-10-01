@@ -3,7 +3,7 @@
 - 整理日期：2026-09-16。
 - 文档性质：研究思路整理；未合入的工作树版本为 draft。
 - 核对基线：本地 `823547a68a65360e4d5679bfeeef4aacc5f6d550` 的相关文档与训练代码。
-- 本文拥有本专题的待澄清问题和未来想法，不拥有 H03–H06 的状态、正式数据契约或运行行为。
+- 本文拥有本专题的待澄清问题和未来想法，不拥有所引用假设的状态、正式数据契约或运行行为。
 - 文中数值除明确引用的候选参数及第 24 节用户确认的业务前提外，均为构造示例；没有运行
   数据实验或形成模型效果证据。
 
@@ -20,8 +20,10 @@
 4. 哪些目标可以从现有排名标签派生，哪些必须重新构造收益或价格路径？
 5. 怎样隔离标签设计、模型选择、数据覆盖和交易执行对结果的影响？
 
-本专题关注标签定义与比较方法。股票 14:30 数据构建、融合、训练和回放链路的实现研究仍由
-[原卷宗](../stock-1430/README.md) 记录。两者通过引用衔接，不在本文重复维护其研究状态。
+本专题关注标签定义与比较方法。股票 14:30 数据基础与原链路的历史证据见
+[stock-1430](../stock-1430/README.md)，后续融合、模型、标签及执行研究见
+[subscription-training](../subscription-training/README.md)。本文只引用，不重复维护研究状态；
+下文原 H05/H06 参数来自冻结历史方案，不再表示待实现的 Change。
 
 ## 当前背景与引用边界
 
@@ -31,13 +33,13 @@
 | 39 个融合特征、P/T 日期关系和各列排名分母 | [H04 融合契约](../../docs/data/stock_1430_daily_l2_contract.md) | 解释输入可见性、尺度和缺失 |
 | 日频原始字段含义 | [日频 Feature/Label 契约](../../docs/data/daily_feature_label_contract.md) | 解释源分区和历史窗口 |
 | 价格与复权因子 | [价格复权契约](../../docs/data/price_adjustment_contract.md) | 解释价格口径及其限制 |
-| 训练窗口、maturity、固定模型和预处理 | [原卷宗 H05](../stock-1430/README.md#h05) | 作为讨论基线，不替代其 Acceptance |
-| 组合构建、执行窗口和未成交 | [原卷宗 H06](../stock-1430/README.md#h06) | 说明预测与交易结果之间的边界 |
+| 训练窗口、maturity、固定模型和预处理 | [原 H05 历史方案][original-h05] | 作为当时讨论基线，不替代后续研究的 Acceptance |
+| 组合构建、执行窗口和未成交 | [原 H06 历史方案][original-h06] | 说明预测与交易结果之间的边界 |
 | 当前通用训练实现 | [SGD trainer](../../src/training/models/sgd_regression.py) | 只说明核对到的实现事实，不证明 H05 已实现 |
 | 研究记录与采用 | [Research 工作流](../../docs/engineering/research_workflow.md) | 决定后续假设、证据和决策的记录位置 |
 
 核对时，H03/H04 数据文档的页首仍标记为拟议 owner。本文引用它们说明已有候选定义；正式
-语义及采用情况应以目标分支的 owner 和原卷宗为准，不能由本文或当前代码自行确认。
+语义及采用情况应以目标分支的 owner 和对应假设卷宗为准，不能由本文或当前代码自行确认。
 
 本次整理属于不改变正式语义的文档维护。本文没有新建独立 Change，没有选择某个新标签，
 也没有设置未经讨论的实验日期、通过阈值或生产行为。下文备选设计均属于待澄清问题或未来想法。
@@ -58,12 +60,15 @@ flowchart TD
 箭头表达依赖关系，不表达排期、已采用状态或实验成功。新目标若改变 H03 的标签语义，必须
 另行确定采用边界；不会因为下游讨论需要，就在既有 `v1` 中悄悄改变定义。
 
-## 关联 Change 索引
+## 关联研究索引
 
 - [H03：Feature 与 T+1 VWAP Rank Label](../stock-1430/README.md#h03)
-- [H04：日频与 Level2 Feature 融合](../stock-1430/README.md#h04)
-- [H05：融合模型离线训练](../stock-1430/README.md#h05)
-- [H06：离线回放与受限执行](../stock-1430/README.md#h06)
+- [融合候选：subscription-training H09（原 H04）](../subscription-training/README.md#h09)
+- [原 H05：融合模型离线训练历史方案][original-h05]
+- [原 H06：离线回放与受限执行历史方案][original-h06]
+
+[original-h05]: https://github.com/UlricWu/trading/blob/c2b84bc4533d1e38fe826f55c0cff91b5504bf94/research/stock-1430/README.md#h05
+[original-h06]: https://github.com/UlricWu/trading/blob/c2b84bc4533d1e38fe826f55c0cff91b5504bf94/research/stock-1430/README.md#h06
 
 ## 阅读导航
 
@@ -1052,7 +1057,7 @@ T 日当时可见数据
 标签更大的研究问题，不能作为当前监督学习 baseline 的默认延伸。
 
 原卷宗 H06 描述了固定 top-20、资金比例、整手、滑点和受限执行等回放假设。本文通过
-[H06](../stock-1430/README.md#h06) 引用它们，不将回放假设升级成真实市场成交保证。
+[H06 历史方案][original-h06] 引用它们，不将回放假设升级成真实市场成交保证。
 
 ### 21. 需要用户决定的问题
 

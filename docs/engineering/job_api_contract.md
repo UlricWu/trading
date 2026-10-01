@@ -63,7 +63,27 @@ curl -i -X POST http://127.0.0.1:5051/checks/tushare
 ```
 
 检测使用目标服务进程 `ENV` 对应的配置文件；客户端选择端口不会修改服务的 `ENV`。
-Postman 通过 `baseUrl` 选择目标服务，异机访问时同时替换为目标服务器地址。
+Postman 通过 Collection 中对应环境的地址变量选择目标服务，异机访问时替换为目标服务器地址。
+
+### Postman 导入与环境切换
+
+在 Postman 的 Import 中导入
+[完整 Job API Collection](../../postman/minquant-jobs.postman_collection.json) 一个文件即可。
+Collection 内含“测试环境 · 5050”和“训练环境 · 5051”两个文件夹，分别使用
+`http://192.168.50.227:5050` 和 `http://192.168.50.227:5051`，无需额外导入或选择
+Postman Environment。先发送对应文件夹的 Health，再调用其他接口；异机访问时修改
+Collection Variables 中的 `testBaseUrl` 或 `trainingBaseUrl`。训练文件夹访问人工开发服务，
+其 Health 的 `environment` 为 `dev`；“训练”只表示客户端文件夹用途。这些客户端预设不改变上述正式部署端口、
+服务启动配置或服务端 `ENV`，目标地址必须已有服务监听或端口映射。
+
+Collection 覆盖全部 5 个路由，包含 Standard 数据、Level-2 数据、训练和两种策略的
+回测请求示例，每个环境 9 个请求，共 18 个请求。日期范围和 `backtestMode` 在
+Collection Variables 中设置；日期须落在目标环境实际可用的数据范围内。创建成功后，
+Job ID 自动写入 Collection 的 `testJobId` 或 `trainingJobId`，查询和取消读取对应环境的 ID。
+训练提交还会将同一 ID 写入 `testModelExperiment` 或 `trainingModelExperiment`，
+须查询确认训练为 `SUCCESS` 后再回测；也可手动填写已有的成功训练
+ID。服务重启后须重新填写或创建 Job。单独发送所需请求；批量运行整个 Collection
+会创建全部示例 Job，并执行取消请求。
 
 每次检测只查询一次 `daily`，唯一业务参数为请求时 `Asia/Shanghai` 当天的
 `trade_date=YYYYMMDD`，`fields` 为空。请求地址沿用当前锁定 Tushare SDK 的规则，
@@ -73,14 +93,23 @@ Postman 通过 `baseUrl` 选择目标服务，异机访问时同时替换为目�
 上游 HTTP 状态为 `2xx`，且 JSON object 的 `code` 为整数 `0` 时，固定返回 `200` 和
 `{"ok": true}`。不以数据行数判断成功，非交易日或当天数据尚未更新时的空结果也通过。
 配置加载失败、HTTP 失败、超时、响应解析失败、缺失或无效 `code`、业务 `code != 0`
-均固定返回 `503`：
+均返回 `503`，错误码固定为 `tushare_check_failed`。默认响应为：
 
 ```json
 {"error": {"code": "tushare_check_failed", "message": "Tushare check failed"}}
 ```
 
-失败只表示本次检测未通过，不区分 token 无效、权限、限流或网络原因，不自动更换 token。
-响应和日志不得包含 token、gateway、上游原始响应、异常详情或 traceback。检测沿用 API
+当上游 HTTP 为 `2xx`、JSON object 的 `code` 为非零整数，且 `msg` 精确等于
+`抱歉，数据暂不可用，请稍后重试` 时，`error.message` 返回这一明确获准公开的业务提示：
+
+```json
+{"error": {"code": "tushare_check_failed", "message": "抱歉，数据暂不可用，请稍后重试"}}
+```
+
+其他消息、缺失或类型无效的 `msg`、包含额外文本的消息，以及配置、HTTP、超时、解析
+失败仍返回默认提示，不透传任意上游 `msg` 或异常文本。未定义其他可公开提示，不凭错误码
+猜测原因，不自动更换 token。响应除上述获准提示外不得包含 token、gateway、上游原始响应、
+异常详情或 traceback；日志仍不得记录上游消息及这些信息。检测沿用 API
 请求与响应状态日志，不增加检测历史、定时任务或告警渠道；`GET /health` 的契约保持不变。
 
 ## POST `/jobs`

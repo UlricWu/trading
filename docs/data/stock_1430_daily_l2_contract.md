@@ -1,6 +1,6 @@
 # 14:30 日频与 Level-2 Feature 融合契约
 
-- **状态**：拟议正式 owner（`research/stock-1430` H04 候选）
+- **状态**：拟议正式 owner（[subscription-training H09 候选](../../research/subscription-training/README.md#h09)，原 stock-1430 H04）
 - **适用范围**：`stock_1430_daily_l2/v1` 的输入绑定、P/T、schema、对齐、排名和消费边界。
 - **输入 owner**：[`daily_feature_label_contract.md`](daily_feature_label_contract.md)、
   [`stock_1430_feature_label_contract.md`](stock_1430_feature_label_contract.md)

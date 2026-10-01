@@ -242,6 +242,65 @@ def test_tushare_check_failure_is_private_and_does_not_affect_health(
     assert post.call_count == (0 if failure_phase == "configuration" else 1)
 
 
+@pytest.mark.parametrize(
+    ("http_status", "code", "message", "expected_message"),
+    [
+        (200, 10004, "抱歉，数据暂不可用，请稍后重试", "抱歉，数据暂不可用，请稍后重试"),
+        (200, 10004, "private-tushare-token", "Tushare check failed"),
+        (200, 10004, "https://private-gateway.example/dataapi", "Tushare check failed"),
+        (200, 10004, "Traceback: internal details", "Tushare check failed"),
+        (200, 10004, "抱歉，数据暂不可用，请稍后重试 private-tushare-token", "Tushare check failed"),
+        (200, 10004, None, "Tushare check failed"),
+        (200, 10004, {"detail": "private-tushare-token"}, "Tushare check failed"),
+        (200, "10004", "抱歉，数据暂不可用，请稍后重试", "Tushare check failed"),
+        (503, 10004, "抱歉，数据暂不可用，请稍后重试", "Tushare check failed"),
+    ],
+)
+def test_tushare_check_exposes_only_the_approved_business_message(
+    monkeypatch: pytest.MonkeyPatch,
+    tushare_config: Mock,
+    http_status: int,
+    code: object,
+    message: object,
+    expected_message: str,
+) -> None:
+    upstream = MagicMock(spec=requests.Response)
+    upstream.__enter__.return_value = upstream
+    upstream.status_code = http_status
+    upstream.json.return_value = {
+        "code": code,
+        "msg": message,
+        "data": {"private": "private-tushare-token"},
+        "detail": "https://private-gateway.example/dataapi",
+    }
+    post = Mock(return_value=upstream)
+    monkeypatch.setattr(requests, "post", post)
+    runtime = _StubRuntime()
+    client = create_app(cast(JobRuntime, runtime)).test_client()
+    messages: list[str] = []
+    sink_id = api_module.logs.add(messages.append, format="{message}")
+    try:
+        response = client.post("/checks/tushare")
+    finally:
+        api_module.logs.remove(sink_id)
+
+    assert response.status_code == 503
+    assert response.get_json() == {
+        "error": {"code": "tushare_check_failed", "message": expected_message}
+    }
+    assert "private-tushare-token" not in response.get_data(as_text=True)
+    assert "private-gateway" not in response.get_data(as_text=True)
+    assert "Traceback" not in response.get_data(as_text=True)
+    assert "private-tushare-token" not in "".join(messages)
+    assert "private-gateway" not in "".join(messages)
+    assert "Traceback" not in "".join(messages)
+    assert "抱歉，数据暂不可用，请稍后重试" not in "".join(messages)
+    post.assert_called_once()
+    tushare_config.assert_called_once_with()
+    assert runtime.jobs == {}
+    assert runtime.submitted == []
+
+
 def test_tushare_check_reloads_token_and_gateway(
     monkeypatch: pytest.MonkeyPatch,
     tushare_config: Mock,

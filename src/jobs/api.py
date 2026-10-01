@@ -201,9 +201,19 @@ def create_app(job_runtime: JobRuntime) -> Flask:
             if (
                 not isinstance(payload, dict)
                 or type(payload.get("code")) is not int
-                or payload["code"] != 0
             ):
-                raise ValueError("Tushare daily response must contain integer code=0")
+                raise ValueError("Tushare daily response must contain integer code")
+            if payload["code"] != 0:
+                public_message = "抱歉，数据暂不可用，请稍后重试"
+                return _error_response(
+                    code="tushare_check_failed",
+                    message=(
+                        public_message
+                        if payload.get("msg") == public_message
+                        else "Tushare check failed"
+                    ),
+                    status_code=503,
+                )
         except Exception:
             return _error_response(
                 code="tushare_check_failed",
