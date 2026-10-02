@@ -3,33 +3,28 @@
 
 from __future__ import annotations
 
-from enum import Enum
+from pathlib import PurePosixPath
+from string import Formatter
 from typing import Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-
-
-class DownloadBackend(str, Enum):
-    """Supported FTP download backends.
-
-    Example:
-        backend = DownloadBackend.FTPLIB
-    """
-
-    FTPLIB = "ftplib"
 
 
 class BrokerConfig(BaseModel):
     """External raw fetch capability declaration loaded from `data.brokers`.
 
     Example:
-        config = BrokerConfig(remote_root="level2", ftp_backend="ftplib")
+        config = BrokerConfig(
+            baidupcs_go="BaiduPCS-Go", raw_cache_days=5,
+            remote_path_templates=("/level2/{date}/{file}",),
+        )
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    remote_root: str | None = None
-    ftp_backend: DownloadBackend | None = None
+    baidupcs_go: str | None = Field(default=None, min_length=1)
+    remote_path_templates: tuple[str, ...] | None = None
+    raw_cache_days: int | None = Field(default=None, ge=1, strict=True)
 
 
 class SourceConfig(BaseModel):
@@ -103,14 +98,36 @@ class DataConfig(BaseModel):
     def _validate_contract(self) -> Self:
         for broker_name, broker in self.brokers.items():
             if broker_name == "level2_ftp":
-                if not broker.remote_root:
-                    raise ValueError("data.brokers.level2_ftp.remote_root is required")
-                if broker.ftp_backend is None:
-                    raise ValueError("data.brokers.level2_ftp.ftp_backend is required")
+                if not broker.baidupcs_go or not broker.baidupcs_go.strip():
+                    raise ValueError("data.brokers.level2_ftp.baidupcs_go is required")
+                if broker.raw_cache_days is None:
+                    raise ValueError("data.brokers.level2_ftp.raw_cache_days is required")
+                if not broker.remote_path_templates:
+                    raise ValueError("data.brokers.level2_ftp.remote_path_templates is required")
+                for template in broker.remote_path_templates:
+                    fields = set()
+                    for _, name, spec, conversion in Formatter().parse(template):
+                        if name is not None:
+                            if name not in {"month", "date", "file"} or spec or conversion:
+                                raise ValueError("invalid Level-2 remote path placeholder")
+                            fields.add(name)
+                    if not {"date", "file"}.issubset(fields):
+                        raise ValueError("Level-2 remote path requires {date} and {file}")
+                    expanded = template.format(
+                        month="2026-09", date="2026-09-21", file="SZ_Trade.csv.7z",
+                    )
+                    path = PurePosixPath(expanded)
+                    if (
+                        not path.is_absolute() or expanded.startswith("//")
+                        or ".." in path.parts or str(path) != expanded
+                        or path.name != "SZ_Trade.csv.7z"
+                        or any(c in expanded for c in ("\\", "\x00", "\r", "\n"))
+                    ):
+                        raise ValueError("Level-2 remote path must be a canonical absolute file path")
                 continue
-            if broker.remote_root is not None or broker.ftp_backend is not None:
+            if any(value is not None for value in broker.model_dump().values()):
                 raise ValueError(
-                    f"data.brokers.{broker_name} must not declare FTP fields"
+                    f"data.brokers.{broker_name} must not declare Baidu fields"
                 )
 
         outputs_by_group: dict[str, set[str]] = {}

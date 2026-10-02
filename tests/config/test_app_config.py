@@ -17,9 +17,6 @@ def _write_application_files(tmp_path: Path) -> Path:
     module_path = config_dir / "app_config.py"
     module_path.write_text("", encoding="utf-8")
     (tmp_path / ".env.test").write_text(
-        "FTP_HOST=ftp.example.com\n"
-        "FTP_USER=researcher\n"
-        "FTP_PASSWORD=password\n"
         "TUSHARE_TOKEN=token\n",
         encoding="utf-8",
     )

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from functools import partial
+from typing import cast
 
 from src import logs
 from src.access import Access
@@ -13,7 +14,6 @@ from src.data_system.brokers.base import BrokerAdapter
 from src.data_system.brokers.level2 import Level2Broker
 from src.data_system.brokers.tushare import TushareBroker
 from src.data_system.context import DataContext
-from src.data_system.normalize import NormalizeOperation
 from src.data_system.normalize.level2 import normalize_level2
 from src.data_system.normalize.tushare import normalize_tushare
 from src.data_system.pipeline import DataPipeline
@@ -21,11 +21,15 @@ from src.data_system.steps.calendar_materialize import CalendarMaterializeStep
 from src.data_system.steps.fact_materialize import FactMaterializeStep
 from src.data_system.steps.feature_build import FeatureBuildStep
 from src.data_system.steps.label_build import LabelBuildStep
+from src.data_system.steps.level2_fact_materialize import Level2FactMaterializeStep
 from src.data_system.steps.level2_minute_build import Level2MinuteBuildStep
 from src.data_system.steps.stock_1430_daily_l2_materialize import (
     Stock1430DailyL2MaterializeStep,
 )
-from src.data_system.steps.stock_1430_materialize import Stock1430MaterializeStep
+from src.data_system.steps.stock_1430_materialize import (
+    Stock1430DailyMaterializeStep,
+    Stock1430MaterializeStep,
+)
 from src.jobs.requests import (
     DataSubmission,
     FeatureBackfillSubmission,
@@ -74,7 +78,7 @@ def run_offline_data(
     path_manager: PathManager,
     submission: DataSubmission,
 ) -> None:
-    """Materialize one complete Standard or Level-2 data range.
+    """Materialize facts and their derived partitions over an arrival-date range.
 
     Example:
         run_offline_data(
@@ -91,12 +95,8 @@ def run_offline_data(
         raise ValueError(
             "run_offline_data requires kind='data-standard' or 'data-level2'"
         )
-    broker_class: type[BrokerAdapter]
-    normalize_operation: NormalizeOperation
     if submission.kind == "data-standard":
         fact_sources = _standard_fact_sources()
-        broker_class = TushareBroker
-        normalize_operation = normalize_tushare
         feature_versions = {
             feature_set: config.version
             for feature_set, config in app_config.data.feature_sets.items()
@@ -119,8 +119,6 @@ def run_offline_data(
             )
     else:
         _require_tushare_source_names()
-        broker_class = Level2Broker
-        normalize_operation = normalize_level2
         fact_sources = {}
         for source_name, source_config in app_config.data.sources.items():
             if not source_config.enabled:
@@ -130,26 +128,17 @@ def run_offline_data(
                 )
                 continue
             fact_sources[source_name] = source_config
-        feature_versions = {}
-        label_versions = {}
-
         if not fact_sources:
             raise ValueError(
                 f"offline data kind '{submission.kind}' has no fact sources"
             )
 
     access = Access(pm=path_manager, processed_version=PROCESSED_VERSION)
-    adapter_cache: dict[str, BrokerAdapter] = {}
+    adapter_cache: dict[str, BrokerAdapter | Level2Broker] = {}
     get_calendar_broker = partial(
         _get_broker,
         app_config=app_config,
         broker_class=TushareBroker,
-        adapter_cache=adapter_cache,
-    )
-    get_fact_broker = partial(
-        _get_broker,
-        app_config=app_config,
-        broker_class=broker_class,
         adapter_cache=adapter_cache,
     )
     steps: tuple[PipelineStep[DataContext], ...] = (
@@ -159,24 +148,48 @@ def run_offline_data(
             access=access,
             processed_version=PROCESSED_VERSION,
         ),
-        FactMaterializeStep(
-            path_manager=path_manager,
-            sources=fact_sources,
-            get_broker=get_fact_broker,
-            normalize_operation=normalize_operation,
-            processed_version=PROCESSED_VERSION,
-        ),
-        FeatureBuildStep(
-            pm=path_manager,
-            access=access,
-            feature_versions=feature_versions,
-        ),
-        LabelBuildStep(
-            pm=path_manager,
-            access=access,
-            label_versions=label_versions,
-        ),
     )
+    if submission.kind == "data-standard":
+        steps += (
+            FactMaterializeStep(
+                path_manager=path_manager,
+                sources=fact_sources,
+                get_broker=get_calendar_broker,
+                normalize_operation=normalize_tushare,
+                processed_version=PROCESSED_VERSION,
+            ),
+            FeatureBuildStep(
+                pm=path_manager,
+                access=access,
+                feature_versions=feature_versions,
+            ),
+            LabelBuildStep(
+                pm=path_manager,
+                access=access,
+                label_versions=label_versions,
+            ),
+        )
+    else:
+        steps += (
+            Level2FactMaterializeStep(
+                path_manager=path_manager,
+                sources=fact_sources,
+                get_broker=partial(
+                    _get_broker, app_config=app_config, broker_class=Level2Broker,
+                    adapter_cache=adapter_cache,
+                ),
+                normalize_operation=normalize_level2,
+                processed_version=PROCESSED_VERSION,
+                raw_cache_days=cast(int, app_config.data.brokers[Level2Broker.name].raw_cache_days),
+            ),
+            Level2MinuteBuildStep(
+                pm=path_manager,
+                access=access,
+                processed_version=PROCESSED_VERSION,
+                symbol_batch_size=_LEVEL2_MINUTE_SYMBOL_BATCH_SIZE,
+            ),
+            Stock1430DailyMaterializeStep(pm=path_manager, access=access),
+        )
     instrumentation = Instrumentation(
         f"{submission.kind}_{submission.start}_{submission.end}"
     )

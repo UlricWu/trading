@@ -9,13 +9,70 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from types import MappingProxyType
 
+from src.utils.datetime_utils import DateTimeUtils
 from src.utils.filesystem import FileSystem
 from src.utils.path import PathManager
 
-__all__ = ("MetaRecord", "commit", "find", "require")
+__all__ = (
+    "MetaRecord", "RemoteRawRecord", "commit", "commit_remote_raw", "find",
+    "find_level2_raw", "require",
+)
 
 _REQUIRED_FIELDS = frozenset({"payload", "size_bytes"})
 _OPTIONAL_FIELDS = frozenset({"upstream", "symbol_slices"})
+
+
+@dataclass(frozen=True, slots=True)
+class RemoteRawRecord:
+    """One Level-2 compressed raw object held in Baidu Netdisk.
+
+    Example:
+        record = RemoteRawRecord(
+            payload="SZ_Trade.csv.7z", size_bytes=123,
+            remote_path="/level2/2026-09-21/SZ_Trade.csv.7z",
+        )
+    """
+
+    payload: str
+    size_bytes: int
+    remote_path: str
+
+
+def find_level2_raw(
+    *, pm: PathManager, meta_path: Path,
+) -> MetaRecord | RemoteRawRecord | None:
+    """Read a remote source or a verified local source awaiting migration.
+
+    Example:
+        record = find_level2_raw(pm=pm, meta_path=raw_meta_path)
+    """
+    resolved = _resolve_meta_path(
+        meta_path, storage_root=pm.storage_root, require_file=False,
+    )
+    _require_level2_raw_path(resolved, pm.storage_root)
+    return _read_record(meta_path=resolved, storage_root=pm.storage_root)
+
+
+def commit_remote_raw(
+    *, pm: PathManager, meta_path: Path, record: RemoteRawRecord,
+) -> None:
+    """Publish a size-verified cloud identity without requiring a local raw file.
+
+    Example:
+        commit_remote_raw(pm=pm, meta_path=raw_meta_path, record=remote)
+    """
+    resolved = _resolve_meta_path(
+        meta_path, storage_root=pm.storage_root, require_file=False,
+    )
+    data = {
+        "payload": record.payload,
+        "size_bytes": record.size_bytes,
+        "remote_path": record.remote_path,
+    }
+    _parse_remote_raw(data, meta_path=resolved, storage_root=pm.storage_root)
+    FileSystem.write_bytes_atomic(
+        resolved, json.dumps(data, indent=2, sort_keys=True).encode("utf-8"),
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -174,6 +231,45 @@ def commit(
     FileSystem.write_bytes_atomic(resolved_payload.parent / "meta.json", encoded)
 
 
+def _require_level2_raw_path(meta_path: Path, storage_root: Path) -> None:
+    parts = meta_path.relative_to(storage_root).parts
+    if (
+        len(parts) != 5 or parts[:2] != ("raw", "level2_ftp")
+        or not parts[3].startswith("trade_date=") or parts[4] != "meta.json"
+    ):
+        raise RuntimeError(f"remote raw requires a Level-2 daily raw partition: {meta_path}")
+    DateTimeUtils.require_system_date(
+        parts[3].removeprefix("trade_date="), field_name="raw trade_date",
+    )
+
+
+def _parse_remote_raw(
+    data: Mapping[str, object], *, meta_path: Path, storage_root: Path,
+) -> RemoteRawRecord:
+    _require_level2_raw_path(meta_path, storage_root)
+    if set(data) != {"payload", "size_bytes", "remote_path"}:
+        raise RuntimeError(f"invalid remote raw fields: {meta_path}")
+    payload = data["payload"]
+    if not isinstance(payload, str) or not payload.endswith(".csv.7z"):
+        raise RuntimeError(f"invalid remote raw payload: {meta_path}")
+    PathManager.require_safe_basename(payload, "payload")
+    remote = data["remote_path"]
+    if not isinstance(remote, str) or any(c in remote for c in ("\x00", "\\", "\n", "\r")):
+        raise RuntimeError(f"invalid remote raw path: {meta_path}")
+    path = PurePosixPath(remote)
+    if (
+        not path.is_absolute() or remote.startswith("//") or ".." in path.parts
+        or str(path) != remote or path.name != payload
+    ):
+        raise RuntimeError(f"invalid remote raw path: {meta_path}")
+    size = _require_non_negative_int(
+        data["size_bytes"], field_name="size_bytes", context=str(meta_path),
+    )
+    if size == 0:
+        raise RuntimeError(f"remote raw size must be positive: {meta_path}")
+    return RemoteRawRecord(payload=payload, size_bytes=size, remote_path=remote)
+
+
 def _load_record(
     *,
     meta_path: Path,
@@ -187,6 +283,8 @@ def _load_record(
     record = _read_record(meta_path=resolved_meta, storage_root=storage_root)
     if record is None:
         return None
+    if isinstance(record, RemoteRawRecord):
+        raise RuntimeError(f"remote raw has no required local payload: {resolved_meta}")
 
     if record.upstream is None:
         return record
@@ -216,10 +314,12 @@ def _read_record(
     *,
     meta_path: Path,
     storage_root: Path,
-) -> MetaRecord | None:
+) -> MetaRecord | RemoteRawRecord | None:
     data = _read_json_object(meta_path)
     if data is None:
         return None
+    if "remote_path" in data:
+        return _parse_remote_raw(data, meta_path=meta_path, storage_root=storage_root)
 
     fields = set(data)
     missing = _REQUIRED_FIELDS - fields

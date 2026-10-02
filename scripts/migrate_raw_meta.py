@@ -320,7 +320,10 @@ def _build_migration_plan(pm: PathManager) -> _MigrationPlan:
                 meta_path=discovered_meta,
             )
             try:
-                meta.require(pm=pm, meta_path=meta_path)
+                if meta_path.relative_to(pm.storage_root).parts[1] == "level2_ftp":
+                    meta.find_level2_raw(pm=pm, meta_path=meta_path)
+                else:
+                    meta.require(pm=pm, meta_path=meta_path)
             except (FileNotFoundError, RuntimeError) as current_error:
                 try:
                     candidate = _load_legacy_candidate(

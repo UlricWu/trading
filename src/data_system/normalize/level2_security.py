@@ -160,6 +160,7 @@ SECURITY_TYPE_RANGES: tuple[SecurityTypeRange, ...] = (
     SecurityTypeRange("sz", 150000, 151999, SecurityType.FUND),
     SecurityTypeRange("sz", 160000, 179999, SecurityType.FUND),
     SecurityTypeRange("sz", 180101, 180999, SecurityType.FUND),
+    SecurityTypeRange("sz", 181001, 181999, SecurityType.FUND),
     SecurityTypeRange("sz", 184000, 184999, SecurityType.FUND),
     SecurityTypeRange("sz", 158000, 159999, SecurityType.ETF),
     SecurityTypeRange("sz", 115000, 115099, SecurityType.CONVERTIBLE_BOND),

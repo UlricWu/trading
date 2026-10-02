@@ -33,6 +33,7 @@ class _PhaseRule:
     effective_to: date | None
     intervals: tuple[_PhaseInterval, ...]
     security_types: tuple[str, ...]
+    symbol_ranges: tuple[range, ...] = ()
 
 
 # Source: docs/data/market_phase.md, section "Level-2 正成交窗口".
@@ -40,6 +41,7 @@ _EARLIEST_SUPPORTED_DATE = date(1900, 1, 1)
 _SSE_CLOSE_CALL_EFFECTIVE_DATE = date(2018, 8, 20)
 _SSE_FUND_CLOSE_CALL_EFFECTIVE_DATE = date(2026, 7, 6)
 _SZ_CONVERTIBLE_BOND_RESUME_CALL_EFFECTIVE_DATE = date(2020, 6, 8)
+_SZ_FIXED_INCOME_COVERAGE_DATE = date(2026, 9, 21)
 
 _TRADE_STOCK_PM = (
     _PhaseInterval(time(13, 0), time(14, 57), False, MarketPhase.CONTINUOUS),
@@ -49,7 +51,7 @@ _TRADE_FUND_ETF_SH_PM = (
     _PhaseInterval(time(13, 0), time(15, 0), False, MarketPhase.CONTINUOUS),
 )
 
-_TRADE_BOND_SH_PM = (
+_TRADE_BOND_PM = (
     _PhaseInterval(time(13, 0), time(15, 30), False, MarketPhase.CONTINUOUS),
 )
 
@@ -62,7 +64,7 @@ _SZ_OPEN_AND_CLOSE_CALL = (
     _PhaseInterval(time(15, 0), time(15, 0, 1), False, MarketPhase.AUCTION),
 )
 
-_SZ_1457_RESUME_CALL = (
+_TRADE_1457_RESUME_CALL = (
     _PhaseInterval(time(14, 57), time(14, 57, 1), False, MarketPhase.AUCTION),
 )
 
@@ -80,6 +82,7 @@ _DEFAULT_A_SHARE_TRADE_PHASE_RULES: tuple[_PhaseRule, ...] = (
             ),
             *_TRADE_REGULAR_AM,
             *_TRADE_STOCK_PM,
+            *_TRADE_1457_RESUME_CALL,
             _PhaseInterval(
                 time(15, 0),
                 time(15, 0, 3),
@@ -119,7 +122,7 @@ _DEFAULT_A_SHARE_TRADE_PHASE_RULES: tuple[_PhaseRule, ...] = (
             _SZ_OPEN_AND_CLOSE_CALL
             + _TRADE_REGULAR_AM
             + _TRADE_STOCK_PM
-            + _SZ_1457_RESUME_CALL
+            + _TRADE_1457_RESUME_CALL
         ),
         security_types=("stock",),
     ),
@@ -128,7 +131,14 @@ _DEFAULT_A_SHARE_TRADE_PHASE_RULES: tuple[_PhaseRule, ...] = (
         effective_from=_EARLIEST_SUPPORTED_DATE,
         effective_to=None,
         intervals=_SZ_OPEN_AND_CLOSE_CALL + _TRADE_REGULAR_AM + _TRADE_STOCK_PM,
-        security_types=("fund", "etf", "bond"),
+        security_types=("fund", "etf"),
+    ),
+    _PhaseRule(
+        exchange="sz",
+        effective_from=_EARLIEST_SUPPORTED_DATE,
+        effective_to=_SZ_FIXED_INCOME_COVERAGE_DATE - timedelta(days=1),
+        intervals=_SZ_OPEN_AND_CLOSE_CALL + _TRADE_REGULAR_AM + _TRADE_STOCK_PM,
+        security_types=("bond",),
     ),
     _PhaseRule(
         exchange="sz",
@@ -153,7 +163,7 @@ _DEFAULT_A_SHARE_TRADE_PHASE_RULES: tuple[_PhaseRule, ...] = (
             _SZ_OPEN_AND_CLOSE_CALL
             + _TRADE_REGULAR_AM
             + _TRADE_STOCK_PM
-            + _SZ_1457_RESUME_CALL
+            + _TRADE_1457_RESUME_CALL
         ),
         security_types=("convertible_bond",),
     ),
@@ -207,9 +217,42 @@ _DEFAULT_A_SHARE_TRADE_PHASE_RULES: tuple[_PhaseRule, ...] = (
                 MarketPhase.AUCTION,
             ),
             *_TRADE_REGULAR_AM,
-            *_TRADE_BOND_SH_PM,
+            *_TRADE_BOND_PM,
         ),
         security_types=("bond", "convertible_bond", "bond_repo"),
+    ),
+    _PhaseRule(
+        exchange="sz",
+        effective_from=_SZ_FIXED_INCOME_COVERAGE_DATE,
+        effective_to=None,
+        intervals=(
+            _PhaseInterval(time(9), time(11, 30), True, MarketPhase.CONTINUOUS),
+            *_TRADE_BOND_PM,
+            _PhaseInterval(time(9, 25), time(9, 25, 1), False, MarketPhase.AUCTION),
+        ),
+        security_types=("bond",),
+    ),
+    _PhaseRule(
+        exchange="sz",
+        effective_from=_SZ_FIXED_INCOME_COVERAGE_DATE,
+        effective_to=None,
+        intervals=(
+            _PhaseInterval(time(9, 25), time(9, 25, 1), False, MarketPhase.AUCTION),
+            *_TRADE_REGULAR_AM,
+            *_TRADE_BOND_PM,
+        ),
+        security_types=("bond_repo",),
+    ),
+    _PhaseRule(
+        exchange="sz",
+        effective_from=_SZ_FIXED_INCOME_COVERAGE_DATE,
+        effective_to=None,
+        intervals=(
+            _PhaseInterval(time(9), time(11, 30), True, MarketPhase.CONTINUOUS),
+            *_TRADE_BOND_PM,
+        ),
+        security_types=("fund", "convertible_bond"),
+        symbol_ranges=(range(117000, 117500), range(121500, 122000)),
     ),
 )
 
@@ -269,6 +312,18 @@ def resolve_level2_phase(
             security_type,
             value_set=pa.array(rule.security_types, type=pa.string()),
         )
+        if rule.symbol_ranges:
+            symbol = pc.cast(table["symbol"], pa.int32())
+            symbol_mask = pa.repeat(pa.scalar(False), table.num_rows)
+            for symbol_range in rule.symbol_ranges:
+                symbol_mask = pc.or_(
+                    symbol_mask,
+                    pc.and_(
+                        pc.greater_equal(symbol, symbol_range.start),
+                        pc.less(symbol, symbol_range.stop),
+                    ),
+                )
+            scope_mask = pc.and_(scope_mask, symbol_mask)
         supported = pc.or_(supported, scope_mask)
 
         for interval in rule.intervals:

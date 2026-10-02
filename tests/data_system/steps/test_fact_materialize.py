@@ -21,6 +21,7 @@ from src.data_system.steps.fact_materialize import FactMaterializeStep
 from src.utils.path import ObjectPaths, PathManager
 
 
+
 def _source(raw_object: str, *, outputs: list[str] | None = None) -> SourceConfig:
     return SourceConfig(
         enabled=True,

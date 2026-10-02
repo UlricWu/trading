@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 from datetime import date
-from functools import partial
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -18,7 +17,7 @@ from src.data_system.builders.stock_1430 import (
 )
 from src.data_system.context import DataContext
 from src.data_system.steps._partition import _publish_partition
-from src.utils.path import ObjectPaths, PathManager
+from src.utils.path import PathManager
 
 _FEATURE_SET = "l2_stock_1430"
 _LABEL_SET = "l2_stock_1430_t1_vwap_rank"
@@ -62,75 +61,130 @@ class Stock1430MaterializeStep:
         """
         for trade_date in context.trade_dates:
             session = date.fromisoformat(trade_date)
-            feature_paths = self._pm.feature_object(
-                feature_set=_FEATURE_SET,
-                version=_VERSION,
-                trade_date=trade_date,
-            )
-            feature_who = (
-                f"stock 14:30 Feature; trade_date={trade_date} version={_VERSION}"
-            )
-
-            def _build_feature(session: date = session) -> pa.Table:
-                return build_stock_1430_features(
-                    self._access.stock_trade_minutes(trade_date=session.isoformat()),
-                    trade_date=session,
-                )
-
-            feature_rows = _publish_partition(
-                pm=self._pm,
-                paths=feature_paths,
-                who=feature_who,
-                build=_build_feature,
-            )
-            if feature_rows is None:
-                logs.info(f"♻️ {feature_who}")
-            else:
-                logs.info(f"✅ {feature_who} rows={feature_rows}")
-
-            label_paths = self._pm.label_object(
-                label_set=_LABEL_SET,
-                version=_VERSION,
-                trade_date=trade_date,
-            )
-            label_who = f"stock 14:30 Label; trade_date={trade_date} version={_VERSION}"
-            label_rows = _publish_partition(
-                pm=self._pm,
-                paths=label_paths,
-                who=label_who,
-                build=partial(
-                    self._build_label,
-                    trade_date=session,
-                    feature_paths=feature_paths,
-                ),
-            )
-            if label_rows is None:
-                logs.info(f"♻️ {label_who}")
-            else:
-                logs.info(f"✅ {label_who} rows={label_rows}")
+            _materialize_feature(pm=self._pm, access=self._access, trade_date=session)
+            _materialize_label(pm=self._pm, access=self._access, trade_date=session)
         return context
 
-    def _build_label(
-        self,
-        *,
-        trade_date: date,
-        feature_paths: ObjectPaths,
-    ) -> pa.Table:
+
+class Stock1430DailyMaterializeStep:
+    """Publish each arrival session's Feature and the preceding session's Label.
+
+    Example:
+        step = Stock1430DailyMaterializeStep(pm=path_manager, access=access)
+        step.run(
+            DataContext(
+                start="2026-05-07",
+                end="2026-05-07",
+                trade_dates=("2026-05-07",),
+            )
+        )
+    """
+
+    def __init__(self, *, pm: PathManager, access: Access) -> None:
+        """Bind the formal store and its fixed V1 processed-data Access.
+
+        Example:
+            step = Stock1430DailyMaterializeStep(pm=path_manager, access=access)
+        """
+        self._pm = pm
+        self._access = access
+
+    def run(self, context: DataContext) -> DataContext:
+        """Materialize current Features and Labels maturing on each arrival date.
+
+        Example:
+            next_context = step.run(
+                DataContext(
+                    start="2026-05-07",
+                    end="2026-05-07",
+                    trade_dates=("2026-05-07",),
+                )
+            )
+        """
+        for arrival_date in context.trade_dates:
+            _materialize_feature(
+                pm=self._pm,
+                access=self._access,
+                trade_date=date.fromisoformat(arrival_date),
+            )
+            previous_date, _ = self._access.recent_trade_dates(
+                end_date=arrival_date,
+                sessions=2,
+            )
+            _materialize_label(
+                pm=self._pm,
+                access=self._access,
+                trade_date=date.fromisoformat(previous_date),
+            )
+        return context
+
+
+def _materialize_feature(*, pm: PathManager, access: Access, trade_date: date) -> None:
+    feature_paths = pm.feature_object(
+        feature_set=_FEATURE_SET,
+        version=_VERSION,
+        trade_date=trade_date.isoformat(),
+    )
+    feature_who = f"stock 14:30 Feature; trade_date={trade_date} version={_VERSION}"
+
+    def _build_feature() -> pa.Table:
+        return build_stock_1430_features(
+            access.stock_trade_minutes(trade_date=trade_date.isoformat()),
+            trade_date=trade_date,
+        )
+
+    feature_rows = _publish_partition(
+        pm=pm,
+        paths=feature_paths,
+        who=feature_who,
+        build=_build_feature,
+    )
+    if feature_rows is None:
+        logs.info(f"♻️ {feature_who}")
+    else:
+        logs.info(f"✅ {feature_who} rows={feature_rows}")
+
+
+def _materialize_label(*, pm: PathManager, access: Access, trade_date: date) -> None:
+    label_paths = pm.label_object(
+        label_set=_LABEL_SET,
+        version=_VERSION,
+        trade_date=trade_date.isoformat(),
+    )
+    label_who = f"stock 14:30 Label; trade_date={trade_date} version={_VERSION}"
+
+    def _build_label() -> pa.Table:
+        feature_paths = pm.feature_object(
+            feature_set=_FEATURE_SET,
+            version=_VERSION,
+            trade_date=trade_date.isoformat(),
+        )
         feature_record = meta.require(
-            pm=self._pm,
+            pm=pm,
             meta_path=feature_paths.meta_path,
             expected_payload_path=feature_paths.payload_path,
         )
         with pq.ParquetFile(feature_record.payload_path) as parquet_file:
             feature_keys = parquet_file.read(columns=STOCK_1430_KEY_SCHEMA.names)
         date_text = trade_date.isoformat()
-        next_trade_date = self._access.next_trade_date(trade_date=date_text)
+        next_trade_date = access.next_trade_date(trade_date=date_text)
         return build_stock_1430_labels(
             feature_keys=feature_keys,
-            entry_minutes=self._access.stock_trade_minutes(trade_date=date_text),
-            exit_minutes=self._access.stock_trade_minutes(trade_date=next_trade_date),
-            entry_factors=self._access.adjustment_factors(trade_date=date_text),
-            exit_factors=self._access.adjustment_factors(trade_date=next_trade_date),
+            entry_minutes=access.stock_trade_minutes(trade_date=date_text),
+            exit_minutes=access.stock_trade_minutes(trade_date=next_trade_date),
+            entry_factors=access.adjustment_factors(trade_date=date_text),
+            exit_factors=access.adjustment_factors(trade_date=next_trade_date),
             trade_date=trade_date,
             next_trade_date=date.fromisoformat(next_trade_date),
         )
+
+    label_rows = _publish_partition(
+        pm=pm,
+        paths=label_paths,
+        who=label_who,
+        build=_build_label,
+    )
+    if label_rows is None:
+        logs.info(f"♻️ {label_who}")
+    else:
+        logs.info(f"✅ {label_who} rows={label_rows}")

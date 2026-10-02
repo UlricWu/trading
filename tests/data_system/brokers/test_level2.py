@@ -1,403 +1,120 @@
 # filepath: tests/data_system/brokers/test_level2.py
-
-"""Regression tests for the Level-2 broker download boundary."""
+"""Exercise the Baidu CLI boundary through a real local subprocess substitute."""
 
 from __future__ import annotations
 
-import ftplib
-from collections.abc import Callable, Sequence
+import json
+import sys
 from pathlib import Path
-from types import SimpleNamespace
-from typing import cast
 
 import pytest
 
+from src.access.meta import RemoteRawRecord
 from src.config.app_config import AppConfig
-from src.config.data_config import DownloadBackend
-from src.data_system.brokers import level2 as level2_module
-from src.data_system.brokers.level2 import FtpEndpoint, Level2Broker
-from src.utils.path import PathManager
+from src.config.data_config import BrokerConfig, DataConfig
+from src.data_system.brokers.level2 import Level2Broker
 
 
-class PayloadFtp(ftplib.FTP):
-    """Expose one deterministic Level-2 archive through the FTP API."""
-
-    def __init__(
-        self,
-        *,
-        remote_file: str,
-        payload: bytes,
-        remote_names: Sequence[str],
-        declared_size_bytes: int | None = None,
-        retrieval_error: BaseException | None = None,
-    ) -> None:
-        self.remote_file = remote_file
-        self.payload = payload
-        self.remote_names = tuple(remote_names)
-        self.declared_size_bytes = declared_size_bytes
-        self.retrieval_error = retrieval_error
-        self.cwd_calls: list[str] = []
-        self.retrievals: list[tuple[str, int | None]] = []
-        self.is_closed = False
-
-    def cwd(self, dirname: str) -> str:
-        self.cwd_calls.append(dirname)
-        return "250 directory changed"
-
-    def nlst(self, *args: str) -> list[str]:
-        return list(self.remote_names)
-
-    def size(self, filename: str) -> int:
-        assert filename == self.remote_file
-        return (
-            len(self.payload)
-            if self.declared_size_bytes is None
-            else self.declared_size_bytes
-        )
-
-    def retrbinary(
-        self,
-        cmd: str,
-        callback: Callable[[bytes], object],
-        blocksize: int = 8192,
-        rest: int | None = None,
-    ) -> str:
-        self.retrievals.append((cmd, rest))
-        callback(self.payload[rest or 0 :])
-        if self.retrieval_error is not None:
-            raise self.retrieval_error
-        return "226 transfer complete"
-
-    def close(self) -> None:
-        self.is_closed = True
-
-
-class RecordingBrokerLogger:
-    """Record non-sensitive Level-2 operational messages."""
-
-    def __init__(self) -> None:
-        self.info_messages: list[str] = []
-        self.warning_messages: list[str] = []
-
-    def info(self, message: str) -> None:
-        self.info_messages.append(message)
-
-    def warning(self, message: str) -> None:
-        self.warning_messages.append(message)
-
-
-def _build_level2_broker() -> Level2Broker:
-    app_config = SimpleNamespace(
-        secret=SimpleNamespace(
-            ftp_host="ftp.example.test",
-            ftp_port=21,
-            ftp_user="user",
-            ftp_password="password",
+@pytest.fixture
+def broker(tmp_path: Path) -> Level2Broker:
+    executable = tmp_path / "pcs"
+    executable.write_text(f"#!{sys.executable}\n" + '''
+import json
+import sys
+from pathlib import Path
+root = Path(__file__).parent
+args = sys.argv[1:]
+with (root / "calls").open("a") as output:
+    output.write(json.dumps(args) + "\\n")
+spec = json.loads((root / "spec.json").read_text())
+if args[0] == "meta":
+    size = spec["files"].get(args[1])
+    if size is None:
+        print("获取文件/目录的元信息: 代码: 31066, 消息: 文件或目录不存在")
+    elif size == "auth_error":
+        print("认证失败: do-not-expose-token")
+    else:
+        print(f"  类型              文件\\n  文件路径          {args[1]}\\n  文件大小          {size}, 1GB")
+else:
+    destination = Path(args[args.index("--saveto") + 1]) / Path(args[-1]).name
+    mode = spec.get("mode", "success")
+    state = destination.with_name(destination.name + ".BaiduPCS-Go-downloading")
+    destination.write_bytes(b"raw" if mode != "wrong_size" else b"wrong")
+    if mode in ("failure", "state"):
+        state.write_text("unfinished ranges")
+    else:
+        state.unlink(missing_ok=True)
+    if mode != "failure":
+        print(f"[1] 下载完成, 保存位置: {destination}")
+    else:
+        print("download failed: do-not-expose-token")
+''')
+    executable.chmod(0o700)
+    (tmp_path / "spec.json").write_text(json.dumps({"files": {"/level2/2026-09-21/SZ_Trade.csv.7z": 3}}))
+    return Level2Broker(app_cfg=AppConfig.model_construct(data=DataConfig(brokers={
+        "level2_ftp": BrokerConfig(
+            baidupcs_go=str(executable), raw_cache_days=5,
+            remote_path_templates=("/level2/{date}-New/{file}", "/level2/{date}/{file}"),
         ),
-        data=SimpleNamespace(
-            brokers={
-                "level2_ftp": SimpleNamespace(
-                    remote_root="level2",
-                    ftp_backend=DownloadBackend.FTPLIB,
-                )
-            }
-        ),
-    )
-    return Level2Broker(app_cfg=cast("AppConfig", app_config))
+    })))
 
 
-def test_ftp_endpoint_normalizes_remote_root_without_exposing_password() -> None:
-    endpoint = FtpEndpoint(
-        host="ftp.example.test",
-        port=21,
-        user="user",
-        password="secret",
-        remote_root="/level2/",
-    )
-
-    assert endpoint.remote_root == "level2"
-    assert "secret" not in repr(endpoint)
+def test_locate_prefers_new_but_migration_requires_original_size(broker: Level2Broker, tmp_path: Path) -> None:
+    new = "/level2/2026-09-21-New/SZ_Trade.csv.7z"
+    old = "/level2/2026-09-21/SZ_Trade.csv.7z"
+    (tmp_path / "spec.json").write_text(json.dumps({"files": {new: 5, old: 3}}))
+    assert broker.locate(raw_object="SZ_Trade", trade_date="2026-09-21") == RemoteRawRecord("SZ_Trade.csv.7z", 5, new)
+    assert broker.locate(raw_object="SZ_Trade", trade_date="2026-09-21", expected_size=3) == RemoteRawRecord("SZ_Trade.csv.7z", 3, old)
+    assert broker.locate(raw_object="SZ_Trade", trade_date="2026-09-21", expected_size=8) is None
+    assert broker.locate(raw_object="SZ_Order", trade_date="2026-09-21") is None
 
 
-def test_level2_broker_downloads_and_publishes_source_native_payload(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    remote_file = "SZ_Trade.csv.7z"
-    payload = b"source-native-level2"
-    ftp = PayloadFtp(
-        remote_file=remote_file,
-        payload=payload,
-        remote_names=(remote_file,),
-    )
-    monkeypatch.setattr(
-        level2_module, "_probe_control_connection", lambda endpoint: None
-    )
-    monkeypatch.setattr(
-        level2_module,
-        "_connect_download_session",
-        lambda endpoint: ftp,
-    )
-    path_manager = PathManager(tmp_path)
-    broker = _build_level2_broker()
-
-    downloaded_path = broker.fetch(
-        source_name="sz_trade",
-        trade_date="2026-07-20",
-        raw_object="SZ_Trade",
-        pm=path_manager,
-    )
-
-    assert downloaded_path is not None
-    assert downloaded_path.name == remote_file
-    assert downloaded_path == path_manager.raw_payload(
-        broker="level2_ftp",
-        source_name="sz_trade",
-        trade_date="2026-07-20",
-        payload_file=remote_file,
-    )
-    assert downloaded_path.read_bytes() == payload
-    assert ftp.cwd_calls == ["level2", "2026-07-20"]
-    assert ftp.retrievals == [(f"RETR {remote_file}", None)]
-    assert ftp.is_closed is True
-    assert (
-        path_manager.raw_payload(
-            broker="level2_ftp",
-            source_name="sz_trade",
-            trade_date="2026-07-20",
-            payload_file=remote_file,
-        ).read_bytes()
-        == payload
-    )
+def test_cli_zero_exit_auth_error_is_not_missing(broker: Level2Broker, tmp_path: Path) -> None:
+    path = "/level2/2026-09-21/SZ_Trade.csv.7z"
+    (tmp_path / "spec.json").write_text(json.dumps({"files": {path: "auth_error"}}))
+    with pytest.raises(RuntimeError, match="metadata unavailable") as error:
+        broker.describe(path)
+    assert "do-not-expose-token" not in str(error.value)
 
 
-def test_level2_broker_resumes_a_partial_download(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    remote_file = "SZ_Trade.csv.7z"
-    payload = b"source-native-level2"
-    resume_offset_bytes = 7
-    ftp = PayloadFtp(
-        remote_file=remote_file,
-        payload=payload,
-        remote_names=(remote_file,),
-    )
-    monkeypatch.setattr(
-        level2_module, "_probe_control_connection", lambda endpoint: None
-    )
-    monkeypatch.setattr(
-        level2_module,
-        "_connect_download_session",
-        lambda endpoint: ftp,
-    )
-    path_manager = PathManager(tmp_path)
-    staging_file = path_manager.staging_payload(
-        broker="level2_ftp",
-        source_name="sz_trade",
-        trade_date="2026-07-20",
-        payload_file=remote_file,
-    )
-    staging_file.parent.mkdir(parents=True, exist_ok=True)
-    part_file = staging_file.with_name(f"{staging_file.name}.part")
-    part_file.write_bytes(payload[:resume_offset_bytes])
-
-    downloaded_path = _build_level2_broker().fetch(
-        source_name="sz_trade",
-        trade_date="2026-07-20",
-        raw_object="SZ_Trade",
-        pm=path_manager,
-    )
-
-    assert downloaded_path is not None
-    assert ftp.retrievals == [(f"RETR {remote_file}", resume_offset_bytes)]
-    assert staging_file.read_bytes() == payload
-    assert not part_file.exists()
+def test_download_resumes_then_publishes_without_hashing(broker: Level2Broker, tmp_path: Path) -> None:
+    record = broker.locate(raw_object="SZ_Trade", trade_date="2026-09-21")
+    assert record is not None
+    path = tmp_path / "cache" / record.payload
+    spec = tmp_path / "spec.json"
+    spec.write_text(json.dumps({"files": {record.remote_path: 3}, "mode": "failure"}))
+    with pytest.raises(RuntimeError, match="incomplete") as error:
+        broker.download(record=record, destination=path)
+    assert "do-not-expose-token" not in str(error.value)
+    assert not path.exists()
+    partial = path.parent / ".download" / record.payload
+    assert partial.stat().st_size == 3
+    spec.write_text(json.dumps({"files": {record.remote_path: 3}}))
+    assert broker.download(record=record, destination=path) == path
+    assert path.read_bytes() == b"raw"
+    assert not partial.exists()
+    calls = [json.loads(line) for line in (tmp_path / "calls").read_text().splitlines()]
+    downloads = [args for args in calls if args[0] == "download"]
+    assert len(downloads) == 2
+    assert all("--nocheck" in args and "--ow" in args for args in downloads)
+    (tmp_path / "calls").unlink()
+    assert broker.download(record=record, destination=path) == path
+    assert not (tmp_path / "calls").exists()
 
 
-def test_level2_broker_reuses_a_complete_staging_payload(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    remote_file = "SZ_Trade.csv.7z"
-    payload = b"source-native-level2"
-    ftp = PayloadFtp(
-        remote_file=remote_file,
-        payload=payload,
-        remote_names=(remote_file,),
-    )
-    monkeypatch.setattr(
-        level2_module, "_probe_control_connection", lambda endpoint: None
-    )
-    monkeypatch.setattr(
-        level2_module,
-        "_connect_download_session",
-        lambda endpoint: ftp,
-    )
-    path_manager = PathManager(tmp_path)
-    staging_file = path_manager.staging_payload(
-        broker="level2_ftp",
-        source_name="sz_trade",
-        trade_date="2026-07-20",
-        payload_file=remote_file,
-    )
-    staging_file.parent.mkdir(parents=True, exist_ok=True)
-    staging_file.write_bytes(payload)
-
-    downloaded_path = _build_level2_broker().fetch(
-        source_name="sz_trade",
-        trade_date="2026-07-20",
-        raw_object="SZ_Trade",
-        pm=path_manager,
-    )
-
-    assert downloaded_path is not None
-    assert ftp.retrievals == []
-    assert staging_file.read_bytes() == payload
+@pytest.mark.parametrize("mode", ["state", "wrong_size"])
+def test_size_or_residual_state_prevents_publish(broker: Level2Broker, tmp_path: Path, mode: str) -> None:
+    record = broker.locate(raw_object="SZ_Trade", trade_date="2026-09-21")
+    assert record is not None
+    (tmp_path / "spec.json").write_text(json.dumps({"files": {record.remote_path: 3}, "mode": mode}))
+    path = tmp_path / "cache" / record.payload
+    with pytest.raises(RuntimeError):
+        broker.download(record=record, destination=path)
+    assert not path.exists()
 
 
-def test_level2_broker_restarts_an_oversized_partial_download(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    remote_file = "SZ_Trade.csv.7z"
-    payload = b"source-native-level2"
-    ftp = PayloadFtp(
-        remote_file=remote_file,
-        payload=payload,
-        remote_names=(remote_file,),
-    )
-    monkeypatch.setattr(
-        level2_module, "_probe_control_connection", lambda endpoint: None
-    )
-    monkeypatch.setattr(
-        level2_module,
-        "_connect_download_session",
-        lambda endpoint: ftp,
-    )
-    path_manager = PathManager(tmp_path)
-    staging_file = path_manager.staging_payload(
-        broker="level2_ftp",
-        source_name="sz_trade",
-        trade_date="2026-07-20",
-        payload_file=remote_file,
-    )
-    staging_file.parent.mkdir(parents=True, exist_ok=True)
-    part_file = staging_file.with_name(f"{staging_file.name}.part")
-    part_file.write_bytes(payload + b"oversized")
-
-    downloaded_path = _build_level2_broker().fetch(
-        source_name="sz_trade",
-        trade_date="2026-07-20",
-        raw_object="SZ_Trade",
-        pm=path_manager,
-    )
-
-    assert downloaded_path is not None
-    assert ftp.retrievals == [(f"RETR {remote_file}", None)]
-    assert staging_file.read_bytes() == payload
-
-
-def test_level2_broker_rejects_a_download_size_mismatch_and_closes_session(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    remote_file = "SZ_Trade.csv.7z"
-    payload = b"short-payload"
-    ftp = PayloadFtp(
-        remote_file=remote_file,
-        payload=payload,
-        remote_names=(remote_file,),
-        declared_size_bytes=len(payload) + 1,
-    )
-    monkeypatch.setattr(
-        level2_module, "_probe_control_connection", lambda endpoint: None
-    )
-    monkeypatch.setattr(
-        level2_module,
-        "_connect_download_session",
-        lambda endpoint: ftp,
-    )
-
-    with pytest.raises(RuntimeError, match="FTP download size mismatch"):
-        _build_level2_broker().fetch(
-            source_name="sz_trade",
-            trade_date="2026-07-20",
-            raw_object="SZ_Trade",
-            pm=PathManager(tmp_path),
-        )
-
-    assert ftp.is_closed is True
-
-
-def test_level2_broker_accepts_a_control_timeout_after_the_full_payload(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    remote_file = "SZ_Trade.csv.7z"
-    payload = b"source-native-level2"
-    ftp = PayloadFtp(
-        remote_file=remote_file,
-        payload=payload,
-        remote_names=(remote_file,),
-        retrieval_error=TimeoutError("control response missing"),
-    )
-    logger = RecordingBrokerLogger()
-    monkeypatch.setattr(
-        level2_module, "_probe_control_connection", lambda endpoint: None
-    )
-    monkeypatch.setattr(
-        level2_module,
-        "_connect_download_session",
-        lambda endpoint: ftp,
-    )
-    monkeypatch.setattr(level2_module, "logs", logger)
-
-    downloaded_path = _build_level2_broker().fetch(
-        source_name="sz_trade",
-        trade_date="2026-07-20",
-        raw_object="SZ_Trade",
-        pm=PathManager(tmp_path),
-    )
-
-    assert downloaded_path is not None
-    assert logger.warning_messages == [
-        (
-            "⚠️ download; reason=control_response_timeout "
-            "remote_file=SZ_Trade.csv.7z payload_complete=true"
-        )
-    ]
-
-
-def test_level2_broker_reports_an_empty_remote_directory_without_payload_names(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    ftp = PayloadFtp(
-        remote_file="unused.csv.7z",
-        payload=b"unused",
-        remote_names=(),
-    )
-    logger = RecordingBrokerLogger()
-    monkeypatch.setattr(
-        level2_module, "_probe_control_connection", lambda endpoint: None
-    )
-    monkeypatch.setattr(
-        level2_module,
-        "_connect_download_session",
-        lambda endpoint: ftp,
-    )
-    monkeypatch.setattr(level2_module, "logs", logger)
-
-    downloaded_path = _build_level2_broker().fetch(
-        source_name="sz_trade",
-        trade_date="2026-07-20",
-        raw_object="SZ_Trade",
-        pm=PathManager(tmp_path),
-    )
-
-    assert downloaded_path is None
-    assert ftp.is_closed is True
-    assert logger.warning_messages == [
-        "⚠️ Level-2 remote directory; reason=empty trade_date=2026-07-20"
-    ]
+def test_changed_cloud_size_prevents_download(broker: Level2Broker, tmp_path: Path) -> None:
+    record = RemoteRawRecord("SZ_Trade.csv.7z", 4, "/level2/2026-09-21/SZ_Trade.csv.7z")
+    with pytest.raises(RuntimeError, match="size changed"):
+        broker.download(record=record, destination=tmp_path / record.payload)
+    assert all(json.loads(line)[0] == "meta" for line in (tmp_path / "calls").read_text().splitlines())

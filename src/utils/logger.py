@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Protocol
 
 from loguru import logger as logs
 
@@ -13,14 +12,6 @@ _CLI_LOG_FORMAT = (
     "<cyan>{name}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>"
 )
 _SYSTEM_LOG_FORMAT = "{time:YYYY-MM-DD HH:mm:ss} | {level} | {message}"
-
-
-class ProcessLogger(Protocol):
-    """Accept an already formatted operational info message."""
-
-    def info(self, message: str) -> None:
-        """Record one informational message."""
-        ...
 
 
 def configure_cli_logging() -> None:
@@ -68,7 +59,6 @@ def configure_system_logging(
 
 
 __all__ = [
-    "ProcessLogger",
     "configure_cli_logging",
     "configure_system_logging",
     "logs",
