@@ -115,6 +115,20 @@ response 仍按单日保存。Broker 不改变正式 processed 字段。
 `sh_trade` 与 `sz_trade` 的字段和 index 由
 [`docs/data/level2_normalization.md`](level2_normalization.md) 所有。
 
+### 已下载 Level-2 文件的人工入库
+
+同一 broker 改以百度网盘交付后，已下载的三份 source-native 文件继续使用上述 source
+identity 和 `raw/level2_ftp/` 命名空间；`level2_ftp` 在这里是既有本地 broker 身份，
+不说明本次文件通过 FTP 获取。人工入库以明确的交易日、输入目录和 storage root 为边界，
+保留 `SH_Stock_OrderTrade.csv.7z`、`SZ_Order.csv.7z`、`SZ_Trade.csv.7z` 原始字节，
+按存储 owner 提交 raw Meta，再由现有 `FactMaterializeStep` 复用 raw 执行 normalize。
+`SZ_Order` 仍为 raw-only；两个 trade 输出固定为 `v1`，保持原有 schema、symbol slices
+和直接 raw lineage。解压仍经唯一流式 CSV7Z reader，不产生中间 CSV。
+
+本边界不建立百度网盘自动下载器、不连接 NATS/ClickHouse，也不修改现有 FTP adapter、
+Job API 或日常 workflow 的下载选择。broker 网站字段字典是 source 说明，新的 CSV
+编码映射和单位边界由[标准化 owner](level2_normalization.md)定义。
+
 ### 已知 Level-2 源端缺失
 
 | broker | source_name | raw_object | trade_date | 观测结果 |
