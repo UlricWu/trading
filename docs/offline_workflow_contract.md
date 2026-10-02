@@ -167,7 +167,7 @@ Instrumentation 衡量 workflow 显式组装的 step，返回 `step.run(context)
 
 ```text
 CalendarMaterializeStep, FactMaterializeStep, FeatureBuildStep, LabelBuildStep,
-Level2MinuteBuildStep, Stock1430MaterializeStep, Stock1430DailyMaterializeStep,
+Level2FactMaterializeStep, Level2MinuteBuildStep, Stock1430MaterializeStep, Stock1430DailyMaterializeStep,
 Stock1430DailyL2MaterializeStep,
 DatasetBuildStep, PreprocessStep, ModelTrainStep, ICEvaluateStep,
 ArtifactPersistStep, SignalStep, SignalEvalStep, TradableAlphaEvalStep,
@@ -226,8 +226,8 @@ Level-2 不组装通用 `FeatureBuildStep` 或 `LabelBuildStep`；分钟与 H03 
 
 Tushare manifest 是受代码审查的执行清单，不通过配置、Broker 反射或 capability provider
 动态展开。Level-2 配置则只表达文件 identity、启停和输出映射。除 calendar 外的所选
-source 在 workflow 准备阶段转换为完整 `SourceConfig` 后直接绑定到
-`FactMaterializeStep`；固定的 Tushare calendar 由 `CalendarMaterializeStep` 按年度对象
+source 在 workflow 准备阶段转换为完整 `SourceConfig`，Standard 绑定到
+`FactMaterializeStep`，Level-2 绑定到 `Level2FactMaterializeStep`；固定的 Tushare calendar 由 `CalendarMaterializeStep` 按年度对象
 直接承担。
 
 每个 Fact Step 的所选 source 属于同一个 broker。Workflow 拥有 source 非空、source family
@@ -236,14 +236,14 @@ source 在 workflow 准备阶段转换为完整 `SourceConfig` 后直接绑定�
 Level-2 facts 固定使用 `Level2Broker`；normalize callable 遵循 source owner 的固定对应关系。
 Step 接收已绑定的零参数 `get_broker` callable 与 `normalize_operation`，不接收
 AppConfig、broker class 或 adapter cache，也不重复检查这些已建立的关系；正确绑定由
-workflow 装配测试验证。Calendar 的 callable 返回可用的 `TushareBroker`，Fact 的 callable
-返回当前 family 的可用 `BrokerAdapter`。
-`outputs=[]` 的 source 只执行 raw ingest，不调用已绑定的 normalize callable。
+workflow 装配测试验证。Calendar 和 Standard Fact 的 callable 返回 `TushareBroker`，
+Level-2 Fact 的 callable 返回 `Level2Broker`。
+Level-2 `outputs=[]` 的 source 仅存云端，不执行本地 ingest 或 normalize。
 
-Broker adapter 在首次 raw Meta miss 时才构造，并按 broker 在整个 workflow 内缓存一次。
+Broker adapter 在首次需要来源 I/O 时才构造，并按 broker 在整个 workflow 内缓存一次。
 `src/workflows` 的 private `_get_broker` 唯一实现实例查询、构造及成功后的缓存写入；
 workflow 使用 `functools.partial` 绑定具体 class、AppConfig 和本次运行独有的 cache，
-把零参数 callable 交给 Step。Calendar 与 Fact 只在 raw Meta miss 后调用该能力，不再自行
+把零参数 callable 交给 Step。Calendar 与 Standard Fact 只在 raw Meta miss 后调用该能力，不再自行
 构造或管理实例。同一 workflow 中每个 broker 名称绑定同一 class 与配置，Standard 的
 Calendar 与 Fact 因而复用同一 Tushare 实例。构造异常原样传播且不写入缓存；不同 workflow
 运行不共享实例。全 Meta hit 不调用供给能力、不构造 adapter。一次 fetch 仍可拥有自己的
@@ -254,27 +254,40 @@ callable。
 的一次 `run` 中按自然年升序复用或物化完整 `[start, end]` 所需的 `trade_calendar` 年度
 对象，再通过同一个 Access 把正式交易日写入 Context。随后：
 
-- `FactMaterializeStep` 在自己的一次 `run` 中对每个正式交易日执行所选 fact source 的
+- Standard 的 `FactMaterializeStep` 在自己的一次 `run` 中对每个正式交易日执行所选 fact source 的
   ingest 与 normalize；
 - 休市日不执行 fact；只包含休市日的范围成功。
 
-单个日期 ingest 必须尝试全部 selected fact source。已有 raw Meta 与本次成功提交的 raw
+Standard 单个日期 ingest 必须尝试全部 selected fact source。已有 raw Meta 与本次成功提交的 raw
 对象都表示可用。Ingest 保留命中时取得的 `MetaRecord`；新下载直接使用 Broker 返回的 raw
 路径提交 Meta，并取得该记录。成功返回按 `source_name` 对应的全部 raw 记录，全部无
 payload 返回空映射，部分可用必须在尝试完全部 source 后抛 `RuntimeError`。同一次日期
 执行的 normalize 直接消费这些记录，不为每个 output 再读取同一 raw Meta；只有 processed
 Meta miss 才选择物理输入，同一 source 的多个 output 复用本次选定的输入路径。发布边界
-仍按存储契约校验并记录直接 upstream。两个 kind 的任一正式交易日全部 fact source 缺失
+仍按存储契约校验并记录直接 upstream。Standard 的任一正式交易日全部 fact source 缺失
 都必须失败；
 `FactMaterializeStep` 必须完成范围内所有正式交易日的尝试后，一次报告全部缺失日期。不得
 返回 workflow 级 skipped 或跳过缺失日期。只包含休市日、因而没有正式交易日的范围成功。
+
+Level-2 按日期、source 逐个处理有输出的来源：先校验 processed Meta 与 symbol slices；
+全部命中时不构造网盘客户端、不要求本地 cache。仅对 miss 准备 raw：复用已登记网盘
+记录，或查询来源并提交 raw Meta；复用同尺寸完整 cache，否则从确切网盘路径下载。
+迁移前的本地 raw、以及已登记网盘但尚未清理的同尺寸本地 raw 可以直接作为输入。
+随后调用既有 normalizer，先发布非空逐笔 payload 再提交带 symbol slices 和 raw upstream
+的 Meta。不新增格式映射，不改变分钟、Feature、Label 的 schema 或成熟日期。
+
+日期内逐个发布，部分成功保留；明确缺失的 source 汇总为 `source@date`，范围结束后
+失败。认证、传输、Meta、解压及标准化错误立即传播。产生了新逐笔对象且当日所选来源
+均可用后，按[存储 owner](data/storage_layout.md#level-2-网盘-raw-与本地缓存)清理旧 cache；
+全 processed hit 不因清理而访问网盘。下载、标准化与清理共用 Level-2 cache 锁，避免并发
+Job 在转换期间删掉 raw；Standard 的流程不取此锁。
 
 Calendar 的 `_materialize_year` 按顺序显式执行：复用合格 processed 年度对象并返回；通过
 `_ensure_raw_calendar` 复用或获取 raw 日历并保证 raw Meta 已提交；调用 `normalize_tushare`
 得到标准表；发布 processed 分区。年度 ingest、raw Meta 和直接 raw 输入选择由
 `_ensure_raw_calendar` 拥有，成功时返回 raw payload 路径。只有 processed Meta miss 才执行
 raw 准备和 normalize，raw Meta hit 也必须经过共享发布边界的输出非空检查。Broker 对空响应
-的拒绝继续发生在 raw 写入前。Fact 的对应责任由 `FactMaterializeStep` 直接承担。
+的拒绝继续发生在 raw 写入前。Standard Fact 的对应责任由 `FactMaterializeStep` 直接承担。
 两个 Step 共享 workflow 的 lazy broker adapter cache。仅当某日全部所选 fact source 可用
 时才 normalize；不得拆分独立 ingest/normalize Pipeline Step，也不得引入 Materializer 或
 其他转发对象。
@@ -282,7 +295,7 @@ raw 准备和 normalize，raw Meta hit 也必须经过共享发布边界的输�
 Calendar 的 processed 分区结果由 Calendar Step 记录，`who` 精确携带
 `calendar; calendar_year=<year> output=<payload_path>`；raw Meta hit 继续由 Calendar
 记录 `♻️ calendar raw meta hit`。Step 成功后以 `✅ calendar materialize` 只聚合 years 与
-trade_dates，不再为日志累计 reused/published。Fact 不记录逐日
+trade_dates，不再为日志累计 reused/published。Standard Fact 不记录逐日
 ingest/normalize start 或 finish；每个 raw 与 processed Meta hit 分别记录 `♻️ raw meta hit`
 与 `♻️ processed meta hit`。每个实际 raw ingest 记录 `✅ raw ingest` 及其 elapsed_seconds；
 每个 processed publish 记录 `✅ processed publish` 及其中 normalize_seconds；不可用 source
@@ -314,7 +327,7 @@ Calendar 的 `_materialize_year` 无返回值；各 Step 的 `run` 返回原 `Da
 
 Standard 的显式 step 顺序固定为 calendar materialize → fact materialize → feature build →
 label build，derived operation 来自 enabled 配置。Level-2 固定为 calendar materialize →
-fact materialize → `Level2MinuteBuildStep` → `Stock1430DailyMaterializeStep`。每个 Step
+`Level2FactMaterializeStep` → `Level2MinuteBuildStep` → `Stock1430DailyMaterializeStep`。每个 Step
 完成整个请求范围后才进入下一 Step，Pipeline 只执行 workflow 传入的单一 tuple，不知道
 也不校验这些领域顺序。
 

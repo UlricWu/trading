@@ -221,7 +221,7 @@ archive 中的其他 member；有效 member 不存在时必须按缺少 CSV head
 
 生产代码不得执行 `7zz t`、`7za t`、`7z t` 等完整 archive 校验。
 
-raw ingest 只提交已存在 payload 的对象级 meta，不通过 7z CLI 预先证明 archive 可以
+Raw Meta 按存储 owner 校验并登记本地或云端来源，不通过 7z CLI 预先证明 archive 可以
 完整解压。后续流式读取发生解压、读取或子进程失败时，流程必须直接失败。
 
 ### Reader API、资源与错误边界
@@ -250,52 +250,30 @@ note 的精确文字不属于契约，但必须指出失败对象和原因。
 并验证精确 member、流式读取和退出码。普通单元测试不得根据宿主环境有无 `7zz` 改变
 覆盖范围。
 
-### FTP transport 与下载进度
+### 百度网盘 transport
 
-Level-2 FTP transport 由 `src.data_system.brokers.level2.Level2Broker` 拥有，包括 endpoint、
-session、远端目录和文件选择、`.part` 续传、大小校验、staging 发布及资源释放。
-`src.utils.download_utils.DownloadProgress` 只累计字节并记录进度，不发起网络请求、不拥有
-文件、不执行重试或发布。调用方必须显式提供 logger；monotonic clock 可以注入以支持
-可重复测试。
+Level-2 历史及未来 raw 只通过 `Level2Broker` 调用已登录的 `BaiduPCS-Go v4.0.2`
+读取百度网盘，不再支持 FTP。凭证由客户端管理，仓库不读取或记录客户端凭证。
+配置显式指定可执行文件、候选远端路径模板和近期缓存日期数。元信息命令的文本解析
+只在 broker 边界进行；只有明确的文件不存在（31066）表示缺失，其他错误必须失败。
 
-当前唯一 backend 是 Python 标准库 `ftplib`，配置必须显式选择 `ftplib`。一次 fetch 使用
-两个独立 session：15 秒 control probe 用于翻译本机 route、TUN、proxy 或 firewall 导致的
-连接超时；1500 秒下载 session 执行 login、目录查询、size 和 `retrbinary()`。两个 session
-在成功、no-data 和失败路径都必须关闭，连接或登录失败时也不得泄漏创建中的 session。
+下载使用 `download --saveto <分区/.download> --nocheck --ow -p 20 -l 1`，续传由客户端
+管理。完成时必须检查客户端完成状态和精确字节数，随后 fsync 并原子移动至
+`PathManager.staging_payload(...)`。失败保留临时文件供重跑续传，不能因为预分配文件
+恰好同尺寸就把未完成下载当作成功。完整 cache 同尺寸时可直接复用。
+不计算 SHA-256 或其他全文件 hash，不执行额外 archive test，也不再复制完整文件到 raw。
+实际流式解压、CSV 解析和标准化错误继续传播。
 
-下载目标必须先由 `PathManager.staging_payload(...)` 生成，并使用同目录
-`<payload>.part -> <payload>`：
-
-- 远端 size 必须是正整数；缺失、非整数或空文件必须失败；
-- 已有 staging 与远端同尺寸时直接复用；已有 staging 小于远端且不存在 `.part` 时，移动
-  为 `.part` 后续传；
-- `.part` 与远端同尺寸时直接发布；大于远端时删除并重新下载；
-- `retrbinary(..., rest=offset)` 从 `.part` 大小继续，block size 固定为 1 MiB；
-- 每个 chunk 必须先写入 `.part`，再更新 `DownloadProgress`；
-- 完整 payload 必须 flush、fsync、严格校验 size、原子替换 staging，并 fsync staging 目录；
-- 下载失败时保留非空 `.part`，清理空 `.part`；
-- 只有全部预期字节已经落地时，FTP control response 收尾 timeout 才能在 fsync 和严格
-  size 校验后视为完成。
-
-staging 到 raw 的复制不属于 FTP transport；`Level2Broker` 在下载完成后调用
-`FileSystem.copy_file_atomic(staging, raw)`。只有 source adapter 可以把远端日期目录 FTP
-`550`、空目录或期望文件不存在翻译为 `None`。认证、连接、timeout、size、同名多匹配、
-写入或最终 size mismatch 必须失败。
-
-FTP transport 和进度日志直接以动作或状态开头，可以记录日期、文件名、backend、size
-和进度，不得记录密码、token 或完整凭证。
-Broker 测试拥有文件选择、续传、staging/raw 发布、no-data、失败和 session 释放边界；
-`DownloadProgress` 测试拥有间隔、百分比、速度、ETA、未知总量、单位和参数拒绝边界。
+下载日志只输出日期、文件名、大小及状态，不转发可能含临时签名链接的客户端输出。
+Broker 测试覆盖远端选择、缺失、认证错误、断点状态、字节数和原子发布。
 
 ### Normalize 的物理输入选择
 
-Normalize 的正式输入身份和 lineage 始终来自已提交的 raw Meta。为避免 Level-2 大文件
-从较慢介质重复读取，normalize 可以构造同 broker、source、trade date 和 payload
-basename 的 staging candidate；仅当 candidate 是普通文件且字节数与正式 raw payload
-完全相同时，才读取 staging。Candidate 不存在或字节数不同时必须读取正式 raw。
-
-该选择只比较 size，不执行 hash、逐字节或 archive 内容校验，也不把 staging 写入
-lineage。实际读取、解压或解析失败必须继续传播，不得回退后把损坏输入伪装成成功。
+Level-2 Normalize 的 lineage 来自已提交的网盘 raw Meta，物理输入是同身份、同尺寸的
+staging cache。缺少 cache 时按 Meta 中的确切远端路径下载；下载前重查远端尺寸，
+不符即失败，不能静默替换 lineage。迁移前的本地 raw 仍按原 Meta 校验和读取；已登记
+网盘但尚未清理的同尺寸本地 raw 也可复用，避免迁移期间重复下载。
+Tushare 的本地 raw 与标准化流程不变。缓存保留和清理由存储 owner 定义。
 
 ### Arrow codec 的适用边界
 

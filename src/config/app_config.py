@@ -84,10 +84,6 @@ class AppConfig(BaseModel):
                 "environment": environment,
                 "storage_root": Path(os.environ["ZERO_STORAGE_ROOT"]),
                 "secret": {
-                    "ftp_host": env_values.get("FTP_HOST"),
-                    "ftp_port": env_values.get("FTP_PORT"),
-                    "ftp_user": env_values.get("FTP_USER"),
-                    "ftp_password": env_values.get("FTP_PASSWORD"),
                     "tushare_token": env_values.get("TUSHARE_TOKEN"),
                     "tushare_gateway": env_values.get("TUSHARE_GATEWAY"),
                 },

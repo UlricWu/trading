@@ -16,7 +16,6 @@ from src.config.app_config import AppConfig
 from src.config.data_config import (
     BrokerConfig,
     DataConfig,
-    DownloadBackend,
     FeatureSetConfig,
     LabelSetConfig,
     SourceConfig,
@@ -55,8 +54,9 @@ def _app_config() -> AppConfig:
             brokers={
                 "tushare": BrokerConfig(),
                 "level2_ftp": BrokerConfig(
-                    remote_root="level2",
-                    ftp_backend=DownloadBackend.FTPLIB,
+                    baidupcs_go="BaiduPCS-Go",
+                    remote_path_templates=("/level2/{date}/{file}",),
+                    raw_cache_days=5,
                 ),
             },
             sources={
@@ -88,7 +88,7 @@ def test_level2_workflow_publishes_current_feature_and_previous_session_label(
     )
     for name in (
         "CalendarMaterializeStep",
-        "FactMaterializeStep",
+        "Level2FactMaterializeStep",
         "Level2MinuteBuildStep",
     ):
         step = Mock()
@@ -196,7 +196,7 @@ def test_data_workflow_supplies_one_linear_domain_step_sequence(
         type(step).__name__ for step in pipeline_factory.call_args.kwargs["steps"]
     ] == [
         "CalendarMaterializeStep",
-        "FactMaterializeStep",
+        "FactMaterializeStep" if kind == "data-standard" else "Level2FactMaterializeStep",
     ] + derived_steps
     pipeline.run.assert_called_once()
     context = pipeline.run.call_args.args[0]
@@ -220,7 +220,11 @@ def test_workflow_supplies_lazy_brokers_shared_per_broker_and_isolated_per_run(
     calendar_factory = Mock()
     fact_factory = Mock()
     monkeypatch.setattr(workflow_module, "CalendarMaterializeStep", calendar_factory)
-    monkeypatch.setattr(workflow_module, "FactMaterializeStep", fact_factory)
+    monkeypatch.setattr(
+        workflow_module,
+        "FactMaterializeStep" if kind == "data-standard" else "Level2FactMaterializeStep",
+        fact_factory,
+    )
     monkeypatch.setattr(workflow_module, "DataPipeline", Mock())
     calendar_brokers = []
     fact_brokers = []
@@ -348,7 +352,7 @@ def test_level2_sources_come_only_from_enabled_file_config(
     monkeypatch.setattr(workflow_module, "DataPipeline", Mock(return_value=pipeline))
     monkeypatch.setattr(
         workflow_module,
-        "FactMaterializeStep",
+        "Level2FactMaterializeStep",
         fact_step_factory,
     )
 

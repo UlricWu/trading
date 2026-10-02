@@ -864,10 +864,6 @@ sudoedit /home/wsw/app/shared/trading/.env.test
 内容结构如下，等号右侧替换为真实值：
 
 ~~~dotenv
-FTP_HOST=replace-me
-FTP_PORT=21
-FTP_USER=replace-me
-FTP_PASSWORD=replace-me
 TUSHARE_TOKEN=replace-me
 TUSHARE_GATEWAY=
 ~~~
@@ -1143,7 +1139,7 @@ git -C /home/wsw/app/code/trading status --short --branch
 恢复；worker 已经启动了它，所以这里只需 <code>enable</code>，不必重复 restart。
 
 前面的 Python 命令只验证 <code>.env.test</code> 能被当前配置 schema 安全加载，不打印
-字段值，也不连接 FTP 或 Tushare。它是首次凭证配置检查，不属于每次部署的 health 成功
+字段值，也不连接百度网盘或 Tushare。它是首次凭证配置检查，不属于每次部署的 health 成功
 语义；health 有意只证明 API 进程和 release identity。
 
 #### 3.10.1 旧 raw Meta 的数据任务 Gate

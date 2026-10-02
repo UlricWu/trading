@@ -32,9 +32,9 @@ Feature 与 label 配置不使用 source group；其固定身份与字段语义�
 Broker implementation 的选择与绑定由
 [`docs/offline_workflow_contract.md`](../offline_workflow_contract.md) 所有。Broker name
 保留配置引用和 source identity 语义。运行时不得建立可变 register/freeze registry。
-Raw Meta hit 前不得构造 broker adapter；首次 miss 时构造并在同一 workflow 内按 broker 复用。
+仅在需要来源 I/O 时构造 broker adapter，并在同一 workflow 内按 broker 复用。
 
-单日下载能力的调用形式为：
+Tushare 单日下载能力的调用形式为：
 
 ```python
 payload_path: Path | None = broker.fetch(
@@ -49,7 +49,7 @@ payload_path: Path | None = broker.fetch(
 `name` 提供，source-native payload basename 由 Broker 确定。成功时直接返回已经写完的
 正式 raw payload 路径；返回路径不表示 Meta 已提交，raw Meta 仍由 Step 提交。调用方不再
 传递或接收 `DownloadPlan`，也不根据下载结果重新拼装 raw 路径。`None` 只表达本 owner
-及 FTP transport owner 定义的源端无数据，不表达请求、文件写入或其他执行失败。
+定义的源端无数据，不表达请求、文件写入或其他执行失败。
 
 Broker 到 normalize callable 的关系固定为：
 
@@ -114,6 +114,25 @@ response 仍按单日保存。Broker 不改变正式 processed 字段。
 
 `sh_trade` 与 `sz_trade` 的字段和 index 由
 [`docs/data/level2_normalization.md`](level2_normalization.md) 所有。
+
+### 百度网盘交付与按需下载
+
+历史及未来交付全部使用百度网盘，保留既有 `level2_ftp` 本地 broker identity 与路径；
+名称不再表示 FTP transport。`outputs=[]` 的 `SZ_Order` 仅在网盘长期保存，不作为日常
+入库前置条件，不下载、不解压。两个 trade 输出仍固定为 `v1`，沿用已合并的旧格式和
+百度新格式标准化映射、symbol slices 及直接 raw lineage。
+
+`data.brokers.level2_ftp` 显式配置 `baidupcs_go` 可执行文件、`remote_path_templates`
+有序候选列表和 `raw_cache_days`（正整数，默认配置 5）。模板只接受 `{month}`
+（YYYY-MM）、`{date}`、`{file}`，必须含日期及文件名，展开为绝对路径。当前配置依次为
+`/wsw/level2_data/{month}/{date}-New/{file}`、普通日期目录、根下补录日期目录。
+首次入库选择第一个存在的文件；迁移既有 raw 则只选择与原记录同尺寸的候选。
+
+`Level2Broker.locate()` 返回网盘来源记录或明确缺失，`describe()` 查询一个确切路径，
+`download()` 只准备本地压缩 cache。Meta 发布、processed 复用和缓存生命周期由工作流
+及存储 owner 拥有。传输采用[技术栈决策](../engineering/technology_stack_decisions.md)
+指定的客户端，认证与传输失败不得转为缺失；不连接 NATS/ClickHouse。
+broker 字段编码及单位由[标准化 owner](level2_normalization.md)定义。
 
 ### 已知 Level-2 源端缺失
 

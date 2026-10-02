@@ -107,6 +107,7 @@ def test_normalize_level2_retains_sz_commercial_reits(
     raw_table = pa.table(
         {
             "TradeTime": ["2026-09-03 09:30:00.000"] * 3,
+            "ExchangeID": ["2"] * 3,
             "SecurityID": ["181001", "000001", "181999"],
             "TickTime": ["93000000"] * 3,
             "TradePrice": ["3.0", "10.0", "2.0"],
@@ -141,6 +142,127 @@ def test_normalize_level2_retains_sz_commercial_reits(
         "181001": range(1, 2),
         "181999": range(2, 3),
     }
+
+
+def _baidu_trade_table(exchange: str) -> pa.Table:
+    is_sh = exchange == "sh"
+    symbol = "600000" if is_sh else "000001"
+    return pa.table(
+        {
+            "TradeTime": ["2026-09-21 not-used-as-event-time"] * 8,
+            "ExchangeID": [exchange.upper()] * 8,
+            "SecurityID": [symbol] * 8,
+            "TickTime": [
+                "093000123", "093000122", "093000122", "092500000",
+                "093000124", "002607540", "093000125", "093000126",
+            ],
+            "TickType" if is_sh else "ExecType": [
+                "T" if is_sh else "F",
+                "T" if is_sh else "F",
+                "T" if is_sh else "F",
+                "T" if is_sh else "P",
+                "D" if is_sh else "4",
+                "S", "T" if is_sh else "F", "T" if is_sh else "F",
+            ],
+            "Price" if is_sh else "TradePrice": [
+                "10.3000", "10.1000", "10.1000", "10.0000",
+                "10.0000", "0.0000", "0.0000", "10.0000",
+            ],
+            "Volume" if is_sh else "TradeVolume": ["100"] * 7 + ["0"],
+            "Side": ["S", "B", "B", "N", "B", "S", "B", "B"],
+            "MainSeq": ["11", "9", "9", "1", "30", "31", "40", "41"],
+            "SubSeq": ["0"] * 8,
+            "BuyNo": ["91662"] * 8,
+            "SellNo": ["4820"] * 8,
+            "LocalTimeStamp": ["2026-09-21 09:31:00.999"] * 8,
+        }
+    )
+
+
+@pytest.mark.parametrize("exchange", ["sh", "sz"])
+def test_normalize_baidu_delivery_preserves_milliseconds_and_source_multiplicity(
+    exchange: str,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    raw_table = _baidu_trade_table(exchange)
+    monkeypatch.setattr(
+        level2_module,
+        "open_csv7z_batches",
+        lambda _: nullcontext(iter(raw_table.to_batches(max_chunksize=3))),
+    )
+    raw_object = "SH_Stock_OrderTrade" if exchange == "sh" else "SZ_Trade"
+    output = normalize_level2(
+        input_file=tmp_path / f"{raw_object}.csv.7z",
+        output_name=tmp_path / "data.parquet",
+        raw_object=raw_object,
+        target_name=f"{exchange}_trade",
+        trade_date="2026-09-21",
+    )
+
+    symbol = "600000" if exchange == "sh" else "000001"
+    assert output.symbol_slices == {symbol: range(0, 4)}
+    assert output.table["symbol"].to_pylist() == [symbol] * 4
+    assert output.table["ts_utc"].to_pylist() == [
+        DateTimeUtils.local_time_to_utc_epoch_us(local_time, date(2026, 9, 21))
+        for local_time in [time(9, 25), time(9, 30, 0, 122000),
+                           time(9, 30, 0, 122000), time(9, 30, 0, 123000)]
+    ]
+    assert output.table["event"].to_pylist() == ["TRADE"] * 4
+    assert output.table["main_seq"].to_pylist() == [1, 9, 9, 11]
+    assert output.table["sub_seq"].to_pylist() == [0] * 4
+    assert output.table["order_id"].to_pylist() == [0] * 4
+    assert output.table["price"].to_pylist() == [10.0, 10.1, 10.1, 10.3]
+    assert output.table["volume"].to_pylist() == [100] * 4
+    assert output.table["buy_no"].to_pylist() == [91662] * 4
+    assert output.table["sell_no"].to_pylist() == [4820] * 4
+    assert output.table["side"].to_pylist() == (
+        [None, "B", "B", "S"] if exchange == "sh" else [None] * 4
+    )
+    assert output.table["security_type"].to_pylist() == ["stock"] * 4
+    assert output.table["phase"].to_pylist() == [
+        int(MarketPhase.AUCTION), *([int(MarketPhase.CONTINUOUS)] * 3)
+    ]
+    assert output.table["notional"].to_pylist() == [1000.0, 1010.0, 1010.0, 1030.0]
+    assert output.table["trade_side"].to_pylist() == [0, 1, 0, 1]
+    assert output.table.schema == pa.schema(
+        list(_EXPECTED_SCHEMA)
+        + [pa.field("security_type", pa.string()), pa.field("phase", pa.int8()),
+           pa.field("notional", pa.float64()), pa.field("trade_side", pa.int8())]
+    )
+
+
+@pytest.mark.parametrize("tick_time", ["0930001234", "240000000", "126000000", "093000.12"])
+def test_parse_baidu_delivery_rejects_invalid_millisecond_time(tick_time: str) -> None:
+    table = _baidu_trade_table("sh").slice(0, 1)
+    table = table.set_column(table.column_names.index("TickTime"), "TickTime", [pa.array([tick_time])])
+    with pytest.raises(ValueError):
+        parse_level2_trade_batch(table, spec=_sh_spec(), trade_date="2026-09-21")
+
+
+@pytest.mark.parametrize("exchange_id", ["SZ", "2", None, "unknown", 1])
+def test_parse_rejects_wrong_source_encoding(exchange_id: str | int | None) -> None:
+    table = _baidu_trade_table("sh").slice(0, 1)
+    table = table.set_column(
+        table.column_names.index("ExchangeID"), "ExchangeID", [pa.array([exchange_id])],
+    )
+    with pytest.raises((ValueError, TypeError), match="ExchangeID"):
+        parse_level2_trade_batch(table, spec=_sh_spec(), trade_date="2026-09-21")
+
+
+def test_parse_requires_source_encoding() -> None:
+    table = _baidu_trade_table("sh").drop_columns(["ExchangeID"])
+    with pytest.raises(ValueError, match="ExchangeID"):
+        parse_level2_trade_batch(table, spec=_sh_spec(), trade_date="2026-09-21")
+
+
+def test_parse_rejects_mixed_source_encodings() -> None:
+    table = _baidu_trade_table("sh").slice(0, 2)
+    table = table.set_column(
+        table.column_names.index("ExchangeID"), "ExchangeID", [pa.array(["1", "SH"])],
+    )
+    with pytest.raises(ValueError, match="ExchangeID"):
+        parse_level2_trade_batch(table, spec=_sh_spec(), trade_date="2026-09-21")
 
 
 def test_normalize_level2_emits_rate_limited_operational_progress(
@@ -215,6 +337,7 @@ def sh_trade_table() -> pa.Table:
                 "2025-11-10 09:15:00.05",
             ],
             "SecurityID": ["803", "2936", "2936", "609", "300007"],
+            "ExchangeID": ["1"] * 5,
             "TickTime": ["9150004", "9150004", "9150004", "9150005", "9150005"],
             "TickType": ["T", "T", "T", "T", "T"],
             "Price": ["1.0", "1.0", "1.0", "1.0", "1.0"],
@@ -237,6 +360,7 @@ def sz_trade_table() -> pa.Table:
                 "2025-11-03 06:00:00.15",
             ],
             "SecurityID": ["751028", "751900"],
+            "ExchangeID": ["2"] * 2,
             "TickTime": ["60000150", "60000150"],
             "TradePrice": ["1.0", "2.0"],
             "TradeVolume": ["100", "200"],
@@ -428,6 +552,7 @@ def test_parse_keeps_only_positive_trade_rows() -> None:
     table = pa.table(
         {
             "TradeTime": ["2025-11-03 09:30:00.1"] * 4,
+            "ExchangeID": ["2"] * 4,
             "SecurityID": ["000001", "000002", "000003", "000004"],
             "TickTime": ["93000000", "93000001", "93000002", "93000003"],
             "TradePrice": ["10.0", "10.0", "0.0", "10.0"],

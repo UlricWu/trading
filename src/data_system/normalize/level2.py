@@ -251,6 +251,7 @@ def parse_level2_trade_batch(
 
     required_fields = (
         "TradeTime",
+        "ExchangeID",
         spec.symbol_field,
         spec.time_field,
         spec.event_field,
@@ -269,14 +270,36 @@ def parse_level2_trade_batch(
     )
     _require_trade_time_date(table["TradeTime"], trade_date=trade_date)
 
+    exchange_ids = table["ExchangeID"]
+    if not pa.types.is_string(exchange_ids.type):
+        raise TypeError("ExchangeID must be a string column")
+    source_codes = pc.unique(exchange_ids).to_pylist()
+    legacy_code = "1" if spec.exchange == "sh" else "2"
+    if len(source_codes) != 1 or source_codes[0] not in (
+        legacy_code,
+        spec.exchange.upper(),
+    ):
+        raise ValueError(
+            f"ExchangeID must contain one {spec.exchange.upper()} source encoding: "
+            f"{source_codes!r}"
+        )
+    is_baidu_delivery = source_codes[0] == spec.exchange.upper()
+    event_mapping = spec.event_mapping
+    side_mapping = spec.side_mapping
+    if is_baidu_delivery:
+        if spec.exchange == "sz":
+            event_mapping = {"F": "TRADE", "P": "TRADE", "4": "CANCEL"}
+        else:
+            side_mapping = {"B": "B", "S": "S"}
+
     event = _map_values_or_null(
         table[spec.event_field],
-        spec.event_mapping,
+        event_mapping,
     )
-    if spec.side_field and spec.side_mapping:
+    if spec.side_field and side_mapping:
         side = _map_values_or_null(
             table[spec.side_field],
-            spec.side_mapping,
+            side_mapping,
         )
     else:
         side = pa.nulls(table.num_rows)
@@ -300,6 +323,7 @@ def parse_level2_trade_batch(
                 table[spec.time_field],
                 trade_date=trade_date,
                 exchange=spec.exchange,
+                source_width=9 if is_baidu_delivery or spec.exchange == "sz" else 8,
             ),
             "event": event,
             "order_id": sub_seq,
@@ -497,6 +521,7 @@ def _exchange_time_to_utc_epoch_us(
     *,
     trade_date: str,
     exchange: Literal["sh", "sz"],
+    source_width: Literal[8, 9],
 ) -> pa.Array | pa.ChunkedArray:
     source_name = f"{exchange.upper()} TickTime"
     if not pa.types.is_string(values.type):
@@ -504,8 +529,7 @@ def _exchange_time_to_utc_epoch_us(
     if values.null_count:
         raise ValueError(f"{source_name} must not contain null values")
 
-    source_width = 8 if exchange == "sh" else 9
-    precision = "HHMMSScc" if exchange == "sh" else "HHMMSSsss"
+    precision = "HHMMSScc" if source_width == 8 else "HHMMSSsss"
     valid_digits = pc.match_substring_regex(
         values,
         rf"^\d{{1,{source_width}}}$",
@@ -516,7 +540,7 @@ def _exchange_time_to_utc_epoch_us(
         )
 
     canonical_time = pc.utf8_lpad(values, source_width, "0")
-    if exchange == "sh":
+    if source_width == 8:
         canonical_time = pc.binary_join_element_wise(
             canonical_time,
             pa.scalar("0"),

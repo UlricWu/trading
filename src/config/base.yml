@@ -10,8 +10,12 @@ data:
   brokers:
     tushare: {}
     level2_ftp:
-      remote_root: "level2"
-      ftp_backend: "ftplib"
+      baidupcs_go: "/home/wsw/.local/bin/BaiduPCS-Go"
+      remote_path_templates:
+        - "/wsw/level2_data/{month}/{date}-New/{file}"
+        - "/wsw/level2_data/{month}/{date}/{file}"
+        - "/wsw/level2_data/{date}/{file}"
+      raw_cache_days: 5
 
 
   # ----------------------------------
