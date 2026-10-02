@@ -127,9 +127,23 @@ response 仍按单日保存。Broker 不改变正式 processed 字段。
 `sh_trade` 与 `sz_trade` 的字段和 index 由
 [`docs/data/level2_normalization.md`](level2_normalization.md) 所有。
 
+### 已下载 Level-2 文件的人工入库
+
+同一 broker 改以百度网盘交付后，已下载的三份 source-native 文件继续使用上述 source
+identity 和 `raw/level2_ftp/` 命名空间；`level2_ftp` 在这里是既有本地 broker 身份，
+不说明本次文件通过 FTP 获取。人工入库以明确的交易日、输入目录和 storage root 为边界，
+保留 `SH_Stock_OrderTrade.csv.7z`、`SZ_Order.csv.7z`、`SZ_Trade.csv.7z` 原始字节，
+按存储 owner 提交 raw Meta，再由现有 `FactMaterializeStep` 复用 raw 执行 normalize。
+`SZ_Order` 仍为 raw-only；两个 trade 输出固定为 `v1`，保持原有 schema、symbol slices
+和直接 raw lineage。解压仍经唯一流式 CSV7Z reader，不产生中间 CSV。
+
+本边界不建立百度网盘自动下载器、不连接 NATS/ClickHouse，也不修改现有 FTP adapter、
+Job API 或日常 workflow 的下载选择。broker 网站字段字典是 source 说明，新的 CSV
+编码映射和单位边界由[标准化 owner](level2_normalization.md)定义。
+
 <a id="level2-data-status"></a>
 
-### Level-2 缺失情况与异常处理（2026-09-22 更新）
+### Level-2 缺失情况与异常处理（2026-10-02 更新）
 
 本节记录已发现问题在正式 `/home/wsw/app/data` 中的处理状态，不改变 source、缺失失败、
 标准化或数据复用契约，也不表示已重新扫描所有历史日期。
@@ -139,11 +153,12 @@ response 仍按单日保存。Broker 不改变正式 processed 字段。
 | `2025-11-25` | `level2_ftp/sz_trade` 的 `SZ_Trade` 源端不可用；沪深逐笔与分钟缺失 | **已补齐**：本地新交付文件已入库，raw、沪深标准化逐笔与分钟可用，正式路径读回校验通过 | [补录记录](../../research/subscription-training/README.md#level2-gap-2025-11-25) |
 | `2025-11-24/25` | 受 `11-25` 分钟缺失影响，H03 Feature/Label 无分区 | **已补齐**：两日 Feature/Label 已生成；各8个逐证券 null Label 符合现行规则，不属于整日分区缺失 | [补录及校验](../../research/subscription-training/README.md#level2-gap-2025-11-25) |
 | `2026-06-08/09` | 旧 `06-09` 三个原始 CSV 除日期外与 `06-08` 全文相同，造成跨日重复 | **已修复**：按新交付数据重建逐笔、分钟及受影响 Feature/Label；原重复窗口已不同，`06-08` 零收益标签由5,106降为0 | [修复与原始文件核验](../../research/subscription-training/README.md#level2-duplicate-2026-06) |
-| `2026-09-21` | broker 新文件的时间、成交编码、序号及部分字段与历史格式不同，现有规则无法完成标准化 | **未入正式库**：用户要求删除该日正式数据；全库核查无该日分区，实际删除0个对象。本批隔离产物不再发布 | [字段对比与清理核查](#level2-format-2026-09-21) |
+| `2026-09-21` | broker 新文件的时间、成交编码、序号及部分字段与历史格式不同，旧规则曾无法完成标准化 | **逐笔已补齐**：2026-10-01 按用户确认的映射和债券时段保存三个 raw，并发布沪深 `v1` 正成交；分钟及派生分区未在本次重建 | [字段对比、历史清理与本次入库](#level2-format-2026-09-21) |
 | `2026-09-18` | H03 Label 依赖下一交易日 `09-21` 的分钟与复权因子，受上述缺口影响未生成 | **Label 缺失**；当日 Feature 分区仍存在 | [依赖与当前状态](#level2-format-2026-09-21) |
 
-`2025-11-25` 相关缺失与 `2026-06-08/09` 重复已处理；`2026-09-21` 及其影响的
-`09-18` Label 缺口仍存在。旧重复文件最初由谁、在哪个生成或转存环节引入仍未确定。
+`2025-11-25` 相关缺失与 `2026-06-08/09` 重复已处理；`2026-09-21` 的 raw 与正成交
+逐笔已补齐，分钟及其影响的 `09-18` Label 缺口仍存在。旧重复文件最初由谁、在哪个
+生成或转存环节引入仍未确定。
 旧实验结论不能自动用于修订后的数据；修订数据上的重验以对应研究卷宗的单独记录为准。
 
 `2025-11-25` 的源端失败作为历史观测保留，本次本地补录没有重新检查 FTP 可用性。
@@ -159,11 +174,13 @@ source unavailable; source=sz_trade broker=level2_ftp trade_date=2025-11-25
 
 <a id="level2-format-2026-09-21"></a>
 
-#### 2026-09-21 字段差异与正式库清理核查
+#### 2026-09-21 字段差异、历史清理与本次入库
 
 本节仅记录数据观测和维护结果，不定义新的标准化映射。用户确认本批仍由同一 broker 提供，
 三个原始逐笔数据先合入数据库，再按日导出。文件位于
 `/home/wsw/Downloads/4564934805_铁皮卡lh/2026-09-21/`。
+以下字段对比及清理核查保留 2026-09-22 当时的结果；当前映射由
+[Level-2 归一化 owner](level2_normalization.md) 定义，最新入库结果见本节末尾。
 
 以 `2026-09-18` 为基准，两日三个正式 source 的原始文件均完整读取，分别为
 **471,322,951 / 527,687,863 行**；六个压缩包完整性校验通过，全部 `TradeTime` 日期前缀
@@ -171,7 +188,7 @@ source unavailable; source=sz_trade broker=level2_ftp trade_date=2025-11-25
 100,000 行抽查，主要编码均与 `09-18` 一致；该抽样不代表这些历史日期的全量质量审计。
 `Index`、`Level2Market` 不在本次比较范围。
 
-| 字段或结构 | `2026-09-18` | `2026-09-21` | 对当前处理的影响 |
+| 字段或结构 | `2026-09-18` | `2026-09-21` | 对当时旧实现的影响 |
 |---|---|---|---|
 | 表头 | 上海16列、深圳订单13列、深圳成交12列 | 列名及顺序完全相同 | 单靠表头检查无法发现以下变化 |
 | `ExchangeID` | 上海 `1`、深圳 `2` | `SH/SZ` | raw 编码变化；当前 processed 交易所由 dataset 路由决定 |
@@ -203,13 +220,13 @@ source unavailable; source=sz_trade broker=level2_ftp trade_date=2025-11-25
 **正式库处理（2026-09-22 15:59:57 +08:00）**：用户明确要求删除 `2026-09-21` 正式数据。
 按[正式存储布局](storage_layout.md)检查 `/home/wsw/app/data` 全部六个顶层命名空间，
 共扫描66,205个目录、132,191个文件；未发现任何 `trade_date=2026-09-21` 分区或符号链接，
-实际删除 **0个对象**。此前构建在隔离目录失败，未发布至正式库；本批入库到此停止。
+实际删除 **0个对象**。此前构建在隔离目录失败，未发布至正式库；该次入库到此停止。
 下载文件与隔离检查证据保留，年度日历、其他日期和实验制品未改动。
 
 `2026-09-18` 的 H03 Feature 分区存在，Label 分区仍缺失；其成熟所需的下一交易日输入是
 `09-21`。依赖关系沿用[日常 Level-2 workflow](../offline_workflow_contract.md)，未用其他日期
-替代，也未将缺失标记为有效空数据。以后重新接入本批数据，需要先核实 broker 的导出字段
-映射，尤其是原通道号是否保留，再确定是否需要修改正式契约；本次未采用新映射。
+替代，也未将缺失标记为有效空数据。当时重新接入前需要核实 broker 的导出字段映射，
+尤其是原通道号是否保留；该次检查未采用新映射。
 
 完整证据目录为
 `/home/wsw/app/maintenance-evidence/level2-2026-09-21-ingest-2026-09-22-lrmjeohq/`，包括
@@ -217,7 +234,25 @@ source unavailable; source=sz_trade broker=level2_ftp trade_date=2025-11-25
 原失败日志 `build.log` 和本次清理核查 `formal-cleanup.json`。新文件指纹与下载时保存的
 SHA-256 一致，统计结果与首次全量检查相符。分析使用保留的
 `46ecdc1dba1a390cf7cfe8560f296cb7fcd0cbbf` 代码快照；环境见 `environment.json`。
-本次只更新维护文档与外置核查记录，未修改标准化实现，未执行 commit、merge、release 或 deploy。
+上述 2026-09-22 检查只更新维护文档与外置核查记录，未修改标准化实现，
+未执行 commit、merge、release 或 deploy。
+
+**本次入库（2026-10-01）**：核实 broker 文档和字段字典后，按用户决定将新 CSV 的
+`MainSeq/SubSeq` 原样保存，仅用于确定性排序，不推断通道或事件唯一性；按
+[归一化 owner](level2_normalization.md) 识别新导出编码并保留沪市毫秒末位，按
+[phase owner](market_phase.md) 补齐本批涉及的深市固收时段。
+三个原压缩文件保持原始字节，正式发布两个 `v1` 正成交对象：沪市 **73,688,684 行、
+3,808 个证券**，深市 **84,932,821 行、4,606 个证券**；`SZ_Order` 仍为 raw-only。
+全量逐行核验、SHA-256、symbol slices、直接 raw lineage 和正式回读均通过，
+311 项相关测试通过。旧 phase 拒绝的 918,965 条正成交全部保留。
+
+本日存在 `501009`、`501028`、`501031` 三个跨市场同码；指定交易所可分别读取，
+未指定交易所的两市合并读取继续按现有 Access 契约失败，不覆盖或拼接同码证券。
+本次未生产分钟、Feature 或 Label。2026-10-02 合并前核查确认该日两市分钟、
+`l2_stock_1430`/`stock_1430_daily_l2` Feature，以及 `2026-09-18` 的
+`l2_stock_1430_t1_vwap_rank` Label 分区仍缺失。
+入库精确输入、代码快照、失败检查与正式发布证据见
+[完成记录](/home/wsw/app/maintenance-evidence/level2-baidu-2026-09-21-2026-10-01-hk6hwrmv/completion.json)。
 
 ## 正式交易日历
 
