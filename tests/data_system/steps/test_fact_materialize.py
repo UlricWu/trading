@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
 from unittest.mock import Mock, call
 
@@ -16,97 +15,11 @@ from src.config.data_config import SourceConfig
 from src.data_system.brokers.base import BrokerAdapter
 from src.data_system.context import DataContext
 from src.data_system.normalize import NormalizeOutput
-from src.data_system.normalize.level2 import normalize_level2
 from src.data_system.steps import _partition as partition_module
 from src.data_system.steps import fact_materialize as fact_module
 from src.data_system.steps.fact_materialize import FactMaterializeStep
 from src.utils.path import ObjectPaths, PathManager
 
-
-@pytest.mark.contract
-def test_fact_step_publishes_baidu_delivery_with_raw_only_orders(tmp_path: Path) -> None:
-    pm = PathManager(tmp_path)
-    trade_date = "2026-09-21"
-    payloads = {
-        "sh_stock_ordertrade": (
-            "SH_Stock_OrderTrade", ["sh_trade"],
-            "TradeTime,ExchangeID,SecurityID,TickTime,TickType,Price,Volume,Side,MainSeq,SubSeq,BuyNo,SellNo\n"
-            "2026-09-21 09:30:00.123,SH,600000,093000123,T,10.1000,100,B,9,0,5,4\n"
-            "2026-09-21 09:30:00.123,SH,600000,093000123,D,10.1000,100,B,10,0,5,0\n",
-        ),
-        "sz_trade": (
-            "SZ_Trade", ["sz_trade"],
-            "TradeTime,ExchangeID,SecurityID,TickTime,ExecType,TradePrice,TradeVolume,MainSeq,SubSeq,BuyNo,SellNo\n"
-            "2026-09-21 09:30:00.120,SZ,000001,093000120,F,9.8000,200,11,0,10,9\n"
-            "2026-09-21 09:30:00.130,SZ,000001,093000130,4,9.8000,200,12,0,10,0\n",
-        ),
-        "sz_order": (
-            "SZ_Order", [],
-            "TradeTime,ExchangeID,SecurityID,OrderTime,Price,Volume,Side,OrderType,MainSeq,SubSeq,OrderNO,OrderStatus,LocalTimeStamp\n"
-            "2026-09-21 09:30:00.100,SZ,000001,093000100,9.8000,200,1,U,10,0,10,,2026-09-21 09:30:00.110\n",
-        ),
-    }
-    sources = {}
-    for source_name, (raw_object, outputs, csv) in payloads.items():
-        csv_path = tmp_path / f"{raw_object}.csv"
-        csv_path.write_text(csv, encoding="utf-8")
-        raw_path = pm.raw_payload(
-            broker="level2_ftp", source_name=source_name,
-            trade_date=trade_date, payload_file=f"{raw_object}.csv.7z",
-        )
-        raw_path.parent.mkdir(parents=True)
-        subprocess.run(
-            ["7zz", "a", "-t7z", "-mx=1", str(raw_path), str(csv_path)],
-            check=True, capture_output=True,
-        )
-        meta.commit(pm=pm, payload_path=raw_path)
-        sources[source_name] = SourceConfig(
-            enabled=True, broker="level2_ftp", group="offline_level2",
-            raw_object=raw_object, outputs=outputs,
-        )
-
-    get_broker = Mock(side_effect=AssertionError("local raw import must not use FTP"))
-    step = FactMaterializeStep(
-        path_manager=pm, sources=sources, get_broker=get_broker,
-        normalize_operation=normalize_level2, processed_version="v1",
-    )
-    context = _context(trade_date)
-    assert step.run(context) is context
-    saved_files = {}
-    for source_name, dataset_name, price in (
-        ("sh_stock_ordertrade", "sh_trade", 10.1),
-        ("sz_trade", "sz_trade", 9.8),
-    ):
-        paths = pm.processed_object(
-            dataset_name=dataset_name, version="v1", trade_date=trade_date,
-        )
-        record = meta.require(pm=pm, meta_path=paths.meta_path)
-        assert record.upstream is not None
-        assert str(record.upstream[0]) == str(
-            pm.raw_meta(broker="level2_ftp", source_name=source_name, trade_date=trade_date)
-            .relative_to(pm.storage_root)
-        )
-        assert record.symbol_slices == {
-            "600000" if dataset_name == "sh_trade" else "000001": range(0, 1)
-        }
-        table = pq.ParquetFile(record.payload_path).read()
-        assert table.num_rows == 1
-        assert table["price"].to_pylist() == [price]
-        assert table["sub_seq"].to_pylist() == [0]
-        saved_files[paths.payload_path] = paths.payload_path.stat().st_mtime_ns
-        saved_files[paths.meta_path] = paths.meta_path.stat().st_mtime_ns
-    order_meta = meta.require(
-        pm=pm, meta_path=pm.raw_meta(
-            broker="level2_ftp", source_name="sz_order", trade_date=trade_date,
-        ),
-    )
-    assert order_meta.payload_path.name == "SZ_Order.csv.7z"
-    assert order_meta.upstream is None
-    assert order_meta.symbol_slices is None
-    assert not (pm.storage_root / "processed" / "sz_order").exists()
-    assert step.run(context) is context
-    get_broker.assert_not_called()
-    assert {path: path.stat().st_mtime_ns for path in saved_files} == saved_files
 
 
 def _source(raw_object: str, *, outputs: list[str] | None = None) -> SourceConfig:

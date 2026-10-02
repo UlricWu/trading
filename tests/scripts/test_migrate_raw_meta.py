@@ -8,6 +8,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from src.access.meta import RemoteRawRecord, commit_remote_raw
+from src.utils.path import PathManager
 
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 
@@ -157,3 +159,13 @@ def test_apply_writes_nothing_when_v1_raw_identity_is_blocked(
     )
     assert valid_meta_path.read_bytes() == original_valid_meta
     assert blocked_meta_path.read_bytes() == original_blocked_meta
+
+
+def test_archive_meta_is_current_without_a_local_payload(tmp_path: Path) -> None:
+    pm = PathManager(tmp_path)
+    commit_remote_raw(
+        pm=pm,
+        meta_path=pm.raw_meta(broker="level2_ftp", source_name="sz_trade", trade_date="2026-09-21"),
+        record=RemoteRawRecord("SZ_Trade.csv.7z", 3, "/level2/2026-09-21/SZ_Trade.csv.7z"),
+    )
+    assert _run_migration(storage_root=tmp_path).returncode == 0

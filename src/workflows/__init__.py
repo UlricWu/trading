@@ -8,16 +8,17 @@ from typing import Literal, cast
 
 from src.config.app_config import AppConfig
 from src.data_system.brokers.base import BrokerAdapter
+from src.data_system.brokers.level2 import Level2Broker
 from src.utils.path import PathManager
 
 PROCESSED_VERSION = "v1"
 
 
-def _get_broker[BrokerT: BrokerAdapter](
+def _get_broker[BrokerT: BrokerAdapter | Level2Broker](
     *,
     app_config: AppConfig,
     broker_class: type[BrokerT],
-    adapter_cache: MutableMapping[str, BrokerAdapter],
+    adapter_cache: MutableMapping[str, BrokerAdapter | Level2Broker],
 ) -> BrokerT:
     """Reuse the workflow's single class and configuration binding per broker name."""
     broker = adapter_cache.get(broker_class.name)

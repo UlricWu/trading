@@ -65,11 +65,52 @@ raw/tushare/trade_calendar/year=<YYYY>/meta.json
 `payload_file` 是 source-native 身份的一部分，调用方必须显式提供，PathManager 不提供
 默认文件名。每个单日 `(broker, source_name, trade_date)` 或年度
 `(broker, source_name, year)` raw partition 只有一个由同目录 `meta.json` 描述的正式
-payload。Meta 的 `payload` basename 必须指向该同目录文件。
+payload。除下述 Level-2 网盘记录外，Meta 的 `payload` basename 必须指向该同目录文件。
 
 `staging` 是 raw ingest 的操作性暂存层，不进入正式 lineage。Normalize 可以在同名
 staging payload 是普通文件且字节数与正式 raw payload 相同时读取 staging；不存在或
-字节数不同时读取正式 raw。该选择不改变 raw 身份或 lineage。
+字节数不同时读取正式 raw。该选择不改变 raw 身份或 lineage。Level-2 采用下述网盘存储。
+
+### Level-2 网盘 raw 与本地缓存
+
+`raw/level2_ftp/<source_name>/trade_date=<date>/meta.json` 保留既有 source identity，
+迁移后只记录一份压缩 raw 的网盘位置，不要求同目录存在 payload。schema 精确为：
+
+```json
+{
+  "payload": "SZ_Trade.csv.7z",
+  "size_bytes": 1774433210,
+  "remote_path": "/wsw/level2_data/2026-06-08/SZ_Trade.csv.7z"
+}
+```
+
+`remote_path` 是规范绝对 POSIX 路径，basename 必须等于 `payload`；`size_bytes` 是正整数。
+此 schema 仅允许上述 Level-2 单日 raw 分区。同 broker、source、日期、文件名和字节数
+相同即视为同一内容；不增加内容摘要、版本库或备份前置条件。Processed 的直接 upstream
+仍指向同一 raw Meta，读回时只校验网盘记录的 schema 和已记录大小，不查网盘或本地 cache。
+Tushare 和所有其他本地对象继续要求其实际 payload 存在且大小匹配。
+
+本地压缩 cache 唯一位置是既有 staging 分区；`.download/` 保存客户端断点状态。
+同一 storage root 的 Level-2 下载、标准化、迁移和清理通过
+`staging/level2_ftp/.cache.lock` 的进程锁串行；锁忙直接失败。Processed 只读不取锁。
+缓存默认保留最近 5 个已完成所选逐笔输出的交易日期，日期数由配置调整。清理只针对窗口
+外已完成且已有网盘 Meta 的完整 cache；完成检查包括逐笔 Meta 指向同日、同 source 的
+raw lineage。每次删除前重新确认网盘同路径、同大小；失败、
+未完成和未迁移的文件保留。日期完成后即可清理，不等整个历史区间结束。
+
+`scripts/migrate_level2_archive.py` 默认仅预检；`--apply` 把已找到同尺寸网盘文件的本地
+raw Meta 转为上述记录，在 `staging/level2_ftp/.migration-meta/<source>/<partition>/meta.json`
+保留原始 Meta 备份，既有 processed payload/Meta 均不改写。
+`--cleanup` 必须同时指定 `--apply`，才清理已归档 raw 重复文件及超出保留窗口的 cache；
+近期有输出的 raw 按需移至 cache，跨文件系统用原子复制后删除源文件。`SZ_Order` 无本地
+输出，归档确认后无需缓存。网盘缺失、尺寸不匹配或无对应配置的分区只报告并保留，可在
+网盘补齐后重跑。2026-10-02 用户确认历史逐日文件目前主要覆盖九月，其他日期将补齐；
+不能将整月 ZIP 推断为逐日 archive 的替代证据。
+
+切换顺序：先按发布 owner 部署兼容本地和网盘两类 raw Meta 的代码，确认所有读取此根的
+服务、定时任务和人工入口均已切换，旧 ingest writer 已停止；再独立执行预检、Meta 迁移
+和清理。普通代码部署不自动执行迁移。回滚旧代码前，必须把所需 raw 从网盘恢复为同目录
+文件，并用备份还原本地 Meta；不能直接让不支持 `remote_path` 的旧程序读取已迁移分区。
 
 ## Processed、features 与 labels
 
@@ -129,13 +170,15 @@ payload 与 Meta 继续分别由 `raw_payload()`/`raw_meta()` 或
 ```
 
 `payload` 和 `size_bytes` 必须存在；`upstream` 和 `symbol_slices` 只在适用时存在；
-不得出现其他字段。`payload` 必须是安全 basename，并且对应同目录普通文件。
+不得出现其他字段（Level-2 网盘 raw 使用上一节的独立 schema）。`payload` 必须是安全
+basename，并且对应同目录普通文件。
 `size_bytes` 必须是非负整数且不得是布尔值。当前 payload identity 只比较文件字节数：
 实际字节数等于 `size_bytes` 即视为 payload 未变，同尺寸内容替换仍可复用。
 
 `upstream` 只表示一个直接输入，schema 精确为 `meta_path` 和 `size_bytes`。
 `meta_path` 必须是 `storage_root` 下 `meta.json` 的 POSIX 相对路径；读取方校验该直接
-Meta 的 schema、payload 和实际字节数，并与记录的 `size_bytes` 比较，但不得递归校验
+Meta 的 schema、payload 和实际字节数（网盘 raw 比较已记录大小），并与记录的
+`size_bytes` 比较，但不得递归校验
 更上游。Level-2 股票分钟事实按其领域 owner 记录同交易所同日逐笔对象的一个直接 upstream；
 Feature 和 label 当前没有 upstream，不写该字段。
 
@@ -149,7 +192,11 @@ payload 字节数、直接 upstream 或 symbol slice 无效时必须失败，不
 producer 必须先发布 payload，再原子写入 `meta.json`；该顺序不构成多文件事务，也不
 定义并发写协调。
 
-`src/access/meta.py` 只公开 `MetaRecord`、`find()`、`require()` 和 `commit()`。
+`src/access/meta.py` 公开本地对象的 `MetaRecord`、`find()`、`require()`、`commit()`，
+以及 Level-2 来源的 `RemoteRawRecord`、`find_level2_raw()`、`commit_remote_raw()`。
+`find_level2_raw()` 在唯一允许的 Level-2 raw 路径读取网盘记录或待迁移的本地记录；
+后者仍校验本地文件。`commit_remote_raw()` 原子写网盘记录，不执行网络 I/O。
+`find()`、`require()` 不把远端记录当成本地 payload 返回。
 `MetaRecord` 表示一个完整的 object-side Meta 记录，不另建表示加载阶段的结果类型。
 `find()` 只供 producer 探测可选输出：`meta.json` 不存在时返回 `None`，存在时校验上述
 契约。`require()` 供 consumer 取得必要对象：Meta 不存在时直接以

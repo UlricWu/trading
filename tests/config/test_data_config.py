@@ -52,8 +52,9 @@ def test_data_config_rejects_non_level2_source_groups() -> None:
             {
                 "brokers": {
                     "level2_ftp": {
-                        "remote_root": "level2",
-                        "ftp_backend": "ftplib",
+                        "baidupcs_go": "BaiduPCS-Go",
+                        "remote_path_templates": ["/level2/{date}/{file}"],
+                        "raw_cache_days": 5,
                     }
                 },
                 "sources": {
@@ -74,8 +75,9 @@ def test_data_config_accepts_complete_level2_file_sources() -> None:
         {
             "brokers": {
                 "level2_ftp": {
-                    "remote_root": "level2",
-                    "ftp_backend": "ftplib",
+                    "baidupcs_go": "BaiduPCS-Go",
+                        "remote_path_templates": ["/level2/{date}/{file}"],
+                    "raw_cache_days": 5,
                 }
             },
             "sources": {
@@ -98,3 +100,20 @@ def test_data_config_accepts_complete_level2_file_sources() -> None:
     )
 
     assert tuple(config.sources) == ("sh_trade", "sz_order")
+
+
+@pytest.mark.parametrize("template", [
+    "relative/{date}/{file}", "/level2/{file}", "/level2/{date}/fixed.csv.7z",
+    "/level2/{unknown}/{date}/{file}", "/level2/{date}/../{file}",
+    "/level2/{date}/{file!r}", "/level2/{date}/{file.name}",
+])
+def test_baidu_templates_require_unambiguous_daily_archive_paths(template: str) -> None:
+    with pytest.raises(ValidationError):
+        DataConfig(brokers={"level2_ftp": BrokerConfig(
+            baidupcs_go="BaiduPCS-Go", remote_path_templates=(template,), raw_cache_days=5,
+        )})
+
+
+def test_ftp_transport_configuration_is_no_longer_accepted() -> None:
+    with pytest.raises(ValidationError):
+        BrokerConfig.model_validate({"remote_root": "level2", "ftp_backend": "ftplib"})
