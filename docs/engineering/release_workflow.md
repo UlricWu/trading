@@ -197,9 +197,11 @@ dispatcher 只读取持久化记录并以参数数组执行固定安装路径
   `/home/wsw/app/shared/trading/logs`，部署锁、API 身份环境文件和当前成功记录位于
   `/home/wsw/app/deploy/trading`。
 - 测试数据根固定为 `/home/wsw/app/data`，不增加 `trading` 子目录。它在测试服务器上共享；
-  raw payload 必须保持正式源端身份，只有 staging、processed、features、labels 和
-  experiments 可以在存储契约变化后按受影响范围人工清理并重建。普通代码部署不得自动删除
-  或迁移数据。
+  raw 必须保持正式源端身份。Tushare raw 保持本地 payload；Level-2 的网盘 raw Meta
+  切换及本地文件回收仅按[存储 owner](../data/storage_layout.md#level-2-网盘-raw-与本地缓存)
+  在兼容代码部署后，以单独授权的维护命令执行。Staging、processed、features、labels 和
+  experiments 可以在存储契约变化后按受影响范围人工清理并重建。普通代码部署不得自动
+  删除或迁移数据。
 - 测试服务器的 `/home/wsw/app/data/raw` 固定为 HDD `/home/wsw/cold/raw` 的 bind mount；
   `staging`、`processed`、`features`、`labels` 和 `experiments` 位于承载
   `/home/wsw/app/data` 的 SSD。数据入口仍只接收一个 `ZERO_STORAGE_ROOT`，不得从代码推导

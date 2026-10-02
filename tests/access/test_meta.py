@@ -143,3 +143,56 @@ def test_symbol_slices_are_nonempty_contiguous_ranges(tmp_path: Path) -> None:
             payload_path=payload_path,
             symbol_slices={"000001": range(1, 2)},
         )
+
+
+def test_remote_level2_lineage_survives_removing_all_local_raw(tmp_path: Path) -> None:
+    pm = PathManager(tmp_path)
+    raw = _write_payload(pm.raw_payload(
+        broker="level2_ftp", source_name="sz_trade", trade_date="2026-09-21",
+        payload_file="SZ_Trade.csv.7z",
+    ), b"raw")
+    raw_meta = raw.parent / "meta.json"
+    meta.commit(pm=pm, payload_path=raw)
+    paths = pm.processed_object(dataset_name="sz_trade", version="v1", trade_date="2026-09-21")
+    _write_payload(paths.payload_path, b"processed")
+    meta.commit(pm=pm, payload_path=paths.payload_path, upstream_meta_path=raw_meta,
+                symbol_slices={"000001": range(1)})
+    processed_meta = paths.meta_path.read_bytes()
+    archive = meta.RemoteRawRecord(raw.name, 3, f"/level2/2026-09-21/{raw.name}")
+    meta.commit_remote_raw(pm=pm, meta_path=raw_meta, record=archive)
+    raw.unlink()
+    assert meta.find_level2_raw(pm=pm, meta_path=raw_meta) == archive
+    assert meta.require(pm=pm, meta_path=paths.meta_path).payload_path == paths.payload_path
+    assert paths.meta_path.read_bytes() == processed_meta
+    with pytest.raises(RuntimeError, match="no required local payload"):
+        meta.require(pm=pm, meta_path=raw_meta)
+    changed = meta.RemoteRawRecord(raw.name, 4, archive.remote_path)
+    meta.commit_remote_raw(pm=pm, meta_path=raw_meta, record=changed)
+    with pytest.raises(RuntimeError, match="upstream payload size changed"):
+        meta.require(pm=pm, meta_path=paths.meta_path)
+
+
+@pytest.mark.parametrize("broker", ["tushare", "other"])
+def test_cloud_schema_cannot_relax_other_raw_payload_checks(tmp_path: Path, broker: str) -> None:
+    pm = PathManager(tmp_path)
+    raw_meta = pm.raw_meta(broker=broker, source_name="daily_bar", trade_date="2026-09-21")
+    archive = meta.RemoteRawRecord("SZ_Trade.csv.7z", 3, "/cloud/SZ_Trade.csv.7z")
+    with pytest.raises(RuntimeError, match="Level-2 daily raw"):
+        meta.commit_remote_raw(pm=pm, meta_path=raw_meta, record=archive)
+    _write_payload(raw_meta, json.dumps({"payload": archive.payload, "size_bytes": 3, "remote_path": archive.remote_path}).encode())
+    with pytest.raises(RuntimeError, match="Level-2 daily raw"):
+        meta.require(pm=pm, meta_path=raw_meta)
+
+
+@pytest.mark.parametrize("remote_path,size", [
+    ("relative/SZ_Trade.csv.7z", 3), ("/cloud/../SZ_Trade.csv.7z", 3),
+    ("/cloud/different.csv.7z", 3), ("/cloud/SZ_Trade.csv.7z", 0),
+    ("/cloud/SZ_Trade.csv.7z", True),
+])
+def test_invalid_remote_raw_record_is_never_published(tmp_path: Path, remote_path: str, size: int) -> None:
+    pm = PathManager(tmp_path)
+    raw_meta = pm.raw_meta(broker="level2_ftp", source_name="sz_trade", trade_date="2026-09-21")
+    with pytest.raises(RuntimeError):
+        meta.commit_remote_raw(pm=pm, meta_path=raw_meta,
+                               record=meta.RemoteRawRecord("SZ_Trade.csv.7z", size, remote_path))
+    assert not raw_meta.exists()

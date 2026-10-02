@@ -5,9 +5,12 @@
 - **适用环境**：`wsw` 用户、Linux x86_64、zsh、`qjfoidnh/BaiduPCS-Go v4.0.2`。
 - **核验日期**：2026-09-22。
 
-BaiduPCS-Go 是独立的人工下载工具。下载完成的文件仍需遵循
+BaiduPCS-Go 同时供人工下载与 Level-2 broker 调用。下载完成的文件仍需遵循
 [数据源契约](../data/source_contract.md)与[存储契约](../data/storage_layout.md)，
-才能成为正式数据对象。本文不增加 broker、运行入口、自动入库行为或生产依赖。
+才能成为正式数据对象。自动下载、缓存与入库契约由上述 owner 及
+[技术栈决策](technology_stack_decisions.md#百度网盘-transport)定义；本文只拥有客户端操作。
+自动入口使用 `data.brokers.level2_ftp.baidupcs_go` 指定的绝对可执行路径，调用 `meta`
+和带 `--nocheck` 的下载命令；service/cron 用户也必须能读取已登录的客户端配置。
 
 ## 安装版本与命令定位
 

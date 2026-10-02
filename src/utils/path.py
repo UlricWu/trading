@@ -177,6 +177,14 @@ class PathManager:
             / self.require_safe_basename(payload_file, "payload_file")
         )
 
+    def level2_cache_dir(self) -> Path:
+        """Return the Level-2 cache root shared by processing and maintenance.
+
+        Example:
+            cache_root = pm.level2_cache_dir()
+        """
+        return self._root / "staging" / "level2_ftp"
+
     def processed_version_dir(
         self,
         *,

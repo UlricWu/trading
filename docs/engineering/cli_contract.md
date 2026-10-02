@@ -31,10 +31,10 @@ Submission 的日期与范围保证由 `src.jobs.requests` 中相应的 `create_
 `dev`；加载过程不得把文件内容写入进程环境。`ZERO_STORAGE_ROOT` 仍由进程环境提供，
 路径可用性由 `PathManager` 校验。
 
-所选 `.env` 是 FTP 和 Tushare 运行配置的正式来源。`FTP_HOST`、`FTP_USER` 和
-`TUSHARE_TOKEN` 必须非空白，`FTP_PASSWORD` 必须非空且不得裁剪。`FTP_PORT` 缺失或为空
-时为 `21`，显式值必须是 `1..65535` 的整数。`TUSHARE_GATEWAY` 缺失或为空时为 `None`，
-表示使用 Tushare SDK 默认地址；非空值覆盖 SDK 地址。
+所选 `.env` 是 Tushare 运行配置的正式来源。`TUSHARE_TOKEN` 必须非空白，
+`TUSHARE_GATEWAY` 缺失或为空时为 `None`，表示使用 Tushare SDK 默认地址；非空值覆盖
+SDK 地址。FTP 配置不再读取或要求。Level-2 使用配置指定且已登录的百度网盘客户端，
+客户端凭证由客户端管理。
 
 `override` 只能包含 `data`、`model` 或 `backtest` 根键；因此不能改变
 `environment`、`storage_root` 或 `secret`。mapping 递归合并，标量、列表和显式
@@ -81,10 +81,18 @@ derived 对象，也不根据 Feature lookback 隐式扩大范围。它构造
 experiment。这两个命令成功时都退出 `0`；任一正式交易日 fact 缺失或其他运行错误都退出
 `1`，不得改写成 skipped。
 
-`data-level2` 的闭区间按到达日解释，除 enabled 文件 source 的 raw/逐笔事实外，还构建
+`data-level2` 的闭区间按到达日解释，按需获取有输出 source 的网盘 raw 并补齐逐笔事实，还构建
 两市股票分钟事实、当日 H03 Feature 和当天成熟的上一 session H03 Label。日期安排、必要
 历史输入、步骤顺序与部分提交语义由工作流 owner 定义；HTTP 与 cron 复用同一入口。
 已有各人工 backfill 命令仍按自身目标分区解释日期，不改成到达日。
+
+Level-2 raw 维护命令为 `uv run python -m scripts.migrate_level2_archive`，只影响
+Level-2 本地来源记录和压缩缓存。仍先按 AppConfig 要求提供 `ENV`、`ZERO_STORAGE_ROOT`
+及 Tushare 配置；`--storage-root` 显式选择维护存储根，`--start/--end` 可限制分区日期。
+默认只预检并报告，`--report <path>` 额外输出 JSON 清单；`--apply` 转换已匹配 Meta，
+`--apply --cleanup` 才按存储 owner 回收已匹配文件。日期限制同时约束转换和清理。
+未匹配分区保留并报告，不阻止其他已匹配分区；传输、无效 Meta 或写入错误非零退出。
+此命令不进入 Job API、cron 或日常 pipeline，不上传或修改网盘文件。
 
 `data-level2-minute-backfill` 是 CLI-only 的两市股票一分钟事实历史回填入口。`start/end`
 闭区间只表示目标分钟分区；它构造 `Level2MinuteBackfillSubmission` 并只调用一次

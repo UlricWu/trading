@@ -108,9 +108,6 @@ def test_route_map_contains_only_the_confirmed_endpoints() -> None:
 @pytest.fixture
 def tushare_config(monkeypatch: pytest.MonkeyPatch) -> Mock:
     secret = SecretConfig(
-        ftp_host="ftp.example.com",
-        ftp_user="user",
-        ftp_password="password",
         tushare_token="private-tushare-token",
         tushare_gateway="https://private-gateway.example/dataapi",
     )

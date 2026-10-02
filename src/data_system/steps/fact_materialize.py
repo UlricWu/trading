@@ -19,7 +19,6 @@ from src.utils import table_ops
 from src.utils.path import PathManager
 
 _EMPTY_PROCESSED_OUTPUTS = frozenset({"stock_basic", "stock_st", "suspend_d"})
-_LEVEL2_TRADE_OUTPUTS = frozenset({"sh_trade", "sz_trade"})
 
 
 @dataclass(slots=True)
@@ -222,15 +221,6 @@ class FactMaterializeStep:
                     meta_path=processed_paths.meta_path,
                     expected_payload_path=processed_paths.payload_path,
                 )
-                if (
-                    output in _LEVEL2_TRADE_OUTPUTS
-                    and loaded_output is not None
-                    and loaded_output.symbol_slices is None
-                ):
-                    raise RuntimeError(
-                        f"Level-2 Meta has no symbol_slices: "
-                        f"dataset={output}, meta_path={processed_paths.meta_path}"
-                    )
                 if loaded_output is not None:
                     stats.processed_reused += 1
                     logs.info(
