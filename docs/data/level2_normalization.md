@@ -1,8 +1,8 @@
 # Level-2 归一化契约
 
 - **状态**：正式 owner
-- **适用范围**：Level-2 trade source 路由、raw 字段映射、交易所时间转换、broker 通道
-  顺序、processed 字段和 symbol slice index。
+- **适用范围**：Level-2 trade source 路由、raw 字段映射、交易所时间转换、源端序号
+  语义及排序限制、processed 字段和 symbol slice index。
 - **Phase owner**：[`docs/data/market_phase.md`](market_phase.md)
 
 ## Source 路由
@@ -27,17 +27,27 @@ trade，不定义或预留 order parser。
 ## ExchangeTime 与 ts_utc
 
 两个正式 trade 路由都使用 raw `TickTime` 作为 `ExchangeTime`。raw CSV reader 提供
-string 列，正式规范化关系只有：
+string 列。`ExchangeID` 是源端导出编码的判别字段，必须是 string；一个非空 batch
+只能包含当前路由的一个编码，null、未知编码、跨交易所编码或混合编码必须失败：
+
+| route | `ExchangeID` | `TickTime` | event / side |
+|---|---|---|---|
+| SH，原 FTP 导出 | `1` | 1–8 位 `HHMMSScc` | `T` 为成交；`Side=1/2` 映射 B/S |
+| SZ，原 FTP 导出 | `2` | 1–9 位 `HHMMSSsss` | `ExecType=1/2` 为成交/撤单；side 为 null |
+| SH，百度网盘导出 | `SH` | 1–9 位 `HHMMSSsss` | `T` 为成交；`Side=B/S` 原样映射，N/其他为 null |
+| SZ，百度网盘导出 | `SZ` | 1–9 位 `HHMMSSsss` | `ExecType=F/P` 为成交，`4` 为撤单；side 为 null |
+
+不以分区日期、字符串长度或 `TradeTime` 后缀猜测导出编码。时间规范化为：
 
 ```python
-if exchange == "sh":
+if exchange_id == "1":
     exchange_time_ms = str(tick_time).zfill(8) + "0"
 else:
     exchange_time_ms = str(tick_time).zfill(9)
 ```
 
-- SH `TickTime` 是 `HHMMSScc`，`cc` 为百分秒；输入必须是 1–8 位十进制数字。
-- SZ `TickTime` 是 `HHMMSSsss`，`sss` 为毫秒；输入必须是 1–9 位十进制数字。
+- 原 SH 导出的 `cc` 为百分秒；其余已接纳导出的 `sss` 为毫秒。百度网盘的上海
+  毫秒末位必须保留，不截断为百分秒。
 - 变换后的 `exchange_time_ms` 必须是合法 `HHMMSSsss`：小时 `00–23`，分钟与秒
   `00–59`。
 - string 类型不正确时抛出 `TypeError`；缺失字段、null、非数字、超长或非法钟表时间
@@ -70,12 +80,12 @@ batch。
 | processed 字段 | Arrow 类型 | SH source / 规则 | SZ source / 规则 | 精确语义 |
 |---|---|---|---|---|
 | `symbol` | `string` | `SecurityID` | `SecurityID` | source 值原样保留；不追加交易所后缀，交易所由 dataset 身份提供 |
-| `ts_utc` | `int64` | `trade_date + TickTime(HHMMSScc)` | `trade_date + TickTime(HHMMSSsss)` | UTC epoch microseconds；只按上一节产生 |
-| `event` | `string` | `TickType: T -> TRADE` | `ExecType: 1 -> TRADE, 2 -> CANCEL` | 正成交过滤后，持久化值恒为 `TRADE` |
+| `ts_utc` | `int64` | `trade_date + TickTime`，精度按上节源编码 | `trade_date + TickTime(HHMMSSsss)` | UTC epoch microseconds；只按上一节产生 |
+| `event` | `string` | `TickType: T -> TRADE` | 原导出 `1/2 -> TRADE/CANCEL`；百度导出 `F/P -> TRADE, 4 -> CANCEL` | 正成交过滤后，持久化值恒为 `TRADE` |
 | `order_id` | `int64` | `SubSeq` | `SubSeq` | 保留的既有 processed 字段；值与 `sub_seq` 相同，不是订单身份、事件主键或 join key |
-| `main_seq` | `int64` | `MainSeq` | `MainSeq` | broker 通道身份；只参与通道内接收顺序表达 |
-| `sub_seq` | `int64` | `SubSeq` | `SubSeq` | broker 在同一 `MainSeq` 内的接收序号；只参与排序 |
-| `side` | nullable `string` | `Side: 1 -> B, 2 -> S`，其他为 null | 无 source，恒为 null | source 映射值；不是 tick-rule 方向，也不补值 |
+| `main_seq` | `int64` | `MainSeq` | `MainSeq` | source 序号原样保留；旧导出的通道语义及新导出的限制见下文 |
+| `sub_seq` | `int64` | `SubSeq` | `SubSeq` | source 序号原样保留，允许 0；只参与排序 |
+| `side` | nullable `string` | 原导出 `Side: 1/2 -> B/S`；百度导出 B/S 原样映射，其他为 null | 无 source，恒为 null | source 映射值；不是 tick-rule 方向，也不补值 |
 | `price` | `float64` | `Price` | `TradePrice` | source 成交价格的数值转换，不缩放 |
 | `volume` | `int64` | `Volume` | `TradeVolume` | source 成交数量的数值转换，不做手数或证券类型单位换算 |
 | `buy_no` | `int64` | `BuyNo` | `BuyNo` | source 买方委托序号；不声明全局唯一性 |
@@ -92,10 +102,17 @@ symbol, ts_utc, event, order_id, main_seq, sub_seq, side, price, volume,
 buy_no, sell_no, security_type, phase, notional, trade_side
 ```
 
-现有 processed 字段全部保留，并增加明确表达 broker 通道顺序的 `main_seq` 与
-`sub_seq`。SH 的 `ExchangeID`、`TradeMoney`、`TradeBSFlag`、`MDSecurityStat`、
-`LocalTimeStamp`，以及 SZ 的 `ExchangeID`、`LocalTimeStamp` 当前不映射到 processed。
+现有 processed 字段全部保留，`main_seq` 与 `sub_seq` 的序号语义按下文导出编码区分。
+SH 的 `ExchangeID`、`TradeMoney`、`TradeBSFlag`、`MDSecurityStat`、
+`LocalTimeStamp`，以及 SZ 的 `ExchangeID`、`LocalTimeStamp` 不作为独立列持久化到 processed。
 没有消费者需求时不为这些 raw 字段增加别名或占位列。
+
+[broker 字段字典](https://int4.tech/#fields)和
+[L2 接入文档](https://docs.qq.com/doc/DQ3FaQ3ZYSmRQdEVi)中的整数接口 `price`
+使用 ×10000 尺度；本系统接收的 CSV `Price/TradePrice` 已为十进制价格，继续只做
+数值转换，不再次除以 10000。数量沿用 CSV source 值，未定义证券类型单位换算；
+`TradeMoney` 不替代 `price * volume`。深圳撤单即使已由 broker 还原为正价格，也按
+`ExecType=4` 排除，不得凭正价格将其当作成交。
 
 ## Trade batch 与日对象
 
@@ -116,8 +133,12 @@ raw batch parse/filter
 ```
 
 `ts_utc` 是事件时间主序。相同 `symbol` 与 `ts_utc` 下，`main_seq`、`sub_seq` 只提供
-确定性排列：同一 `MainSeq` 内较小 `SubSeq` 表示较早的 broker 接收顺序；不同
-`MainSeq` 的数值顺序不表示跨通道因果关系或全局接收顺序。Normalize 不按这些字段或
+确定性排列。旧 `ExchangeID=1/2` 导出中，同一 `MainSeq` 内较小 `SubSeq` 表示较早的
+broker 接收顺序；不同 `MainSeq` 的数值顺序不表示跨通道因果关系或全局接收顺序。
+百度网盘 `ExchangeID=SH/SZ` 导出未提供独立 channel 字段，`MainSeq/SubSeq` 只保留
+源值用于确定性排序，不声明通道、接收先后或事件唯一性，也不凭实时接口的 `index`
+定义推断 CSV `MainSeq`。`SubSeq=0` 不由行号、其他序号或 `SZ_Order` 补值。
+Normalize 不按这些字段或
 `order_id`、`buy_no`、`sell_no` 去重；通过正成交过滤的 raw 行保持其多重性。
 
 证券代码段和生效日期/成交时段分别由 `level2_security` 与 `level2_phase` 表达，因为
@@ -186,7 +207,7 @@ Access 在加载 Meta 后以 Parquet 总行数校验完整覆盖；row-group ove
 
 - raw object、processed dataset 和 exchange 的组合身份由 Normalize 路由拥有。
 - `symbol` 是 symbol slice 的身份。当前没有 Level-2 成交事件的正式唯一键；
-  `main_seq` 与 `sub_seq` 只表达 broker 通道内接收顺序，不能证明一个交易日的 raw
+  `main_seq` 与 `sub_seq` 的顺序保证按上节源编码区分，不能证明一个交易日的 raw
   完整性，也不是数据集级事件身份或 join key。`order_id`、`buy_no`、`sell_no` 同样不是。
 - Normalize producer 拥有 raw 必要字段、字段类型、日期一致性、交易所时间、数值转换、
   security type、phase、排序、行数保持和 slice 生成错误。缺少必要字段、非法类型、非法
