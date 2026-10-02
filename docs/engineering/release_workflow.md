@@ -92,6 +92,16 @@ release PR 当前 head SHA 上的检查结果。
   `protect-master-release` 中将其替换为 `run-ci / build-and-test`，来源选择
   `GitHub Actions`，保存后刷新 PR。重复审批或等待不会产生一个不存在的检查。
 
+### 自动版本发布
+
+release workflow 在 `master` 的 CI 成功后执行 semantic-release，以已合入的提交生成
+版本号、`${version}` 格式的 Git tag 和 GitHub Release。版本说明统一保存在
+[GitHub Releases](https://github.com/UlricWu/trading/releases)，仓库不维护 `CHANGELOG.md`。
+
+发布配置只加载 commit-analyzer、release-notes-generator 和 github 插件；workflow 的
+安装列表必须与配置一致。发布过程不得创建 release commit 或直接更新 `master`，继续
+遵守必须通过 PR 和 CI 的分支保护规则。
+
 ### Research 记录与正式化
 
 `research/` 中的研究记录、采用候选、Notebook 和结论可以通过普通 feature PR 进入 `dev`，
@@ -139,7 +149,7 @@ cron 部署都不属于测试发布链路。Funnel 只允许映射 Webhook 接�
 - Webhook 返回成功：合法 delivery 已持久化接纳，或该 delivery 已被接纳过。
 - delivery result 为 `succeeded`：精确 SHA、依赖、服务启动和身份健康全部通过。
 - release PR 合入 `master`：正式发布源获批准。
-- semantic-release 成功：版本号、tag、changelog 和 GitHub Release 已生成。
+- semantic-release 成功：版本号、tag 和包含版本说明的 GitHub Release 已生成。
 
 ## Webhook 接收契约
 
@@ -277,6 +287,7 @@ dispatcher 只读取持久化记录并以参数数组执行固定安装路径
 
 - 普通 CI 只拥有 `contents: read`。
 - auto-release 仅在镜像分支和维护 PR 的 job 中拥有写权限。
-- release 和 sync 仅在必须写 tag、release commit 或分支的 job/workflow 中拥有写权限。
+- release 仅在必须写 tag 和 GitHub Release 的 job 中拥有写权限；sync 仅在必须写分支的
+  workflow 中拥有写权限。
 - auto-release 使用单一并发组并取消旧运行，推送前确认目标 SHA 仍是最新 `dev`。
 - `release/auto-release` 使用 `--force-with-lease` 更新，禁止无租约 force push。
