@@ -30,7 +30,6 @@ data:
 model:
   group: sgd_regression
   model_params: {}
-  train_window_days: 30
   preprocessing:
     missing:
       method: constant
@@ -73,12 +72,12 @@ def test_override_recursively_merges_any_formal_config_field(
 
     config = AppConfig.load(
         override={
-            "model": {"train_window_days": 0},
+            "model": {"model_params": {"alpha": 0.001}},
             "backtest": {"init_cash": 123_456},
         }
     )
 
-    assert config.model.train_window_days == 0
+    assert config.model.model_params == {"alpha": 0.001}
     assert config.model.group == "sgd_regression"
     assert config.model.dataset.feature_columns == ["factor"]
     assert config.backtest.init_cash == 123_456

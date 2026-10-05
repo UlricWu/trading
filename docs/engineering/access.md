@@ -3,7 +3,7 @@
 - **状态**：正式 owner
 - **适用范围**：`src/access/access.py::Access` 的正式 processed 市场数据读取、
   可用交易日及下一正式交易日、日频行情/复权因子/换手率、日频 universe、Level-2
-  universe、Level-2 symbol/trade 市场范围读取和两市股票分钟事实读取。
+  universe、Level-2 symbol/trade 市场范围读取和两市股票分钟事实读取；以及 `src/access/feature_label.py` 的已提交 Feature/Label 日分区读取。
 
 ## 身份与职责
 
@@ -263,3 +263,22 @@ schema 零行表。Access 不执行 14:30 universe、窗口、Feature 或 Label 
 Access 不拥有 source 获取、normalize、feature、label、信号、交易规则模型、交易日
 预测、涨跌停查询、任意 DataFrame 变换、旧 API 兼容或跨日期隐式状态。Meta 不建立
 领域模型、递归 lineage、hash identity 或并发事务。
+
+## Feature/Label 分区读取
+
+`read_features(*, pm, feature_set, version, trade_date, feature_names)` 与
+`read_labels(*, pm, label_set, version, trade_date, label_column)` 是数据提供侧的具名读取边界，
+不扩展 Access 的任意表或路径 API。它们从同一个 PathManager 选择规范对象，先 require
+同目录 Meta，再以 context manager 读取 Parquet；不绕过 Meta，不改变数据身份或生成数据。
+
+Feature 返回完整样本键后跟请求顺序的特征列；Label 返回完整键后跟单个标签列。
+[日频 schema](../data/daily_feature_label_contract.md) 的键为 symbol、trade_date；
+[14:30 schema](../data/stock_1430_feature_label_contract.md) 还包含 decision_ts_utc；H03 的
+Feature 与 Label 身份要求读取这一键，缺列时失败，不能退化成日频身份。
+读取保留两种现有 schema 中的全部键，校验非空逻辑字符串、完整键唯一性、分区日期一致
+和决策时间整数类型，不排序、join、过滤样本或推断“有效日期”。Feature/Label 的逐行对应
+由训练或评价边界检查。特征 NaN 和未知标签保留；训练过滤、预处理和评价各自处理其
+负责的缺失与数值失败。样本键及 ts_us 不得选择为特征。
+
+返回表归调用方拥有。列的业务含义及计算可见性仍由各 Feature/Label owner 定义；此 API
+不提供历史 availability 证明，也不把当前 Meta 或文件时间解释为过去已可见。

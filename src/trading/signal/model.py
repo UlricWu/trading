@@ -4,6 +4,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+import numpy as np
+
 from src.trading.market.data_view import MarketDataView
 from src.trading.signal.base import SignalProvider
 from src.trading.signal.diagnostics import SignalDiagnostics
@@ -12,7 +14,7 @@ from src.training.inference_model import InferenceModel
 
 @dataclass(frozen=True, slots=True)
 class ModelSignalProvider(SignalProvider):
-    """Map retained inference rows back to their requested symbol identities.
+    """Map aligned predictions to symbols, skipping ordinary missing predictions.
 
     Example:
         provider = ModelSignalProvider(model=inference_model)
@@ -59,16 +61,11 @@ class ModelSignalProvider(SignalProvider):
                 model=self.model,
             )
 
-        keep_rows, predictions = self.model.predict(features)
-        retained_symbols = (
-            str(symbol)
-            for symbol, keep in zip(symbols, keep_rows, strict=True)
-            if bool(keep)
-        )
-
+        predictions = self.model.predict(features)
         scores = {
-            symbol: float(score)
-            for symbol, score in zip(retained_symbols, predictions, strict=True)
+            str(symbol): float(score)
+            for symbol, score in zip(symbols, predictions, strict=True)
+            if not np.isnan(score)
         }
 
         if self.diagnostics:

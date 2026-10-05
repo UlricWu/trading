@@ -92,7 +92,6 @@ class ModelConfig(BaseModel):
         config = ModelConfig(
             group="sgd_regression",
             dataset=feature_label_config,
-            train_window_days=30,
         )
     """
 
@@ -100,6 +99,5 @@ class ModelConfig(BaseModel):
 
     group: str = Field(min_length=1)
     model_params: dict[str, object] = Field(default_factory=dict)
-    train_window_days: int = Field(default=252, ge=0, strict=True)
     preprocessing: PreprocessingConfig = Field(default_factory=PreprocessingConfig)
     dataset: FeatureLabelConfig

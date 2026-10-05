@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import json
+
 from collections.abc import Sequence
 from contextlib import nullcontext
 from datetime import UTC, datetime
@@ -31,6 +33,17 @@ from src.jobs.runtime import (
     RangeJobScope,
 )
 
+
+
+def _training_windows() -> list[dict[str, object]]:
+    return [{
+        "train_dates": ["2026-07-01", "2026-07-20"],
+        "training_cutoff_ts_us": 1785510000000000,
+        "label_availability": {
+            "2026-07-01": {"available_ts_us": 1782976200000000, "evidence_ref": "test/label-1"},
+            "2026-07-20": {"available_ts_us": 1784617200000000, "evidence_ref": "test/label-20"},
+        },
+    }]
 
 class _StubRuntime:
     def __init__(self) -> None:
@@ -385,9 +398,7 @@ def test_training_request_creates_one_full_range_job() -> None:
     response = app.test_client().post(
         "/jobs",
         json={
-            "kind": "train",
-            "start": "2026-07-01",
-            "end": "2026-07-20",
+            "kind": "train", "windows": _training_windows(),
         },
     )
 
@@ -424,7 +435,8 @@ def test_training_request_creates_one_full_range_job() -> None:
             "mode": "full_backtest",
             "start": "2026-07-01",
             "end": "2026-07-20",
-            "model_experiment": "training-1",
+            "model_ref": "/data/models/training-1.joblib",
+            "model_use": {'training_schedule_ref': '/data/training/schedule.json', 'effective_ts_us': 1782860400000000, 'availability_evidence_ref': 'synthetic/model-use'},
             "strategy": {
                 "type": "threshold",
                 "params": {"threshold": 0.5, "secret": "do-not-echo"},

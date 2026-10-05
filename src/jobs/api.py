@@ -39,12 +39,15 @@ def create_app(job_runtime: JobRuntime) -> Flask:
         "end": "YYYY-MM-DD"}``, or the same object with ``kind`` set to
         ``"data-level2"``.
       - Training:
-        ``{"kind": "train", "start": "YYYY-MM-DD",
-        "end": "YYYY-MM-DD"}``.
+        ``{"kind": "train", "windows": EXPLICIT_TRAINING_SELECTIONS}``.
+        Each selection contains training dates, information cutoff and label
+        availability facts, and optionally an evaluation date and decision time.
       - Backtest:
         ``{"kind": "backtest", "mode": MODE, "start": "YYYY-MM-DD",
-        "end": "YYYY-MM-DD", "model_experiment": BASENAME,
-        "strategy": STRATEGY}``.
+        "end": "YYYY-MM-DD", "model_ref": ABSOLUTE_PATH,
+        "model_use": MODEL_USE, "strategy": STRATEGY}``.
+        ``MODEL_USE`` declares an absolute training schedule ref, an effective
+        UTC microsecond timestamp and the task's model availability evidence ref.
 
       ``MODE`` is ``signal_eval``, ``tradable_alpha_eval``,
       ``execution_eval``, ``risk_eval``, or ``full_backtest``. ``STRATEGY``

@@ -65,17 +65,22 @@ def test_loader_consumes_the_supplied_window_without_calendar_resolution(
         )
         meta.commit(pm=path_manager, payload_path=label_path)
 
+    # Evaluation data is intentionally unavailable; training must not read it.
+    for paths in (
+        path_manager.feature_object(feature_set="features", version="v1", trade_date="2026-07-03"),
+        path_manager.label_object(label_set="labels", version="v1", trade_date="2026-07-03"),
+    ):
+        paths.payload_path.unlink()
+        paths.meta_path.unlink()
+
     loader = DatasetBuildStep(
         pm=path_manager,
         dataset_cfg=dataset_config,
     )
 
-    (train_X, train_y), (eval_X, eval_y) = loader.load(
+    train_X, train_y = loader.load(
         train_dates=("2026-07-01", "2026-07-02"),
-        eval_date="2026-07-03",
     )
 
     assert train_X["factor"].tolist() == [1.0, 2.0]
     assert train_y.tolist() == [0.1, 0.2]
-    assert eval_X["factor"].tolist() == [3.0]
-    assert eval_y.tolist() == [0.3]

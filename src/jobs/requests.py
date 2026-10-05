@@ -8,9 +8,9 @@ import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, TypeAlias, cast
+from typing import Literal, Self, TypeAlias, cast
 
-from pydantic import TypeAdapter, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, model_validator
 
 from src.config.backtest_config import BacktestMode, StrategyConfig
 from src.utils.datetime_utils import DateTimeUtils
@@ -30,9 +30,9 @@ JOB_EXIT_CODE_SKIPPED = 75
 _DATA_KINDS = frozenset({"data-standard", "data-level2"})
 _JOB_KINDS = _DATA_KINDS | {"train", "backtest"}
 _DATA_FIELDS = frozenset({"kind", "start", "end"})
-_TRAINING_FIELDS = frozenset({"kind", "start", "end"})
+_TRAINING_FIELDS = frozenset({"kind", "windows"})
 _BACKTEST_FIELDS = frozenset(
-    {"kind", "mode", "start", "end", "model_experiment", "strategy"}
+    {"kind", "mode", "start", "end", "model_ref", "model_use", "strategy"}
 )
 
 
@@ -144,17 +144,124 @@ class Stock1430FusionBackfillSubmission:
     end: str
 
 
-@dataclass(frozen=True, slots=True)
-class TrainingSubmission:
-    """Describe one validated full-range training workflow execution.
+class LabelAvailability(BaseModel):
+    """Task-supplied availability fact for one selected label partition.
 
     Example:
-        submission = TrainingSubmission(start="2026-07-01", end="2026-07-20")
+        fact = LabelAvailability(available_ts_us=1782976200000000, evidence_ref="ledger/label-2026-07-01")
     """
 
-    start: str
-    end: str
+    model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
+    available_ts_us: int
+    evidence_ref: str = Field(min_length=1)
+
+
+class TrainingSelection(BaseModel):
+    """Explicit training dates, information cutoff, and optional prediction timing.
+
+    Availability facts are supplied by the task, rather than inferred from Meta.
+
+    Example:
+        selection = TrainingSelection(
+            train_dates=("2026-07-01",), training_cutoff_ts_us=1783062600000000,
+            label_availability={"2026-07-01": LabelAvailability(
+                available_ts_us=1782976200000000, evidence_ref="ledger/label-2026-07-01",
+            )},
+        )
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
+    train_dates: tuple[str, ...] = Field(min_length=1, strict=False)
+    training_cutoff_ts_us: int
+    label_availability: dict[str, LabelAvailability]
+    eval_date: str | None = None
+    decision_ts_us: int | None = None
+
+    @model_validator(mode="after")
+    def _require_selection(self) -> Self:
+        for trade_date in self.train_dates:
+            DateTimeUtils.require_system_date(trade_date, field_name="train_dates")
+        if any(left >= right for left, right in zip(self.train_dates, self.train_dates[1:])):
+            raise ValueError("train_dates must be unique and increasing")
+        if set(self.label_availability) != set(self.train_dates):
+            raise ValueError("label_availability must cover exactly train_dates")
+        DateTimeUtils.from_utc_epoch_us(self.training_cutoff_ts_us)
+        for fact in self.label_availability.values():
+            DateTimeUtils.from_utc_epoch_us(fact.available_ts_us)
+            if not fact.evidence_ref.strip():
+                raise ValueError("availability evidence_ref must not be blank")
+        if (self.eval_date is None) != (self.decision_ts_us is None):
+            raise ValueError("eval_date and decision_ts_us must be supplied together")
+        if self.eval_date is not None:
+            DateTimeUtils.require_system_date(self.eval_date, field_name="eval_date")
+            local = DateTimeUtils.to_local(DateTimeUtils.from_utc_epoch_us(self.decision_ts_us))
+            if local.date().isoformat() != self.eval_date:
+                raise ValueError("decision_ts_us must fall on eval_date in Asia/Shanghai")
+            if self.training_cutoff_ts_us > self.decision_ts_us:
+                raise ValueError("training cutoff must not follow the prediction decision")
+        return self
+
+
+@dataclass(frozen=True, slots=True)
+class TrainingSubmission:
+    """Describe one explicit ordered schedule, without implicit window defaults.
+
+    Example:
+        submission = TrainingSubmission(windows=(training_selection,))
+    """
+
+    windows: tuple[TrainingSelection, ...]
     kind: Literal["train"] = "train"
+
+    @property
+    def start(self) -> str:
+        """Return the first selected training or evaluation date for the range label.
+
+        Example:
+            first_date = submission.start
+        """
+        return min(
+            min(window.train_dates[0], window.eval_date or window.train_dates[0])
+            for window in self.windows
+        )
+
+    @property
+    def end(self) -> str:
+        """Return the last selected training or evaluation date for the range label.
+
+        Example:
+            last_date = submission.end
+        """
+        return max(
+            max(window.train_dates[-1], window.eval_date or window.train_dates[-1])
+            for window in self.windows
+        )
+
+
+class ModelUse(BaseModel):
+    """Declare the training record and historical basis for a fixed model use.
+
+    Example:
+        use = ModelUse(
+            training_schedule_ref=Path("/data/training/schedule.json"),
+            effective_ts_us=1783047600000000,
+            availability_evidence_ref="research/conditional-model-availability",
+        )
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
+    training_schedule_ref: Path = Field(strict=False)
+    effective_ts_us: int
+    availability_evidence_ref: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _validate_use(self) -> Self:
+        if not self.training_schedule_ref.is_absolute():
+            raise ValueError("training_schedule_ref must be absolute")
+        if not self.availability_evidence_ref.strip():
+            raise ValueError("availability_evidence_ref must not be blank")
+        DateTimeUtils.from_utc_epoch_us(self.effective_ts_us)
+        return self
 
 
 @dataclass(frozen=True, slots=True)
@@ -162,19 +269,21 @@ class BacktestSubmission:
     """Describe one validated full-range backtest workflow execution.
 
     Example:
-        submission = create_backtest_submission(
-            mode="full_backtest",
+        submission = BacktestSubmission(
+            mode=BacktestMode.FULL_BACKTEST,
             start="2026-07-01",
             end="2026-07-20",
-            model_experiment="training-1",
-            strategy={"type": "threshold", "params": {"threshold": 0.5}},
+            model_ref=Path("/data/models/training-1.joblib"),
+            model_use=use,
+            strategy=threshold_strategy,
         )
     """
 
     mode: BacktestMode
     start: str
     end: str
-    model_experiment: str
+    model_ref: Path
+    model_use: ModelUse
     strategy: StrategyConfig
     kind: Literal["backtest"] = "backtest"
 
@@ -312,17 +421,30 @@ def create_stock_1430_fusion_backfill_submission(
     return Stock1430FusionBackfillSubmission(start=normalized_start, end=normalized_end)
 
 
-def create_training_submission(
-    start: object,
-    end: object,
-) -> TrainingSubmission:
-    """Construct one usable full-range training submission.
+def create_training_submission(windows: object) -> TrainingSubmission:
+    """Validate one explicit schedule shared by CLI and HTTP.
 
     Example:
-        submission = create_training_submission("2026-07-01", "2026-07-20")
+        submission = create_training_submission([{
+            "train_dates": ["2026-07-01"], "training_cutoff_ts_us": 1783062600000000,
+            "label_availability": {"2026-07-01": {
+                "available_ts_us": 1782976200000000, "evidence_ref": "ledger/label-2026-07-01",
+            }},
+        }])
     """
-    normalized_start, normalized_end = _require_range(start, end)
-    return TrainingSubmission(start=normalized_start, end=normalized_end)
+    try:
+        selections = TypeAdapter(list[TrainingSelection]).validate_python(windows)
+    except (ValidationError, TypeError, ValueError) as exc:
+        raise InvalidJobRequest("must be a valid explicit training schedule", field="windows") from exc
+    if not selections:
+        raise InvalidJobRequest("must not be empty", field="windows")
+    decision_times = [item.decision_ts_us for item in selections if item.decision_ts_us is not None]
+    if any(left >= right for left, right in zip(decision_times, decision_times[1:])):
+        raise InvalidJobRequest("evaluation decision times must be unique and increasing", field="windows")
+    evaluation_dates = [item.eval_date for item in selections if item.eval_date is not None]
+    if any(left >= right for left, right in zip(evaluation_dates, evaluation_dates[1:])):
+        raise InvalidJobRequest("daily evaluation dates must be unique and increasing", field="windows")
+    return TrainingSubmission(windows=tuple(selections))
 
 
 def create_backtest_submission(
@@ -330,7 +452,8 @@ def create_backtest_submission(
     mode: object,
     start: object,
     end: object,
-    model_experiment: object,
+    model_ref: object,
+    model_use: object,
     strategy: object,
 ) -> BacktestSubmission:
     """Construct one usable full-range backtest submission.
@@ -340,7 +463,8 @@ def create_backtest_submission(
             mode="full_backtest",
             start="2026-07-01",
             end="2026-07-20",
-            model_experiment="training-1",
+            model_ref="/data/models/training-1.joblib",
+            model_use=use,
             strategy={"type": "threshold", "params": {"threshold": 0.5}},
         )
     """
@@ -351,10 +475,16 @@ def create_backtest_submission(
     except (TypeError, ValueError) as exc:
         raise InvalidJobRequest("is invalid", field="mode") from exc
 
-    normalized_model_experiment = _require_safe_basename(
-        model_experiment,
-        field="model_experiment",
-    )
+    if not isinstance(model_ref, str | Path):
+        raise InvalidJobRequest("must be an absolute file path", field="model_ref")
+    normalized_model_ref = Path(model_ref)
+    if not normalized_model_ref.is_absolute():
+        raise InvalidJobRequest("must be an absolute file path", field="model_ref")
+
+    try:
+        normalized_use = ModelUse.model_validate(model_use)
+    except ValidationError as exc:
+        raise InvalidJobRequest("must declare a valid model use", field="model_use") from exc
 
     try:
         normalized_strategy = TypeAdapter(StrategyConfig).validate_python(strategy)
@@ -368,7 +498,8 @@ def create_backtest_submission(
         mode=normalized_mode,
         start=normalized_start,
         end=normalized_end,
-        model_experiment=normalized_model_experiment,
+        model_ref=normalized_model_ref,
+        model_use=normalized_use,
         strategy=normalized_strategy,
     )
 
@@ -409,10 +540,7 @@ def parse_job_request(payload: object) -> list[JobSubmission]:
     if kind == "train":
         _reject_unknown_fields(request_payload, _TRAINING_FIELDS)
         return [
-            create_training_submission(
-                request_payload.get("start"),
-                request_payload.get("end"),
-            )
+            create_training_submission(request_payload.get("windows"))
         ]
 
     _reject_unknown_fields(request_payload, _BACKTEST_FIELDS)
@@ -421,7 +549,8 @@ def parse_job_request(payload: object) -> list[JobSubmission]:
             mode=request_payload.get("mode"),
             start=request_payload.get("start"),
             end=request_payload.get("end"),
-            model_experiment=request_payload.get("model_experiment"),
+            model_ref=request_payload.get("model_ref"),
+            model_use=request_payload.get("model_use"),
             strategy=request_payload.get("strategy"),
         )
     ]
@@ -463,10 +592,9 @@ def build_cli_command(
     elif isinstance(submission, TrainingSubmission):
         command.extend(
             [
-                "--start",
-                submission.start,
-                "--end",
-                submission.end,
+                "--windows-json",
+                json.dumps([window.model_dump(mode="json") for window in submission.windows],
+                           ensure_ascii=False, sort_keys=True, separators=(",", ":")),
                 "--experiment-id",
                 job_id,
             ]
@@ -482,8 +610,10 @@ def build_cli_command(
                 submission.end,
                 "--experiment-id",
                 job_id,
-                "--model-experiment",
-                submission.model_experiment,
+                "--model-ref",
+                str(submission.model_ref),
+                "--model-use-json",
+                submission.model_use.model_dump_json(),
                 "--strategy-json",
                 json.dumps(
                     submission.strategy.model_dump(mode="json"),

@@ -51,6 +51,8 @@ def test_scores_map_only_retained_rows_to_their_original_symbols() -> None:
             ),
             feature_set="daily",
             feature_version="v1",
+            train_dates=("2026-07-01",),
+            label_set="rank", label_version="v1", label_column="target",
         ),
         diagnostics=diagnostics,
     )

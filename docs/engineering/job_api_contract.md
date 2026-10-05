@@ -77,12 +77,13 @@ Collection Variables 中的 `testBaseUrl` 或 `trainingBaseUrl`。训练文件�
 服务启动配置或服务端 `ENV`，目标地址必须已有服务监听或端口映射。
 
 Collection 覆盖全部 5 个路由，包含 Standard 数据、Level-2 数据、训练和两种策略的
-回测请求示例，每个环境 9 个请求，共 18 个请求。日期范围和 `backtestMode` 在
-Collection Variables 中设置；日期须落在目标环境实际可用的数据范围内。创建成功后，
+回测请求示例，每个环境 9 个请求，共 18 个请求。数据与回测日期范围、`backtestMode` 以及
+`testTrainingWindowsJson` / `trainingWindowsJson` 在 Collection Variables 中设置；训练日程
+须提供实际任务的日期、截止与可用依据，日期须落在目标环境实际可用的数据范围内。创建成功后，
 Job ID 自动写入 Collection 的 `testJobId` 或 `trainingJobId`，查询和取消读取对应环境的 ID。
-训练提交还会将同一 ID 写入 `testModelExperiment` 或 `trainingModelExperiment`，
-须查询确认训练为 `SUCCESS` 后再回测；也可手动填写已有的成功训练
-ID。服务重启后须重新填写或创建 Job。单独发送所需请求；批量运行整个 Collection
+回测前从训练 schedule.json 及具体已发布模型文件取得绝对 ref，手动填写 `testModelRef`
+或 `trainingModelRef`。Job ID 只标识任务，不能推导模型引用；计划中的 ref 也不证明发布成功。
+服务重启后须重新填写或创建 Job ID。单独发送所需请求；批量运行整个 Collection
 会创建全部示例 Job，并执行取消请求。
 
 每次检测只查询一次 `daily`，唯一业务参数为请求时 `Asia/Shanghai` 当天的
@@ -127,11 +128,14 @@ CLI-only 的 `data-calendar`、`data-standard-bootstrap`、`data-level2-minute-b
   - 完整闭区间是一个 workflow 执行单位，因此只创建一个 Job。单日使用
     `start == end`。
 - `train`
-  - 必须且只允许提供 `start` 与 `end`。
-  - 完整范围是一个 workflow 执行单位，因此只创建一个 Job。
+  - 必须且只允许提供非空 `windows` 数组，每项 schema 与 CLI 的 `--windows-json` 一致。
+  - 每项显式声明 train_dates、training_cutoff_ts_us、label_availability，以及可选的
+    eval_date/decision_ts_us；不提供默认训练窗口，也不接受 start/end。
+  - 全部窗口构成一个 workflow 执行单位，只创建一个 Job；公开 scope.start/end 概括
+    全部所选训练及评价日期，不重新选择样本。
 - `backtest`
-  - 必须且只允许提供 `mode`、`start`、`end`、`model_experiment` 和 `strategy`。
-  - 字段业务语义与 CLI 同名参数一致。
+  - 必须且只允许提供 `mode`、`start`、`end`、`model_ref`、`model_use` 和 `strategy`。
+  - 字段业务语义与 CLI 同名参数一致；model_ref 必须是具体模型文件的绝对路径。
   - 完整范围是一个 workflow 执行单位，因此只创建一个 Job。
 
 一个 Job 对应一个完整 workflow 执行单位；每个有效请求只创建一个 Job。请求必须先完成
@@ -149,7 +153,14 @@ CLI-only 的 `data-calendar`、`data-standard-bootstrap`、`data-level2-minute-b
 
 HTTP 和 CLI 必须共同使用 `src.jobs.requests` 构造完整、可直接消费的 data、training
 或 backtest submission；HTTP 层只拥有 JSON object 形状、`kind` allowlist 和每种 kind
-的字段 allowlist，不得复制日期、mode、model experiment 或 strategy 的业务校验。
+的字段 allowlist，不得复制日期、mode、model ref 或 strategy 的业务校验。
+
+Backtest 请求另须包含 model_use 对象，字段与 CLI 的 MODEL_USE_JSON 完全相同：
+training_schedule_ref、effective_ts_us、availability_evidence_ref。缺失或形状非法时
+不得创建 Job；schedule 读取、模型关联及时间约束在 workflow 内执行，失败为 FAILED。
+build_cli_command 通过 --model-use-json 原样传递已校验值。Postman 对应变量为
+testTrainingScheduleRef、trainingScheduleRef、modelEffectiveTsUs 和
+modelAvailabilityEvidenceRef；后两项及模型/schedule 路径必须替换为实际任务依据。
 
 Job 子进程必须使用当前服务的 Python 解释器执行 `-m src.cli`，不得调用 PATH 中的
 `python`。Data Job 的 UUID 只标识 Job；training 和 backtest 必须将同一个完整 Job UUID
@@ -202,7 +213,7 @@ CANCELLED
 - 子进程退出码 `0`、`75` 和其他值分别产生 `SUCCESS`、`SKIPPED` 和 `FAILED`。
 - Standard 或 Level-2 Data 的任一正式交易日 fact 缺失时，workflow 失败，CLI 子进程退出
   非零，Job 因而进入 `FAILED`；Data workflow 不产生退出码 `75`。
-- Training 没有可执行 window 或 backtest 没有相邻 timing 时，workflow 以
+- Training 所选日期违反 workflow 前置条件或 backtest 没有相邻 timing 时，workflow 以
   `ValueError` 失败，CLI 子进程退出非零，Job 因而进入 `FAILED`；不得改成 `SKIPPED`。
 - `PENDING` 取消直接进入 `CANCELLED`，不创建 job log 或子进程。
 - `RUNNING` 取消进入 `CANCELLING`；只有进程组退出并完成 wait/reap 后才进入

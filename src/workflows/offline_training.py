@@ -1,13 +1,14 @@
 # filepath: src/workflows/offline_training.py
-"""Compose one offline-training execution."""
+"""Compose explicit training deliveries and optional fixed-prediction evaluation."""
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+import json
+from datetime import date, time
 
 from src.access import Access
 from src.config.model_config import ModelConfig
-from src.data_system.builders.registry import get_label_builder
+from src.data_system.builders.registry import get_feature_builder, get_label_builder
 from src.jobs.requests import TrainingSubmission
 from src.observability.instrumentation import Instrumentation
 from src.pipeline import PipelineStep
@@ -17,54 +18,74 @@ from src.training.pipeline import TrainingPipeline
 from src.training.steps.artifact_persist import ArtifactPersistStep
 from src.training.steps.dataset_build import DatasetBuildStep
 from src.training.steps.ic_evaluate import ICEvaluateStep
+from src.training.steps.metrics_persist import MetricsPersistStep
 from src.training.steps.model_train import ModelTrainStep
+from src.training.steps.prediction import PredictionStep
 from src.training.steps.preprocess import PreprocessStep
 from src.training.steps.report import ReportStep
+from src.utils.datetime_utils import DateTimeUtils
+from src.utils.filesystem import FileSystem
 from src.utils.path import PathManager
 from src.workflows import PROCESSED_VERSION, require_new_experiment
 
 
 def resolve_training_windows(
     *,
-    open_dates: Sequence[str],
-    train_window_days: int,
-    eval_offset: int,
+    submission: TrainingSubmission,
+    access: Access,
+    path_manager: PathManager,
+    experiment_name: str,
+    label_lookahead: int,
+    label_maturity_time: time,
 ) -> tuple[TrainingWindow, ...]:
-    """Resolve ordered open dates into expanding or rolling windows.
+    """Check complete selections against calendar, maturity, and task availability.
+
+    Dates violating the information cutoff fail instead of being shortened.
+    Availability evidence is supplied by the task; Meta does not prove history.
 
     Example:
         windows = resolve_training_windows(
-            open_dates=(
-                "2026-07-17",
-                "2026-07-20",
-                "2026-07-21",
-            ),
-            train_window_days=2,
-            eval_offset=1,
+            submission=training_submission, access=access,
+            path_manager=path_manager, experiment_name="training_run",
+            label_lookahead=1, label_maturity_time=time(15, 0),
         )
     """
+    open_dates = set(access.trade_dates(start_date=submission.start, end_date=submission.end))
+    maturity_times: dict[str, int] = {}
     windows: list[TrainingWindow] = []
-    dates = tuple(open_dates)
-    for train_end_index in range(len(dates)):
-        eval_index = train_end_index + eval_offset
-        if eval_index >= len(dates):
-            continue
-        if train_window_days == 0:
-            train_start_index = 0
-        else:
-            train_start_index = train_end_index - train_window_days + 1
-            if train_start_index < 0:
-                continue
+    for index, selection in enumerate(submission.windows):
+        for train_date in selection.train_dates:
+            if train_date not in open_dates:
+                raise ValueError(f"selected training date is not an open session: {train_date}")
+            if train_date not in maturity_times:
+                mature_date = train_date
+                for _ in range(label_lookahead):
+                    mature_date = access.next_trade_date(trade_date=mature_date)
+                maturity_times[train_date] = DateTimeUtils.local_time_to_utc_epoch_us(
+                    label_maturity_time, date.fromisoformat(mature_date),
+                )
+            fact = selection.label_availability[train_date]
+            if fact.available_ts_us < maturity_times[train_date]:
+                raise ValueError(f"label availability precedes maturity: train_date={train_date}")
+            if fact.available_ts_us > selection.training_cutoff_ts_us:
+                raise ValueError(f"label is unavailable at training cutoff: train_date={train_date}")
+        if selection.eval_date is not None:
+            if selection.eval_date not in open_dates:
+                raise ValueError(f"selected evaluation date is not an open session: {selection.eval_date}")
+        model_ref = path_manager.experiment_training_model(
+            experiment_name=experiment_name, window_index=index,
+        )
         windows.append(
             TrainingWindow(
-                train_dates=dates[train_start_index : train_end_index + 1],
-                eval_date=dates[eval_index],
+                train_dates=selection.train_dates,
+                model_ref=model_ref,
+                eval_date=selection.eval_date,
+                decision_ts_us=selection.decision_ts_us,
+                prediction_ref=(
+                    model_ref.with_name("predictions.parquet")
+                    if selection.eval_date is not None else None
+                ),
             )
-        )
-    if not windows:
-        raise ValueError(
-            "[TrainingSchedule] empty schedule; check date range, "
-            "train_window_days, and eval_offset"
         )
     return tuple(windows)
 
@@ -76,79 +97,82 @@ def run_offline_training(
     submission: TrainingSubmission,
     experiment_id: str,
 ) -> None:
-    """Run one accepted range through the offline training workflow.
+    """Deliver every selected model, then optionally evaluate fixed predictions.
 
     Example:
         run_offline_training(
-            model_config=model_config,
-            path_manager=path_manager,
-            submission=TrainingSubmission(
-                start="2026-07-01",
-                end="2026-07-20",
-            ),
-            experiment_id="run-1",
+            model_config=model_config, path_manager=path_manager,
+            submission=training_submission, experiment_id="run-1",
         )
     """
     trainer = get_model_trainer(model_config.group)
+    dataset = model_config.dataset
+    if (dataset.feature_set, dataset.feature_version) == ("l2_stock_1430", "v1"):
+        decision_time = time(14, 30)
+        exact_decision = True
+    else:
+        get_feature_builder(dataset.feature_set, dataset.feature_version)
+        decision_time = time(15, 0)
+        exact_decision = False
+    if (dataset.label_set, dataset.label_version) == ("l2_stock_1430_t1_vwap_rank", "v1"):
+        label_column = "y_rank_return"
+        lookahead = 1
+        maturity_time = time(14, 36)
+    else:
+        label_builder = get_label_builder(dataset.label_set, dataset.label_version)
+        label_column = label_builder.label_column
+        lookahead = label_builder.lookahead
+        maturity_time = time(15, 0)
+    if dataset.label_column != label_column:
+        raise ValueError(f"label set {dataset.label_set!r} exposes only label_column={label_column!r}")
+    for selection in submission.windows:
+        if selection.eval_date is not None:
+            minimum = DateTimeUtils.local_time_to_utc_epoch_us(
+                decision_time, date.fromisoformat(selection.eval_date),
+            )
+            if (
+                (exact_decision and selection.decision_ts_us != minimum)
+                or selection.decision_ts_us < minimum
+            ):
+                raise ValueError("prediction timing violates the selected feature's visibility")
     experiment_name = require_new_experiment(
-        path_manager=path_manager,
-        kind="training",
-        start_date=submission.start,
-        end_date=submission.end,
-        experiment_id=experiment_id,
+        path_manager=path_manager, kind="training", start_date=submission.start,
+        end_date=submission.end, experiment_id=experiment_id,
     )
-    label_builder = get_label_builder(
-        model_config.dataset.label_set,
-        model_config.dataset.label_version,
-    )
-    if model_config.dataset.label_column != label_builder.label_column:
-        raise ValueError(
-            f"label set {model_config.dataset.label_set!r} exposes only "
-            f"label_column={label_builder.label_column!r}"
-        )
-    eval_offset = label_builder.lookahead
     access = Access(pm=path_manager, processed_version=PROCESSED_VERSION)
-    open_dates = access.trade_dates(
-        start_date=submission.start,
-        end_date=submission.end,
-    )
     windows = resolve_training_windows(
-        open_dates=open_dates,
-        train_window_days=model_config.train_window_days,
-        eval_offset=eval_offset,
+        submission=submission, access=access, path_manager=path_manager,
+        experiment_name=experiment_name, label_lookahead=lookahead,
+        label_maturity_time=maturity_time,
     )
     per_window_steps: tuple[PipelineStep[TrainingContext], ...] = (
-        DatasetBuildStep(
-            pm=path_manager,
-            dataset_cfg=model_config.dataset,
-        ),
+        DatasetBuildStep(pm=path_manager, dataset_cfg=dataset),
         PreprocessStep(model_config.preprocessing),
-        ModelTrainStep(
-            trainer=trainer,
-            model_params=model_config.model_params,
-            feature_set=model_config.dataset.feature_set,
-            feature_version=model_config.dataset.feature_version,
-        ),
-        ICEvaluateStep(),
+        ModelTrainStep(trainer=trainer, model_params=model_config.model_params, dataset_cfg=dataset),
+        ArtifactPersistStep(),
     )
-    final_steps: tuple[PipelineStep[TrainingContext], ...] = (
-        ArtifactPersistStep(
-            pm=path_manager,
-            experiment_name=experiment_name,
-            experiment_id=experiment_id,
-            model_group=model_config.group,
-            dataset_cfg=model_config.dataset,
-            label_lookahead=eval_offset,
-        ),
-        ReportStep(
-            pm=path_manager,
-            experiment_name=experiment_name,
-        ),
+    final_steps: tuple[PipelineStep[TrainingContext], ...] = ()
+    if any(window.eval_date is not None for window in windows):
+        per_window_steps += (PredictionStep(pm=path_manager), ICEvaluateStep(pm=path_manager))
+        final_steps = (
+            MetricsPersistStep(pm=path_manager, experiment_name=experiment_name),
+            ReportStep(
+                pm=path_manager,
+                experiment_name=experiment_name,
+                model_refs=tuple(window.model_ref for window in windows),
+            ),
+        )
+    schedule = [
+        {**selection.model_dump(mode="json"), "model_ref": str(window.model_ref)}
+        for selection, window in zip(submission.windows, windows, strict=True)
+    ]
+    FileSystem.write_bytes_atomic(
+        path_manager.experiment_training_schedule(experiment_name=experiment_name),
+        json.dumps(schedule, ensure_ascii=False, indent=2, allow_nan=False).encode("utf-8"),
     )
-    pipeline = TrainingPipeline(
+    TrainingPipeline(
         windows=windows,
         per_window_steps=per_window_steps,
         final_steps=final_steps,
         instrumentation=Instrumentation(experiment_name),
-    )
-    pipeline.run()
+    ).run()

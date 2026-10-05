@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, fields, is_dataclass
+from pathlib import Path
 
 from src import logs
 from src.config.backtest_config import (
@@ -25,8 +26,7 @@ from src.trading.portfolio.constructors.topk_hysteresis import TopKHysteresisCon
 from src.trading.risk.engine import NoOpRiskManager
 from src.trading.signal.diagnostics import BasicSignalDiagnostics
 from src.trading.signal.model import ModelSignalProvider
-from src.training.artifact import load_inference_model
-from src.utils.path import PathManager
+from src.training.artifact import load
 
 
 @dataclass(frozen=True)
@@ -34,12 +34,11 @@ class Components:
     """Runtime components consumed by the fixed backtest layer graph.
 
     Example:
-        components = build_components(
-            mode=BacktestMode.FULL_BACKTEST,
-            model_experiment="training-1",
-            strategy=strategy,
-            cfg=backtest_config,
-            pm=path_manager,
+        components = Components(
+            signal=model_signal, feature_set="tushare_daily_basic",
+            feature_version="v1", feature_names=("f_d_close_return_1d",),
+            constructor=portfolio_constructor, risk=NoOpRiskManager(),
+            execution=IdealExecution(), target_capacity=None,
         )
     """
 
@@ -56,27 +55,22 @@ class Components:
 def build_components(
     *,
     mode: BacktestMode,
-    model_experiment: str,
+    model_ref: Path,
     strategy: StrategyConfig,
     cfg: BacktestConfig,
-    pm: PathManager,
 ) -> Components:
     """Build artifact-backed components from static config and submission data.
 
     Example:
         components = build_components(
             mode=BacktestMode.FULL_BACKTEST,
-            model_experiment="training-1",
+            model_ref=Path("/data/models/training-1.joblib"),
             strategy=strategy,
             cfg=backtest_config,
-            pm=path_manager,
         )
     """
 
-    inference_model = load_inference_model(
-        pm=pm,
-        experiment_name=model_experiment,
-    )
+    inference_model = load(model_ref)
 
     constructor = build_portfolio_constructor(strategy)
     signal = ModelSignalProvider(

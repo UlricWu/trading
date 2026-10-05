@@ -6,6 +6,7 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import cast
 
 import numpy as np
@@ -43,6 +44,8 @@ from src.trading.risk.engine import NoOpRiskManager, RiskManager
 from src.trading.signal.base import SignalProvider
 from src.trading.sim.kernel import BacktestKernel, BarContext
 from src.trading.sim.session import ReplaySession
+from src.training.evaluation import ICObservation, evaluate_prediction_record
+from src.training.prediction import save_prediction_record
 from src.utils.path import PathManager
 
 
@@ -59,6 +62,7 @@ class SignalResult:
     raw_prices: dict[str, float]
     scores: dict[str, float]
     skipped_symbols: tuple[str, ...]
+    prediction_ref: Path
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,6 +75,7 @@ class SignalEvaluationResult:
 
     forward_raw_prices: dict[str, float]
     frame: SignalEvalFrame
+    model_observation: ICObservation
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,6 +122,8 @@ class SignalStep:
             pm=path_manager,
             min_listing_calendar_days=120,
             signal=signal,
+            model_ref=model_ref,
+            prediction_dir=Path("/data/run/backtest/predictions"),
             feature_set="daily",
             feature_version="v1",
             feature_names=("momentum",),
@@ -131,6 +138,8 @@ class SignalStep:
         pm: PathManager,
         min_listing_calendar_days: int,
         signal: SignalProvider,
+        model_ref: Path,
+        prediction_dir: Path,
         feature_set: str,
         feature_version: str,
         feature_names: Sequence[str],
@@ -143,6 +152,8 @@ class SignalStep:
                 pm=path_manager,
                 min_listing_calendar_days=120,
                 signal=signal,
+                model_ref=model_ref,
+                prediction_dir=Path("/data/run/backtest/predictions"),
                 feature_set="daily",
                 feature_version="v1",
                 feature_names=("momentum",),
@@ -152,6 +163,8 @@ class SignalStep:
         self._pm = pm
         self._min_listing_calendar_days = min_listing_calendar_days
         self._signal = signal
+        self._model_ref = model_ref
+        self._prediction_dir = prediction_dir
         self._feature_set = feature_set
         self._feature_version = feature_version
         self._feature_names = tuple(feature_names)
@@ -191,7 +204,7 @@ class SignalStep:
             feature_names=self._feature_names,
         )
         data_view = DailyView(
-            view_data,
+            view_data.loc[:, ["symbol", RAW_PRICE_COL, *self._feature_names]],
             trade_date=trade_date,
             price_column=RAW_PRICE_COL,
         )
@@ -209,12 +222,26 @@ class SignalStep:
 
         state.portfolio_state.on_trading_day_start(trade_date)
         bar = trade_bars[0]
+        if "decision_ts_utc" in view_data and not view_data["decision_ts_utc"].eq(bar.ts_us).all():
+            raise ValueError("daily backtest decision time disagrees with feature sample keys")
         scores = self._signal.scores(
             ts_us=bar.ts_us,
             data_view=bar.data_view,
             symbols=signal_symbols,
         )
         score_map = dict(scores)
+        prediction_ref = self._prediction_dir / f"{trade_date}.parquet"
+        save_prediction_record(
+            prediction_ref, model_ref=self._model_ref, trade_date=trade_date,
+            decision_ts_us=bar.ts_us,
+            features=view_data.drop(columns=[RAW_PRICE_COL]),
+            feature_names=self._feature_names,
+            predictions=np.array([score_map.get(symbol, np.nan) for symbol in signal_symbols], dtype=np.float64),
+        )
+        logs.info(
+            f"✅ backtest prediction; model_ref={self._model_ref} "
+            f"decision_ts_us={bar.ts_us} path={prediction_ref} rows={len(signal_symbols)}"
+        )
         scored_symbols = set(score_map)
         return SignalResult(
             bar=bar,
@@ -226,6 +253,7 @@ class SignalStep:
                 for symbol in signal_symbols
                 if str(symbol) not in scored_symbols
             ),
+            prediction_ref=prediction_ref,
         )
 
     def run(self, context: BacktestContext) -> BacktestContext:
@@ -249,20 +277,21 @@ class SignalStep:
 
 
 class SignalEvalStep:
-    """Evaluate one signal result against the T+1 raw close.
+    """Evaluate fixed predictions against their model target and T+1 raw close.
 
     Example:
-        operation = SignalEvalStep(access=access)
+        operation = SignalEvalStep(access=access, pm=path_manager)
         evaluation = operation(timing, signal_result)
     """
 
-    def __init__(self, *, access: Access) -> None:
+    def __init__(self, *, access: Access, pm: PathManager) -> None:
         """Bind the processed market-data capability.
 
         Example:
-            operation = SignalEvalStep(access=access)
+            operation = SignalEvalStep(access=access, pm=path_manager)
         """
         self._access = access
+        self._pm = pm
 
     def __call__(
         self,
@@ -298,6 +327,7 @@ class SignalEvalStep:
         return SignalEvaluationResult(
             forward_raw_prices=forward_raw_prices,
             frame=frame,
+            model_observation=evaluate_prediction_record(signal.prediction_ref, pm=self._pm),
         )
 
     def run(self, context: BacktestContext) -> BacktestContext:
@@ -312,6 +342,7 @@ class SignalEvalStep:
         evaluation = self(context.timing, signal)
         context.signal_evaluation = evaluation
         context.state.signal_eval_frames.append(evaluation.frame)
+        context.state.model_observations.append(evaluation.model_observation)
         return context
 
 

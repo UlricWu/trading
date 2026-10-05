@@ -46,7 +46,7 @@ class AppConfig(BaseModel):
 
         Example:
             config = AppConfig.load(
-                override={"model": {"train_window_days": 60}}
+                override={"model": {"model_params": {"alpha": 0.001}}}
             )
             model_config = config.model
         """

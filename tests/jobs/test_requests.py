@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -27,6 +28,17 @@ from src.jobs.requests import (
 )
 
 
+
+def _training_windows() -> list[dict[str, object]]:
+    return [{
+        "train_dates": ["2026-07-01", "2026-07-20"],
+        "training_cutoff_ts_us": 1785510000000000,
+        "label_availability": {
+            "2026-07-01": {"available_ts_us": 1782976200000000, "evidence_ref": "test/label-1"},
+            "2026-07-20": {"available_ts_us": 1784617200000000, "evidence_ref": "test/label-20"},
+        },
+    }]
+
 def test_data_range_creates_one_atomic_submission() -> None:
     submissions = parse_job_request(
         {
@@ -48,13 +60,17 @@ def test_data_range_creates_one_atomic_submission() -> None:
 def test_training_range_creates_one_submission() -> None:
     submissions = parse_job_request(
         {
-            "kind": "train",
-            "start": "2026-07-01",
-            "end": "2026-07-20",
+            "kind": "train", "windows": _training_windows(),
         }
     )
 
-    assert submissions == [TrainingSubmission(start="2026-07-01", end="2026-07-20")]
+    assert len(submissions) == 1 and isinstance(submissions[0], TrainingSubmission)
+    assert submissions[0].start == "2026-07-01" and submissions[0].end == "2026-07-20"
+    assert submissions[0].windows[0].train_dates == ("2026-07-01", "2026-07-20")
+    command = build_cli_command(submissions[0], "run-1")
+    import json
+    assert json.loads(command[command.index("--windows-json") + 1]) == [window.model_dump(mode="json") for window in submissions[0].windows]
+    assert command[command.index("--experiment-id") + 1] == "run-1"
 
 
 def test_cli_only_data_ranges_create_distinct_submissions() -> None:
@@ -143,7 +159,8 @@ def test_backtest_command_uses_job_id_as_experiment_id() -> None:
             "mode": "full_backtest",
             "start": "2026-07-01",
             "end": "2026-07-20",
-            "model_experiment": "training-1",
+            "model_ref": "/data/models/training-1.joblib",
+            "model_use": {'training_schedule_ref': '/data/training/schedule.json', 'effective_ts_us': 1782860400000000, 'availability_evidence_ref': 'synthetic/model-use'},
             "strategy": {
                 "type": "threshold",
                 "params": {"threshold": 0.5},
@@ -166,6 +183,27 @@ def test_backtest_command_uses_job_id_as_experiment_id() -> None:
         "src.cli",
         "backtest",
     )
+    model_use_index = command.index("--model-use-json")
+    assert json.loads(command[model_use_index + 1]) == submission.model_use.model_dump(mode="json")
+
+
+@pytest.mark.parametrize("invalid_use", [
+    None,
+    {},
+    {"training_schedule_ref": "relative.json", "effective_ts_us": 1, "availability_evidence_ref": "record"},
+    {"training_schedule_ref": "/data/schedule.json", "effective_ts_us": True, "availability_evidence_ref": "record"},
+    {"training_schedule_ref": "/data/schedule.json", "effective_ts_us": 1, "availability_evidence_ref": " "},
+    {"training_schedule_ref": "/data/schedule.json", "effective_ts_us": 1, "availability_evidence_ref": "record", "extra": 1},
+])
+def test_backtest_requires_an_unambiguous_model_use_before_submission(invalid_use: object) -> None:
+    with pytest.raises(InvalidJobRequest) as caught:
+        parse_job_request({
+            "kind": "backtest", "mode": "signal_eval",
+            "start": "2026-07-03", "end": "2026-07-06",
+            "model_ref": "/data/model.joblib", "model_use": invalid_use,
+            "strategy": {"type": "threshold", "params": {"threshold": 0.5}},
+        })
+    assert caught.value.field == "model_use"
 
 
 @pytest.mark.parametrize(
@@ -188,7 +226,8 @@ def test_backtest_command_uses_job_id_as_experiment_id() -> None:
             "mode": "unknown",
             "start": "2026-07-01",
             "end": "2026-07-20",
-            "model_experiment": "training-1",
+            "model_ref": "/data/models/training-1.joblib",
+            "model_use": {'training_schedule_ref': '/data/training/schedule.json', 'effective_ts_us': 1782860400000000, 'availability_evidence_ref': 'synthetic/model-use'},
             "strategy": {
                 "type": "threshold",
                 "params": {"threshold": 0.5},
@@ -201,3 +240,58 @@ def test_invalid_request_is_rejected_before_any_submission(
 ) -> None:
     with pytest.raises(InvalidJobRequest):
         parse_job_request(payload)
+
+
+@pytest.mark.parametrize("mutation", ["empty_dates", "duplicate_dates", "unsorted_dates", "bad_date", "missing_availability", "extra_availability", "boolean_cutoff", "boolean_availability", "empty_evidence", "unpaired_evaluation", "decision_wrong_day", "decision_before_cutoff", "extra_window_field"])
+def test_training_schedule_rejects_ambiguous_dates_or_information_inputs(mutation: str) -> None:
+    from src.jobs.requests import create_training_submission
+    windows = _training_windows()
+    item = windows[0]
+    if mutation == "empty_dates":
+        item["train_dates"] = []
+    elif mutation == "duplicate_dates":
+        item["train_dates"] = ["2026-07-01", "2026-07-01"]
+    elif mutation == "unsorted_dates":
+        item["train_dates"] = ["2026-07-20", "2026-07-01"]
+    elif mutation == "bad_date":
+        item["train_dates"] = ["2026-7-1"]
+    elif mutation == "missing_availability":
+        item["label_availability"].pop("2026-07-01")
+    elif mutation == "extra_availability":
+        item["label_availability"]["2026-07-02"] = {"available_ts_us": 1, "evidence_ref": "test"}
+    elif mutation == "boolean_cutoff":
+        item["training_cutoff_ts_us"] = True
+    elif mutation == "boolean_availability":
+        item["label_availability"]["2026-07-01"]["available_ts_us"] = True
+    elif mutation == "empty_evidence":
+        item["label_availability"]["2026-07-01"]["evidence_ref"] = " "
+    elif mutation == "unpaired_evaluation":
+        item["eval_date"] = "2026-07-20"
+    elif mutation == "decision_wrong_day":
+        item["eval_date"] = "2026-07-20"
+        item["decision_ts_us"] = 1782976200000000
+    elif mutation == "decision_before_cutoff":
+        item["eval_date"] = "2026-07-02"
+        item["decision_ts_us"] = 1782976200000000
+    else:
+        item["window_days"] = 30
+    with pytest.raises(InvalidJobRequest) as caught:
+        create_training_submission(windows)
+    assert caught.value.field == "windows"
+
+
+@pytest.mark.parametrize("ref", ["training-run", "relative/model.joblib", "../model.joblib", None, 1])
+def test_backtest_requires_a_concrete_absolute_model_reference(ref: object) -> None:
+    from src.jobs.requests import create_backtest_submission
+    with pytest.raises(InvalidJobRequest) as caught:
+        create_backtest_submission(mode="signal_eval", start="2026-07-01", end="2026-07-02", model_ref=ref, model_use={'training_schedule_ref': '/data/training/schedule.json', 'effective_ts_us': 1782860400000000, 'availability_evidence_ref': 'synthetic/model-use'}, strategy={"type": "threshold", "params": {"threshold": 0.5}})
+    assert caught.value.field == "model_ref"
+
+
+def test_training_scope_covers_every_selected_date_before_runtime_maturity_checks() -> None:
+    from src.jobs.requests import create_training_submission
+    item = {"train_dates": ["2026-07-20"], "training_cutoff_ts_us": 1782976200000000,
+            "label_availability": {"2026-07-20": {"available_ts_us": 1782976200000000, "evidence_ref": "synthetic/invalid-history"}},
+            "eval_date": "2026-07-02", "decision_ts_us": 1782976200000000}
+    submission = create_training_submission([item])
+    assert (submission.start, submission.end) == ("2026-07-02", "2026-07-20")

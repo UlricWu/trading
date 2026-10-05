@@ -19,6 +19,7 @@ def build_daily_training_dataset(
     label_frame: pd.DataFrame,
     feature_columns: Sequence[str],
     label_column: str,
+    key_columns: Sequence[str] = _KEY_COLUMNS,
 ) -> tuple[pd.DataFrame, pd.Series]:
     """Build one daily feature/label dataset from formal input tables.
 
@@ -39,26 +40,27 @@ def build_daily_training_dataset(
         )
     """
     selected_columns = tuple(feature_columns)
+    selected_keys = tuple(key_columns)
     table_ops.require_nonempty(feature_frame, who="training dataset feature_frame")
     table_ops.require_columns(
         feature_frame,
-        (*_KEY_COLUMNS, *selected_columns),
+        (*selected_keys, *selected_columns),
         who="training dataset feature_frame",
     )
     table_ops.require_columns(
         label_frame,
-        (*_KEY_COLUMNS, label_column),
+        (*selected_keys, label_column),
         who="training dataset label_frame",
     )
-    feature_keys = feature_frame.loc[:, list(_KEY_COLUMNS)].reset_index(drop=True)
-    label_keys = label_frame.loc[:, list(_KEY_COLUMNS)].reset_index(drop=True)
+    feature_keys = feature_frame.loc[:, list(selected_keys)].reset_index(drop=True)
+    label_keys = label_frame.loc[:, list(selected_keys)].reset_index(drop=True)
     if (
         len(feature_keys) != len(label_keys)
         or not feature_keys.eq(label_keys).to_numpy(dtype=bool, na_value=False).all()
     ):
         raise RuntimeError("training dataset feature / label key mismatch")
 
-    metadata_columns = {"trade_date", "ts_us"} & set(selected_columns)
+    metadata_columns = {*selected_keys, "ts_us"} & set(selected_columns)
     if metadata_columns:
         raise RuntimeError(
             "training dataset metadata leaked into feature space: "
@@ -79,6 +81,4 @@ def build_daily_training_dataset(
     labeled_rows = ~y.isna()
     X = X.loc[labeled_rows].copy()
     y = y.loc[labeled_rows].copy()
-    if not X.index.equals(y.index):
-        raise RuntimeError("training dataset X / y index mismatch")
     return X, y

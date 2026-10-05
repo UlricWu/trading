@@ -17,6 +17,7 @@ from src.trading.engines.backtest_eval import (
     TradableAlphaFrame,
 )
 from src.trading.portfolio.state import PortfolioState
+from src.training.evaluation import ICObservation
 
 if TYPE_CHECKING:
     from src.trading.backtest.steps.backtest_layers import (
@@ -43,6 +44,7 @@ class BacktestState:
     signal_tape: SignalTape = field(default_factory=SignalTape)
     target_tape: TargetTape = field(default_factory=TargetTape)
     signal_eval_frames: list[SignalEvalFrame] = field(default_factory=list)
+    model_observations: list[ICObservation] = field(default_factory=list)
     tradable_alpha_frames: list[TradableAlphaFrame] = field(default_factory=list)
     risk_decision_frames: list[RiskEffectFrame] = field(default_factory=list)
     execution_eval_frames: list[ExecutionQualityFrame] = field(default_factory=list)

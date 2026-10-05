@@ -3,15 +3,15 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import ANY, Mock
+from unittest.mock import Mock
 
 import pytest
 
 from src.config.backtest_config import BacktestConfig, BacktestMode
 from src.jobs.requests import create_backtest_submission
 from src.trading.sim import components as components_module
-from src.utils.path import PathManager
 
 
 @pytest.mark.parametrize(
@@ -38,7 +38,7 @@ def test_mode_selects_fixed_execution_and_noop_risk(
     constructor = object()
     monkeypatch.setattr(
         components_module,
-        "load_inference_model",
+        "load",
         load_model,
     )
     monkeypatch.setattr(
@@ -94,25 +94,26 @@ def test_mode_selects_fixed_execution_and_noop_risk(
         mode=mode.value,
         start="2026-07-01",
         end="2026-07-02",
-        model_experiment="training-runtime",
+        model_ref="/data/models/training-runtime.joblib",
+        model_use={
+            "training_schedule_ref": "/data/training/schedule.json",
+            "effective_ts_us": 1782860400000000,
+            "availability_evidence_ref": "synthetic/model-use",
+        },
         strategy={"type": "threshold", "params": {"threshold": 0.5}},
     )
 
     components = components_module.build_components(
         mode=submission.mode,
-        model_experiment=submission.model_experiment,
+        model_ref=submission.model_ref,
         strategy=submission.strategy,
         cfg=BacktestConfig(
             init_cash=200_000,
             min_listing_calendar_days=120,
         ),
-        pm=Mock(spec=PathManager),
     )
 
-    load_model.assert_called_once_with(
-        pm=ANY,
-        experiment_name="training-runtime",
-    )
+    load_model.assert_called_once_with(Path("/data/models/training-runtime.joblib"))
     assert components.risk is risk
     if uses_ideal_execution:
         assert components.execution is ideal_execution

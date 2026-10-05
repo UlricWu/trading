@@ -307,34 +307,28 @@ def data_feature_backfill(
 
 @app.command()
 def train(
-    start_date: str = typer.Option(..., "--start"),
-    end_date: str = typer.Option(..., "--end"),
+    windows_json: str = typer.Option(..., "--windows-json"),
     experiment_id: str = typer.Option(..., "--experiment-id"),
 ) -> None:
-    """Run one offline training experiment.
+    """Run explicit training selections with optional evaluation.
 
     Example:
-        train(
-            start_date="2026-07-01",
-            end_date="2026-07-20",
-            experiment_id="training-1",
-        )
+        train(windows_json='[{"train_dates":["2026-07-01"],"training_cutoff_ts_us":1783062600000000,"label_availability":{"2026-07-01":{"available_ts_us":1782976200000000,"evidence_ref":"ledger/label-2026-07-01"}}}]', experiment_id="training-1")
     """
     try:
-        submission = create_training_submission(start_date, end_date)
+        raw_windows = json.loads(windows_json)
+    except json.JSONDecodeError:
+        raise typer.BadParameter("must be valid JSON", param_hint="--windows-json") from None
+    try:
+        submission = create_training_submission(raw_windows)
     except InvalidJobRequest as exc:
-        _raise_bad_parameter(
-            exc,
-            {"start": "--start", "end": "--end"},
-        )
+        _raise_bad_parameter(exc, {"windows": "--windows-json"})
     experiment_id = _require_experiment_id(experiment_id)
-
     app_config = AppConfig.load()
     run_offline_training(
         model_config=app_config.model,
         path_manager=PathManager(app_config.storage_root),
-        submission=submission,
-        experiment_id=experiment_id,
+        submission=submission, experiment_id=experiment_id,
     )
 
 
@@ -344,7 +338,8 @@ def backtest(
     start_date: str = typer.Option(..., "--start"),
     end_date: str = typer.Option(..., "--end"),
     experiment_id: str = typer.Option(..., "--experiment-id"),
-    model_experiment: str = typer.Option(..., "--model-experiment"),
+    model_ref: str = typer.Option(..., "--model-ref"),
+    model_use_json: str = typer.Option(..., "--model-use-json"),
     strategy_json: str = typer.Option(..., "--strategy-json"),
 ) -> None:
     """Run one offline daily-alpha backtest experiment.
@@ -355,17 +350,23 @@ def backtest(
             start_date="2026-07-01",
             end_date="2026-07-20",
             experiment_id="backtest-1",
-            model_experiment="training-1",
+            model_ref="/data/models/training-1.joblib",
+            model_use_json=model_use_json,
             strategy_json='{"type":"threshold","params":{"threshold":0.5}}',
         )
     """
     experiment_id = _require_experiment_id(experiment_id)
     try:
+        model_use = json.loads(model_use_json)
+    except json.JSONDecodeError as exc:
+        raise typer.BadParameter("must be valid JSON", param_hint="--model-use-json") from exc
+    try:
         submission = create_backtest_submission(
             mode=mode,
             start=start_date,
             end=end_date,
-            model_experiment=model_experiment,
+            model_ref=model_ref,
+            model_use=model_use,
             strategy=_parse_strategy_json(strategy_json),
         )
     except InvalidJobRequest as exc:
@@ -375,7 +376,8 @@ def backtest(
                 "mode": "--mode",
                 "start": "--start",
                 "end": "--end",
-                "model_experiment": "--model-experiment",
+                "model_ref": "--model-ref",
+                "model_use": "--model-use-json",
                 "strategy": "--strategy-json",
             },
         )

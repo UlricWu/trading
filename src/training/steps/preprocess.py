@@ -53,7 +53,7 @@ class PreprocessStep:
             config=self._preprocessing_cfg,
         )
         keep_rows, values = fitted.transform(
-            train_X.to_numpy(dtype=float, na_value=np.nan, copy=True)
+            train_X.to_numpy(dtype=float, na_value=np.nan, copy=False)
         )
         if values.shape[0] == 0:
             raise ValueError("PreprocessStep retained no training rows")

@@ -15,6 +15,7 @@ from src.trading.engines.backtest_eval import (
     summarize_tradable_alpha_frames,
 )
 from src.trading.reporting.metrics import build_backtest_metrics
+from src.training.evaluation import ICEvaluation, summarize_observations
 from src.utils.filesystem import FileSystem
 from src.utils.path import PathManager
 
@@ -44,6 +45,10 @@ def persist_backtest_metrics(
     )
     metrics.update(
         {
+            "model_evaluation": ICEvaluation(
+                observations=tuple(state.model_observations),
+                summary=summarize_observations(state.model_observations),
+            ).model_dump(mode="json"),
             "signal_eval": summarize_signal_eval_frames(state.signal_eval_frames),
             "tradable_alpha_eval": summarize_tradable_alpha_frames(
                 state.tradable_alpha_frames,

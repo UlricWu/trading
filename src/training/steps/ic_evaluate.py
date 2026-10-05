@@ -1,29 +1,40 @@
 # filepath: src/training/steps/ic_evaluate.py
-"""Rank-IC evaluation for one explicit model and evaluation partition."""
+"""Read corresponding labels only after the prediction record is fixed."""
+
+from __future__ import annotations
 
 from src.training.context import TrainingContext
-from src.training.engines.rank_ic import evaluate_rank_ic
+from src.training.evaluation import evaluate_prediction_record
+from src.utils.path import PathManager
 
 
 class ICEvaluateStep:
-    """Evaluate and record Rank IC for one trained Context window.
+    """Append one observation for the saved model and its complete prediction rows.
 
     Example:
-        evaluated_context = ICEvaluateStep().run(trained_context)
+        step = ICEvaluateStep(pm=path_manager)
+        context = step.run(predicted_context)
     """
 
-    def run(self, context: TrainingContext) -> TrainingContext:
-        """Attach Rank IC and record it under the Context evaluation date.
+    def __init__(self, *, pm: PathManager) -> None:
+        """Bind label storage without reading it during composition.
 
         Example:
-            evaluated_context = ICEvaluateStep().run(trained_context)
+            step = ICEvaluateStep(pm=path_manager)
         """
-        if context.model is None or context.eval_X is None or context.eval_y is None:
-            raise RuntimeError("ICEvaluateStep requires a model and evaluation data")
-        rank_ic = evaluate_rank_ic(
-            model=context.model,
-            eval_X=context.eval_X,
-            eval_y=context.eval_y,
-        )
-        context.metrics[f"ic@{context.window.eval_date}"] = rank_ic
+        self._pm = pm
+
+    def run(self, context: TrainingContext) -> TrainingContext:
+        """Evaluate exact key-aligned labels using the model's actual target.
+
+        Example:
+            context = step.run(predicted_context)
+        """
+        window = context.window
+        if window.eval_date is None:
+            return context
+        if window.prediction_ref is None:
+            raise RuntimeError("ICEvaluateStep requires a persisted prediction ref")
+        observation = evaluate_prediction_record(window.prediction_ref, pm=self._pm)
+        context.observations.append(observation)
         return context

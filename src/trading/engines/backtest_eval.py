@@ -1,12 +1,16 @@
 # filepath: src/trading/engines/backtest_eval.py
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
 import math
+from collections import Counter
+from collections.abc import Mapping, Sequence
 from typing import NotRequired, TypedDict
+
+import numpy as np
 
 from src.trading.core.equity import EquityPoint
 from src.trading.core.events import FillEvent
+from src.training.engines.rank_ic import rank_ic
 
 
 class SignalEvalFrame(TypedDict):
@@ -19,6 +23,8 @@ class SignalEvalFrame(TypedDict):
     failed_invalid_exit_price: int
     ic_pearson: float | None
     rank_ic: float | None
+    rank_ic_pair_count: int
+    rank_ic_undefined_reasons: tuple[str, ...]
     mean_forward_return: float | None
     positive_ratio: float | None
     top_quantile_return: float | None
@@ -120,7 +126,15 @@ def signal_eval_frame(
     exit_prices: Mapping[str, float],
     quantiles: int = 5,
 ) -> SignalEvalFrame:
-    """Evaluate score quality against the current T+1 raw-close label."""
+    """Evaluate T+1 raw-close quality, including undefined Rank IC observations.
+
+    Example:
+        frame = signal_eval_frame(
+            scores={"000001": 0.0},
+            entry_prices={"000001": 10.0}, exit_prices={"000001": 11.0},
+        )
+        assert frame["rank_ic"] is None
+    """
     if quantiles < 2:
         raise RuntimeError("[signal_eval] quantiles must be >= 2")
     rows, counts = _score_return_rows(
@@ -129,6 +143,12 @@ def signal_eval_frame(
         exit_prices=exit_prices,
         round_trip_cost_bps=0.0,
         label="signal_eval",
+    )
+    score_values = [row["score"] for row in rows]
+    returns = [row["gross_return"] for row in rows]
+    rank_value, pair_count, reasons = rank_ic(
+        np.asarray(score_values, dtype=np.float64),
+        np.asarray(returns, dtype=np.float64),
     )
     frame: SignalEvalFrame = {
         "score_count": int(len(scores)),
@@ -139,7 +159,9 @@ def signal_eval_frame(
         "failed_missing_exit_price": counts["missing_exit_price"],
         "failed_invalid_exit_price": counts["invalid_exit_price"],
         "ic_pearson": None,
-        "rank_ic": None,
+        "rank_ic": rank_value,
+        "rank_ic_pair_count": pair_count,
+        "rank_ic_undefined_reasons": reasons,
         "mean_forward_return": None,
         "positive_ratio": None,
         "top_quantile_return": None,
@@ -150,8 +172,6 @@ def signal_eval_frame(
     if not rows:
         return frame
 
-    score_values = [row["score"] for row in rows]
-    returns = [row["gross_return"] for row in rows]
     quantile_returns = _quantile_means(
         rows=rows,
         value_key="gross_return",
@@ -164,7 +184,6 @@ def signal_eval_frame(
     frame.update(
         {
             "ic_pearson": _corr(score_values, returns),
-            "rank_ic": _corr(_rank_average(score_values), _rank_average(returns)),
             "mean_forward_return": _mean(returns),
             "positive_ratio": _ratio(
                 sum(1 for value in returns if value > 0.0),
@@ -442,12 +461,21 @@ def full_backtest_frame(
 def summarize_signal_eval_frames(
     frames: Sequence[SignalEvalFrame],
 ) -> dict[str, object]:
+    """Summarize raw-close diagnostics while retaining undefined-date coverage.
+
+    Example:
+        summary = summarize_signal_eval_frames([daily_frame])
+        defined_dates = summary["rank_ic_defined_date_count"]
+    """
+    reason_counts = Counter(reason for frame in frames for reason in frame["rank_ic_undefined_reasons"])
     return {
         "frames": int(len(frames)),
         "score_count": _sum_int(frames, "score_count"),
         "label_count": _sum_int(frames, "label_count"),
         "coverage": _weighted_ratio(frames, "label_count", "score_count"),
         "mean_rank_ic": _mean_present(frames, "rank_ic"),
+        "rank_ic_defined_date_count": sum(frame["rank_ic"] is not None for frame in frames),
+        "rank_ic_undefined_reason_counts": dict(sorted(reason_counts.items())),
         "mean_ic_pearson": _mean_present(frames, "ic_pearson"),
         "mean_forward_return": _mean_present(frames, "mean_forward_return"),
         "mean_long_short_return": _mean_present(frames, "long_short_return"),
@@ -537,11 +565,9 @@ def _score_return_rows(
     round_trip_cost_bps: float,
     label: str,
 ) -> tuple[list[dict[str, float]], dict[str, int]]:
-    if not scores:
-        raise RuntimeError(f"[{label}] scores required")
-    if not entry_prices:
+    if scores and not entry_prices:
         raise RuntimeError(f"[{label}] entry_prices required")
-    if not exit_prices:
+    if scores and not exit_prices:
         raise RuntimeError(f"[{label}] exit_prices required")
     cost_bps = _require_finite(round_trip_cost_bps, "round_trip_cost_bps")
     if cost_bps < 0.0:
@@ -666,21 +692,6 @@ def _quantile_means(
             continue
         out[f"q{index + 1}"] = _mean([row[value_key] for row in ordered[start:end]])
     return out
-
-
-def _rank_average(values: Sequence[float]) -> list[float]:
-    indexed = sorted(enumerate(values), key=lambda item: item[1])
-    ranks = [0.0] * len(indexed)
-    cursor = 0
-    while cursor < len(indexed):
-        end = cursor + 1
-        while end < len(indexed) and indexed[end][1] == indexed[cursor][1]:
-            end += 1
-        average_rank = (cursor + 1 + end) / 2.0
-        for original_index, _value in indexed[cursor:end]:
-            ranks[original_index] = average_rank
-        cursor = end
-    return ranks
 
 
 def _corr(left: Sequence[float], right: Sequence[float]) -> float | None:

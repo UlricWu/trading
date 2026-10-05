@@ -13,7 +13,6 @@ def _model_payload() -> dict[str, object]:
     return {
         "group": "sgd_regression",
         "model_params": {},
-        "train_window_days": 30,
         "preprocessing": {
             "missing": {"method": "constant", "fill_value": 0.0},
         },
@@ -86,5 +85,14 @@ def test_model_config_rejects_missing_group() -> None:
     payload = _model_payload()
     del payload["group"]
 
+    with pytest.raises(ValidationError):
+        ModelConfig.model_validate(payload)
+
+
+def test_training_config_has_no_implicit_window_and_rejects_removed_setting() -> None:
+    payload = _model_payload()
+    config = ModelConfig.model_validate(payload)
+    assert not hasattr(config, "train_window_days")
+    payload["train_window_days"] = 30
     with pytest.raises(ValidationError):
         ModelConfig.model_validate(payload)

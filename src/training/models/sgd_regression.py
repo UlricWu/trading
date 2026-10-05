@@ -22,7 +22,7 @@ def train_sgd_regression(
         model = train_sgd_regression(
             X=train_X,
             y=train_y,
-            model_params={"alpha": 0.001},
+            model_params={"alpha": 0.001, "random_state": 7},
         )
     """
     if len(X) != len(y):
@@ -31,6 +31,8 @@ def train_sgd_regression(
     y_values = np.asarray(y, dtype=float).reshape(-1)
     if not np.isfinite(X_values).all() or not np.isfinite(y_values).all():
         raise ValueError("training inputs must contain only finite values")
+    if type(model_params.get("random_state")) is not int:
+        raise ValueError("SGD training requires an explicit integer random_state")
 
     model = SGDRegressor(**dict(model_params))
     model.partial_fit(X_values, y_values)

@@ -9,6 +9,7 @@ from typing import cast
 from src.observability.instrumentation import Instrumentation
 from src.pipeline import PipelineStep, run_steps
 from src.training.context import TrainingContext, TrainingWindow
+from src.training.evaluation import ICObservation
 
 
 class TrainingPipeline:
@@ -17,8 +18,8 @@ class TrainingPipeline:
     Example:
         pipeline = TrainingPipeline(
             windows=windows,
-            per_window_steps=(dataset, preprocess, train, evaluate),
-            final_steps=(persist, report),
+            per_window_steps=(dataset, preprocess, train, persist, predict, evaluate),
+            final_steps=(metrics, report),
             instrumentation=Instrumentation("training_2026-07_run-1"),
         )
         pipeline.run()
@@ -37,8 +38,8 @@ class TrainingPipeline:
         Example:
             pipeline = TrainingPipeline(
                 windows=windows,
-                per_window_steps=(dataset, preprocess, train, evaluate),
-                final_steps=(persist, report),
+                per_window_steps=(dataset, preprocess, train, persist, predict, evaluate),
+                final_steps=(metrics, report),
                 instrumentation=Instrumentation("training_2026-07_run-1"),
             )
         """
@@ -56,12 +57,12 @@ class TrainingPipeline:
         if not self._windows:
             raise ValueError("[TrainingSchedule] empty schedule")
 
-        metrics: dict[str, float] = {}
+        observations: list[ICObservation] = []
         last_context: TrainingContext | None = None
         with self._instrumentation:
             for window in self._windows:
                 last_context = run_steps(
-                    context=TrainingContext(window=window, metrics=metrics),
+                    context=TrainingContext(window=window, observations=observations),
                     steps=self._per_window_steps,
                     instrumentation=self._instrumentation,
                 )

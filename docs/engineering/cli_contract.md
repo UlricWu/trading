@@ -11,7 +11,7 @@ CLI 只把不可信文本解析为 `src.jobs.requests` 已构造的 data、fact 
 backfill、Level-2 minute backfill、H03 14:30 backfill、H04 fusion backfill、training 或 backtest submission，
 加载一次 `AppConfig`，
 创建 `PathManager` 并调用一次工作流。HTTP Job API
-也必须复用同一构造边界，不得各自实现日期、mode、model experiment 或 strategy 校验。
+也必须复用同一构造边界，不得各自实现日期、mode、model ref 或 strategy 校验。
 CLI 在命令分派前按日志技术 owner 配置一次公共 logger 的 stderr sink；它不记录
 start/done 或原始 JSON，workflow 负责业务运行日志。Typer 负责参数错误并以 `2` 退出，
 未处理的配置或运行错误以 `1` 退出。
@@ -136,16 +136,40 @@ calendar 与 Standard facts，不调用 broker，不写 raw、processed、label 
 
 ```text
 python -m src.cli train \
-  --start YYYY-MM-DD \
-  --end YYYY-MM-DD \
+  --windows-json JSON \
   --experiment-id EXPERIMENT_ID
 ```
 
-Training 只使用基础 `AppConfig.model`，不接受 group 或配置 JSON override。CLI 将已校验
-`TrainingSubmission`、experiment ID、`ModelConfig` 和 `PathManager` 直接交给 training
-workflow。
-通过 HTTP 创建 training Job 时，Job API 使用同一个 Job UUID 作为该必填
-`EXPERIMENT_ID`；HTTP 不接受客户端提供此字段。
+JSON 必须是非空训练选择数组，不接受 start/end 或隐式窗口长度。每项 schema 为：
+
+```json
+[{
+  "train_dates": ["2026-07-01"],
+  "training_cutoff_ts_us": 1783062600000000,
+  "label_availability": {
+    "2026-07-01": {
+      "available_ts_us": 1782976200000000,
+      "evidence_ref": "ledger/label-2026-07-01"
+    }
+  }
+}]
+```
+
+该例是结构示例，不表示 ledger 已经存在。train_dates 必须为规范、非空、严格升序且唯一的
+日期；label_availability 必须精确覆盖所选日期，时间是严格整数 UTC epoch microseconds，
+依据引用不得为空。可另同时提供 eval_date 与 decision_ts_us；同时省略或设为 null 表示
+只交付模型。决策必须落在评价日的上海日期内，且不早于训练截止；数组中的评价日期和
+决策时点必须各自严格递增。额外字段拒绝。成熟、实际可用声明及 Feature 可见性核验由
+[training workflow](../offline_workflow_contract.md#training-workflow)负责，违反时不缩短日期。
+
+Training 只使用基础 AppConfig.model，不接受 group 或配置 JSON override。CLI 将已校验
+TrainingSubmission、experiment ID、ModelConfig 和 PathManager 直接交给 workflow。
+JSON/参数构造失败退出 2；配置、数据、训练、保存或评价失败退出 1；成功退出 0。可恢复
+模型的具体 ref 位于 training/windows/<index>/model.joblib，并记录在 schedule.json；评价和
+报告不参与模型构造或发布判定。纯训练不读取评价输入。
+
+通过 HTTP 创建 training Job 时，Job API 使用同一个 Job UUID 作为必填 EXPERIMENT_ID；
+HTTP 不接受客户端提供此字段。
 
 ## Backtest
 
@@ -155,12 +179,14 @@ python -m src.cli backtest \
   --start YYYY-MM-DD \
   --end YYYY-MM-DD \
   --experiment-id EXPERIMENT_ID \
-  --model-experiment MODEL_EXPERIMENT \
+  --model-ref ABSOLUTE_MODEL_PATH \
+  --model-use-json MODEL_USE_JSON \
   --strategy-json JSON
 ```
 
 `MODE` 必须是 `signal_eval`、`tradable_alpha_eval`、`execution_eval`、`risk_eval` 或
-`full_backtest`。`MODEL_EXPERIMENT` 必须是安全单一 basename。`JSON` 必须完整匹配以下
+`full_backtest`。`ABSOLUTE_MODEL_PATH` 必须是指向单份已发布模型的绝对文件路径，构造为 pathlib.Path；
+不通过实验名称猜测某一个模型。`JSON` 必须完整匹配以下
 任一对象，额外字段禁止：
 
 ```text
@@ -176,9 +202,24 @@ python -m src.cli backtest \
 }}
 ```
 
+`MODEL_USE_JSON` 是必填对象，字段精确为：
+
+```json
+{
+  "training_schedule_ref": "/data/experiments/TRAINING_RUN/training/schedule.json",
+  "effective_ts_us": 1783062000000000,
+  "availability_evidence_ref": "TASK_MODEL_AVAILABILITY_EVIDENCE"
+}
+```
+
+schedule 引用必须是绝对路径，时间必须为整数 UTC microseconds，证据引用不得为空白。
+示例不是历史可用性证明；实际调用须使用任务材料。CLI/HTTP 共同校验形状，workflow
+读取 schedule 和模型后检查关联、训练截止及首个决策边界。缺失字段或非法 JSON 在
+装配 workflow 前失败；不自动补造依据，也不兼容省略 model_use 的旧请求。
+
 CLI 不构造 config override。它加载一次只含静态执行设置的 `BacktestConfig`，并把该对象、
 完整 `BacktestSubmission`、`PathManager` 与 experiment ID 直接交给 workflow。Runtime
-mode、model experiment 和 strategy 的唯一 owner 是 submission；`BacktestConfig` 只拥有
+mode、model ref、model_use 和 strategy 的唯一 owner 是 submission；`BacktestConfig` 只拥有
 `init_cash` 与 `min_listing_calendar_days`。CLI 不接受 group、run ID、model name 或可选
 策略。
 通过 HTTP 创建 backtest Job 时，Job API 使用同一个 Job UUID 作为该必填

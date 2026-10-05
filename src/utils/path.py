@@ -330,24 +330,22 @@ class PathManager:
         """Return the report artifact directory for one experiment."""
         return self.experiment_dir(experiment_name=experiment_name) / "report"
 
-    def experiment_training_inference(self, *, experiment_name: str) -> Path:
-        """Return one training experiment's ready inference asset path.
+    def experiment_training_model(
+        self, *, experiment_name: str, window_index: int,
+    ) -> Path:
+        """Return the immutable model ref for one explicit training window.
 
         Example:
-            path = pm.experiment_training_inference(
-                experiment_name="training_2026-07-01_2026-07-20_run-1"
+            path = pm.experiment_training_model(
+                experiment_name="training_2026-07-01_2026-07-20_run-1",
+                window_index=0,
             )
         """
+        if isinstance(window_index, bool) or not isinstance(window_index, int) or window_index < 0:
+            raise ValueError("window_index must be a non-negative integer")
         return (
             self.experiment_training_dir(experiment_name=experiment_name)
-            / "inference.pkl"
-        )
-
-    def experiment_training_params(self, *, experiment_name: str) -> Path:
-        """Return one training experiment's parameter artifact path."""
-        return (
-            self.experiment_training_dir(experiment_name=experiment_name)
-            / "params.json"
+            / "windows" / f"{window_index:04d}" / "model.joblib"
         )
 
     def experiment_training_metrics(self, *, experiment_name: str) -> Path:
@@ -356,6 +354,14 @@ class PathManager:
             self.experiment_training_dir(experiment_name=experiment_name)
             / "metrics.json"
         )
+
+    def experiment_training_schedule(self, *, experiment_name: str) -> Path:
+        """Return the explicit dates, cutoff, and availability-evidence record.
+
+        Example:
+            path = pm.experiment_training_schedule(experiment_name="training_run")
+        """
+        return self.experiment_training_dir(experiment_name=experiment_name) / "schedule.json"
 
     def experiment_backtest_metrics(self, *, experiment_name: str) -> Path:
         """Return one backtest experiment's metrics artifact path."""

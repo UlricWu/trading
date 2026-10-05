@@ -4,9 +4,9 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 import pandas as pd
-import pyarrow.parquet as pq
 
-from src.access import Access, meta
+from src.access import Access
+from src.access.feature_label import read_features
 from src.trading.market.daily_view import SYMBOL_COL
 from src.utils import table_ops
 from src.utils.path import PathManager
@@ -25,7 +25,10 @@ def read_daily_raw_signal_view_data(
     feature_version: str,
     feature_names: Sequence[str],
 ) -> pd.DataFrame:
-    """Read one daily raw-price `DailyView` input for executable replay.
+    """Read complete feature sample keys and values with raw execution prices.
+
+    Sample keys stay available for prediction records. The caller selects symbol,
+    raw price and feature columns when constructing a DailyView.
 
     Example:
         frame = read_daily_raw_signal_view_data(
@@ -34,9 +37,9 @@ def read_daily_raw_signal_view_data(
             symbols=("000001",),
             price_date="2026-07-20",
             feature_date="2026-07-20",
-            feature_set="daily",
+            feature_set="tushare_daily_basic",
             feature_version="v1",
-            feature_names=("momentum",),
+            feature_names=("f_d_close_return_1d",),
         )
     """
     ordered_symbols = [str(symbol) for symbol in symbols]
@@ -58,7 +61,8 @@ def read_daily_raw_signal_view_data(
     frame[RAW_PRICE_COL] = (
         prices.set_index(SYMBOL_COL).loc[ordered_symbols, RAW_PRICE_COL].to_numpy()
     )
-    return frame.loc[:, [SYMBOL_COL, RAW_PRICE_COL, *names]]
+    keys = [column for column in features if column not in names]
+    return frame.loc[:, [*keys, RAW_PRICE_COL, *names]]
 
 
 def read_raw_close(
@@ -114,21 +118,13 @@ def _read_feature_rows(
 ) -> pd.DataFrame:
     ordered_symbols = [str(symbol) for symbol in symbols]
     names = [str(name) for name in feature_names]
-    paths = pm.feature_object(
+    features = read_features(
+        pm=pm,
         feature_set=feature_set,
         version=feature_version,
         trade_date=trade_date,
+        feature_names=names,
     )
-    loaded = meta.require(
-        pm=pm,
-        meta_path=paths.meta_path,
-        expected_payload_path=paths.payload_path,
-    )
-    features = pq.ParquetFile(loaded.payload_path).read().to_pandas()
-
-    table_ops.require_columns(features, (SYMBOL_COL, *names), who="feature")
-    features = features.loc[:, [SYMBOL_COL, *names]].copy()
-    table_ops.require_nonempty_strings(features, (SYMBOL_COL,), who="feature")
     table_ops.require_unique(features, (SYMBOL_COL,), who="feature")
 
     return (

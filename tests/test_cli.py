@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import json
+
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -14,6 +16,17 @@ from src import cli
 from src.config.backtest_config import BacktestMode
 from src.utils.path import PathManager
 
+
+
+def _training_windows() -> list[dict[str, object]]:
+    return [{
+        "train_dates": ["2026-07-01", "2026-07-20"],
+        "training_cutoff_ts_us": 1785510000000000,
+        "label_availability": {
+            "2026-07-01": {"available_ts_us": 1782976200000000, "evidence_ref": "test/label-1"},
+            "2026-07-20": {"available_ts_us": 1784617200000000, "evidence_ref": "test/label-20"},
+        },
+    }]
 
 def test_data_calendar_bootstraps_through_the_current_market_year(
     tmp_path: Path,
@@ -257,10 +270,7 @@ def test_train_passes_base_model_config_and_complete_submission(
         cli.app,
         [
             "train",
-            "--start",
-            "2026-07-01",
-            "--end",
-            "2026-07-20",
+            "--windows-json", json.dumps(_training_windows()),
             "--experiment-id",
             "run-1",
         ],
@@ -303,8 +313,10 @@ def test_backtest_loads_static_config_without_runtime_override(
             "2026-07-20",
             "--experiment-id",
             "run-1",
-            "--model-experiment",
-            "training-1",
+            "--model-use-json",
+            '{"training_schedule_ref": "/data/training/schedule.json", "effective_ts_us": 1782860400000000, "availability_evidence_ref": "synthetic/model-use"}',
+            "--model-ref",
+            "/data/models/training-1.joblib",
             "--strategy-json",
             '{"type":"threshold","params":{"threshold":0.5}}',
         ],
@@ -316,7 +328,7 @@ def test_backtest_loads_static_config_without_runtime_override(
     submission = arguments["submission"]
     assert arguments["backtest_config"] is backtest_config
     assert submission.mode is BacktestMode.FULL_BACKTEST
-    assert submission.model_experiment == "training-1"
+    assert str(submission.model_ref) == "/data/models/training-1.joblib"
     assert submission.strategy.params.target_quantity == 100
     assert arguments["experiment_id"] == "run-1"
     assert isinstance(arguments["path_manager"], PathManager)
@@ -327,11 +339,7 @@ def test_backtest_loads_static_config_without_runtime_override(
     [
         (
             [
-                "train",
-                "--start",
-                "2026-07-01",
-                "--end",
-                "2026-07-02",
+                "train", "--windows-json", json.dumps(_training_windows()),
                 "--experiment-id",
                 "run-1",
             ],
@@ -348,8 +356,10 @@ def test_backtest_loads_static_config_without_runtime_override(
                 "2026-07-02",
                 "--experiment-id",
                 "run-1",
-                "--model-experiment",
-                "training-1",
+                "--model-use-json",
+            '{"training_schedule_ref": "/data/training/schedule.json", "effective_ts_us": 1782860400000000, "availability_evidence_ref": "synthetic/model-use"}',
+            "--model-ref",
+                "/data/models/training-1.joblib",
                 "--strategy-json",
                 '{"type":"threshold","params":{"threshold":0.5}}',
             ],
@@ -458,13 +468,8 @@ def test_empty_runtime_schedule_propagates_as_exit_code_1(
             "run-1",
         ],
         [
-            "train",
-            "--start",
-            "2026-07-01",
-            "--end",
-            "2026-07-20",
-            "--experiment-id",
-            "-invalid",
+            "train", "--windows-json", json.dumps(_training_windows()),
+            "--experiment-id", "-invalid",
         ],
         [
             "backtest",
@@ -476,7 +481,9 @@ def test_empty_runtime_schedule_propagates_as_exit_code_1(
             "2026-07-20",
             "--experiment-id",
             "run-1",
-            "--model-experiment",
+            "--model-use-json",
+            '{"training_schedule_ref": "/data/training/schedule.json", "effective_ts_us": 1782860400000000, "availability_evidence_ref": "synthetic/model-use"}',
+            "--model-ref",
             "../training-1",
             "--strategy-json",
             '{"type":"threshold","params":{"threshold":0.5}}',

@@ -51,8 +51,12 @@ class InferenceModel:
             preprocess=preprocessor,
             feature_set="daily",
             feature_version="v1",
+            train_dates=("2026-07-20",),
+            label_set="rank",
+            label_version="v1",
+            label_column="target",
         )
-        keep_rows, predictions = inference_model.predict(
+        predictions = inference_model.predict(
             np.array([[float("nan")]], dtype=float)
         )
     """
@@ -61,16 +65,16 @@ class InferenceModel:
     preprocess: FittedPreprocessor
     feature_set: str
     feature_version: str
+    train_dates: tuple[str, ...]
+    label_set: str
+    label_version: str
+    label_column: str
 
     def __post_init__(self) -> None:
         if not isinstance(self.model, PredictionModel):
             raise TypeError("model must expose predict(values)")
         if not isinstance(self.preprocess, FittedPreprocessor):
             raise TypeError("preprocess must be a FittedPreprocessor")
-        if not isinstance(self.feature_set, str) or not self.feature_set:
-            raise ValueError("feature_set must be a non-empty string")
-        if not isinstance(self.feature_version, str) or not self.feature_version:
-            raise ValueError("feature_version must be a non-empty string")
 
     @property
     def feature_names(self) -> tuple[str, ...]:
@@ -81,17 +85,18 @@ class InferenceModel:
         """
         return self.preprocess.feature_names
 
-    def predict(self, raw_values: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        """Transform raw rows once and predict only retained rows.
+    def predict(self, raw_values: np.ndarray) -> np.ndarray:
+        """Return float64 predictions in input order; dropped rows remain NaN.
 
         Example:
-            keep_rows, predictions = inference_model.predict(
+            predictions = inference_model.predict(
                 np.array([[1.0], [float("nan")]], dtype=float)
             )
         """
         keep_rows, transformed = self.preprocess.transform(raw_values)
+        aligned = np.full(keep_rows.shape[0], np.nan, dtype=np.float64)
         if transformed.shape[0] == 0:
-            return keep_rows, np.empty(0, dtype=float)
+            return aligned
 
         predictions = np.asarray(self.model.predict(transformed), dtype=float)
         if predictions.ndim != 1 or predictions.shape[0] != transformed.shape[0]:
@@ -100,4 +105,5 @@ class InferenceModel:
             )
         if not np.isfinite(predictions).all():
             raise RuntimeError("model predictions must be finite")
-        return keep_rows, predictions
+        aligned[keep_rows] = predictions
+        return aligned

@@ -265,38 +265,72 @@ experiments/<experiment_name>/
 ```text
 experiments/<experiment_name>/
 ├── training/
-│   ├── params.json
-│   ├── metrics.json
-│   └── inference.pkl
+│   ├── schedule.json
+│   ├── windows/
+│   │   ├── 0000/
+│   │   │   ├── model.joblib
+│   │   │   └── predictions.parquet  # 此窗口选择评价时才创建
+│   │   └── 0001/ ...
+│   └── metrics.json                # 实验选择评价时才创建
 └── report/
-    └── training_report.html
+    └── training_report.html        # 实验选择评价时才创建
 ```
 
-`inference.pkl` 是一个已经可用的 `InferenceModel`，同时包含原始预测模型、唯一的已拟合
-预处理对象及 feature set/version 身份。预处理对象同时拥有实际训练列顺序、拟合状态和唯一
-的 `transform` 实现；不存在独立的 `model.pkl` 或 `preprocess.pkl`。
+Window index 是显式 schedule 中的零起始位置，目录使用至少四位十进制表示；每次训练
+独立保存自己的模型。PathManager.experiment_training_model 返回该次绝对 ref，预测文件
+固定在同一个 window 目录。模型的业务内容、预测返回与评价 schema 只由
+[training workflow owner](../offline_workflow_contract.md#training-workflow)定义。
+Schedule 保存任务所选日期、训练信息截止、可用依据、可选评价时序和每个输出 ref；
+它是运行安排，不是成功发布确认，不是完整配置、代码或环境归档。
 
-Training artifact publish 依次原子写入 `params.json`、`metrics.json`，最后原子发布
-`inference.pkl`。`inference.pkl` 存在且可加载只表示推理资产已经就绪；它不表示 report
-成功，也不表示整个 workflow 成功。报告只读取经过同一 schema 边界校验的 params 与
-metrics。
+保存边界为 `src.training.artifact.save(ref: Path, model: InferenceModel) -> None`，加载边界
+为 `load(ref: Path) -> InferenceModel`；两者都拒绝相对路径。ref 由训练运行选择，消费侧
+使用同一个具体引用，实验名称不能代替模型身份。不另建 registry、latest 指针或外层字典。
+Joblib 单个文件直接保存完整就绪对象，不存在独立 model/preprocess/params 文件。
 
-当前 backtest experiment 暂时只正式保留：
+Save 创建必要父目录，在目标同目录创建唯一临时文件，完成序列化并关闭文件后，通过
+`os.link` 不覆盖发布，再删除临时文件。目标已存在时原样 FileExistsError，不覆盖、不选择
+另一文件名；并发发布只有一个成功。FileSystem.atomic_path 的 replace 发布不满足此处的
+不可覆盖身份保证，不用于模型。序列化、文件和依赖错误原样传播；恢复内容类型错误是
+TypeError，不重新校验已由训练建立的来源字段。失败清理临时文件，清理错误不能隐藏原始
+序列化或发布错误；发布后临时清理失败则向调用方报错，已发布的完整文件保留，不回滚或
+自动重试。文件已经存在与 save 成功返回是不同事实。
+
+每份 predictions.parquet 保留原始完整样本键，以及 int64 decision_ts_us、字符串
+model_ref 和 nullable float64 prediction；输入顺序和行数不因 drop 或缺标签改变。
+Parquet schema metadata 的 prediction_inputs 保存 model_ref、model_sha256、
+feature_sha256、trade_date、decision_ts_us。模型摘要对完整文件字节计算；输入摘要对
+实际同序 Feature 表去除 schema metadata 后的 Arrow IPC stream 计算，包含完整键、
+列序、数值类型和内容。它检测变化，不归档输入。预测记录由使用它的运行选择路径，
+模型存放目录不自动拥有后续所有预测；本轮每窗口训练布局保持上图。
+Metrics 与 HTML 在模型交付后分别原子写入，不组成多文件事务。它们缺失或失败不表示
+模型不可恢复；模型可加载也不表示评价、报告或整个 workflow 成功。
+
+当前 backtest experiment 保留：
 
 ```text
 experiments/<experiment_name>/
 ├── backtest/
+│   ├── binding.json
+│   ├── predictions/
+│   │   ├── YYYY-MM-DD.parquet
+│   │   └── ...
 │   └── metrics.json
 └── report/
     └── backtest_report.html
 ```
 
-当前不定义其他 backtest artifact。Backtest 运行时通过 `model_experiment` 选择 training
-experiment，但当前不持久化该引用的 lineage。Experiment 不写 `run_meta.json`、`inputs/` 或
-`predictions.parquet`，不得声称已保存完整 resolved config、代码版本、运行环境、随机性
-策略或通用 replay metadata。
+binding.json 仅在指定模型加载并通过使用时序核验后写入，保存具体 ref、模型内容摘要、
+model_use、对应训练选择、首个决策时点、本次 mode、strategy 和静态 backtest_config。
+实际事件时间沿用运行日志，effective_ts_us 只表示该任务的生效决策边界，不是发布时间。
+每个 signal_date 拥有独立预测文件；不会写回 training 的 predictions.parquet，也不会
+以最后一天覆盖前一天。预测文件与训练采用相同 schema；metrics.model_evaluation
+保存模型目标评价，原 signal_eval 保留 T+1 raw-close 诊断。
+Experiment 不另写 run_meta.json、输入副本或通用 replay metadata，不声称已归档完整
+resolved config、代码版本、运行环境或历史输入修订事实。
 
-PathManager 为每个已定义 artifact 提供精确方法，不接受任意 experiment 文件名，也不
+PathManager 为已定义的 experiment、模型、schedule、metrics 与 report 提供精确方法；
+window 内预测文件名由本节固定。不接受任意 experiment 文件名，也不
 根据文件存在性判断 experiment 是否成功。
 
 Training 或 backtest 在 artifact persist、metrics persist 或 report 阶段失败时，已经创建的

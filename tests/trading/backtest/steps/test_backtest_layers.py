@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -24,7 +25,8 @@ def test_signal_uses_the_signal_date_for_prices_universe_and_features(
     read_prices = Mock(
         return_value=pd.DataFrame({"symbol": ["000001"], "close": [10.0]})
     )
-    read_view = Mock(return_value=pd.DataFrame({"symbol": ["000001"]}))
+    read_view = Mock(return_value=pd.DataFrame({"symbol": ["000001"], "trade_date": ["2026-07-01"], "close": [10.0], "factor": [1.0]}))
+    monkeypatch.setattr(layers, "save_prediction_record", Mock())
     monkeypatch.setattr(layers, "read_raw_close", read_prices)
     monkeypatch.setattr(layers, "read_daily_raw_signal_view_data", read_view)
 
@@ -55,6 +57,8 @@ def test_signal_uses_the_signal_date_for_prices_universe_and_features(
         pm=path_manager,
         min_listing_calendar_days=120,
         signal=signal_provider,
+        model_ref=Path("/data/model.joblib"),
+        prediction_dir=Path("/data/run/predictions"),
         feature_set="features",
         feature_version="v1",
         feature_names=("factor",),

@@ -68,7 +68,7 @@ data:
 
 # ==================================================
 # Backtest System
-# - Runtime mode, model experiment and strategy belong to BacktestSubmission.
+# - Runtime mode, model ref and strategy belong to BacktestSubmission.
 # - Minimum listing age is explicit; Access always excludes current ST and suspension.
 # ==================================================
 backtest:
@@ -76,7 +76,7 @@ backtest:
   min_listing_calendar_days: 120
 # ==================================================
 # Model / Training System
-# - Runtime range and experiment identity are CLI inputs.
+# - Runtime training selections and experiment identity are CLI inputs.
 # - Model group is selected explicitly from the training model catalog.
 # ==================================================
 model:
@@ -84,7 +84,7 @@ model:
   model_params:
     alpha: 0.0005
     l1_ratio: 0.0
-  train_window_days: 30
+    random_state: 7
   preprocessing:
     missing:
       method: "constant"
