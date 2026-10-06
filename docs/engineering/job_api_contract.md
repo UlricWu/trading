@@ -78,8 +78,9 @@ Collection Variables 中的 `testBaseUrl` 或 `trainingBaseUrl`。训练文件�
 
 Collection 覆盖全部 5 个路由，包含 Standard 数据、Level-2 数据、训练和两种策略的
 回测请求示例，每个环境 9 个请求，共 18 个请求。数据与回测日期范围、`backtestMode` 以及
-`testTrainingWindowsJson` / `trainingWindowsJson` 在 Collection Variables 中设置；训练日程
-须提供实际任务的日期、截止与可用依据，日期须落在目标环境实际可用的数据范围内。创建成功后，
+训练的 `trainingStart`、`trainingEnd`、`trainingEvalRangeJson`、`trainingModel`、
+`trainingFeatureGroup`、`trainingLabelGroup` 在 Collection Variables 中设置；评价范围
+可填 JSON object 或 null，日期须落在目标环境实际可用的数据范围内。创建成功后，
 Job ID 自动写入 Collection 的 `testJobId` 或 `trainingJobId`，查询和取消读取对应环境的 ID。
 回测前从训练 schedule.json 及具体已发布模型文件取得绝对 ref，手动填写 `testModelRef`
 或 `trainingModelRef`。Job ID 只标识任务，不能推导模型引用；计划中的 ref 也不证明发布成功。
@@ -128,11 +129,17 @@ CLI-only 的 `data-calendar`、`data-standard-bootstrap`、`data-level2-minute-b
   - 完整闭区间是一个 workflow 执行单位，因此只创建一个 Job。单日使用
     `start == end`。
 - `train`
-  - 必须且只允许提供非空 `windows` 数组，每项 schema 与 CLI 的 `--windows-json` 一致。
-  - 每项显式声明 train_dates、training_cutoff_ts_us、label_availability，以及可选的
-    eval_date/decision_ts_us；不提供默认训练窗口，也不接受 start/end。
-  - 全部窗口构成一个 workflow 执行单位，只创建一个 Job；公开 scope.start/end 概括
-    全部所选训练及评价日期，不重新选择样本。
+  - 必须提供 `train_range`、`model` 和 `dataset`，可选 `eval_range`；不允许其他字段。
+  - train_range 和非 null 的 eval_range 必须各自只包含规范日期 `start`、`end`，
+    且 start <= end；dataset 必须且只包含 `feature_group` 和 `label_group`。
+  - model 与两个组名必须是已支持名称；选项含义及允许组合由
+    [training workflow](../offline_workflow_contract.md#training-workflow) 拥有。
+    未知名称、跨决策网格组合及嵌套额外字段在创建 Job 前拒绝。
+  - eval_range 省略或为 null 表示纯训练；起止相同表示单日评价，多日评价复用同一次
+    训练产物。日期两端可以是休市日，正式日历解析、空区间、成熟时序及数据完整性在
+    workflow 中核验，违反时 Job 为 FAILED，不静默缩短区间。
+  - 只创建一个 Job；公开 scope.start/end 是原始训练及评价闭区间的整体包络，
+    不使用过滤后的交易日期重新计算。不接受 windows、逐日日期或技术时间参数。
 - `backtest`
   - 必须且只允许提供 `mode`、`start`、`end`、`model_ref`、`model_use` 和 `strategy`。
   - 字段业务语义与 CLI 同名参数一致；model_ref 必须是具体模型文件的绝对路径。
@@ -140,6 +147,21 @@ CLI-only 的 `data-calendar`、`data-standard-bootstrap`、`data-level2-minute-b
 
 一个 Job 对应一个完整 workflow 执行单位；每个有效请求只创建一个 Job。请求必须先完成
 字段和业务参数构造，再加入 FIFO；任一字段无效时不得创建任何 Job、ID、日志或子进程。
+
+完整训练示例（日期数据需由目标环境提供）：
+
+```json
+{
+  "kind": "train",
+  "train_range": {"start": "2026-07-01", "end": "2026-07-31"},
+  "eval_range": {"start": "2026-08-10", "end": "2026-08-31"},
+  "model": "sgd_regression",
+  "dataset": {
+    "feature_group": "daily_basic_selected_v1",
+    "label_group": "daily_close_return_rank_d1/v1"
+  }
+}
+```
 
 成功固定返回：
 

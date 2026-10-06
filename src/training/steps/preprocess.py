@@ -52,9 +52,9 @@ class PreprocessStep:
             train_X=train_X,
             config=self._preprocessing_cfg,
         )
-        keep_rows, values = fitted.transform(
-            train_X.to_numpy(dtype=float, na_value=np.nan, copy=False)
-        )
+        raw_values = train_X.to_numpy(dtype=float, na_value=np.nan, copy=False)
+        missing = np.isnan(raw_values)
+        keep_rows, values = fitted.transform(raw_values)
         if values.shape[0] == 0:
             raise ValueError("PreprocessStep retained no training rows")
 
@@ -64,10 +64,11 @@ class PreprocessStep:
             columns=fitted.feature_names,
         )
         processed_y = train_y.iloc[np.flatnonzero(keep_rows)].copy()
+        filled_cells = 0 if fitted.missing_method == "drop" else int(missing.sum())
         logs.info(
-            f"✅ preprocess; train_rows={len(train_X)} "
-            f"retained_rows={len(processed_X)} "
-            f"skipped_rows={len(train_X) - len(processed_X)}"
+            f"✅ 特征预处理; missing_method={fitted.missing_method}\n"
+            f"含缺失特征：{int(missing.any(axis=1).sum()):,} 行；填充值：{filled_cells:,} 个单元格；"
+            f"移除：{len(train_X) - len(processed_X):,} 行；实际训练样本：{len(processed_X):,} 行"
         )
         return processed_X, processed_y, fitted
 

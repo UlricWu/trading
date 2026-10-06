@@ -22,5 +22,5 @@ class ArtifactPersistStep:
         if context.model is None:
             raise RuntimeError("ArtifactPersistStep requires an inference model")
         save(context.window.model_ref, context.model)
-        logs.info(f"✅ training model publish; model_ref={context.window.model_ref}")
+        logs.info(f"✅ 模型写入; model_ref={context.window.model_ref}")
         return context

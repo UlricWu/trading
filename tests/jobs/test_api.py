@@ -33,17 +33,17 @@ from src.jobs.runtime import (
     RangeJobScope,
 )
 
-
-
-def _training_windows() -> list[dict[str, object]]:
-    return [{
-        "train_dates": ["2026-07-01", "2026-07-20"],
-        "training_cutoff_ts_us": 1785510000000000,
-        "label_availability": {
-            "2026-07-01": {"available_ts_us": 1782976200000000, "evidence_ref": "test/label-1"},
-            "2026-07-20": {"available_ts_us": 1784617200000000, "evidence_ref": "test/label-20"},
+def _training_request() -> dict[str, object]:
+    return {
+        "kind": "train",
+        "train_range": {"start": "2026-07-01", "end": "2026-07-20"},
+        "model": "sgd_regression",
+        "dataset": {
+            "feature_group": "daily_basic_selected_v1",
+            "label_group": "daily_close_return_rank_d1/v1",
         },
-    }]
+    }
+
 
 class _StubRuntime:
     def __init__(self) -> None:
@@ -390,7 +390,8 @@ def test_data_range_returns_one_job_and_only_public_fields() -> None:
     }
 
 
-def test_training_request_creates_one_full_range_job() -> None:
+@pytest.mark.parametrize("eval_end", [None, "2026-08-10", "2026-08-31"])
+def test_training_request_creates_one_full_range_job(eval_end: str | None) -> None:
     runtime = _StubRuntime()
     app = create_app(cast(JobRuntime, runtime))
     app.config["TESTING"] = True
@@ -398,17 +399,39 @@ def test_training_request_creates_one_full_range_job() -> None:
     response = app.test_client().post(
         "/jobs",
         json={
-            "kind": "train", "windows": _training_windows(),
+            **_training_request(),
+            "eval_range": {"start": "2026-08-10", "end": eval_end} if eval_end else None,
         },
     )
 
     assert response.status_code == 201
     assert response.get_json()["jobs"][0]["scope"] == {
         "start": "2026-07-01",
-        "end": "2026-07-20",
+        "end": eval_end or "2026-07-20",
     }
     assert len(runtime.submitted) == 1
     assert isinstance(runtime.submitted[0], TrainingSubmission)
+
+
+@pytest.mark.parametrize(("changes", "field"), [
+    ({"model": "do-not-echo"}, "model"),
+    ({"dataset": {"feature_group": "stock_1430_daily_l2/v1", "label_group": "daily_close_return_rank_d1/v1"}}, "dataset.feature_group"),
+    ({"dataset": {"feature_group": "daily_basic_selected_v1", "label_group": "do-not-echo"}}, "dataset.label_group"),
+    ({"dataset": {"feature_group": "l2_stock_1430_all_v1", "label_group": "daily_close_return_rank_d1/v1"}}, "dataset"),
+    ({"train_range": {"start": "2026-07-31", "end": "2026-07-01"}}, "train_range"),
+    ({"eval_range": {"start": "2026-08-10", "end": "2026-08-31", "cutoff": "do-not-echo"}}, "eval_range.cutoff"),
+])
+def test_invalid_training_choice_has_no_job_identity(
+    changes: dict[str, object], field: str,
+) -> None:
+    runtime = _StubRuntime()
+    response = create_app(cast(JobRuntime, runtime)).test_client().post(
+        "/jobs", json={**_training_request(), **changes},
+    )
+    assert response.status_code == 400
+    assert response.get_json()["error"]["field"] == field
+    assert "do-not-echo" not in response.get_data(as_text=True)
+    assert runtime.jobs == {} and runtime.submitted == []
 
 
 @pytest.mark.parametrize(

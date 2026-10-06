@@ -7,7 +7,7 @@ from src.utils.path import PathManager
 
 
 class MetricsPersistStep:
-    """Persist all windows' evaluation records and coverage summary.
+    """Persist daily evaluation records and the interval's coverage summary.
 
     Example:
         step = MetricsPersistStep(pm=path_manager, experiment_name="training_run")

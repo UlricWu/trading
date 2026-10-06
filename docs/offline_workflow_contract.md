@@ -46,7 +46,8 @@ run_stock_1430_fusion_backfill(
 ) -> None
 
 run_offline_training(
-    *, model_config: ModelConfig, path_manager: PathManager,
+    *, models: Mapping[str, ModelPreset],
+    feature_groups: Mapping[str, FeatureGroupConfig], path_manager: PathManager,
     submission: TrainingSubmission, experiment_id: str,
 ) -> None
 
@@ -61,7 +62,8 @@ run_daily_alpha_backtest(
 `TrainingPipeline` 和 `BacktestPipeline`。`DataPipeline` 只拥有 workflow 传入的单一 `steps`
 tuple 和 Instrumentation 作用域，不知道 data kind、日期 schedule、source、step 分类或具体
 step 类型；它必须严格按传入顺序把同一个 Context 交给每个 step，一次 `run` 中每个 step
-实例只调用一次。Training 与 Backtest Pipeline 继续拥有各自的 window/timing schedule。
+实例只调用一次。TrainingPipeline 拥有一个已解析的训练窗口及单一 Step 链，
+BacktestPipeline 拥有 timing schedule。
 所有 Pipeline 都不得创建、发现、排序或按类型重排 step。
 
 公共编排抽象只允许结构化 `PipelineStep[ContextT]` 协议和 `run_steps(...)` 保序执行器。
@@ -109,8 +111,8 @@ Normalize 的公共入口按 source family 固定为
 
 `run_steps(...)` 是无状态的单段 Step 链执行原语，统一拥有四个不变量：严格使用调用方
 给定的顺序；把前一 Step 返回的 Context 交给后一 Step；默认且仅一次测量每次 Step 调用；
-原样传播异常。Data 用它执行一次完整 Step 链；Training 分别对每个 window 和最终 Step 链
-调用；Backtest 分别对每个 timing 和最终 Step 链调用。各领域 Pipeline 仍拥有 schedule、
+原样传播异常。Data 与 Training 各用它执行一次完整 Step 链；Backtest 分别对每个 timing
+和最终 Step 链调用。各领域 Pipeline 仍拥有自身的日程、
 Context 创建、跨迭代状态和整个 workflow 的 Instrumentation 作用域，`run_steps(...)` 不拥有
 这些生命周期。
 
@@ -131,7 +133,7 @@ Data、Training 与 Backtest 各自使用最小领域 Context，只保存相邻 
 config、registry、Access、PathManager、Instrumentation 和 experiment identity 绑定到具体
 step 或 Pipeline，不进入 Context。Data Context 保存请求的 `start`、`end`，并由 calendar
 step 写入后续 step 所需的 `trade_dates`。Backtest Context 每个 timing 新建，Training
-Context 的单 window 临时字段在每次迭代前清空。只有确需跨 timing 延续的 backtest 值进入
+Context 每次 `run()` 新建，训练值和逐日评价观察只在这次 Step 链内传递。只有确需跨 timing 延续的 backtest 值进入
 `BacktestState`。
 
 Data Context 是可信内部载体，构造时不执行日期校验。请求范围由
@@ -157,11 +159,17 @@ backtest_{start}_{end}_{experiment_id}
 以 `FileExistsError` 失败；该检查不创建、预留、锁定、清理或恢复目录。
 
 Instrumentation 衡量 workflow 显式组装的 step，返回 `step.run(context)` 的原始结果，以
-`finally` 累计耗时和次数，并原样传播异常。Step 不接收也不调用 Instrumentation；只有
+`finally` 累计耗时和次数；异常只附加 scope 与 step 名称的 note，保留原异常对象及类型，
+不在此记录 traceback。Step 不接收也不调用 Instrumentation；只有
 `run_steps(...)` 负责默认测量。同名 step 累计总耗时、次数和平均值；离开 Instrumentation
-作用域时只输出一个多行、等宽对齐的 Pipeline timeline 日志事件，其中依次列出每个 step
-的总耗时，再列出 Total；同名 step 在同一作用域内实际执行多次时，该行才额外列出平均
-耗时和 runs。正常退出以 `✅` 和 `INFO` 开头，异常退出以 `❌` 和 `ERROR` 开头；续行不重复
+作用域时只输出一个多行、等宽对齐的“步骤耗时”日志事件，首行以 `scope=...` 定位运行，
+依次列出每个 step 的总耗时，再列出“步骤耗时合计”。合计只累加被 measure 包围的步骤，
+不包含 workflow 准备或 Job 启动等耗时，必须注明“不代表任务总耗时”，不得称为端到端耗时。
+Workflow 可通过 `descriptions` 提供 step 的中文含义，Instrumentation 独立保存该映射，
+展示时附在对应行后，不改用于累计的代码名称。训练 ReportStep 的含义为“诊断计算与报告
+输出”，包含材料读取和诊断计算，不能只称为 HTML 渲染。同名 step 在同一作用域内实际
+执行多次时，该行才额外列出平均耗时和 runs。正常退出以 `✅` 和 `INFO` 开头，异常退出
+以 `❌` 和 `ERROR` 开头；续行不重复
 时间、level、源码位置或状态符号。准备阶段或空 schedule/timing 在进入作用域前失败，
 因此不输出 timeline。现有 step label 固定为：
 
@@ -504,47 +512,68 @@ targets。Step 的 `who` 为 `stock 14:30 daily/L2 Feature`，携带 trade_date 
 和读取错误由[存储契约](data/storage_layout.md#experiments)拥有。共享 Workflow →
 TrainingPipeline → `run_steps` → Step 结构继续遵循共同边界。
 
-Training runtime 日程只来自 `TrainingSubmission.windows`，不从配置中的默认天数推导。
-每项 `TrainingSelection` 必须显式给出：
+TrainingSubmission 表达一次模型训练及可选的固定模型评价，业务输入只有 `train_range`、
+可选的 `eval_range`、`model` 和 `dataset`。日期范围是规范 `YYYY-MM-DD` 闭区间；
+dataset 分别选择 `feature_group` 与 `label_group`。不接受内部 windows、逐日 train_dates、
+训练截止、逐日可用性声明或决策微秒数。请求形状由 CLI / Job API owner 定义，本节拥有
+选项含义及执行语义。
 
-```text
-train_dates: 非空、严格升序且唯一的 YYYY-MM-DD tuple
-training_cutoff_ts_us: UTC epoch microseconds
-label_availability: 每个 train_date 对应的 available_ts_us 与非空 evidence_ref
+模型名称选择 `AppConfig.models` 中的训练配置，特征组名称选择 `AppConfig.feature_groups`
+中的身份与有序列；标签组直接使用已有 `label_set/version` 身份，不另建标签别名 registry。
+当前提供以下选项：
 
-eval_date 与 decision_ts_us: 同时给出，或同时省略
-```
+| 选择 | 名称 | 准确含义 |
+| --- | --- | --- |
+| model | `sgd_regression` | 新建 SGDRegressor，按配置执行一次 partial_fit；基础配置为 alpha=0.0005、l1_ratio=0.0、random_state=7，缺失特征填 0，不缩放；未显式配置的估计器参数遵循锁定 sklearn 版本，其中 loss=squared_error、penalty=l2，因此 l1_ratio 不改变当前 L2 惩罚 |
+| feature_group | `daily_basic_selected_v1` | `tushare_daily_basic/v1` 的七个有序列，见下文 |
+| feature_group | `daily_basic_all_v1` | 同一日频 Feature 的全部 16 个数值列，按数据 owner 的 schema 顺序 |
+| feature_group | `l2_stock_1430_all_v1` | `l2_stock_1430/v1` 的全部 32 个数值列，按数据 owner 的 schema 顺序 |
+| label_group | `daily_close_return_rank_d1/v1` | 当前收盘到下一正式交易日收盘的复权收益横截面排名 |
+| label_group | `daily_close_return_rank_d3/v1` | 当前收盘到第 3 个后续正式交易日收盘的复权收益横截面排名 |
+| label_group | `daily_close_return_rank_d5/v1` | 当前收盘到第 5 个后续正式交易日收盘的复权收益横截面排名 |
+| label_group | `l2_stock_1430_t1_vwap_rank/v1` | T 日 [14:31,14:36) 到下一正式交易日同一窗口的复权 VWAP 收益横截面排名 |
 
-日期精确表示本次交给读取侧的完整日期序列，不从过滤后的拟合样本重算；某日样本全部
-被过滤，模型仍保留该日期。评价是可选的后续工作，纯训练无需评价日期或评价输入。
-一个 submission 可以包含多个训练窗口；评价日期及决策时点各自严格递增、同日只有一个
-评价。Job scope 和 experiment 名称中的 start/end 只概括完整所选范围，不重新选择样本。
-
-Model group 只来自 `ModelConfig.group`；workflow 在任何 I/O 和 Instrumentation 前通过
-不可变 catalog 取得 trainer，当前支持 `sgd_regression`。Dataset 必须显式给出身份、非空
-有序且不重复的 feature_columns 和 label_column。特征顺序由拟合后的 preprocessor 唯一
-持有，不另存参数投影。当前入口消费已登记的日频 Feature 与 Label，以及正式
-`l2_stock_1430/v1` / `l2_stock_1430_t1_vwap_rank/v1`；不因研究分区存在而采用其他候选身份。
-Feature producer 拥有数值含义、价格口径和可见性，训练和消费侧不再复权或重新计算特征。
-对应定义由[日频 owner](data/daily_feature_label_contract.md)及
+七列的实际训练顺序为 `f_d_close_return_1d`、`f_d_open_gap_1d`、`f_d_log_amount`、
+`f_d_max_drawdown_20d_asof_tminus1`、`f_d_close_volatility_60d_asof_tminus1`、
+`f_d_close_return_5d_asof_tminus1`、`f_d_turnover_rate_mean_20d_asof_tminus1`。
+两种日频特征组只允许搭配三个日频标签；14:30 特征组只允许搭配 14:30 标签。
+四种标签均读取 `y_rank_return`，预测目标是排名分数，不是收益率本身。
+未知名称和不同决策网格的组合在 submission 构造时拒绝，不创建 Job。
+研究候选 `stock_1430_daily_l2/v1` 不在选项中，分区存在不表示可用于本入口。
+Feature producer 拥有数值含义、价格口径、排名细节和可见性，训练及消费侧不重新计算；
+完整定义由[日频 owner](data/daily_feature_label_contract.md)及
 [14:30 owner](data/stock_1430_feature_label_contract.md)拥有。
 
-Workflow 从唯一 PathManager 创建 Access，以正式日历检查全部选定日期及解析标签成熟
-session。日频 d1/d3/d5 的最低信息边界为 T+h 收盘，实际还须等待必要输入对象可用；
-14:30 标签为 T+1 14:36。任务声明的 available_ts_us 不得早于这一最低成熟边界，且必须
-不晚于 training_cutoff_ts_us。任何选定日期违反条件都抛 ValueError，不静默缩短窗口。
-未知标签仍按既有样本规则过滤，不能用过滤掩盖尚未成熟的日期。
+Workflow 在任何数据 I/O 和 Instrumentation 前查找所选配置并通过不可变 catalog 取得
+trainer；未配置的已知名称或不支持的模型实现必须失败。解析后的 ModelConfig 组合
+该训练配置与实际 Feature/Label 身份、非空有序且不重复的 feature_columns 和 label_column。
+拟合后的特征顺序由 preprocessor 唯一持有，模型不另存参数投影。
 
-Meta 只有当前 payload 可消费的证据，没有历史可用时间；不能用当前文件存在、mtime 或
-成熟时点替代实际可用依据。因此 label_availability 由任务显式提供，evidence_ref 指向任务
-采用的可用记录。入口核对这些声明与成熟、截止边界，不自动证明引用的历史真实性或
-排除同版本事后修订。使用假设材料的运行只能报告条件研究结果；真实历史可用性的结论
-仍需要任务提供可审查的记录。该时序输入、所选日期与输出 model_ref 保存在 schedule.json，
-不增加模型内时间字段或发布确认字段。计划中的 ref 不证明文件已经成功发布。
+Workflow 从唯一 PathManager 创建 Access，按正式日历解析每个闭区间中的全部交易日，
+两端允许休市日，不以周一至周五近似交易日。空训练区间或显式空评价区间失败；省略
+eval_range 或为 null 才表示纯训练。评价样本必须晚于全部训练样本，单日评价使用相同
+起止日期，多日不重复训练。实际日期非空、升序且唯一，不从文件列表或过滤后的拟合样本
+重算；某日样本全被过滤，模型仍保留该训练日期。缺少目标日期的必要输入必须失败，
+不缩短区间。Job scope 和 experiment 名称的 start/end 是请求区间的整体包络，不重新选择样本。
 
-评价决策必须位于 eval_date 的上海日期内，且不早于训练截止。日频收盘 Feature 不用于
-当日收盘前的决策；14:30 Feature 只用于该分区明确的 14:30 决策。该核验不把边界时刻
-自动解释成文件在真实历史中已经到达；对应特征的历史可用性仍由任务的输入依据负责。
+日频 d1/d3/d5 的最低标签成熟边界为 T+h 15:00，14:30 标签为 T+1 14:36，h 和下一
+session 由精确标签定义及正式日历解析。最后一个训练样本的成熟时点不得晚于首个评价
+决策；日频评价决策固定为当日 15:00，14:30 评价固定为当日 14:30。违反时在训练前失败，
+不能靠过滤未知标签掩盖尚未成熟的日期。纯训练不虚构历史训练截止，只要求当前完整输入
+可消费，同时记录所选训练标签的理论成熟下界供消费侧核验必要条件。
+
+这是固定样本的离线训练与评价。Meta 只证明当前 payload 可消费，没有历史实际可用时间；
+当前文件存在、mtime、理论成熟时间或本次运行时间都不能证明历史上已经拿到相同输入或
+完成训练，也不能排除同版本事后修订。成熟校验防止已知的时间泄漏，但不构成历史部署
+或严格 point-in-time 回放证明；此类结论仍须真实输入修订及模型可用记录，不能由普通
+训练请求的客户端声明代替。
+
+训练前在 schedule.json 保存一个 TrainingRunRecord 对象，字段精确为 `request`（已校验
+请求的 JSON，包含默认 null）、`train_dates`、`eval_dates`、`model_ref`、`configuration`
+（解析后的 ModelConfig）与 `label_maturity_ts_us`（上述理论下界）。消费侧读取解析字段，
+不把归档 request 重新反序列化为公共请求 DTO。记录日期与配置可解释当次选择，但不归档
+全部训练输入、代码或环境；不增加模型内时间字段或发布确认字段。计划中的 ref 不证明
+文件已经成功发布。
 
 DatasetBuildStep 只读取 train_dates，通过数据侧
 [`read_features` / `read_labels`](engineering/access.md#featurelabel-分区读取)消费完整样本键及
@@ -555,7 +584,7 @@ DatasetBuildStep 只读取 train_dates，通过数据侧
 FittedPreprocessor 继续唯一拥有训练列、拟合状态与 transform。Constant 使用配置有限数；
 mean/median 只在训练行拟合，全缺失列失败；drop 返回原行长 mask 与保留行转换结果，
 训练侧按同一 mask 同步选择标签，全部训练行丢弃则失败。评价及 runtime 使用已拟合状态，
-不重新 fit。每个窗口由 catalog trainer 从新对象训练；当前 SGD 仍只调用一次 partial_fit，
+不重新 fit。每个任务由 catalog trainer 从新对象训练；当前 SGD 仍只调用一次 partial_fit，
 SGD 的 `model_params.random_state` 必须显式给出整数，禁止缺失、None 和 bool；
 当前 base.yml 明确选择 7，不在 trainer 内补默认种子。种子与输入内容、顺序、一次
 partial_fit 及锁定环境共同构成确定性重训条件，不承诺任意算法或跨环境逐位一致。
@@ -568,34 +597,58 @@ train_dates, label_set, label_version, label_column
 ```
 
 `feature_names` 仍来自 preprocess。来源身份来自本次实际消费的已校验配置，train_dates
-直接来自窗口；保存、加载和消费侧不重新校验这些来源字段。不建立 provenance 外层、
-独立来源容器、配置副本或输入快照。模型预测返回 float64 ndarray，长度与输入相同、顺序
+直接来自窗口；保存与加载不重新校验这些来源字段，回测只在运行绑定边界核对它们与所引
+训练记录的关联。模型内不建立 provenance 外层、独立来源容器、配置副本或输入快照。
+模型预测返回 float64 ndarray，长度与输入相同、顺序
 相同；drop 行为留下 NaN，零是有效预测。没有保留行时返回等长全 NaN（空输入返回空数组）
 并不调用预测器。预测器返回的维度、行数及有限性必须在回填前验证，非法输出抛 RuntimeError。
 
-Workflow 的 per_window_steps 顺序为 dataset load → train-only preprocess → fresh model
-train → ArtifactPersistStep；存在评价时再接 PredictionStep → ICEvaluateStep。保存消费当前
-window.model_ref，每次窗口独立交付一个模型，不能只在循环结束后保存最后一次。模型保存
-不等待评价；后续错误保留已经交付的模型。纯训练只组装前四步，final_steps 为空。
+Workflow 的单一 steps 顺序为 dataset load → train-only preprocess → fresh model train
+→ ArtifactPersistStep；存在评价时再接 PredictionStep → ICEvaluateStep → MetricsPersistStep
+→ ReportStep。TrainingWindow 只包含 train_dates、model_ref 和逐日 EvaluationDay tuple；
+每个 EvaluationDay 包含 trade_date、decision_ts_us、prediction_ref。一次任务独立交付一个
+模型，保存不等待评价；后续错误保留已经交付的模型。纯训练只组装前四步。
 
-PredictionStep 加载该窗口的具体已发布 ref，用模型的特征身份及顺序读取评价 Feature，
-保留全部原样本键，调用同一 predict，然后写入 workflow 在 TrainingWindow.prediction_ref
-指定的路径。保存位置由本次运行拥有，不从模型 ref 隐式推断；首轮训练仍采用每窗口一个
-predictions.parquet。正常无预测行也保留，NaN 写为 Parquet null。
+Workflow 在解析模型及数据组身份、确认 experiment 未存在后，进入日历读取前输出一条
+“训练任务”开始事件：中文表格说明模型、特征组及列数、标签组、请求训练/评价区间、
+特征缺失处理和单次 partial_fit 的单轮行为；表外解释当前标签的预测目标及排名分数量纲。
+完整参数、特征顺序和实际交易日由已有 schedule.json 归档，日志不展开全部参数及列名。
+准备阶段失败不宣称已写入运行配置。只有 Pipeline 正常返回，workflow 才写任务完成事件；
+纯训练明确写“本次未请求评价”，提供模型和运行配置路径，不宣称生成 metrics 或 HTML。
+
+过程日志由掌握事实的阶段产生：数据准备以首末日期及交易日数表示范围，分别记录原始
+Feature 行数、因标签缺失移除的行数和标签筛选后行数；预处理记录含缺失特征的行数、
+填充的单元格数、移除行数及实际拟合行数。填充与删行是不同动作，不能共用“跳过”计数。
+SGD 拟合前输出样本数与列数，partial_fit 返回后读取 n_iter_ 记录实际轮数；不在阻塞的
+fit 内虚构百分比或收敛进度。模型成功写入时记录具体 model_ref，保证后续评价失败仍能
+定位已交付模型。预测和 IC 评价各输出开始及一条批量完成摘要，不再逐日重复长路径；
+逐日记录继续保存于原有预测 Parquet、metrics 和 HTML。
+
+DatasetBuildStep、PredictionStep 和 ICEvaluateStep 由 workflow 注入单调 clock；循环在
+完成一个交易日后，距上次进度至少 5 秒且仍有剩余日期时才输出累计日期进度。开始、完成
+及失败事件不受此限制，不增加后台心跳线程。逐日读取或写入失败时，在原异常上附加日期
+及相关 ref 的 note 后重新抛出；报告材料失败同样附加定位信息，不补默认值或重写已有制品。
+原始 traceback 仍仅由最外层终止边界输出，已成功保存的模型及前序预测保留。
+
+PredictionStep 加载这个具体已发布 ref 一次，按每个 EvaluationDay 用模型的特征身份及
+顺序读取评价 Feature，保留全部原样本键，调用同一 predict，然后写入 workflow 指定的
+逐日路径。保存位置由本次运行拥有，不从模型 ref 隐式推断；不同日期分别保存，不能覆盖
+前日记录。全部预测完成后才进入标签评价。正常无预测行也保留，NaN 写为 Parquet null。
 公共 `save_prediction_record` 同时保存模型字节及实际同序 Feature 表的 SHA-256，
 metadata 由 `PredictionInputs` 定义；这只检测材料变化，不复制历史输入或证明历史可用。
 `verify_prediction_record(ref, pm=...)` 重新读取所声明分区，以完整原键选择原顺序，
 核对输入及模型摘要，再严格比较等长 float64 预测（包括 NaN 位置）；失败不重写原记录。
 输入和代码/环境保持可恢复仍是任务责任，不将摘要解释成数据归档。
 
-ICEvaluateStep 只需窗口的 prediction_ref，通过共用 `evaluate_prediction_record` 读取实际
+ICEvaluateStep 遍历窗口的逐日 prediction_ref，通过共用 `evaluate_prediction_record` 读取实际
 落盘预测，随后读取模型自身标签身份及列对应的 Label。按完整键选取记录对应的标签并保持
 预测顺序；记录中的键在标签中不存在是错误，存在键上的 NaN 才是普通缺失。评价允许
 使用侧先按当时可见资格选出的输入子集，标签中的其他样本不能补入名单。缺失标签不能
 提前改变预测输入行集合。该函数不调用 predict，可独立重跑，再追加 ICObservation。
-TrainingPipeline 每个窗口新建 Context，只共享明确追加的 observations；最终
-MetricsPersistStep 保存全部观察及汇总，ReportStep 从明确的全部模型 ref 与 metrics schema
-构建报告，不把最后一个 Context.model 当成实验唯一模型。公共返回值为 None。
+TrainingPipeline 每次 run 新建 Context，观察不泄漏到另一运行；随后 MetricsPersistStep
+保存逐日观察及汇总，ReportStep 从这个明确模型 ref、metrics 及其引用的逐日预测与标签
+构建报告；训练诊断使用本次 Context 保留的实际拟合样本，口径见下文。
+公共返回值为 None。
 
 共用纯函数 `rank_ic(predictions, labels) -> (value, pair_count, undefined_reasons)` 不加载模型、
 不做 I/O 或记录日志。它只使用同序有限配对，NaN 是普通缺失，Inf 和非法数组是错误；
@@ -618,8 +671,60 @@ missing_label_count、value、pair_count、undefined_reasons。其中 missing_la
 Metrics JSON 有 observations 与 summary 两项。Summary 精确包含 date_count、
 defined_date_count、mean_ic、undefined_reason_counts；均值只按有定义日期等权计算，
 全无定义则 mean_ic=null，所有原观察仍保留。None 写为 null，原因 tuple 写为数组，
-序列化禁止 NaN/Infinity。报告展示每个模型的完整来源、每个观察、无值原因和覆盖率，
-不把缺失或无定义显示成零或空白。
+序列化禁止 NaN/Infinity。Metrics JSON 继续保存上述 IC 事实与来源；以下附加诊断写入
+HTML 报告和 ReportStep 日志，不改写 metrics 或增加制品。
+
+ReportStep 的结束摘要必须包括实际训练日期、拟合样本数、特征数、实际训练轮数、评价
+日期及行覆盖、核心指标，以及模型、metrics、report、schedule 的完整路径。训练样本数是删除缺失
+标签并完成预处理筛选后的实际行数；实际轮数读取已交付 SGD 模型的 `n_iter_`，不能把
+配置的 `max_iter` 当作实际轮数。当前一次 partial_fit 对应一轮，报告步骤不再次训练。
+日期展示为可读日期；逐日决策时点由 UTC 微秒转换为带偏移的 `Asia/Shanghai` 时间。
+
+摘要同时给出以下指标，日志与 HTML 必须使用同一次计算结果：
+
+- IC 均值继续按有定义日期等权计算；波动使用这些日期的样本标准差（ddof=1），不足
+  两个有定义日期时无值。正 IC 天数只计 IC > 0，比例的分母是有定义日期数；零 IC 不计
+  为正，全无定义时比例无值。全部评价日期及无值原因仍保留，不能删除无值日抬高覆盖率。
+- 回归 MAE、MSE、RMSE、R² 合并全部评价日的有限预测与有限标签配对，按样本等权计算，
+  不平均逐日误差。IC 无定义日仍可能有可用误差样本，例如单配对日。零配对时误差无值；
+  不足两个配对或标签为常量时 R² 无值。R² 使用合并样本的标签均值计算总平方和，
+  不将负值截成零。评价输入仍分为无预测、有预测但缺标签、有效配对三部分。
+  样本覆盖率为有效配对数 / 评价输入行数，输入为零时无值；IC 日期覆盖率为有定义日期数 /
+  全部评价日期数，两者不得互换。计数标明样本行或交易日，不把样本行数当成股票数。
+- 误差基线在完全相同的有效样本上固定预测排名 0.5，不从评价标签拟合基线参数。
+  输出基线 RMSE 及“模型 RMSE − 基线 RMSE”，负值表示模型误差更小；基线 RMSE 大于零时，
+  同时将该差值 / 基线 RMSE 解释为误差高或低的百分比，差值为零时说明相同。基线 RMSE
+  为零时保留绝对差值，相对变化显示“无值”，包括双方误差都为零的情况，不输出 Infinity。
+  R² 的基线是各自样本集的标签均值，与固定预测 0.5 不同；负 R² 表示误差大于均值基线。
+  这些比较针对排名标签，不表示交易收益或收益率误差。
+- 训练 MAE、MSE、RMSE、R² 使用本次实际拟合的已转换特征与对应标签，由已交付模型的
+  原始估计器预测后计算；不得重复应用 preprocessor，也不重新读取可能变化的训练分区。
+  输出“评估 MAE − 训练 MAE”和“评估 RMSE − 训练 RMSE”。训练误差是拟合内误差，
+  差距也可能来自样本分布变化，不能单凭差值宣布过拟合或模型可上线。
+
+报告读取评价标签时复用 IC 评价的完整键对齐，并核对标签路径与内容摘要仍属于 metrics
+记录的同一修订；预测中的模型引用、模型摘要及决策时点必须与所报告的模型和观察一致。
+发现材料不一致时失败，不能混合旧 IC 与新标签误差。评价误差只使用已保存的预测，
+不重新预测评价集。报告保留模型完整来源、逐日观察、无值原因和覆盖率；数学无定义在
+HTML 和日志均显示“无值”，不补零或隐藏。
+
+ReportStep 先记录“诊断计算与报告输出”开始事件，在 HTML 成功发布后写入一条 INFO 级
+多行“训练报告”事件，首行保留状态符号和 `experiment=...` 定位上下文。正文先给出事实
+解读：平均每日 Rank IC 为正、负、零或无值；正 IC 日期数及其比例；评估 RMSE 对固定
+0.5 基线的绝对及相对比较；实际轮数与未监测收敛。全无有效配对明确说无法评价回归误差；
+IC 无定义不代表没有可计算误差的样本。该解读与 HTML 使用同一实现，不加模型好坏、通过
+或可上线的阈值。正 IC 日比例不能称为准确率或交易胜率；排序方向与数值误差可能表现不同。
+
+随后按“训练与评价覆盖”“排序表现”“误差与基线”输出三张中文文本表格。正 IC 日期数和
+比例合并展示；误差表同时比较训练、评估及已有的 MAE/RMSE 差距。列按中英文显示宽度
+对齐，计数使用千位分隔，指标保留六位小数，比例显示两位小数的百分数，差值显示正负号；
+差值和比例仍按原始精度计算，不用已舍入的显示值相减。此规则只影响展示，不改变计算或
+metrics。制品按“模型”“IC 指标 JSON”“完整诊断 HTML 报告”“运行配置”准确命名，避免
+把仅含 IC 的 JSON 称为全部指标；四条路径各占一行并完整保留，避免挤宽表格。沿用公共
+日志进入 CLI stderr 及 Job 日志，不新增日志文件写入器，也不回写历史 Job 日志。
+当前没有逐轮损失历史，诊断明确显示逐轮损失未记录、收敛尚未评估；实际
+轮数和最终误差不能证明收敛。需要观察收敛时，再明确逐轮损失的采样方式和训练行为，
+不能在报告阶段重训或虚构损失曲线。
 
 
 ## Backtest workflow
@@ -633,10 +738,12 @@ Workflow 通过 Access 读取正式交易日，并把相邻日期映射为
 在 component 构造和 Instrumentation 前抛 `ValueError`。
 
 首轮固定模型由 model_use 指定 training_schedule_ref、effective_ts_us 和非空
-availability_evidence_ref。入口从所引用 schedule 精确找到同一 model_ref 的唯一训练
-选择，检查 training_cutoff_ts_us <= effective_ts_us <= 首次 15:00 决策；加载后核对
-模型 train_dates 与该选择一致，再保存 binding.json 并记录加载绑定事件。
-无匹配、重复匹配、时序不合规或日期关联错误均失败；加载失败不得写成功绑定记录。
+availability_evidence_ref。入口直接读取所引用 schedule 的 TrainingRunRecord，要求其中
+model_ref 与所用模型相同，检查 label_maturity_ts_us <= effective_ts_us <= 首次 15:00
+决策；加载后核对模型的 train_dates、Feature/Label 身份、列顺序及标签列与记录一致，
+再保存 binding.json 并记录加载绑定事件。归档 request 不作为反序列化入口。
+记录格式、模型关联或时序不合规均失败；加载失败不得写成功绑定记录。
+label_maturity_ts_us 只是理论必要下界，不是实际训练完成时间或历史模型可用证明。
 availability_evidence_ref 的历史真实性由任务负责；合成依据只支持条件研究，今天的
 成功加载和日志实际时间不能证明过去已经拥有模型。本入口仍只有一个固定模型，
 不增加周期换模管理器。14:30 决策模型不得被该 15:00 日频交易入口静默使用。

@@ -266,22 +266,22 @@ experiments/<experiment_name>/
 experiments/<experiment_name>/
 ├── training/
 │   ├── schedule.json
-│   ├── windows/
-│   │   ├── 0000/
-│   │   │   ├── model.joblib
-│   │   │   └── predictions.parquet  # 此窗口选择评价时才创建
-│   │   └── 0001/ ...
+│   ├── model.joblib
+│   ├── predictions/                # 实验选择评价时才创建
+│   │   ├── YYYY-MM-DD.parquet
+│   │   └── ...
 │   └── metrics.json                # 实验选择评价时才创建
 └── report/
     └── training_report.html        # 实验选择评价时才创建
 ```
 
-Window index 是显式 schedule 中的零起始位置，目录使用至少四位十进制表示；每次训练
-独立保存自己的模型。PathManager.experiment_training_model 返回该次绝对 ref，预测文件
-固定在同一个 window 目录。模型的业务内容、预测返回与评价 schema 只由
+一次任务训练并保存一个模型。PathManager.experiment_training_model(experiment_name=...)
+返回这个绝对 ref；每个评价日有独立预测文件。模型的业务内容、预测返回与评价 schema 只由
 [training workflow owner](../offline_workflow_contract.md#training-workflow)定义。
-Schedule 保存任务所选日期、训练信息截止、可用依据、可选评价时序和每个输出 ref；
-它是运行安排，不是成功发布确认，不是完整配置、代码或环境归档。
+schedule.json 是一个 TrainingRunRecord JSON object，保存已校验请求、解析后的训练与评价
+日期、实际模型/数据配置、输出 model_ref 和标签理论成熟下界，字段语义由上述 owner 定义。
+它在训练前写入，记录运行安排，不是成功发布确认或历史可用性证明，也不归档代码、环境
+及完整输入修订。
 
 保存边界为 `src.training.artifact.save(ref: Path, model: InferenceModel) -> None`，加载边界
 为 `load(ref: Path) -> InferenceModel`；两者都拒绝相对路径。ref 由训练运行选择，消费侧
@@ -296,13 +296,13 @@ TypeError，不重新校验已由训练建立的来源字段。失败清理临�
 序列化或发布错误；发布后临时清理失败则向调用方报错，已发布的完整文件保留，不回滚或
 自动重试。文件已经存在与 save 成功返回是不同事实。
 
-每份 predictions.parquet 保留原始完整样本键，以及 int64 decision_ts_us、字符串
+每份预测 Parquet 保留原始完整样本键，以及 int64 decision_ts_us、字符串
 model_ref 和 nullable float64 prediction；输入顺序和行数不因 drop 或缺标签改变。
 Parquet schema metadata 的 prediction_inputs 保存 model_ref、model_sha256、
 feature_sha256、trade_date、decision_ts_us。模型摘要对完整文件字节计算；输入摘要对
 实际同序 Feature 表去除 schema metadata 后的 Arrow IPC stream 计算，包含完整键、
 列序、数值类型和内容。它检测变化，不归档输入。预测记录由使用它的运行选择路径，
-模型存放目录不自动拥有后续所有预测；本轮每窗口训练布局保持上图。
+模型存放目录不自动拥有后续所有预测；本轮逐日训练评价布局如上图。
 Metrics 与 HTML 在模型交付后分别原子写入，不组成多文件事务。它们缺失或失败不表示
 模型不可恢复；模型可加载也不表示评价、报告或整个 workflow 成功。
 
@@ -321,16 +321,16 @@ experiments/<experiment_name>/
 ```
 
 binding.json 仅在指定模型加载并通过使用时序核验后写入，保存具体 ref、模型内容摘要、
-model_use、对应训练选择、首个决策时点、本次 mode、strategy 和静态 backtest_config。
+model_use、training_record、首个决策时点、本次 mode、strategy 和静态 backtest_config。
 实际事件时间沿用运行日志，effective_ts_us 只表示该任务的生效决策边界，不是发布时间。
-每个 signal_date 拥有独立预测文件；不会写回 training 的 predictions.parquet，也不会
+每个 signal_date 拥有独立预测文件；不会写回 training 的 predictions 目录，也不会
 以最后一天覆盖前一天。预测文件与训练采用相同 schema；metrics.model_evaluation
 保存模型目标评价，原 signal_eval 保留 T+1 raw-close 诊断。
-Experiment 不另写 run_meta.json、输入副本或通用 replay metadata，不声称已归档完整
-resolved config、代码版本、运行环境或历史输入修订事实。
+Experiment 不另写 run_meta.json、输入副本或通用 replay metadata；training_record 保存
+模型与数据组的解析配置，不声称已归档整个应用配置、代码版本、运行环境或历史输入修订事实。
 
 PathManager 为已定义的 experiment、模型、schedule、metrics 与 report 提供精确方法；
-window 内预测文件名由本节固定。不接受任意 experiment 文件名，也不
+逐日预测文件名由本节固定。不接受任意 experiment 文件名，也不
 根据文件存在性判断 experiment 是否成功。
 
 Training 或 backtest 在 artifact persist、metrics persist 或 report 阶段失败时，已经创建的

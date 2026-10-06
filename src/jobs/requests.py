@@ -10,9 +10,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Self, TypeAlias, cast
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, field_validator, model_validator
 
 from src.config.backtest_config import BacktestMode, StrategyConfig
+from src.config.model_config import FeatureGroupName, LabelGroupName, TrainingModelName
 from src.utils.datetime_utils import DateTimeUtils
 from src.utils.path import PathManager
 
@@ -30,7 +31,7 @@ JOB_EXIT_CODE_SKIPPED = 75
 _DATA_KINDS = frozenset({"data-standard", "data-level2"})
 _JOB_KINDS = _DATA_KINDS | {"train", "backtest"}
 _DATA_FIELDS = frozenset({"kind", "start", "end"})
-_TRAINING_FIELDS = frozenset({"kind", "windows"})
+_TRAINING_FIELDS = frozenset({"kind", "train_range", "eval_range", "model", "dataset"})
 _BACKTEST_FIELDS = frozenset(
     {"kind", "mode", "start", "end", "model_ref", "model_use", "strategy"}
 )
@@ -144,73 +145,68 @@ class Stock1430FusionBackfillSubmission:
     end: str
 
 
-class LabelAvailability(BaseModel):
-    """Task-supplied availability fact for one selected label partition.
+class TrainingDateRange(BaseModel):
+    """Select a closed interval of sample dates using canonical market dates.
 
     Example:
-        fact = LabelAvailability(available_ts_us=1782976200000000, evidence_ref="ledger/label-2026-07-01")
+        interval = TrainingDateRange(start="2026-07-01", end="2026-07-31")
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
-    available_ts_us: int
-    evidence_ref: str = Field(min_length=1)
+    start: str
+    end: str
+
+    @field_validator("start", "end")
+    @classmethod
+    def _require_date(cls, value: str) -> str:
+        return DateTimeUtils.require_system_date(value, field_name="date")
+
+    @model_validator(mode="after")
+    def _require_range(self) -> Self:
+        if self.start > self.end:
+            raise ValueError("start must not follow end")
+        return self
 
 
-class TrainingSelection(BaseModel):
-    """Explicit training dates, information cutoff, and optional prediction timing.
-
-    Availability facts are supplied by the task, rather than inferred from Meta.
+class TrainingDatasetSelection(BaseModel):
+    """Choose compatible feature columns and an existing label identity.
 
     Example:
-        selection = TrainingSelection(
-            train_dates=("2026-07-01",), training_cutoff_ts_us=1783062600000000,
-            label_availability={"2026-07-01": LabelAvailability(
-                available_ts_us=1782976200000000, evidence_ref="ledger/label-2026-07-01",
-            )},
+        selection = TrainingDatasetSelection(
+            feature_group="daily_basic_selected_v1",
+            label_group="daily_close_return_rank_d1/v1",
         )
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
-    train_dates: tuple[str, ...] = Field(min_length=1, strict=False)
-    training_cutoff_ts_us: int
-    label_availability: dict[str, LabelAvailability]
-    eval_date: str | None = None
-    decision_ts_us: int | None = None
+    feature_group: FeatureGroupName
+    label_group: LabelGroupName
 
     @model_validator(mode="after")
-    def _require_selection(self) -> Self:
-        for trade_date in self.train_dates:
-            DateTimeUtils.require_system_date(trade_date, field_name="train_dates")
-        if any(left >= right for left, right in zip(self.train_dates, self.train_dates[1:])):
-            raise ValueError("train_dates must be unique and increasing")
-        if set(self.label_availability) != set(self.train_dates):
-            raise ValueError("label_availability must cover exactly train_dates")
-        DateTimeUtils.from_utc_epoch_us(self.training_cutoff_ts_us)
-        for fact in self.label_availability.values():
-            DateTimeUtils.from_utc_epoch_us(fact.available_ts_us)
-            if not fact.evidence_ref.strip():
-                raise ValueError("availability evidence_ref must not be blank")
-        if (self.eval_date is None) != (self.decision_ts_us is None):
-            raise ValueError("eval_date and decision_ts_us must be supplied together")
-        if self.eval_date is not None:
-            DateTimeUtils.require_system_date(self.eval_date, field_name="eval_date")
-            local = DateTimeUtils.to_local(DateTimeUtils.from_utc_epoch_us(self.decision_ts_us))
-            if local.date().isoformat() != self.eval_date:
-                raise ValueError("decision_ts_us must fall on eval_date in Asia/Shanghai")
-            if self.training_cutoff_ts_us > self.decision_ts_us:
-                raise ValueError("training cutoff must not follow the prediction decision")
+    def _require_compatible_groups(self) -> Self:
+        if (self.feature_group == "l2_stock_1430_all_v1") != (
+            self.label_group == "l2_stock_1430_t1_vwap_rank/v1"
+        ):
+            raise ValueError("feature_group and label_group must use the same sample grid")
         return self
 
 
-@dataclass(frozen=True, slots=True)
-class TrainingSubmission:
-    """Describe one explicit ordered schedule, without implicit window defaults.
+class TrainingSubmission(BaseModel):
+    """Request one model fit and optional evaluation over a closed date range.
 
     Example:
-        submission = TrainingSubmission(windows=(training_selection,))
+        submission = TrainingSubmission(
+            train_range=TrainingDateRange(start="2026-07-01", end="2026-07-31"),
+            model="sgd_regression", dataset=dataset_selection,
+        )
     """
 
-    windows: tuple[TrainingSelection, ...]
+    model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
+
+    train_range: TrainingDateRange
+    model: TrainingModelName
+    dataset: TrainingDatasetSelection
+    eval_range: TrainingDateRange | None = None
     kind: Literal["train"] = "train"
 
     @property
@@ -220,10 +216,7 @@ class TrainingSubmission:
         Example:
             first_date = submission.start
         """
-        return min(
-            min(window.train_dates[0], window.eval_date or window.train_dates[0])
-            for window in self.windows
-        )
+        return min(self.train_range.start, self.eval_range.start) if self.eval_range else self.train_range.start
 
     @property
     def end(self) -> str:
@@ -232,10 +225,7 @@ class TrainingSubmission:
         Example:
             last_date = submission.end
         """
-        return max(
-            max(window.train_dates[-1], window.eval_date or window.train_dates[-1])
-            for window in self.windows
-        )
+        return max(self.train_range.end, self.eval_range.end) if self.eval_range else self.train_range.end
 
 
 class ModelUse(BaseModel):
@@ -421,30 +411,29 @@ def create_stock_1430_fusion_backfill_submission(
     return Stock1430FusionBackfillSubmission(start=normalized_start, end=normalized_end)
 
 
-def create_training_submission(windows: object) -> TrainingSubmission:
-    """Validate one explicit schedule shared by CLI and HTTP.
+def create_training_submission(
+    *, train_range: object, model: object, dataset: object, eval_range: object = None,
+) -> TrainingSubmission:
+    """Validate the business choices shared by CLI and HTTP.
 
     Example:
-        submission = create_training_submission([{
-            "train_dates": ["2026-07-01"], "training_cutoff_ts_us": 1783062600000000,
-            "label_availability": {"2026-07-01": {
-                "available_ts_us": 1782976200000000, "evidence_ref": "ledger/label-2026-07-01",
-            }},
-        }])
+        submission = create_training_submission(
+            train_range={"start": "2026-07-01", "end": "2026-07-31"},
+            model="sgd_regression", dataset={
+                "feature_group": "daily_basic_selected_v1",
+                "label_group": "daily_close_return_rank_d1/v1",
+            },
+        )
     """
     try:
-        selections = TypeAdapter(list[TrainingSelection]).validate_python(windows)
-    except (ValidationError, TypeError, ValueError) as exc:
-        raise InvalidJobRequest("must be a valid explicit training schedule", field="windows") from exc
-    if not selections:
-        raise InvalidJobRequest("must not be empty", field="windows")
-    decision_times = [item.decision_ts_us for item in selections if item.decision_ts_us is not None]
-    if any(left >= right for left, right in zip(decision_times, decision_times[1:])):
-        raise InvalidJobRequest("evaluation decision times must be unique and increasing", field="windows")
-    evaluation_dates = [item.eval_date for item in selections if item.eval_date is not None]
-    if any(left >= right for left, right in zip(evaluation_dates, evaluation_dates[1:])):
-        raise InvalidJobRequest("daily evaluation dates must be unique and increasing", field="windows")
-    return TrainingSubmission(windows=tuple(selections))
+        return TrainingSubmission.model_validate({
+            "train_range": train_range, "eval_range": eval_range,
+            "model": model, "dataset": dataset,
+        })
+    except ValidationError as exc:
+        error = exc.errors(include_url=False, include_input=False)[0]
+        field = ".".join(str(part) for part in error["loc"])
+        raise InvalidJobRequest(error["msg"], field=field) from exc
 
 
 def create_backtest_submission(
@@ -540,7 +529,12 @@ def parse_job_request(payload: object) -> list[JobSubmission]:
     if kind == "train":
         _reject_unknown_fields(request_payload, _TRAINING_FIELDS)
         return [
-            create_training_submission(request_payload.get("windows"))
+            create_training_submission(
+                train_range=request_payload.get("train_range"),
+                eval_range=request_payload.get("eval_range"),
+                model=request_payload.get("model"),
+                dataset=request_payload.get("dataset"),
+            )
         ]
 
     _reject_unknown_fields(request_payload, _BACKTEST_FIELDS)
@@ -592,13 +586,20 @@ def build_cli_command(
     elif isinstance(submission, TrainingSubmission):
         command.extend(
             [
-                "--windows-json",
-                json.dumps([window.model_dump(mode="json") for window in submission.windows],
-                           ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+                "--train-start", submission.train_range.start,
+                "--train-end", submission.train_range.end,
+                "--model", submission.model,
+                "--feature-group", submission.dataset.feature_group,
+                "--label-group", submission.dataset.label_group,
                 "--experiment-id",
                 job_id,
             ]
         )
+        if submission.eval_range is not None:
+            command.extend([
+                "--eval-start", submission.eval_range.start,
+                "--eval-end", submission.eval_range.end,
+            ])
     else:
         command.extend(
             [

@@ -331,21 +331,18 @@ class PathManager:
         return self.experiment_dir(experiment_name=experiment_name) / "report"
 
     def experiment_training_model(
-        self, *, experiment_name: str, window_index: int,
+        self, *, experiment_name: str,
     ) -> Path:
-        """Return the immutable model ref for one explicit training window.
+        """Return the single immutable model ref for one training run.
 
         Example:
             path = pm.experiment_training_model(
                 experiment_name="training_2026-07-01_2026-07-20_run-1",
-                window_index=0,
             )
         """
-        if isinstance(window_index, bool) or not isinstance(window_index, int) or window_index < 0:
-            raise ValueError("window_index must be a non-negative integer")
         return (
             self.experiment_training_dir(experiment_name=experiment_name)
-            / "windows" / f"{window_index:04d}" / "model.joblib"
+            / "model.joblib"
         )
 
     def experiment_training_metrics(self, *, experiment_name: str) -> Path:
@@ -356,7 +353,7 @@ class PathManager:
         )
 
     def experiment_training_schedule(self, *, experiment_name: str) -> Path:
-        """Return the explicit dates, cutoff, and availability-evidence record.
+        """Return the request, resolved configuration, and sample-date record.
 
         Example:
             path = pm.experiment_training_schedule(experiment_name="training_run")

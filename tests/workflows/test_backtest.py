@@ -14,7 +14,7 @@ import pytest
 
 from src.access import Access, meta
 from src.config.backtest_config import BacktestConfig
-from src.config.model_config import FeatureLabelConfig, MissingConfig, ModelConfig, PreprocessingConfig
+from src.config.model_config import FeatureGroupConfig, MissingConfig, ModelPreset, PreprocessingConfig
 from src.jobs.requests import BacktestSubmission, create_backtest_submission, create_training_submission
 from src.trading.portfolio.constructors.threshold import ThresholdConstructor
 from src.trading.portfolio.state import PortfolioState
@@ -62,28 +62,29 @@ def delivery(
             ref.parent.mkdir(parents=True)
             pd.DataFrame({**keys, column: values}).to_parquet(ref, index=False)
             meta.commit(pm=pm, payload_path=ref)
-    config = ModelConfig(
+    preset = ModelPreset(
         group="sgd_regression", model_params={"random_state": 7},
         preprocessing=PreprocessingConfig(missing=MissingConfig(method="drop")),
-        dataset=FeatureLabelConfig(
-            feature_set="tushare_daily_basic", feature_version="v1",
-            feature_columns=["f_d_close_return_1d"],
-            label_set="daily_close_return_rank_d1", label_version="v1", label_column="y_rank_return",
-        ),
+    )
+    feature = FeatureGroupConfig(
+        feature_set="tushare_daily_basic", feature_version="v1",
+        feature_columns=["f_d_close_return_1d"],
     )
     run_offline_training(
-        model_config=config, path_manager=pm, experiment_id="delivery",
-        submission=create_training_submission([{
-            "train_dates": ["2026-07-01"], "training_cutoff_ts_us": _decision("2026-07-02"),
-            "label_availability": {"2026-07-01": {
-                "available_ts_us": _decision("2026-07-02"), "evidence_ref": "synthetic/label-availability",
-            }},
-        }]),
+        models={"sgd_regression": preset}, feature_groups={"daily_basic_selected_v1": feature},
+        path_manager=pm, experiment_id="delivery",
+        submission=create_training_submission(
+            train_range={"start": "2026-07-01", "end": "2026-07-01"},
+            model="sgd_regression", dataset={
+                "feature_group": "daily_basic_selected_v1",
+                "label_group": "daily_close_return_rank_d1/v1",
+            },
+        ),
     )
     training_name = "training_2026-07-01_2026-07-01_delivery"
     submission = create_backtest_submission(
         mode="signal_eval", start="2026-07-03", end="2026-07-07",
-        model_ref=pm.experiment_training_model(experiment_name=training_name, window_index=0),
+        model_ref=pm.experiment_training_model(experiment_name=training_name),
         model_use={
             "training_schedule_ref": pm.experiment_training_schedule(experiment_name=training_name),
             "effective_ts_us": _decision("2026-07-03"),
@@ -156,7 +157,7 @@ def test_invalid_model_use_stops_before_predictions(
 ) -> None:
     pm, submission, _ = delivery
     submission = replace(submission, model_use=submission.model_use.model_copy(update={"effective_ts_us": effective}))
-    with pytest.raises(ValueError, match="training cutoff"):
+    with pytest.raises(ValueError, match="label maturity"):
         run_daily_alpha_backtest(
             backtest_config=BacktestConfig(init_cash=200_000, min_listing_calendar_days=120), path_manager=pm,
             submission=submission, experiment_id="invalid",
@@ -177,6 +178,58 @@ def test_model_load_failure_cannot_publish_a_binding(
         )
     run_dir = pm.experiment_backtest_dir(experiment_name="backtest_2026-07-03_2026-07-07_missing")
     assert not (run_dir / "binding.json").exists()
+
+
+@pytest.mark.parametrize(("change", "message"), [
+    ("model_ref", "model_ref from the training record"),
+    ("train_dates", "train_dates disagree"),
+    ("dataset", "dataset disagrees"),
+    ("unordered_dates", "unique and increasing"),
+    ("missing_maturity", "label_maturity_ts_us"),
+])
+def test_invalid_training_record_cannot_publish_a_binding(
+    delivery: tuple[PathManager, BacktestSubmission, Mock], change: str, message: str,
+) -> None:
+    pm, submission, _ = delivery
+    schedule = submission.model_use.training_schedule_ref
+    record = json.loads(schedule.read_text())
+    if change == "model_ref":
+        record["model_ref"] = str(submission.model_ref.with_name("another.joblib"))
+    elif change == "train_dates":
+        record["train_dates"] = ["2026-06-30"]
+    elif change == "dataset":
+        record["configuration"]["dataset"]["label_set"] = "daily_close_return_rank_d3"
+    elif change == "unordered_dates":
+        record["train_dates"] = ["2026-07-01", "2026-06-30"]
+    else:
+        del record["label_maturity_ts_us"]
+    schedule.write_text(json.dumps(record))
+    with pytest.raises(ValueError, match=message):
+        run_daily_alpha_backtest(
+            backtest_config=BacktestConfig(init_cash=200_000, min_listing_calendar_days=120),
+            path_manager=pm, submission=submission, experiment_id="invalid-record",
+        )
+    name = "backtest_2026-07-03_2026-07-07_invalid-record"
+    assert not pm.experiment_backtest_dir(experiment_name=name).exists()
+
+
+def test_backtest_consumes_resolved_record_without_parsing_archived_request(
+    delivery: tuple[PathManager, BacktestSubmission, Mock],
+) -> None:
+    pm, submission, _ = delivery
+    schedule = submission.model_use.training_schedule_ref
+    record = json.loads(schedule.read_text())
+    record["request"] = {"archived_intent": "not a current submission"}
+    schedule.write_text(json.dumps(record))
+    run_daily_alpha_backtest(
+        backtest_config=BacktestConfig(init_cash=200_000, min_listing_calendar_days=120),
+        path_manager=pm, submission=submission, experiment_id="resolved-record",
+    )
+    name = "backtest_2026-07-03_2026-07-07_resolved-record"
+    binding = json.loads((pm.experiment_backtest_dir(experiment_name=name) / "binding.json").read_text())
+    assert binding["training_record"] == record
+    assert binding["model_ref"] == record["model_ref"]
+    assert pm.experiment_backtest_metrics(experiment_name=name).exists()
 
 
 def test_changed_future_labels_and_prices_cannot_change_prior_predictions_or_targets(

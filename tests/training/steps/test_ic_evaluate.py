@@ -1,5 +1,7 @@
 # filepath: tests/training/steps/test_ic_evaluate.py
 from pathlib import Path
+from dataclasses import replace
+from unittest.mock import Mock
 
 import numpy as np
 import pandas as pd
@@ -10,8 +12,9 @@ from sklearn.dummy import DummyRegressor
 from src.access import meta
 from src.training.artifact import save
 from src.training.prediction import save_prediction_record
-from src.training.context import TrainingContext, TrainingWindow
+from src.training.context import EvaluationDay, TrainingContext, TrainingWindow
 from src.training.engines.preprocessing import FittedPreprocessor
+from src.training.evaluation import evaluate_predictions
 from src.training.inference_model import InferenceModel
 from src.training.steps.ic_evaluate import ICEvaluateStep
 from src.utils.path import PathManager
@@ -19,7 +22,7 @@ from src.utils.path import PathManager
 
 def _context(pm: PathManager, labels: list[float]) -> TrainingContext:
     day = "2026-07-03"
-    ref = pm.experiment_training_model(experiment_name="run", window_index=0)
+    ref = pm.experiment_training_model(experiment_name="run")
     keys = {
         "symbol": ["000001", "000002", "000003"],
         "trade_date": [day] * 3,
@@ -48,8 +51,8 @@ def _context(pm: PathManager, labels: list[float]) -> TrainingContext:
         predictions=np.array([0.0, np.nan, 2.0], dtype=np.float64),
     )
     return TrainingContext(window=TrainingWindow(
-        train_dates=model.train_dates, model_ref=ref, eval_date=day,
-        decision_ts_us=100, prediction_ref=prediction_ref,
+        train_dates=model.train_dates, model_ref=ref,
+        evaluations=(EvaluationDay(trade_date=day, decision_ts_us=100, prediction_ref=prediction_ref),),
     ))
 
 
@@ -58,48 +61,77 @@ def test_evaluation_never_predicts_or_filters_original_prediction_rows(
 ) -> None:
     pm = PathManager(tmp_path)
     context = _context(pm, [np.nan, 1.0, 2.0])
-    original = context.window.prediction_ref.read_bytes()
+    original = context.window.evaluations[0].prediction_ref.read_bytes()
 
     def fail_predict(self: InferenceModel, raw_values: np.ndarray) -> np.ndarray:
         raise AssertionError("evaluation must use fixed predictions")
 
     monkeypatch.setattr(InferenceModel, "predict", fail_predict)
-    ICEvaluateStep(pm=pm).run(context)
+    ICEvaluateStep(pm=pm, clock=lambda: 0.0).run(context)
     item = context.observations[0]
     assert (
         item.input_count, item.no_prediction_count, item.missing_label_count, item.pair_count,
     ) == (3, 1, 1, 1)
     assert item.undefined_reasons == ("insufficient_pairs", "constant_prediction", "constant_label")
-    assert context.window.prediction_ref.read_bytes() == original
+    assert context.window.evaluations[0].prediction_ref.read_bytes() == original
     # Later label changes alter evaluation, never the already fixed predictions.
     path = pm.label_object(
         label_set="l2_stock_1430_t1_vwap_rank", version="v1",
-        trade_date=context.window.eval_date,
+        trade_date=context.window.evaluations[0].trade_date,
     ).payload_path
     changed = pd.read_parquet(path)
     changed["y_rank_return"] = [np.nan] * 3
     changed.to_parquet(path, index=False)
     meta.commit(pm=pm, payload_path=path)
-    ICEvaluateStep(pm=pm).run(context)
+    ICEvaluateStep(pm=pm, clock=lambda: 0.0).run(context)
     assert context.observations[-1].pair_count == 0
-    assert context.window.prediction_ref.read_bytes() == original
+    assert context.window.evaluations[0].prediction_ref.read_bytes() == original
 
 
 def test_equal_symbol_date_with_wrong_third_key_is_rejected(tmp_path: Path) -> None:
     pm = PathManager(tmp_path)
     context = _context(pm, [0.0, 1.0, 2.0])
-    prediction_ref = context.window.prediction_ref
+    prediction_ref = context.window.evaluations[0].prediction_ref
     with pq.ParquetFile(prediction_ref) as source:
         table = source.read()
     table = table.set_column(2, "decision_ts_utc", [[101] * 3])
     pq.write_table(table, prediction_ref)
     with pytest.raises(RuntimeError, match="key mismatch"):
-        ICEvaluateStep(pm=pm).run(context)
+        ICEvaluateStep(pm=pm, clock=lambda: 0.0).run(context)
 
 
 def test_infinite_label_is_an_error_even_on_a_row_without_prediction(tmp_path: Path) -> None:
     pm = PathManager(tmp_path)
     context = _context(pm, [0.0, np.inf, 2.0])
-    with pytest.raises(ValueError, match="infinity"):
-        ICEvaluateStep(pm=pm).run(context)
+    with pytest.raises(ValueError, match="infinity") as raised:
+        ICEvaluateStep(pm=pm, clock=lambda: 0.0).run(context)
     assert context.observations == []
+    assert "trade_date=2026-07-03" in raised.value.__notes__[0]
+    assert str(context.window.evaluations[0].prediction_ref) in raised.value.__notes__[0]
+
+
+def test_evaluation_progress_is_throttled_and_summary_counts_only_this_batch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pm = PathManager(tmp_path)
+    context = _context(pm, [0.0, 0.5, 1.0])
+    dates = ("2026-07-03", "2026-07-06", "2026-07-07", "2026-07-08", "2026-07-09")
+    days = tuple(EvaluationDay(trade_date=day, decision_ts_us=index,
+                               prediction_ref=context.window.model_ref.parent / f"{day}.parquet")
+                 for index, day in enumerate(dates))
+    context.window = replace(context.window, evaluations=days)
+    observations = [evaluate_predictions(
+        model_ref=context.window.model_ref, decision_ts_us=day.decision_ts_us,
+        predictions=np.array([0.0, np.nan, 1.0]), labels=np.array([0.0, 0.5, 1.0]),
+    ) for day in days]
+    context.observations.append(observations[0])
+    monkeypatch.setattr("src.training.steps.ic_evaluate.evaluate_prediction_record", Mock(side_effect=observations))
+    logger = Mock()
+    monkeypatch.setattr("src.training.steps.ic_evaluate.logs", logger)
+    clock = Mock(side_effect=[0.0, 4.99, 5.0, 9.99, 10.0, 99.0])
+    assert ICEvaluateStep(pm=pm, clock=clock).run(context) is context
+    assert context.observations == [observations[0], *observations]
+    messages = [call.args[0] for call in logger.info.call_args_list]
+    assert len(messages) == 4
+    assert "已评价 2 / 5 个交易日" in messages[1] and "已评价 4 / 5 个交易日" in messages[2]
+    assert "IC 有效日期：5 / 5 个交易日；有效配对：10 行" in messages[-1]

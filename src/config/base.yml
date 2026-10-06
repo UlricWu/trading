@@ -75,21 +75,21 @@ backtest:
   init_cash: 200000
   min_listing_calendar_days: 120
 # ==================================================
-# Model / Training System
-# - Runtime training selections and experiment identity are CLI inputs.
-# - Model group is selected explicitly from the training model catalog.
+# Training presets and ordered feature selections
 # ==================================================
-model:
-  group: "sgd_regression"
-  model_params:
-    alpha: 0.0005
-    l1_ratio: 0.0
-    random_state: 7
-  preprocessing:
-    missing:
-      method: "constant"
-      fill_value: 0.0
-  dataset:
+models:
+  sgd_regression:
+    group: "sgd_regression"
+    model_params:
+      alpha: 0.0005
+      l1_ratio: 0.0
+      random_state: 7
+    preprocessing:
+      missing:
+        method: "constant"
+        fill_value: 0.0
+feature_groups:
+  daily_basic_selected_v1:
     feature_set: "tushare_daily_basic"
     feature_version: "v1"
     feature_columns:
@@ -100,7 +100,59 @@ model:
       - "f_d_close_volatility_60d_asof_tminus1"
       - "f_d_close_return_5d_asof_tminus1"
       - "f_d_turnover_rate_mean_20d_asof_tminus1"
-
-    label_set: "daily_close_return_rank_d1"
-    label_version: "v1"
-    label_column: "y_rank_return"
+  daily_basic_all_v1:
+    feature_set: "tushare_daily_basic"
+    feature_version: "v1"
+    feature_columns:
+      - "f_d_close_return_1d"
+      - "f_d_open_gap_1d"
+      - "f_d_intraday_return"
+      - "f_d_range_vs_prev_close"
+      - "f_d_log_volume"
+      - "f_d_log_amount"
+      - "f_d_max_drawdown_20d_asof_tminus1"
+      - "f_d_close_volatility_60d_asof_tminus1"
+      - "f_d_close_distance_to_high_20d_asof_tminus1"
+      - "f_d_amount_mean_5d_asof_tminus1"
+      - "f_d_amount_mean_20d_asof_tminus1"
+      - "f_d_close_return_5d_asof_tminus1"
+      - "f_d_close_return_20d_asof_tminus1"
+      - "f_d_close_volatility_20d_asof_tminus1"
+      - "f_d_turnover_rate_mean_20d_asof_tminus1"
+      - "f_d_close_position_in_range_20d_asof_tminus1"
+  l2_stock_1430_all_v1:
+    feature_set: "l2_stock_1430"
+    feature_version: "v1"
+    feature_columns:
+      - "f_l2_edge_vwap_return_rank_5m"
+      - "f_l2_high_low_range_rank_5m"
+      - "f_l2_notional_rank_5m"
+      - "f_l2_trade_count_rank_5m"
+      - "f_l2_average_trade_notional_rank_5m"
+      - "f_l2_tick_signed_volume_ratio_rank_5m"
+      - "f_l2_tick_signed_notional_ratio_rank_5m"
+      - "f_l2_observed_minute_ratio_5m"
+      - "f_l2_edge_vwap_return_rank_15m"
+      - "f_l2_high_low_range_rank_15m"
+      - "f_l2_notional_rank_15m"
+      - "f_l2_trade_count_rank_15m"
+      - "f_l2_average_trade_notional_rank_15m"
+      - "f_l2_tick_signed_volume_ratio_rank_15m"
+      - "f_l2_tick_signed_notional_ratio_rank_15m"
+      - "f_l2_observed_minute_ratio_15m"
+      - "f_l2_edge_vwap_return_rank_30m"
+      - "f_l2_high_low_range_rank_30m"
+      - "f_l2_notional_rank_30m"
+      - "f_l2_trade_count_rank_30m"
+      - "f_l2_average_trade_notional_rank_30m"
+      - "f_l2_tick_signed_volume_ratio_rank_30m"
+      - "f_l2_tick_signed_notional_ratio_rank_30m"
+      - "f_l2_observed_minute_ratio_30m"
+      - "f_l2_edge_vwap_return_rank_60m"
+      - "f_l2_high_low_range_rank_60m"
+      - "f_l2_notional_rank_60m"
+      - "f_l2_trade_count_rank_60m"
+      - "f_l2_average_trade_notional_rank_60m"
+      - "f_l2_tick_signed_volume_ratio_rank_60m"
+      - "f_l2_tick_signed_notional_ratio_rank_60m"
+      - "f_l2_observed_minute_ratio_60m"

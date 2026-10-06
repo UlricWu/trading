@@ -7,6 +7,7 @@ import hashlib
 import json
 from collections import Counter
 from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
@@ -16,7 +17,8 @@ from pydantic import BaseModel, ConfigDict, Field, FiniteFloat
 
 from src.access.feature_label import read_labels
 from src.training.engines.rank_ic import rank_ic
-from src.training.prediction import load_prediction_model, read_prediction_record
+from src.training.inference_model import InferenceModel
+from src.training.prediction import PredictionInputs, load_prediction_model, read_prediction_record
 from src.utils.filesystem import FileSystem
 from src.utils.path import PathManager
 
@@ -81,6 +83,20 @@ class ICEvaluation(BaseModel):
     summary: ICSummary
 
 
+@dataclass(frozen=True, slots=True)
+class EvaluationLabels:
+    """Keep aligned label values with the exact source revision used to read them.
+
+    Example:
+        labels = read_evaluation_labels(pm=pm, inputs=inputs, model=model, predictions=rows)
+        assert labels.values.shape == (len(rows),)
+    """
+
+    values: np.ndarray
+    ref: Path
+    sha256: str
+
+
 def evaluate_predictions(
     *,
     model_ref: Path,
@@ -121,6 +137,26 @@ def evaluate_prediction_record(ref: Path, *, pm: PathManager) -> ICObservation:
     """
     inputs, predictions = read_prediction_record(ref)
     model = load_prediction_model(inputs)
+    labels = read_evaluation_labels(pm=pm, inputs=inputs, model=model, predictions=predictions)
+    observation = evaluate_predictions(
+        model_ref=inputs.model_ref, decision_ts_us=inputs.decision_ts_us,
+        predictions=predictions["prediction"].to_numpy(dtype=np.float64), labels=labels.values,
+    )
+    return observation.model_copy(update={
+        "prediction_ref": str(ref), "label_ref": str(labels.ref), "label_sha256": labels.sha256,
+    })
+
+
+def read_evaluation_labels(
+    *, pm: PathManager, inputs: PredictionInputs, model: InferenceModel,
+    predictions: pd.DataFrame,
+) -> EvaluationLabels:
+    """Select labels by complete prediction keys and retain their source digest.
+
+    Example:
+        labels = read_evaluation_labels(pm=pm, inputs=inputs, model=model, predictions=rows)
+        errors = rows["prediction"].to_numpy() - labels.values
+    """
     labels = read_labels(
         pm=pm, label_set=model.label_set, version=model.label_version,
         trade_date=inputs.trade_date, label_column=model.label_column,
@@ -134,19 +170,15 @@ def evaluate_prediction_record(ref: Path, *, pm: PathManager) -> ICObservation:
     )
     if (positions < 0).any():
         raise RuntimeError("evaluation prediction / label key mismatch")
-    observation = evaluate_predictions(
-        model_ref=inputs.model_ref, decision_ts_us=inputs.decision_ts_us,
-        predictions=predictions["prediction"].to_numpy(dtype=np.float64),
-        labels=labels[model.label_column].iloc[positions].to_numpy(dtype=np.float64),
-    )
     label_ref = pm.label_object(
         label_set=model.label_set, version=model.label_version, trade_date=inputs.trade_date,
     ).payload_path
     with label_ref.open("rb") as source:
         label_digest = hashlib.file_digest(source, "sha256").hexdigest()
-    return observation.model_copy(update={
-        "prediction_ref": str(ref), "label_ref": str(label_ref), "label_sha256": label_digest,
-    })
+    return EvaluationLabels(
+        values=labels[model.label_column].iloc[positions].to_numpy(dtype=np.float64),
+        ref=label_ref, sha256=label_digest,
+    )
 
 
 def summarize_observations(observations: Sequence[ICObservation]) -> ICSummary:

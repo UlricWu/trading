@@ -10,7 +10,7 @@ from datetime import date, time
 from src import logs
 from src.access import Access
 from src.config.backtest_config import BacktestConfig
-from src.jobs.requests import BacktestSubmission, TrainingSelection
+from src.jobs.requests import BacktestSubmission
 from src.observability.instrumentation import Instrumentation
 from src.pipeline import PipelineStep
 from src.trading.backtest.context import BacktestContext, BacktestState
@@ -29,6 +29,7 @@ from src.trading.backtest.steps.metrics_persist import MetricsPersistStep
 from src.trading.backtest.steps.report import ReportStep
 from src.trading.backtest.timing import resolve_backtest_timing
 from src.trading.sim import components as sim_components
+from src.training.record import TrainingRunRecord
 from src.utils.path import PathManager
 from src.utils.datetime_utils import DateTimeUtils
 from src.utils.filesystem import FileSystem
@@ -69,18 +70,16 @@ def run_daily_alpha_backtest(
         raise ValueError("[BacktestWorkflow] backtest timings are required")
 
     use = submission.model_use
-    schedule = json.loads(use.training_schedule_ref.read_text(encoding="utf-8"))
-    selected = [entry for entry in schedule if entry["model_ref"] == str(submission.model_ref)]
-    if len(selected) != 1:
-        raise ValueError("model use requires exactly one matching training schedule entry")
-    selection = TrainingSelection.model_validate({
-        key: value for key, value in selected[0].items() if key != "model_ref"
-    })
+    record = TrainingRunRecord.model_validate_json(
+        use.training_schedule_ref.read_text(encoding="utf-8")
+    )
+    if record.model_ref != submission.model_ref:
+        raise ValueError("model use requires the model_ref from the training record")
     first_decision = DateTimeUtils.local_time_to_utc_epoch_us(
         time(15, 0), date.fromisoformat(timings[0].signal_date),
     )
-    if not selection.training_cutoff_ts_us <= use.effective_ts_us <= first_decision:
-        raise ValueError("model use requires training cutoff <= effective time <= first decision")
+    if not record.label_maturity_ts_us <= use.effective_ts_us <= first_decision:
+        raise ValueError("model use requires label maturity <= effective time <= first decision")
 
     components = sim_components.build_components(
         mode=submission.mode,
@@ -89,8 +88,17 @@ def run_daily_alpha_backtest(
         cfg=backtest_config,
     )
     model = components.signal.model
-    if model.train_dates != selection.train_dates:
-        raise ValueError("model train_dates disagree with the referenced training schedule")
+    if model.train_dates != record.train_dates:
+        raise ValueError("model train_dates disagree with the referenced training record")
+    dataset = record.configuration.dataset
+    if (
+        model.feature_set, model.feature_version, model.feature_names,
+        model.label_set, model.label_version, model.label_column,
+    ) != (
+        dataset.feature_set, dataset.feature_version, tuple(dataset.feature_columns),
+        dataset.label_set, dataset.label_version, dataset.label_column,
+    ):
+        raise ValueError("model dataset disagrees with the referenced training record")
     if model.feature_set == "l2_stock_1430":
         raise ValueError("daily-close backtest cannot execute a 14:30 decision model")
     with submission.model_ref.open("rb") as source:
@@ -103,7 +111,7 @@ def run_daily_alpha_backtest(
             "model_ref": str(submission.model_ref),
             "model_sha256": model_digest,
             "model_use": use.model_dump(mode="json"),
-            "training_selection": selection.model_dump(mode="json"),
+            "training_record": record.model_dump(mode="json"),
             "first_decision_ts_us": first_decision,
             "mode": submission.mode.value,
             "strategy": submission.strategy.model_dump(mode="json"),

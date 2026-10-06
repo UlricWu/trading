@@ -20,13 +20,14 @@ start/done 或原始 JSON，workflow 负责业务运行日志。Typer 负责参�
 `EXPERIMENT_ID` 必须匹配 `[A-Za-z0-9][A-Za-z0-9._-]{0,63}`。
 
 Submission 的日期与范围保证由 `src.jobs.requests` 中相应的 `create_*_submission` 函数
-建立。直接调用 submission dataclass 构造函数不执行校验，只允许可信内部调用者提供
-已经满足契约的值；CLI 和 HTTP 不得通过直接构造绕过该边界。
+建立。TrainingSubmission 使用验证模型；其他 submission 的 dataclass 构造函数不执行
+校验，只允许可信内部调用者提供已经满足契约的值。CLI 和 HTTP 均使用共享构造函数，
+不另建业务校验。
 
 ## AppConfig
 
 `AppConfig.load()` 是完整应用配置的唯一加载入口。调用者一次获得 `environment`、
-`storage_root`、`secret`、`data`、`model` 和 `backtest`，无需分别识别或加载配置区段。
+`storage_root`、`secret`、`data`、`models`、`feature_groups` 和 `backtest`，无需分别识别或加载配置区段。
 进程变量 `ENV` 选择项目根目录的 `.env.dev`、`.env.test` 或 `.env.prod`，缺省为
 `dev`；加载过程不得把文件内容写入进程环境。`ZERO_STORAGE_ROOT` 仍由进程环境提供，
 路径可用性由 `PathManager` 校验。
@@ -36,7 +37,7 @@ Submission 的日期与范围保证由 `src.jobs.requests` 中相应的 `create_
 SDK 地址。FTP 配置不再读取或要求。Level-2 使用配置指定且已登录的百度网盘客户端，
 客户端凭证由客户端管理。
 
-`override` 只能包含 `data`、`model` 或 `backtest` 根键；因此不能改变
+`override` 只能包含 `data`、`models`、`feature_groups` 或 `backtest` 根键；因此不能改变
 `environment`、`storage_root` 或 `secret`。mapping 递归合并，标量、列表和显式
 `None` 直接替换，不定义字段级特殊合并规则。合并后必须校验完整 `AppConfig`。HTTP Job
 API 和所有 CLI 命令都不得用 request runtime 字段构造 config override。配置读取、
@@ -136,37 +137,38 @@ calendar 与 Standard facts，不调用 broker，不写 raw、processed、label 
 
 ```text
 python -m src.cli train \
-  --windows-json JSON \
+  --train-start YYYY-MM-DD --train-end YYYY-MM-DD \
+  --model MODEL --feature-group FEATURE_GROUP --label-group LABEL_GROUP \
+  [--eval-start YYYY-MM-DD --eval-end YYYY-MM-DD] \
   --experiment-id EXPERIMENT_ID
 ```
 
-JSON 必须是非空训练选择数组，不接受 start/end 或隐式窗口长度。每项 schema 为：
+train 起止日期、模型名、特征组名与标签组名必填。eval 两端必须同时提供或同时省略；
+起止相同表示单日评价，省略表示纯训练，不另加模式参数。日期为规范闭区间，
+`start <= end`；不接受 windows JSON、逐日日期、cutoff、可用性声明或决策微秒数。
+可选名称、准确含义、组合限制和日历/成熟时序由
+[training workflow](../offline_workflow_contract.md#training-workflow)拥有。
+例如完整的多日固定模型评价调用为：
 
-```json
-[{
-  "train_dates": ["2026-07-01"],
-  "training_cutoff_ts_us": 1783062600000000,
-  "label_availability": {
-    "2026-07-01": {
-      "available_ts_us": 1782976200000000,
-      "evidence_ref": "ledger/label-2026-07-01"
-    }
-  }
-}]
+```bash
+python -m src.cli train \
+  --train-start 2026-07-01 --train-end 2026-07-31 \
+  --eval-start 2026-08-10 --eval-end 2026-08-31 \
+  --model sgd_regression \
+  --feature-group daily_basic_selected_v1 \
+  --label-group daily_close_return_rank_d1/v1 \
+  --experiment-id example-run
 ```
 
-该例是结构示例，不表示 ledger 已经存在。train_dates 必须为规范、非空、严格升序且唯一的
-日期；label_availability 必须精确覆盖所选日期，时间是严格整数 UTC epoch microseconds，
-依据引用不得为空。可另同时提供 eval_date 与 decision_ts_us；同时省略或设为 null 表示
-只交付模型。决策必须落在评价日的上海日期内，且不早于训练截止；数组中的评价日期和
-决策时点必须各自严格递增。额外字段拒绝。成熟、实际可用声明及 Feature 可见性核验由
-[training workflow](../offline_workflow_contract.md#training-workflow)负责，违反时不缩短日期。
+模型超参数、随机种子和预处理由所选 AppConfig.models 条目拥有；特征组定义由
+AppConfig.feature_groups 拥有，不从请求构造配置 override。CLI 将共享构造边界校验后的
+TrainingSubmission、两个配置映射、experiment ID 和 PathManager 直接交给 workflow。
+参数格式、未知选项或不兼容的数据组合退出 2；配置、日历、数据、训练、保存或评价失败
+退出 1；成功退出 0。示例不保证目标环境已有相应数据。无交易日或数据缺失不缩短区间。
 
-Training 只使用基础 AppConfig.model，不接受 group 或配置 JSON override。CLI 将已校验
-TrainingSubmission、experiment ID、ModelConfig 和 PathManager 直接交给 workflow。
-JSON/参数构造失败退出 2；配置、数据、训练、保存或评价失败退出 1；成功退出 0。可恢复
-模型的具体 ref 位于 training/windows/<index>/model.joblib，并记录在 schedule.json；评价和
-报告不参与模型构造或发布判定。纯训练不读取评价输入。
+每次任务仅训练一次，模型 ref 位于 training/model.joblib，并记录在 schedule.json；
+多日预测分别写入 training/predictions/YYYY-MM-DD.parquet。评价与报告不参与模型构造或
+发布判定。纯训练不读取评价输入，也不创建预测、评价或报告文件。
 
 通过 HTTP 创建 training Job 时，Job API 使用同一个 Job UUID 作为必填 EXPERIMENT_ID；
 HTTP 不接受客户端提供此字段。
@@ -214,7 +216,8 @@ python -m src.cli backtest \
 
 schedule 引用必须是绝对路径，时间必须为整数 UTC microseconds，证据引用不得为空白。
 示例不是历史可用性证明；实际调用须使用任务材料。CLI/HTTP 共同校验形状，workflow
-读取 schedule 和模型后检查关联、训练截止及首个决策边界。缺失字段或非法 JSON 在
+读取 schedule 和模型后检查关联、标签理论成熟下界及首个决策边界；该下界不证明历史
+模型可用性。缺失字段或非法 JSON 在
 装配 workflow 前失败；不自动补造依据，也不兼容省略 model_use 的旧请求。
 
 CLI 不构造 config override。它加载一次只含静态执行设置的 `BacktestConfig`，并把该对象、

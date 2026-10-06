@@ -39,9 +39,11 @@ def create_app(job_runtime: JobRuntime) -> Flask:
         "end": "YYYY-MM-DD"}``, or the same object with ``kind`` set to
         ``"data-level2"``.
       - Training:
-        ``{"kind": "train", "windows": EXPLICIT_TRAINING_SELECTIONS}``.
-        Each selection contains training dates, information cutoff and label
-        availability facts, and optionally an evaluation date and decision time.
+        ``{"kind": "train", "train_range": DATE_RANGE, "model": MODEL_NAME,
+        "dataset": {"feature_group": FEATURE_GROUP, "label_group": LABEL_GROUP},
+        "eval_range": DATE_RANGE_OR_NULL}``.
+        Each date range has inclusive start/end dates. Optional evaluation uses
+        the same fitted model for every selected trading day.
       - Backtest:
         ``{"kind": "backtest", "mode": MODE, "start": "YYYY-MM-DD",
         "end": "YYYY-MM-DD", "model_ref": ABSOLUTE_PATH,

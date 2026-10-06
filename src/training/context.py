@@ -1,5 +1,5 @@
 # filepath: src/training/context.py
-"""Per-window values and explicitly shared evaluation observations."""
+"""One training selection, its evaluation days, and ordered Step values."""
 
 from __future__ import annotations
 
@@ -14,24 +14,36 @@ from src.training.inference_model import InferenceModel
 
 
 @dataclass(frozen=True, slots=True)
-class TrainingWindow:
-    """Identify one complete training selection and its concrete output reference.
+class EvaluationDay:
+    """Bind one evaluation date to its prediction time and output location.
 
-    None evaluation fields mean model delivery without evaluation.
+    Example:
+        day = EvaluationDay(
+            trade_date="2026-08-10", decision_ts_us=1786345200000000,
+            prediction_ref=Path("/data/run/training/predictions/2026-08-10.parquet"),
+        )
+    """
+
+    trade_date: str
+    decision_ts_us: int
+    prediction_ref: Path
+
+
+@dataclass(frozen=True, slots=True)
+class TrainingWindow:
+    """Identify one training interval, model, and optional evaluation days.
 
     Example:
         window = TrainingWindow(
             train_dates=("2026-07-17", "2026-07-20"),
-            model_ref=Path("/data/experiments/run/training/windows/0000/model.joblib"),
-            eval_date="2026-07-21", decision_ts_us=1784617200000000,
+            model_ref=Path("/data/experiments/run/training/model.joblib"),
+            evaluations=(evaluation_day,),
         )
     """
 
     train_dates: tuple[str, ...]
     model_ref: Path
-    eval_date: str | None = None
-    decision_ts_us: int | None = None
-    prediction_ref: Path | None = None
+    evaluations: tuple[EvaluationDay, ...] = ()
 
 
 @dataclass(slots=True)

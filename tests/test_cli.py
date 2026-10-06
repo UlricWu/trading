@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import json
-
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -14,19 +13,17 @@ from typer.testing import CliRunner
 
 from src import cli
 from src.config.backtest_config import BacktestMode
+from src.jobs.requests import build_cli_command, create_training_submission
 from src.utils.path import PathManager
 
 
+def _training_args() -> list[str]:
+    return [
+        "--train-start", "2026-07-01", "--train-end", "2026-07-20",
+        "--model", "sgd_regression", "--feature-group", "daily_basic_selected_v1",
+        "--label-group", "daily_close_return_rank_d1/v1",
+    ]
 
-def _training_windows() -> list[dict[str, object]]:
-    return [{
-        "train_dates": ["2026-07-01", "2026-07-20"],
-        "training_cutoff_ts_us": 1785510000000000,
-        "label_availability": {
-            "2026-07-01": {"available_ts_us": 1782976200000000, "evidence_ref": "test/label-1"},
-            "2026-07-20": {"available_ts_us": 1784617200000000, "evidence_ref": "test/label-20"},
-        },
-    }]
 
 def test_data_calendar_bootstraps_through_the_current_market_year(
     tmp_path: Path,
@@ -251,37 +248,41 @@ def test_stock_1430_backfill_passes_one_validated_target_range(
     assert isinstance(arguments["path_manager"], PathManager)
 
 
-def test_train_passes_base_model_config_and_complete_submission(
+@pytest.mark.parametrize("eval_end", [None, "2026-08-10", "2026-08-31"])
+def test_train_command_round_trip_preserves_named_choices_and_ranges(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    eval_end: str | None,
 ) -> None:
-    model_config = object()
+    models = {"sgd_regression": object()}
+    feature_groups = {"daily_basic_selected_v1": object()}
     load_config = Mock(
         return_value=SimpleNamespace(
             storage_root=tmp_path,
-            model=model_config,
+            models=models, feature_groups=feature_groups,
         )
     )
     run_training = Mock()
     monkeypatch.setattr(cli.AppConfig, "load", load_config)
     monkeypatch.setattr(cli, "run_offline_training", run_training)
 
-    result = CliRunner().invoke(
-        cli.app,
-        [
-            "train",
-            "--windows-json", json.dumps(_training_windows()),
-            "--experiment-id",
-            "run-1",
-        ],
+    submission = create_training_submission(
+        train_range={"start": "2026-07-01", "end": "2026-07-20"},
+        eval_range={"start": "2026-08-10", "end": eval_end} if eval_end else None,
+        model="sgd_regression", dataset={
+            "feature_group": "daily_basic_selected_v1",
+            "label_group": "daily_close_return_rank_d1/v1",
+        },
     )
+    command = build_cli_command(submission, "run-1")
+    result = CliRunner().invoke(cli.app, command[3:])
 
     assert result.exit_code == 0, result.output
     load_config.assert_called_once_with()
     arguments = run_training.call_args.kwargs
-    assert arguments["model_config"] is model_config
-    assert arguments["submission"].start == "2026-07-01"
-    assert arguments["submission"].end == "2026-07-20"
+    assert arguments["models"] is models
+    assert arguments["feature_groups"] is feature_groups
+    assert arguments["submission"] == submission
     assert arguments["experiment_id"] == "run-1"
     assert isinstance(arguments["path_manager"], PathManager)
 
@@ -339,7 +340,7 @@ def test_backtest_loads_static_config_without_runtime_override(
     [
         (
             [
-                "train", "--windows-json", json.dumps(_training_windows()),
+                "train", *_training_args(),
                 "--experiment-id",
                 "run-1",
             ],
@@ -379,7 +380,7 @@ def test_empty_runtime_schedule_propagates_as_exit_code_1(
         Mock(
             return_value=SimpleNamespace(
                 storage_root=tmp_path,
-                model=object(),
+                models=object(), feature_groups=object(),
                 backtest=object(),
             )
         ),
@@ -468,8 +469,16 @@ def test_empty_runtime_schedule_propagates_as_exit_code_1(
             "run-1",
         ],
         [
-            "train", "--windows-json", json.dumps(_training_windows()),
+            "train", *_training_args(),
             "--experiment-id", "-invalid",
+        ],
+        [
+            "train", *_training_args(), "--experiment-id", "run-1",
+            "--eval-start", "2026-08-10",
+        ],
+        [
+            "train", *_training_args(), "--experiment-id", "run-1",
+            "--eval-end", "2026-08-31",
         ],
         [
             "backtest",

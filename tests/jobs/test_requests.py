@@ -29,15 +29,16 @@ from src.jobs.requests import (
 
 
 
-def _training_windows() -> list[dict[str, object]]:
-    return [{
-        "train_dates": ["2026-07-01", "2026-07-20"],
-        "training_cutoff_ts_us": 1785510000000000,
-        "label_availability": {
-            "2026-07-01": {"available_ts_us": 1782976200000000, "evidence_ref": "test/label-1"},
-            "2026-07-20": {"available_ts_us": 1784617200000000, "evidence_ref": "test/label-20"},
+def _training_request() -> dict[str, object]:
+    return {
+        "kind": "train",
+        "train_range": {"start": "2026-07-01", "end": "2026-07-20"},
+        "model": "sgd_regression",
+        "dataset": {
+            "feature_group": "daily_basic_selected_v1",
+            "label_group": "daily_close_return_rank_d1/v1",
         },
-    }]
+    }
 
 def test_data_range_creates_one_atomic_submission() -> None:
     submissions = parse_job_request(
@@ -60,16 +61,20 @@ def test_data_range_creates_one_atomic_submission() -> None:
 def test_training_range_creates_one_submission() -> None:
     submissions = parse_job_request(
         {
-            "kind": "train", "windows": _training_windows(),
+            **_training_request(),
         }
     )
 
     assert len(submissions) == 1 and isinstance(submissions[0], TrainingSubmission)
     assert submissions[0].start == "2026-07-01" and submissions[0].end == "2026-07-20"
-    assert submissions[0].windows[0].train_dates == ("2026-07-01", "2026-07-20")
+    assert submissions[0].train_range.model_dump() == {"start": "2026-07-01", "end": "2026-07-20"}
     command = build_cli_command(submissions[0], "run-1")
-    import json
-    assert json.loads(command[command.index("--windows-json") + 1]) == [window.model_dump(mode="json") for window in submissions[0].windows]
+    assert command[command.index("--train-start") + 1] == "2026-07-01"
+    assert command[command.index("--train-end") + 1] == "2026-07-20"
+    assert command[command.index("--model") + 1] == "sgd_regression"
+    assert command[command.index("--feature-group") + 1] == "daily_basic_selected_v1"
+    assert command[command.index("--label-group") + 1] == "daily_close_return_rank_d1/v1"
+    assert "--eval-start" not in command and "--windows-json" not in command
     assert command[command.index("--experiment-id") + 1] == "run-1"
 
 
@@ -242,42 +247,60 @@ def test_invalid_request_is_rejected_before_any_submission(
         parse_job_request(payload)
 
 
-@pytest.mark.parametrize("mutation", ["empty_dates", "duplicate_dates", "unsorted_dates", "bad_date", "missing_availability", "extra_availability", "boolean_cutoff", "boolean_availability", "empty_evidence", "unpaired_evaluation", "decision_wrong_day", "decision_before_cutoff", "extra_window_field"])
-def test_training_schedule_rejects_ambiguous_dates_or_information_inputs(mutation: str) -> None:
-    from src.jobs.requests import create_training_submission
-    windows = _training_windows()
-    item = windows[0]
-    if mutation == "empty_dates":
-        item["train_dates"] = []
-    elif mutation == "duplicate_dates":
-        item["train_dates"] = ["2026-07-01", "2026-07-01"]
-    elif mutation == "unsorted_dates":
-        item["train_dates"] = ["2026-07-20", "2026-07-01"]
-    elif mutation == "bad_date":
-        item["train_dates"] = ["2026-7-1"]
-    elif mutation == "missing_availability":
-        item["label_availability"].pop("2026-07-01")
-    elif mutation == "extra_availability":
-        item["label_availability"]["2026-07-02"] = {"available_ts_us": 1, "evidence_ref": "test"}
-    elif mutation == "boolean_cutoff":
-        item["training_cutoff_ts_us"] = True
-    elif mutation == "boolean_availability":
-        item["label_availability"]["2026-07-01"]["available_ts_us"] = True
-    elif mutation == "empty_evidence":
-        item["label_availability"]["2026-07-01"]["evidence_ref"] = " "
-    elif mutation == "unpaired_evaluation":
-        item["eval_date"] = "2026-07-20"
-    elif mutation == "decision_wrong_day":
-        item["eval_date"] = "2026-07-20"
-        item["decision_ts_us"] = 1782976200000000
-    elif mutation == "decision_before_cutoff":
-        item["eval_date"] = "2026-07-02"
-        item["decision_ts_us"] = 1782976200000000
-    else:
-        item["window_days"] = 30
+@pytest.mark.parametrize(("field", "value", "error_field"), [
+    ("train_range", None, "train_range"),
+    ("train_range", {}, "train_range.start"),
+    ("train_range", {"start": "2026-7-1", "end": "2026-07-20"}, "train_range.start"),
+    ("train_range", {"start": "2026-02-30", "end": "2026-07-20"}, "train_range.start"),
+    ("train_range", {"start": "2026-07-21", "end": "2026-07-20"}, "train_range"),
+    ("train_range", {"start": True, "end": "2026-07-20"}, "train_range.start"),
+    ("train_range", {"start": "2026-07-01", "end": "2026-07-20", "train_dates": []}, "train_range.train_dates"),
+    ("eval_range", {"start": "2026-08-01"}, "eval_range.end"),
+    ("eval_range", {}, "eval_range.start"),
+    ("model", "unknown", "model"),
+    ("model", None, "model"),
+    ("dataset", {"feature_group": "unknown", "label_group": "daily_close_return_rank_d1/v1"}, "dataset.feature_group"),
+    ("dataset", {"feature_group": "daily_basic_selected_v1", "label_group": "daily_close_return_rank_d7/v1"}, "dataset.label_group"),
+    ("dataset", {"feature_group": "daily_basic_selected_v1", "label_group": "l2_stock_1430_t1_vwap_rank/v1"}, "dataset"),
+    ("dataset", {"feature_group": "l2_stock_1430_all_v1", "label_group": "daily_close_return_rank_d1/v1"}, "dataset"),
+    ("dataset", {"feature_group": "stock_1430_daily_l2/v1", "label_group": "l2_stock_1430_t1_vwap_rank/v1"}, "dataset.feature_group"),
+])
+def test_training_request_rejects_invalid_ranges_and_choices(
+    field: str, value: object, error_field: str,
+) -> None:
+    payload = _training_request()
+    payload[field] = value
     with pytest.raises(InvalidJobRequest) as caught:
-        create_training_submission(windows)
-    assert caught.value.field == "windows"
+        parse_job_request(payload)
+    assert caught.value.field == error_field
+
+
+@pytest.mark.parametrize("field", [
+    "windows", "train_dates", "training_cutoff_ts_us", "label_availability",
+    "decision_ts_us", "availability_ref", "experiment_id", "model_params",
+])
+def test_training_rejects_removed_technical_inputs(field: str) -> None:
+    with pytest.raises(InvalidJobRequest) as caught:
+        parse_job_request({**_training_request(), field: "not a business choice"})
+    assert caught.value.field == field
+
+
+@pytest.mark.parametrize("end", ["2026-08-10", "2026-08-31"])
+def test_single_and_multiple_evaluation_days_share_one_request_shape(end: str) -> None:
+    submission = parse_job_request({
+        **_training_request(), "eval_range": {"start": "2026-08-10", "end": end},
+    })[0]
+    assert isinstance(submission, TrainingSubmission)
+    assert submission.start == "2026-07-01" and submission.end == end
+    command = build_cli_command(submission, "run-1")
+    assert command[command.index("--eval-start") + 1] == "2026-08-10"
+    assert command[command.index("--eval-end") + 1] == end
+
+
+def test_omitted_and_null_evaluation_both_mean_pure_training() -> None:
+    omitted = parse_job_request(_training_request())[0]
+    explicit = parse_job_request({**_training_request(), "eval_range": None})[0]
+    assert omitted == explicit
 
 
 @pytest.mark.parametrize("ref", ["training-run", "relative/model.joblib", "../model.joblib", None, 1])
@@ -288,10 +311,9 @@ def test_backtest_requires_a_concrete_absolute_model_reference(ref: object) -> N
     assert caught.value.field == "model_ref"
 
 
-def test_training_scope_covers_every_selected_date_before_runtime_maturity_checks() -> None:
-    from src.jobs.requests import create_training_submission
-    item = {"train_dates": ["2026-07-20"], "training_cutoff_ts_us": 1782976200000000,
-            "label_availability": {"2026-07-20": {"available_ts_us": 1782976200000000, "evidence_ref": "synthetic/invalid-history"}},
-            "eval_date": "2026-07-02", "decision_ts_us": 1782976200000000}
-    submission = create_training_submission([item])
+def test_training_scope_covers_both_ranges_before_runtime_information_checks() -> None:
+    submission = parse_job_request({
+        **_training_request(), "train_range": {"start": "2026-07-20", "end": "2026-07-20"},
+        "eval_range": {"start": "2026-07-02", "end": "2026-07-02"},
+    })[0]
     assert (submission.start, submission.end) == ("2026-07-02", "2026-07-20")

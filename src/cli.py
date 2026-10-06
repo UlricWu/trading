@@ -307,26 +307,49 @@ def data_feature_backfill(
 
 @app.command()
 def train(
-    windows_json: str = typer.Option(..., "--windows-json"),
+    train_start: str = typer.Option(..., "--train-start"),
+    train_end: str = typer.Option(..., "--train-end"),
+    model: str = typer.Option(..., "--model"),
+    feature_group: str = typer.Option(..., "--feature-group"),
+    label_group: str = typer.Option(..., "--label-group"),
     experiment_id: str = typer.Option(..., "--experiment-id"),
+    eval_start: str | None = typer.Option(None, "--eval-start"),
+    eval_end: str | None = typer.Option(None, "--eval-end"),
 ) -> None:
-    """Run explicit training selections with optional evaluation.
+    """Train one selected model and optionally evaluate it over a date range.
 
     Example:
-        train(windows_json='[{"train_dates":["2026-07-01"],"training_cutoff_ts_us":1783062600000000,"label_availability":{"2026-07-01":{"available_ts_us":1782976200000000,"evidence_ref":"ledger/label-2026-07-01"}}}]', experiment_id="training-1")
+        train(
+            train_start="2026-07-01", train_end="2026-07-31",
+            model="sgd_regression", feature_group="daily_basic_selected_v1",
+            label_group="daily_close_return_rank_d1/v1", experiment_id="training-1",
+            eval_start="2026-08-10", eval_end="2026-08-31",
+        )
     """
     try:
-        raw_windows = json.loads(windows_json)
-    except json.JSONDecodeError:
-        raise typer.BadParameter("must be valid JSON", param_hint="--windows-json") from None
-    try:
-        submission = create_training_submission(raw_windows)
+        submission = create_training_submission(
+            train_range={"start": train_start, "end": train_end},
+            eval_range=(
+                {"start": eval_start, "end": eval_end}
+                if eval_start is not None or eval_end is not None else None
+            ),
+            model=model,
+            dataset={"feature_group": feature_group, "label_group": label_group},
+        )
     except InvalidJobRequest as exc:
-        _raise_bad_parameter(exc, {"windows": "--windows-json"})
+        _raise_bad_parameter(exc, {
+            "train_range": "--train-start/--train-end",
+            "train_range.start": "--train-start", "train_range.end": "--train-end",
+            "eval_range": "--eval-start/--eval-end",
+            "eval_range.start": "--eval-start", "eval_range.end": "--eval-end",
+            "model": "--model", "dataset": "--feature-group/--label-group",
+            "dataset.feature_group": "--feature-group", "dataset.label_group": "--label-group",
+        })
     experiment_id = _require_experiment_id(experiment_id)
     app_config = AppConfig.load()
     run_offline_training(
-        model_config=app_config.model,
+        models=app_config.models,
+        feature_groups=app_config.feature_groups,
         path_manager=PathManager(app_config.storage_root),
         submission=submission, experiment_id=experiment_id,
     )
