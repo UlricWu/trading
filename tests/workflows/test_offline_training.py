@@ -75,6 +75,8 @@ def _partition(
             "trade_date": [day] * len(feature_values)}
     if feature.feature_set == "l2_stock_1430":
         keys["decision_ts_utc"] = [_ts(day, 14, 30)] * len(feature_values)
+    if feature.feature_set == "previous_day_daily_l2":
+        keys["decision_ts_utc"] = [_ts(day, 9)] * len(feature_values)
     feature_ref = pm.feature_object(
         feature_set=feature.feature_set, version=feature.feature_version, trade_date=day,
     ).payload_path
@@ -83,6 +85,8 @@ def _partition(
         (feature_ref, {column: feature_values for column in feature.feature_columns}),
         (label_ref, {"y_rank_return": label_values}),
     ):
+        if ref == feature_ref and feature.feature_set == "previous_day_daily_l2":
+            values.update({column: feature_values for column in ("baseline_amount", "baseline_momentum", "baseline_reversal")})
         ref.parent.mkdir(parents=True, exist_ok=True)
         pd.DataFrame({**keys, **values}).to_parquet(ref, index=False)
         meta.commit(pm=pm, payload_path=ref)
@@ -399,3 +403,89 @@ def test_retraining_is_deterministic_and_evaluation_labels_do_not_change_model_o
     after_observation = evaluate_prediction_record(prediction, pm=pm)
     assert before_observation.pair_count == 3 and after_observation.pair_count == 0
     assert ref.read_bytes() == before_model and prediction.read_bytes() == before_prediction
+
+
+def test_gap_counts_trading_sessions_and_does_not_shift_explicit_evaluation(
+    tmp_path: Path, settings: tuple[dict[str, ModelPreset], dict[str, FeatureGroupConfig]],
+) -> None:
+    models, groups = settings
+    pm = PathManager(tmp_path)
+    _calendar(pm)
+    for day in ("2026-07-03", "2026-07-06", "2026-07-07"):
+        _partition(pm, day, groups["daily_basic_selected_v1"])
+    request = _submission(train_start="2026-07-03", train_end="2026-07-03", eval_start="2026-07-06", eval_end="2026-07-06")
+    request = TrainingSubmission.model_validate({**request.model_dump(), "eval_gap_sessions": 1})
+    with pytest.raises(ValueError, match="eval_gap_sessions"):
+        run_offline_training(models=models, feature_groups=groups, path_manager=pm, submission=request, experiment_id="bad-gap")
+    request = TrainingSubmission.model_validate({**request.model_dump(), "eval_range": {"start": "2026-07-07", "end": "2026-07-07"}})
+    run_offline_training(models=models, feature_groups=groups, path_manager=pm, submission=request, experiment_id="good-gap")
+    root = pm.experiment_training_dir(experiment_name="training_2026-07-03_2026-07-07_good-gap")
+    assert [path.name for path in (root / "predictions").iterdir()] == ["2026-07-07.parquet"]
+
+
+def test_134_day_development_and_17_day_evaluation_use_one_frozen_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    settings: tuple[dict[str, ModelPreset], dict[str, FeatureGroupConfig]],
+) -> None:
+    from src.access import Access
+    from src.training.models.catalog import get_model_trainer
+
+    models, groups = settings
+    pm = PathManager(tmp_path)
+    _calendar(pm)
+    sessions = Access(pm=pm, processed_version="v1").trade_dates(start_date="2026-01-01", end_date="2026-12-31")
+    development, evaluation = sessions[:134], sessions[135:152]
+    for day in (*development, *evaluation):
+        _partition(pm, day, groups["previous_day_daily_l2_v1"], "next_day_high_return_rank")
+    trainer = Mock(wraps=get_model_trainer("ridge_regression"))
+    monkeypatch.setattr("src.workflows.offline_training.get_model_trainer", Mock(return_value=trainer))
+    request = create_training_submission(
+        train_range={"start": development[0], "end": development[-1]},
+        eval_range={"start": evaluation[0], "end": evaluation[-1]},
+        validation_sessions=27, eval_gap_sessions=1, model="ridge_regression",
+        dataset={"feature_group": "previous_day_daily_l2_v1", "label_group": "next_day_high_return_rank/v1"},
+    )
+    name = f"training_{development[0]}_{evaluation[-1]}_split"
+    run_offline_training(models=models, feature_groups=groups, path_manager=pm, submission=request, experiment_id="split")
+    root = pm.experiment_training_dir(experiment_name=name)
+    record = TrainingRunRecord.model_validate_json((root / "schedule.json").read_text())
+    assert trainer.call_count == 1
+    assert record.train_dates == tuple(development[:106])
+    assert record.purged_dates == (development[106],)
+    assert record.validation_dates == tuple(development[107:])
+    assert record.eval_dates == tuple(evaluation)
+    assert trainer.call_args.kwargs["X"].shape == (106 * 3, 39)
+    assert load_evaluation(root / "metrics.json").summary.date_count == 17
+    assert load_evaluation(root / "validation-metrics.json").summary.date_count == 27
+    assert len(list(root.rglob("*.joblib"))) == 1
+    assert len(list((root / "predictions").iterdir())) == 44
+    for path in (root / "predictions").iterdir():
+        verify_prediction_record(path, pm=pm)
+    summary = pd.read_json(root / "selection-summary.json")
+    assert summary.groupby("stage").days.first().to_dict() == {"validation": 27, "evaluation": 17}
+
+    for day in (*record.validation_dates, *record.eval_dates):
+        _partition(pm, day, groups["previous_day_daily_l2_v1"], "next_day_high_return_rank", label_values=(np.nan,) * 3)
+    run_offline_training(models=models, feature_groups=groups, path_manager=pm, submission=request, experiment_id="changed-labels")
+    changed = pm.experiment_training_dir(experiment_name=name.removesuffix("split") + "changed-labels")
+    assert (root / "model.joblib").read_bytes() == (changed / "model.joblib").read_bytes()
+    for path in (root / "predictions").iterdir():
+        np.testing.assert_array_equal(pd.read_parquet(path).prediction, pd.read_parquet(changed / "predictions" / path.name).prediction)
+    assert all(row.pair_count == 0 for row in load_evaluation(changed / "metrics.json").observations)
+
+
+@pytest.mark.parametrize("validation_sessions", [1, 2])
+def test_validation_split_rejects_missing_mature_training_dates(
+    tmp_path: Path, settings: tuple[dict[str, ModelPreset], dict[str, FeatureGroupConfig]], validation_sessions: int,
+) -> None:
+    models, groups = settings
+    pm = PathManager(tmp_path)
+    _calendar(pm)
+    request = create_training_submission(
+        train_range={"start": "2026-07-01", "end": "2026-07-02"}, model="ridge_regression",
+        validation_sessions=validation_sessions,
+        dataset={"feature_group": "previous_day_daily_l2_v1", "label_group": "next_day_high_return_rank/v1"},
+    )
+    with pytest.raises(ValueError, match="validation"):
+        run_offline_training(models=models, feature_groups=groups, path_manager=pm, submission=request, experiment_id="bad-split")
+    assert not list(tmp_path.rglob("*.joblib"))

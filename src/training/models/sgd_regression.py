@@ -17,6 +17,7 @@ def train_sgd_regression(
     X: pd.DataFrame,
     y: pd.Series,
     model_params: Mapping[str, object],
+    sample_weight: pd.Series | None = None,
 ) -> SGDRegressor:
     """Fit and return one fresh SGD regressor.
 
@@ -38,6 +39,6 @@ def train_sgd_regression(
 
     model = SGDRegressor(**dict(model_params))
     logs.info(f"▶️ 模型拟合; model=sgd_regression\n训练样本：{len(X):,} 行；特征：{X.shape[1]:,} 列；执行一次 partial_fit")
-    model.partial_fit(X_values, y_values)
+    model.partial_fit(X_values, y_values, sample_weight=sample_weight)
     logs.info(f"✅ 模型拟合; model=sgd_regression\n实际训练轮数：{model.n_iter_:,}；未记录逐轮损失，收敛尚未评估")
     return model

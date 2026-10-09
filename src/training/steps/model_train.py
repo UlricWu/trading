@@ -61,6 +61,7 @@ class ModelTrainStep:
             X=context.train_X,
             y=context.train_y,
             model_params=self._model_params,
+            **({"sample_weight": context.sample_weight} if context.sample_weight is not None else {}),
         )
         context.model = InferenceModel(
             model=raw_model,
@@ -71,5 +72,6 @@ class ModelTrainStep:
             label_set=self._dataset_cfg.label_set,
             label_version=self._dataset_cfg.label_version,
             label_column=self._dataset_cfg.label_column,
+            prediction_method="positive_probability" if self._dataset_cfg.label_column == "y_event" else "value",
         )
         return context

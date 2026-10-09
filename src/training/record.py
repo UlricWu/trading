@@ -29,6 +29,8 @@ class TrainingRunRecord(BaseModel):
     request: dict[str, JsonValue]
     train_dates: tuple[str, ...] = Field(min_length=1)
     eval_dates: tuple[str, ...]
+    validation_dates: tuple[str, ...] = ()
+    purged_dates: tuple[str, ...] = ()
     model_ref: Path
     configuration: ModelConfig
     label_maturity_ts_us: int = Field(strict=True)
@@ -37,7 +39,7 @@ class TrainingRunRecord(BaseModel):
     def _require_record(self) -> Self:
         if not self.model_ref.is_absolute():
             raise ValueError("model_ref must be absolute")
-        for dates in (self.train_dates, self.eval_dates):
+        for dates in (self.train_dates, self.validation_dates, self.purged_dates, self.eval_dates):
             for day in dates:
                 DateTimeUtils.require_system_date(day, field_name="sample_date")
             if any(left >= right for left, right in zip(dates, dates[1:])):

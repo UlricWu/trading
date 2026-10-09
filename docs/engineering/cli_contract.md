@@ -133,6 +133,22 @@ calendar 与 Standard facts，不调用 broker，不写 raw、processed、label 
 不属于 HTTP Job、日常 data workflow 或 cron。融合领域契约由
 [`stock_1430_daily_l2_contract.md`](../data/stock_1430_daily_l2_contract.md) 拥有。
 
+`data-previous-day-backfill --start YYYY-MM-DD --end YYYY-MM-DD` 是 CLI-only 的盘前数据
+构建入口，闭区间由 TrainingDateRange 校验，调用 run_previous_day_backfill。读取本地已提交
+输入、生成资格/Feature/Label，具体身份及失败边界由
+[前日数据 owner](../data/previous_day_feature_label_contract.md) 拥有；不调用 broker。
+首次选择 previous_day 特征组前，须在训练服务实际使用的 ZERO_STORAGE_ROOT 中完成此
+初始化。另一个存储根中的验证产物不会自动进入当前服务；仅增加模型与组名配置不会
+生成对应数据。以本地开发服务的数据目录为例：
+
+```bash
+ZERO_STORAGE_ROOT=/home/wsw/app/data uv run --locked python -m src.cli \
+  data-previous-day-backfill --start 2026-02-03 --end 2026-09-17
+```
+
+完成后再提交同一训练请求。该命令建立数据分区，不创建训练 Job；后续 POST 仍只创建
+一个训练任务。训练本身不联网补取数据，也不会自动切换到研究证据目录。
+
 ## Training
 
 ```text
@@ -140,6 +156,7 @@ python -m src.cli train \
   --train-start YYYY-MM-DD --train-end YYYY-MM-DD \
   --model MODEL --feature-group FEATURE_GROUP --label-group LABEL_GROUP \
   [--eval-start YYYY-MM-DD --eval-end YYYY-MM-DD] \
+  [--validation-sessions INTEGER] [--eval-gap-sessions INTEGER] \
   --experiment-id EXPERIMENT_ID
 ```
 
@@ -166,9 +183,13 @@ TrainingSubmission、两个配置映射、experiment ID 和 PathManager 直接�
 参数格式、未知选项或不兼容的数据组合退出 2；配置、日历、数据、训练、保存或评价失败
 退出 1；成功退出 0。示例不保证目标环境已有相应数据。无交易日或数据缺失不缩短区间。
 
-每次任务仅训练一次，模型 ref 位于 training/model.joblib，并记录在 schedule.json；
+任务仅拟合一次，模型 ref 位于 training/model.joblib，并记录在 schedule.json；
 多日预测分别写入 training/predictions/YYYY-MM-DD.parquet。评价与报告不参与模型构造或
-发布判定。纯训练不读取评价输入，也不创建预测、评价或报告文件。
+发布判定。未请求内部验证和最终评估时不读取评价输入，也不创建预测、评价或报告文件。
+
+`--validation-sessions` 与 `--eval-gap-sessions` 映射 Job API 的同名业务字段，复用同一
+TrainingSubmission 校验。内部验证取训练区间末尾交易日；最终评估间隔按中间跳过的交易日
+数计算，默认均为0。内部验证与最终评估共享已冻结模型，指标分别保存。
 
 通过 HTTP 创建 training Job 时，Job API 使用同一个 Job UUID 作为必填 EXPERIMENT_ID；
 HTTP 不接受客户端提供此字段。

@@ -125,8 +125,12 @@ def test_formal_base_config_declares_only_level2_file_sources(
         "daily_close_return_rank_d5",
     )
     assert all(label.enabled for label in config.data.label_sets.values())
-    assert set(config.models) == {"sgd_regression"}
+    assert set(config.models) == {"sgd_regression", "ridge_regression", "logistic_regression",
+                                 "hist_gradient_boosting_regressor", "hist_gradient_boosting_classifier"}
     assert {name: len(group.feature_columns) for name, group in config.feature_groups.items()} == {
         "daily_basic_selected_v1": 7, "daily_basic_all_v1": 16, "l2_stock_1430_all_v1": 32,
+        "previous_day_daily_v1": 7, "previous_day_daily_l2_price_v1": 15,
+        "previous_day_daily_l2_activity_v1": 23, "previous_day_daily_l2_direction_v1": 15,
+        "previous_day_daily_l2_v1": 39,
     }
     assert not hasattr(config.models["sgd_regression"], "dataset")

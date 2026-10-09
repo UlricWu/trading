@@ -31,7 +31,7 @@ JOB_EXIT_CODE_SKIPPED = 75
 _DATA_KINDS = frozenset({"data-standard", "data-level2"})
 _JOB_KINDS = _DATA_KINDS | {"train", "backtest"}
 _DATA_FIELDS = frozenset({"kind", "start", "end"})
-_TRAINING_FIELDS = frozenset({"kind", "train_range", "eval_range", "model", "dataset"})
+_TRAINING_FIELDS = frozenset({"kind", "train_range", "eval_range", "eval_gap_sessions", "validation_sessions", "model", "dataset"})
 _BACKTEST_FIELDS = frozenset(
     {"kind", "mode", "start", "end", "model_ref", "model_use", "strategy"}
 )
@@ -184,6 +184,11 @@ class TrainingDatasetSelection(BaseModel):
 
     @model_validator(mode="after")
     def _require_compatible_groups(self) -> Self:
+        preopen = self.feature_group.startswith("previous_day_")
+        if preopen or self.label_group.startswith("next_day_high_"):
+            if preopen != self.label_group.startswith("next_day_high_"):
+                raise ValueError("feature_group and label_group must use the same sample grid")
+            return self
         if (self.feature_group == "l2_stock_1430_all_v1") != (
             self.label_group == "l2_stock_1430_t1_vwap_rank/v1"
         ):
@@ -207,7 +212,16 @@ class TrainingSubmission(BaseModel):
     model: TrainingModelName
     dataset: TrainingDatasetSelection
     eval_range: TrainingDateRange | None = None
+    eval_gap_sessions: int = Field(default=0, ge=0)
+    validation_sessions: int = Field(default=0, ge=0)
     kind: Literal["train"] = "train"
+
+    @model_validator(mode="after")
+    def _require_training_choices(self) -> Self:
+        classifier = self.model in {"logistic_regression", "hist_gradient_boosting_classifier"}
+        if classifier != (self.dataset.label_group == "next_day_high_top_decile/v1"):
+            raise ValueError("classifier models require next_day_high_top_decile/v1; regressors require rank labels")
+        return self
 
     @property
     def start(self) -> str:
@@ -216,7 +230,7 @@ class TrainingSubmission(BaseModel):
         Example:
             first_date = submission.start
         """
-        return min(self.train_range.start, self.eval_range.start) if self.eval_range else self.train_range.start
+        return min(self.train_range.start, self.eval_range.start) if self.eval_range is not None else self.train_range.start
 
     @property
     def end(self) -> str:
@@ -225,7 +239,7 @@ class TrainingSubmission(BaseModel):
         Example:
             last_date = submission.end
         """
-        return max(self.train_range.end, self.eval_range.end) if self.eval_range else self.train_range.end
+        return max(self.train_range.end, self.eval_range.end) if self.eval_range is not None else self.train_range.end
 
 
 class ModelUse(BaseModel):
@@ -413,6 +427,7 @@ def create_stock_1430_fusion_backfill_submission(
 
 def create_training_submission(
     *, train_range: object, model: object, dataset: object, eval_range: object = None,
+    eval_gap_sessions: object = 0, validation_sessions: object = 0,
 ) -> TrainingSubmission:
     """Validate the business choices shared by CLI and HTTP.
 
@@ -429,6 +444,8 @@ def create_training_submission(
         return TrainingSubmission.model_validate({
             "train_range": train_range, "eval_range": eval_range,
             "model": model, "dataset": dataset,
+            "eval_gap_sessions": eval_gap_sessions,
+            "validation_sessions": validation_sessions,
         })
     except ValidationError as exc:
         error = exc.errors(include_url=False, include_input=False)[0]
@@ -528,14 +545,13 @@ def parse_job_request(payload: object) -> list[JobSubmission]:
         ]
     if kind == "train":
         _reject_unknown_fields(request_payload, _TRAINING_FIELDS)
-        return [
-            create_training_submission(
-                train_range=request_payload.get("train_range"),
-                eval_range=request_payload.get("eval_range"),
-                model=request_payload.get("model"),
-                dataset=request_payload.get("dataset"),
-            )
-        ]
+        return [create_training_submission(
+            train_range=request_payload.get("train_range"),
+            eval_range=request_payload.get("eval_range"),
+            eval_gap_sessions=request_payload.get("eval_gap_sessions", 0),
+            validation_sessions=request_payload.get("validation_sessions", 0),
+            model=request_payload.get("model"), dataset=request_payload.get("dataset"),
+        )]
 
     _reject_unknown_fields(request_payload, _BACKTEST_FIELDS)
     return [
@@ -600,6 +616,10 @@ def build_cli_command(
                 "--eval-start", submission.eval_range.start,
                 "--eval-end", submission.eval_range.end,
             ])
+        if submission.eval_gap_sessions:
+            command.extend(["--eval-gap-sessions", str(submission.eval_gap_sessions)])
+        if submission.validation_sessions:
+            command.extend(["--validation-sessions", str(submission.validation_sessions)])
     else:
         command.extend(
             [

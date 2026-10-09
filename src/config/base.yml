@@ -88,6 +88,62 @@ models:
       missing:
         method: "constant"
         fill_value: 0.0
+  ridge_regression:
+    group: ridge_regression
+    model_params:
+      alpha: 100
+      solver: cholesky
+    sample_weight: date_equal
+    preprocessing:
+      missing:
+        method: constant
+        fill_value: 0.5
+  logistic_regression:
+    group: logistic_regression
+    model_params:
+      C: 0.01
+      solver: lbfgs
+      max_iter: 1000
+      tol: 1.0e-08
+    sample_weight: date_equal
+    preprocessing:
+      missing:
+        method: constant
+        fill_value: 0.5
+  hist_gradient_boosting_regressor:
+    group: hist_gradient_boosting_regressor
+    model_params:
+      max_iter: 100
+      max_leaf_nodes: 7
+      max_depth: 3
+      min_samples_leaf: 500
+      learning_rate: 0.05
+      l2_regularization: 10
+      max_bins: 63
+      early_stopping: false
+      random_state: 20260919
+    sample_weight: date_equal
+    preprocessing:
+      missing:
+        method: constant
+        fill_value: 0.5
+  hist_gradient_boosting_classifier:
+    group: hist_gradient_boosting_classifier
+    model_params:
+      max_iter: 100
+      max_leaf_nodes: 7
+      max_depth: 3
+      min_samples_leaf: 500
+      learning_rate: 0.05
+      l2_regularization: 10
+      max_bins: 63
+      early_stopping: false
+      random_state: 20260919
+    sample_weight: date_equal
+    preprocessing:
+      missing:
+        method: constant
+        fill_value: 0.5
 feature_groups:
   daily_basic_selected_v1:
     feature_set: "tushare_daily_basic"
@@ -156,3 +212,122 @@ feature_groups:
       - "f_l2_tick_signed_volume_ratio_rank_60m"
       - "f_l2_tick_signed_notional_ratio_rank_60m"
       - "f_l2_observed_minute_ratio_60m"
+  previous_day_daily_v1:
+    feature_set: previous_day_daily_l2
+    feature_version: v1
+    feature_columns:
+    - lag_f_d_close_return_1d_rank
+    - lag_f_d_open_gap_1d_rank
+    - lag_f_d_log_amount_rank
+    - lag_f_d_max_drawdown_20d_asof_tminus1_rank
+    - lag_f_d_close_volatility_60d_asof_tminus1_rank
+    - lag_f_d_close_return_5d_asof_tminus1_rank
+    - lag_f_d_turnover_rate_mean_20d_asof_tminus1_rank
+  previous_day_daily_l2_price_v1:
+    feature_set: previous_day_daily_l2
+    feature_version: v1
+    feature_columns:
+    - lag_f_l2_edge_vwap_return_rank_5m
+    - lag_f_l2_high_low_range_rank_5m
+    - lag_f_l2_edge_vwap_return_rank_15m
+    - lag_f_l2_high_low_range_rank_15m
+    - lag_f_l2_edge_vwap_return_rank_30m
+    - lag_f_l2_high_low_range_rank_30m
+    - lag_f_l2_edge_vwap_return_rank_60m
+    - lag_f_l2_high_low_range_rank_60m
+    - lag_f_d_close_return_1d_rank
+    - lag_f_d_open_gap_1d_rank
+    - lag_f_d_log_amount_rank
+    - lag_f_d_max_drawdown_20d_asof_tminus1_rank
+    - lag_f_d_close_volatility_60d_asof_tminus1_rank
+    - lag_f_d_close_return_5d_asof_tminus1_rank
+    - lag_f_d_turnover_rate_mean_20d_asof_tminus1_rank
+  previous_day_daily_l2_activity_v1:
+    feature_set: previous_day_daily_l2
+    feature_version: v1
+    feature_columns:
+    - lag_f_l2_notional_rank_5m
+    - lag_f_l2_trade_count_rank_5m
+    - lag_f_l2_average_trade_notional_rank_5m
+    - lag_f_l2_observed_minute_ratio_5m
+    - lag_f_l2_notional_rank_15m
+    - lag_f_l2_trade_count_rank_15m
+    - lag_f_l2_average_trade_notional_rank_15m
+    - lag_f_l2_observed_minute_ratio_15m
+    - lag_f_l2_notional_rank_30m
+    - lag_f_l2_trade_count_rank_30m
+    - lag_f_l2_average_trade_notional_rank_30m
+    - lag_f_l2_observed_minute_ratio_30m
+    - lag_f_l2_notional_rank_60m
+    - lag_f_l2_trade_count_rank_60m
+    - lag_f_l2_average_trade_notional_rank_60m
+    - lag_f_l2_observed_minute_ratio_60m
+    - lag_f_d_close_return_1d_rank
+    - lag_f_d_open_gap_1d_rank
+    - lag_f_d_log_amount_rank
+    - lag_f_d_max_drawdown_20d_asof_tminus1_rank
+    - lag_f_d_close_volatility_60d_asof_tminus1_rank
+    - lag_f_d_close_return_5d_asof_tminus1_rank
+    - lag_f_d_turnover_rate_mean_20d_asof_tminus1_rank
+  previous_day_daily_l2_direction_v1:
+    feature_set: previous_day_daily_l2
+    feature_version: v1
+    feature_columns:
+    - lag_f_l2_tick_signed_volume_ratio_rank_5m
+    - lag_f_l2_tick_signed_notional_ratio_rank_5m
+    - lag_f_l2_tick_signed_volume_ratio_rank_15m
+    - lag_f_l2_tick_signed_notional_ratio_rank_15m
+    - lag_f_l2_tick_signed_volume_ratio_rank_30m
+    - lag_f_l2_tick_signed_notional_ratio_rank_30m
+    - lag_f_l2_tick_signed_volume_ratio_rank_60m
+    - lag_f_l2_tick_signed_notional_ratio_rank_60m
+    - lag_f_d_close_return_1d_rank
+    - lag_f_d_open_gap_1d_rank
+    - lag_f_d_log_amount_rank
+    - lag_f_d_max_drawdown_20d_asof_tminus1_rank
+    - lag_f_d_close_volatility_60d_asof_tminus1_rank
+    - lag_f_d_close_return_5d_asof_tminus1_rank
+    - lag_f_d_turnover_rate_mean_20d_asof_tminus1_rank
+  previous_day_daily_l2_v1:
+    feature_set: previous_day_daily_l2
+    feature_version: v1
+    feature_columns:
+    - lag_f_l2_edge_vwap_return_rank_5m
+    - lag_f_l2_high_low_range_rank_5m
+    - lag_f_l2_notional_rank_5m
+    - lag_f_l2_trade_count_rank_5m
+    - lag_f_l2_average_trade_notional_rank_5m
+    - lag_f_l2_tick_signed_volume_ratio_rank_5m
+    - lag_f_l2_tick_signed_notional_ratio_rank_5m
+    - lag_f_l2_observed_minute_ratio_5m
+    - lag_f_l2_edge_vwap_return_rank_15m
+    - lag_f_l2_high_low_range_rank_15m
+    - lag_f_l2_notional_rank_15m
+    - lag_f_l2_trade_count_rank_15m
+    - lag_f_l2_average_trade_notional_rank_15m
+    - lag_f_l2_tick_signed_volume_ratio_rank_15m
+    - lag_f_l2_tick_signed_notional_ratio_rank_15m
+    - lag_f_l2_observed_minute_ratio_15m
+    - lag_f_l2_edge_vwap_return_rank_30m
+    - lag_f_l2_high_low_range_rank_30m
+    - lag_f_l2_notional_rank_30m
+    - lag_f_l2_trade_count_rank_30m
+    - lag_f_l2_average_trade_notional_rank_30m
+    - lag_f_l2_tick_signed_volume_ratio_rank_30m
+    - lag_f_l2_tick_signed_notional_ratio_rank_30m
+    - lag_f_l2_observed_minute_ratio_30m
+    - lag_f_l2_edge_vwap_return_rank_60m
+    - lag_f_l2_high_low_range_rank_60m
+    - lag_f_l2_notional_rank_60m
+    - lag_f_l2_trade_count_rank_60m
+    - lag_f_l2_average_trade_notional_rank_60m
+    - lag_f_l2_tick_signed_volume_ratio_rank_60m
+    - lag_f_l2_tick_signed_notional_ratio_rank_60m
+    - lag_f_l2_observed_minute_ratio_60m
+    - lag_f_d_close_return_1d_rank
+    - lag_f_d_open_gap_1d_rank
+    - lag_f_d_log_amount_rank
+    - lag_f_d_max_drawdown_20d_asof_tminus1_rank
+    - lag_f_d_close_volatility_60d_asof_tminus1_rank
+    - lag_f_d_close_return_5d_asof_tminus1_rank
+    - lag_f_d_turnover_rate_mean_20d_asof_tminus1_rank

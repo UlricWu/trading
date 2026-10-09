@@ -275,10 +275,15 @@ experiments/<experiment_name>/
     └── training_report.html        # 实验选择评价时才创建
 ```
 
-一次任务训练并保存一个模型。PathManager.experiment_training_model(experiment_name=...)
+一次任务保存一个模型。PathManager.experiment_training_model(experiment_name=...)
 返回这个绝对 ref；每个评价日有独立预测文件。模型的业务内容、预测返回与评价 schema 只由
 [training workflow owner](../offline_workflow_contract.md#training-workflow)定义。
-schedule.json 是一个 TrainingRunRecord JSON object，保存已校验请求、解析后的训练与评价
+请求内部验证时，验证日期的预测也保存于 predictions 目录，IC 独立保存于
+`validation-metrics.json`；`metrics.json` 仅包含最终评估。盘前评价另外保存
+`selection-metrics.parquet`、`selections.parquet` 和 `selection-summary.json`，通过 stage
+区分内部验证和最终评估，并写入已有 report 路径。业务公式由 training workflow owner 拥有。
+
+单次拟合的 schedule.json 是一个 TrainingRunRecord JSON object，保存已校验请求、解析后的拟合、内部验证、隔离与最终评估
 日期、实际模型/数据配置、输出 model_ref 和标签理论成熟下界，字段语义由上述 owner 定义。
 它在训练前写入，记录运行安排，不是成功发布确认或历史可用性证明，也不归档代码、环境
 及完整输入修订。

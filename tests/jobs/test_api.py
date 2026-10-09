@@ -45,6 +45,16 @@ def _training_request() -> dict[str, object]:
     }
 
 
+def test_train_post_creates_exactly_one_job() -> None:
+    runtime = _StubRuntime()
+    client = create_app(cast(JobRuntime, runtime)).test_client()
+    response = client.post("/jobs", json={**_training_request(),
+        "eval_range": {"start": "2026-08-03", "end": "2026-09-17"},
+        "eval_gap_sessions": 1})
+    assert response.status_code == 201
+    assert len(response.get_json()["jobs"]) == len(runtime.submitted) == 1
+
+
 class _StubRuntime:
     def __init__(self) -> None:
         self.jobs: dict[str, JobSnapshot] = {}

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from typing import Literal
 
 import pandas as pd
 
@@ -24,7 +25,8 @@ class DatasetBuildStep:
         context = step.run(TrainingContext(window=training_window))
     """
 
-    def __init__(self, *, pm: PathManager, dataset_cfg: FeatureLabelConfig, clock: Callable[[], float]) -> None:
+    def __init__(self, *, pm: PathManager, dataset_cfg: FeatureLabelConfig, clock: Callable[[], float],
+                 sample_weight: Literal["uniform", "date_equal"] = "uniform") -> None:
         """Bind committed input storage and the selected dataset.
 
         Example:
@@ -33,6 +35,8 @@ class DatasetBuildStep:
         self._pm = pm
         self._dataset_cfg = dataset_cfg
         self._clock = clock
+        self._sample_weight = sample_weight
+        self._weights: pd.Series | None = None
 
     def load(self, *, train_dates: Sequence[str]) -> tuple[pd.DataFrame, pd.Series]:
         """Read exactly the given dates; filter unknown labels only for fitting.
@@ -44,6 +48,7 @@ class DatasetBuildStep:
         X_parts: list[pd.DataFrame] = []
         y_parts: list[pd.Series] = []
         raw_rows = 0
+        weights: list[pd.Series] = []
         logs.info(
             f"▶️ 数据准备; feature_set={cfg.feature_set}/{cfg.feature_version}\n"
             f"训练日期：{train_dates[0]} ~ {train_dates[-1]}（{len(train_dates):,} 个交易日）"
@@ -73,12 +78,17 @@ class DatasetBuildStep:
             raw_rows += len(features)
             X_parts.append(X)
             y_parts.append(y)
+            if self._sample_weight == "date_equal" and len(y):
+                weights.append(pd.Series(1.0 / len(y), index=range(len(y))))
             now = self._clock()
             if completed < len(train_dates) and now - last_progress >= PROGRESS_INTERVAL_SECONDS:
                 logs.info(f"⏳ 数据准备; trade_date={trade_date}\n已读取 {completed:,} / {len(train_dates):,} 个交易日")
                 last_progress = now
         train_X = pd.concat(X_parts, ignore_index=True)
         train_y = pd.concat(y_parts, ignore_index=True)
+        if self._sample_weight == "date_equal":
+            self._weights = pd.concat(weights, ignore_index=True)
+            self._weights /= self._weights.mean()
         logs.info(
             f"✅ 数据准备; feature_set={cfg.feature_set}/{cfg.feature_version}\n"
             f"原始样本：{raw_rows:,} 行；缺标签移除：{raw_rows - len(train_X):,} 行；"
@@ -93,4 +103,5 @@ class DatasetBuildStep:
             context = step.run(TrainingContext(window=training_window))
         """
         context.train_X, context.train_y = self.load(train_dates=context.window.train_dates)
+        context.sample_weight = self._weights
         return context

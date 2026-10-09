@@ -5,13 +5,15 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
-from typing import NoReturn
+from typing import Annotated, NoReturn
 
 import typer
+from pydantic import ValidationError
 
 from src.config.app_config import AppConfig
 from src.jobs.requests import (
     InvalidJobRequest,
+    TrainingDateRange,
     create_backtest_submission,
     create_data_submission,
     create_feature_backfill_submission,
@@ -32,6 +34,7 @@ from src.workflows.offline_daily_data import (
     run_standard_fact_bootstrap,
     run_stock_1430_backfill,
     run_stock_1430_fusion_backfill,
+    run_previous_day_backfill,
 )
 from src.workflows.offline_training import run_offline_training
 from src.workflows.trade_calendar import run_trade_calendar_bootstrap
@@ -306,6 +309,23 @@ def data_feature_backfill(
 
 
 @app.command()
+def data_previous_day_backfill(
+    start_date: str = typer.Option(..., "--start"), end_date: str = typer.Option(..., "--end"),
+) -> None:
+    """Prepare preopen training inputs from committed local market data.
+
+    Example:
+        data_previous_day_backfill(start_date="2026-07-01", end_date="2026-07-31")
+    """
+    try:
+        interval = TrainingDateRange(start=start_date, end=end_date)
+    except ValidationError as exc:
+        raise typer.BadParameter(exc.errors(include_input=False)[0]["msg"], param_hint="--start/--end") from None
+    config = AppConfig.load()
+    run_previous_day_backfill(path_manager=PathManager(config.storage_root), interval=interval)
+
+
+@app.command()
 def train(
     train_start: str = typer.Option(..., "--train-start"),
     train_end: str = typer.Option(..., "--train-end"),
@@ -315,6 +335,8 @@ def train(
     experiment_id: str = typer.Option(..., "--experiment-id"),
     eval_start: str | None = typer.Option(None, "--eval-start"),
     eval_end: str | None = typer.Option(None, "--eval-end"),
+    eval_gap_sessions: Annotated[int, typer.Option("--eval-gap-sessions")] = 0,
+    validation_sessions: Annotated[int, typer.Option("--validation-sessions")] = 0,
 ) -> None:
     """Train one selected model and optionally evaluate it over a date range.
 
@@ -335,6 +357,8 @@ def train(
             ),
             model=model,
             dataset={"feature_group": feature_group, "label_group": label_group},
+            eval_gap_sessions=eval_gap_sessions,
+            validation_sessions=validation_sessions,
         )
     except InvalidJobRequest as exc:
         _raise_bad_parameter(exc, {
@@ -342,6 +366,7 @@ def train(
             "train_range.start": "--train-start", "train_range.end": "--train-end",
             "eval_range": "--eval-start/--eval-end",
             "eval_range.start": "--eval-start", "eval_range.end": "--eval-end",
+            "eval_gap_sessions": "--eval-gap-sessions", "validation_sessions": "--validation-sessions",
             "model": "--model", "dataset": "--feature-group/--label-group",
             "dataset.feature_group": "--feature-group", "dataset.label_group": "--label-group",
         })

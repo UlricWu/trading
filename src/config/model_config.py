@@ -6,13 +6,20 @@ from typing import Literal, Self, TypeAlias
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
-TrainingModelName: TypeAlias = Literal["sgd_regression"]
+TrainingModelName: TypeAlias = Literal[
+    "sgd_regression", "ridge_regression", "logistic_regression",
+    "hist_gradient_boosting_regressor", "hist_gradient_boosting_classifier",
+]
 FeatureGroupName: TypeAlias = Literal[
     "daily_basic_selected_v1", "daily_basic_all_v1", "l2_stock_1430_all_v1",
+    "previous_day_daily_v1", "previous_day_daily_l2_price_v1",
+    "previous_day_daily_l2_activity_v1", "previous_day_daily_l2_direction_v1",
+    "previous_day_daily_l2_v1",
 ]
 LabelGroupName: TypeAlias = Literal[
     "daily_close_return_rank_d1/v1", "daily_close_return_rank_d3/v1",
     "daily_close_return_rank_d5/v1", "l2_stock_1430_t1_vwap_rank/v1",
+    "next_day_high_return_rank/v1", "next_day_high_top_decile/v1",
 ]
 
 
@@ -125,6 +132,7 @@ class ModelPreset(BaseModel):
     group: str = Field(min_length=1)
     model_params: dict[str, object] = Field(default_factory=dict)
     preprocessing: PreprocessingConfig = Field(default_factory=PreprocessingConfig)
+    sample_weight: Literal["uniform", "date_equal"] = "uniform"
 
 
 class ModelConfig(BaseModel):
@@ -142,4 +150,5 @@ class ModelConfig(BaseModel):
     group: str = Field(min_length=1)
     model_params: dict[str, object] = Field(default_factory=dict)
     preprocessing: PreprocessingConfig = Field(default_factory=PreprocessingConfig)
+    sample_weight: Literal["uniform", "date_equal"] = "uniform"
     dataset: FeatureLabelConfig

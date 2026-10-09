@@ -146,23 +146,24 @@ def build_training_start_log(
     eval_range = submission.eval_range
     table = _text_table((
         ("项目", "本次选择"),
-        ("模型", f"{submission.model}（SGD 线性回归）"),
+        ("模型", submission.model),
         ("特征组", f"{submission.dataset.feature_group}（{len(configuration.dataset.feature_columns):,} 列）"),
         ("标签组", submission.dataset.label_group),
         ("请求训练区间", f"{submission.train_range.start} ~ {submission.train_range.end}"),
+        ("内部验证", f"训练区间末尾 {submission.validation_sessions} 个交易日"),
         ("请求评价区间", "本次未请求评价" if eval_range is None else f"{eval_range.start} ~ {eval_range.end}"),
         ("特征缺失处理", f"{missing.method}：{missing_description}"),
-        ("训练方式", "一次 partial_fit（单轮）"),
+        ("训练方式", "一次 partial_fit（单轮）" if submission.model == "sgd_regression" else "一次完整 fit"),
     ))
     return (
         f"{table}\n预测目标：{target_description}。标签列：{configuration.dataset.label_column}。\n"
-        "目标是排名分数，分数越高表示相对收益越高；不是收益率。\n"
+        f"输出为{'正例概率' if configuration.dataset.label_column == 'y_event' else '排名分数'}；不是收益率。\n"
         "完整参数、特征顺序和实际交易日将在校验通过后写入运行配置 schedule.json。"
     )
 
 
 def _result_interpretation(
-    evaluation: ICEvaluation, summary: TrainingReportSummary, actual_iterations: int,
+    evaluation: ICEvaluation, summary: TrainingReportSummary, actual_iterations: int | None,
 ) -> tuple[str, str, str]:
     mean_ic = evaluation.summary.mean_ic
     if mean_ic is None:
@@ -192,13 +193,14 @@ def _result_interpretation(
         )
     return (
         ranking, regression,
-        f"训练诊断：实际训练 {actual_iterations:,} 轮；逐轮损失未记录，收敛尚未评估。",
+        ("训练诊断：直接求解，不适用迭代轮数。" if actual_iterations is None
+         else f"训练诊断：实际训练 {actual_iterations:,} 轮；逐轮损失未记录，收敛尚未评估。"),
     )
 
 
 def build_training_log(
     *, model: InferenceModel, evaluation: ICEvaluation, summary: TrainingReportSummary,
-    actual_iterations: int, model_ref: Path, metrics_ref: Path, report_ref: Path, schedule_ref: Path,
+    actual_iterations: int | None, model_ref: Path, metrics_ref: Path, report_ref: Path, schedule_ref: Path,
 ) -> str:
     """Render readable, aligned diagnostic tables for one multiline log event.
 
@@ -220,7 +222,7 @@ def build_training_log(
         ("项目", "结果"),
         ("训练日期", f"{model.train_dates[0]} ~ {model.train_dates[-1]}（{len(model.train_dates):,} 个交易日）"),
         ("实际训练样本 / 特征数", f"{summary.train.sample_count:,} 行 / {len(model.feature_names):,} 列"),
-        ("实际训练轮数", f"{actual_iterations:,}"),
+        ("实际训练轮数", "不适用（直接求解）" if actual_iterations is None else f"{actual_iterations:,}"),
         ("评价日期", f"{eval_dates[0]} ~ {eval_dates[-1]}（{coverage.date_count:,} 个交易日）"),
         ("有效配对 / 评价输入", f"{summary.evaluation.sample_count:,} / {summary.input_count:,} 行（{pair_ratio}）"),
         ("评价排除明细", f"无预测 {summary.no_prediction_count:,} 行；有预测但缺标签 {summary.missing_label_count:,} 行"),
@@ -278,7 +280,7 @@ def _text_table(rows: Sequence[Sequence[str]]) -> str:
 
 def build_training_report(
     *, experiment_name: str, model_ref: Path, model: InferenceModel,
-    evaluation: ICEvaluation, summary: TrainingReportSummary, actual_iterations: int,
+    evaluation: ICEvaluation, summary: TrainingReportSummary, actual_iterations: int | None,
 ) -> str:
     """Render fitted training diagnostics and fixed-prediction evaluation in HTML.
 
@@ -330,7 +332,7 @@ def build_training_report(
 </head><body><h1>{title}</h1>
 <h2>训练与评价摘要</h2>
 {interpretation}
-<p>实际训练样本：{summary.train.sample_count}；特征数：{len(model.feature_names)}；实际训练轮数：{actual_iterations}</p>
+<p>实际训练样本：{summary.train.sample_count}；特征数：{len(model.feature_names)}；实际训练轮数：{actual_iterations if actual_iterations is not None else "不适用（直接求解）"}</p>
 <p>Rank IC 均值：{_metric(coverage.mean_ic)}；IC 标准差（ddof=1）：{_metric(summary.ic_std)}；正 IC 天数 / 有定义日期：{summary.positive_ic_days} / {coverage.defined_date_count}（{positive_ratio}）</p>
 <p>有定义日期 / 全部评价日期：{coverage.defined_date_count} / {coverage.date_count} 个交易日；评价输入行数：{summary.input_count}；无预测：{summary.no_prediction_count}；有预测但缺标签：{summary.missing_label_count}；有效配对：{summary.evaluation.sample_count} 行（{pair_ratio}）</p>
 <p>{escape(reason_counts)}</p>

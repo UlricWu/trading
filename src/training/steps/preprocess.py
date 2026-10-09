@@ -84,4 +84,9 @@ class PreprocessStep:
             train_X=context.train_X,
             train_y=context.train_y,
         )
+        if context.sample_weight is not None:
+            dropped = len(context.sample_weight) != len(context.train_y)
+            context.sample_weight = context.sample_weight.loc[context.train_y.index]
+            if dropped:
+                context.sample_weight /= context.sample_weight.mean()
         return context

@@ -5,9 +5,10 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from typing import Literal, Protocol, runtime_checkable
 
 import numpy as np
+from threadpoolctl import threadpool_limits
 
 from src.training.engines.preprocessing import FittedPreprocessor
 
@@ -29,6 +30,26 @@ class PredictionModel(Protocol):
 
         Example:
             predictions = model.predict(np.array([[0.5]], dtype=float))
+        """
+        ...
+
+
+@runtime_checkable
+class ProbabilityModel(Protocol):
+    """Expose class identities and their probabilities.
+
+    Example:
+        model: ProbabilityModel = LogisticRegression().fit(values, labels)
+        probabilities = model.predict_proba(values)
+    """
+
+    classes_: np.ndarray
+
+    def predict_proba(self, values: np.ndarray) -> np.ndarray:
+        """Return probabilities in classes_ order.
+
+        Example:
+            probabilities = model.predict_proba(values)
         """
         ...
 
@@ -69,12 +90,16 @@ class InferenceModel:
     label_set: str
     label_version: str
     label_column: str
+    prediction_method: Literal["value", "positive_probability"] = "value"
 
     def __post_init__(self) -> None:
         if not isinstance(self.model, PredictionModel):
             raise TypeError("model must expose predict(values)")
         if not isinstance(self.preprocess, FittedPreprocessor):
             raise TypeError("preprocess must be a FittedPreprocessor")
+        if self.prediction_method == "positive_probability":
+            if not isinstance(self.model, ProbabilityModel) or not np.array_equal(self.model.classes_, [0, 1]):
+                raise TypeError("positive_probability requires a binary model with classes [0, 1]")
 
     @property
     def feature_names(self) -> tuple[str, ...]:
@@ -98,7 +123,11 @@ class InferenceModel:
         if transformed.shape[0] == 0:
             return aligned
 
-        predictions = np.asarray(self.model.predict(transformed), dtype=float)
+        with threadpool_limits(limits=1):
+            if self.prediction_method == "positive_probability":
+                predictions = np.asarray(self.model.predict_proba(transformed)[:, 1], dtype=float)
+            else:
+                predictions = np.asarray(self.model.predict(transformed), dtype=float)
         if predictions.ndim != 1 or predictions.shape[0] != transformed.shape[0]:
             raise RuntimeError(
                 "model predictions must be one-dimensional and match retained rows"

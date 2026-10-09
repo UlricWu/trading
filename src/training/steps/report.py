@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import cast
 
 import numpy as np
-from sklearn.linear_model import SGDRegressor
+from sklearn.linear_model import Ridge, SGDRegressor
 
 from src import logs
 from src.training.artifact import load
@@ -86,7 +86,7 @@ class ReportStep:
             evaluation_predictions=np.concatenate(prediction_arrays), evaluation_labels=np.concatenate(label_arrays),
             evaluation=evaluation,
         )
-        actual_iterations = int(cast(SGDRegressor, model.model).n_iter_)
+        actual_iterations = None if isinstance(model.model, Ridge) else int(cast(SGDRegressor, model.model).n_iter_)
         html = build_training_report(
             experiment_name=self._experiment_name, model_ref=model_ref, model=model,
             evaluation=evaluation, summary=summary, actual_iterations=actual_iterations,

@@ -23,10 +23,14 @@ class MetricsPersistStep:
         self._output = pm.experiment_training_metrics(experiment_name=experiment_name)
 
     def run(self, context: TrainingContext) -> TrainingContext:
-        """Publish the shared observation collection without consuming a final model.
+        """Publish chronological validation separately from final evaluation.
 
         Example:
             context = step.run(evaluated_context)
         """
-        save_evaluation(self._output, context.observations)
+        validation_count = sum(day.stage == "validation" for day in context.window.evaluations)
+        if validation_count:
+            save_evaluation(self._output.with_name("validation-metrics.json"), context.observations[:validation_count])
+        if len(context.observations) > validation_count or not validation_count:
+            save_evaluation(self._output, context.observations[validation_count:])
         return context

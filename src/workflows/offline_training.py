@@ -10,6 +10,7 @@ from time import monotonic
 from src import logs
 from src.access import Access
 from src.config.model_config import FeatureGroupConfig, FeatureLabelConfig, ModelConfig, ModelPreset
+from src.data_system.builders.previous_day import PREOPEN_AVAILABLE_TIME, PREOPEN_DECISION_TIME
 from src.data_system.builders.registry import get_feature_builder, get_label_builder
 from src.data_system.builders.stock_1430 import STOCK_1430_DECISION_TIME
 from src.jobs.requests import TrainingSubmission
@@ -20,6 +21,7 @@ from src.training.engines.report import build_training_start_log
 from src.training.models.catalog import get_model_trainer
 from src.training.pipeline import TrainingPipeline
 from src.training.record import TrainingRunRecord
+from src.training.top_selection import save_top_selection_evaluation
 from src.training.steps.artifact_persist import ArtifactPersistStep
 from src.training.steps.dataset_build import DatasetBuildStep
 from src.training.steps.ic_evaluate import ICEvaluateStep
@@ -42,7 +44,7 @@ def run_offline_training(
     submission: TrainingSubmission,
     experiment_id: str,
 ) -> None:
-    """Resolve the user's choices, fit once, then evaluate the same saved model.
+    """Split chronological validation, fit once, and evaluate the frozen model.
 
     Label maturity is a theoretical information boundary. Current committed
     inputs and this offline run do not establish historical file availability.
@@ -66,6 +68,8 @@ def run_offline_training(
     label_set, label_version = submission.dataset.label_group.split("/")
     if (feature.feature_set, feature.feature_version) == ("l2_stock_1430", "v1"):
         decision_time = STOCK_1430_DECISION_TIME
+    elif (feature.feature_set, feature.feature_version) == ("previous_day_daily_l2", "v1"):
+        decision_time = PREOPEN_DECISION_TIME
     else:
         get_feature_builder(feature.feature_set, feature.feature_version)
         decision_time = time(15, 0)
@@ -74,6 +78,11 @@ def run_offline_training(
         lookahead = 1
         maturity_time = time(14, 36)
         target_description = "当日至下一交易日 [14:31, 14:36) VWAP 窗口的复权收益横截面百分位排名"
+    elif label_set in {"next_day_high_return_rank", "next_day_high_top_decile"}:
+        label_column = "y_event" if label_set == "next_day_high_top_decile" else "y_rank_return"
+        lookahead = 1
+        maturity_time = PREOPEN_AVAILABLE_TIME
+        target_description = "当日 [14:31,14:36) VWAP 至下一交易日全天最高价的复权收益排名"
     else:
         label_builder = get_label_builder(label_set, label_version)
         label_column = label_builder.label_column
@@ -87,7 +96,7 @@ def run_offline_training(
     )
     configuration = ModelConfig(
         group=preset.group, model_params=preset.model_params,
-        preprocessing=preset.preprocessing, dataset=dataset,
+        preprocessing=preset.preprocessing, dataset=dataset, sample_weight=preset.sample_weight,
     )
     experiment_name = require_new_experiment(
         path_manager=path_manager, kind="training", start_date=submission.start,
@@ -111,11 +120,40 @@ def run_offline_training(
         if train_dates[-1] >= eval_dates[0]:
             raise ValueError("train_range samples must precede eval_range samples")
 
-    mature_date = train_dates[-1]
-    for _ in range(lookahead):
-        mature_date = access.next_trade_date(trade_date=mature_date)
-    label_maturity_ts_us = DateTimeUtils.local_time_to_utc_epoch_us(
-        maturity_time, date.fromisoformat(mature_date),
+    if eval_dates and submission.eval_gap_sessions:
+        between = access.trade_dates(start_date=train_dates[-1], end_date=eval_dates[0])
+        if len(between) - 2 < submission.eval_gap_sessions:
+            raise ValueError("eval_range does not satisfy eval_gap_sessions")
+
+    def label_maturity(day: str) -> int:
+        for _ in range(lookahead):
+            day = access.next_trade_date(trade_date=day)
+        return DateTimeUtils.local_time_to_utc_epoch_us(maturity_time, date.fromisoformat(day))
+
+    if eval_dates and label_maturity(train_dates[-1]) > DateTimeUtils.local_time_to_utc_epoch_us(
+        decision_time, date.fromisoformat(eval_dates[0]),
+    ):
+        raise ValueError(
+            f"train_range last sample {train_dates[-1]} has a label that matures "
+            f"after the first eval_range prediction on {eval_dates[0]}"
+        )
+    validation_dates: tuple[str, ...] = ()
+    purged_dates: tuple[str, ...] = ()
+    if submission.validation_sessions:
+        if submission.validation_sessions >= len(train_dates):
+            raise ValueError("validation_sessions must leave training sessions in train_range")
+        validation_dates = train_dates[-submission.validation_sessions:]
+        validation_start = DateTimeUtils.local_time_to_utc_epoch_us(decision_time, date.fromisoformat(validation_dates[0]))
+        candidate_dates = train_dates[:-submission.validation_sessions]
+        purged_dates = tuple(day for day in candidate_dates if label_maturity(day) > validation_start)
+        train_dates = tuple(day for day in candidate_dates if day not in purged_dates)
+        if not train_dates:
+            raise ValueError("validation split leaves no mature training sessions")
+    label_maturity_ts_us = label_maturity(train_dates[-1])
+    logs.info(
+        f"✅ 训练划分; experiment={experiment_name}\n"
+        f"拟合 {len(train_dates)} 日；内部验证 {len(validation_dates)} 日；"
+        f"标签未成熟隔离 {len(purged_dates)} 日；最终评估 {len(eval_dates)} 日。"
     )
     model_ref = path_manager.experiment_training_model(experiment_name=experiment_name)
     evaluations = tuple(
@@ -125,17 +163,13 @@ def run_offline_training(
                 decision_time, date.fromisoformat(day),
             ),
             prediction_ref=model_ref.parent / "predictions" / f"{day}.parquet",
+            stage="validation" if day in validation_dates else "evaluation",
         )
-        for day in eval_dates
+        for day in (*validation_dates, *eval_dates)
     )
-    if evaluations and label_maturity_ts_us > evaluations[0].decision_ts_us:
-        raise ValueError(
-            f"train_range last sample {train_dates[-1]} has a label that matures "
-            f"after the first eval_range prediction on {eval_dates[0]}"
-        )
     window = TrainingWindow(train_dates=train_dates, model_ref=model_ref, evaluations=evaluations)
     steps: tuple[PipelineStep[TrainingContext], ...] = (
-        DatasetBuildStep(pm=path_manager, dataset_cfg=dataset, clock=monotonic),
+        DatasetBuildStep(pm=path_manager, dataset_cfg=dataset, clock=monotonic, sample_weight=preset.sample_weight),
         PreprocessStep(preset.preprocessing),
         ModelTrainStep(trainer=trainer, model_params=preset.model_params, dataset_cfg=dataset),
         ArtifactPersistStep(),
@@ -144,12 +178,14 @@ def run_offline_training(
         steps += (
             PredictionStep(pm=path_manager, clock=monotonic), ICEvaluateStep(pm=path_manager, clock=monotonic),
             MetricsPersistStep(pm=path_manager, experiment_name=experiment_name),
-            ReportStep(pm=path_manager, experiment_name=experiment_name),
         )
+        if eval_dates and feature.feature_set != "previous_day_daily_l2":
+            steps += (ReportStep(pm=path_manager, experiment_name=experiment_name),)
     record = TrainingRunRecord(
         request=submission.model_dump(mode="json"), train_dates=train_dates,
         eval_dates=eval_dates, model_ref=model_ref, configuration=configuration,
         label_maturity_ts_us=label_maturity_ts_us,
+        validation_dates=validation_dates, purged_dates=purged_dates,
     )
     schedule_ref = path_manager.experiment_training_schedule(experiment_name=experiment_name)
     FileSystem.write_bytes_atomic(
@@ -164,7 +200,13 @@ def run_offline_training(
         }),
     ).run()
     if evaluations:
-        logs.info(f"✅ 训练任务; experiment={experiment_name}\n模型、评价与报告均已写入。")
+        if feature.feature_set == "previous_day_daily_l2":
+            save_top_selection_evaluation(
+                pm=path_manager, experiment_name=experiment_name,
+                periods={day.trade_date: day.stage for day in evaluations},
+            )
+        outputs = "模型、评价与报告均已写入。" if eval_dates or feature.feature_set == "previous_day_daily_l2" else "模型与内部验证指标均已写入；本次未请求最终评估。"
+        logs.info(f"✅ 训练任务; experiment={experiment_name}\n{outputs}")
     else:
         logs.info(
             f"✅ 训练任务; experiment={experiment_name}\n本次未请求评价；未生成 IC 指标或 HTML 报告。\n"

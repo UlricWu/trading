@@ -512,8 +512,9 @@ targets。Step 的 `who` 为 `stock 14:30 daily/L2 Feature`，携带 trade_date 
 和读取错误由[存储契约](data/storage_layout.md#experiments)拥有。共享 Workflow →
 TrainingPipeline → `run_steps` → Step 结构继续遵循共同边界。
 
-TrainingSubmission 表达一次模型训练及可选的固定模型评价，业务输入只有 `train_range`、
-可选的 `eval_range`、`model` 和 `dataset`。日期范围是规范 `YYYY-MM-DD` 闭区间；
+TrainingSubmission 表达一个模型配置的一次训练任务及可选评价，业务输入为 `train_range`、
+`model`、`dataset`，以及可选 `eval_range`、`validation_sessions`、`eval_gap_sessions`。
+一次 POST 只创建一个 Job；研究中的多模型对照不改变这一任务边界。日期范围是规范 `YYYY-MM-DD` 闭区间；
 dataset 分别选择 `feature_group` 与 `label_group`。不接受内部 windows、逐日 train_dates、
 训练截止、逐日可用性声明或决策微秒数。请求形状由 CLI / Job API owner 定义，本节拥有
 选项含义及执行语义。
@@ -533,11 +534,33 @@ dataset 分别选择 `feature_group` 与 `label_group`。不接受内部 windows
 | label_group | `daily_close_return_rank_d5/v1` | 当前收盘到第 5 个后续正式交易日收盘的复权收益横截面排名 |
 | label_group | `l2_stock_1430_t1_vwap_rank/v1` | T 日 [14:31,14:36) 到下一正式交易日同一窗口的复权 VWAP 收益横截面排名 |
 
+新增模型预设与盘前数据选择如下；完整估计器参数保存在 base.yml 和每次 schedule。
+所有新增模型缺失填0.5、不缩放，日期等权。Ridge 使用 alpha=100、cholesky；Logistic 使用
+C=0.01、lbfgs、max_iter=1000、tol=1e-8。两个直方图梯度提升模型共同使用 max_iter=100、
+max_leaf_nodes=7、max_depth=3、min_samples_leaf=500、learning_rate=0.05、
+l2_regularization=10、max_bins=63、early_stopping=false、random_state=20260919。
+拟合与预测限定一个数值库线程；ConvergenceWarning 作为拟合失败。
+
+| 选择 | 名称 | 含义 |
+| --- | --- | --- |
+| model | ridge_regression / logistic_regression | 完整 fit 的排名回归 / 二元事件分类 |
+| model | hist_gradient_boosting_regressor / hist_gradient_boosting_classifier | 完整 fit 的浅树排名回归 / 二元事件分类 |
+| feature_group | previous_day_daily_v1 | 盘前数据的7列日频排名 |
+| feature_group | previous_day_daily_l2_price_v1 / previous_day_daily_l2_activity_v1 / previous_day_daily_l2_direction_v1 | 保留39列原顺序，选择日频加对应8/16/8列 L2，共15/23/15列 |
+| feature_group | previous_day_daily_l2_v1 | 完整39列 |
+| label_group | next_day_high_return_rank/v1 | y_rank_return |
+| label_group | next_day_high_top_decile/v1 | y_event；严格原排名>0.9 |
+
+这些特征组都指向 previous_day_daily_l2/v1；只有两个 next_day_high 标签可以搭配盘前
+特征组，分类模型只搭配事件标签，回归模型只搭配排名标签。数据公式、共同资格与条件
+可用时间由[前日数据 owner](data/previous_day_feature_label_contract.md)唯一拥有，训练不重新排名。
+价格组选择 edge_vwap/high_low 列，方向组选择 tick_signed 列，其余为活跃度组。
+
 七列的实际训练顺序为 `f_d_close_return_1d`、`f_d_open_gap_1d`、`f_d_log_amount`、
 `f_d_max_drawdown_20d_asof_tminus1`、`f_d_close_volatility_60d_asof_tminus1`、
 `f_d_close_return_5d_asof_tminus1`、`f_d_turnover_rate_mean_20d_asof_tminus1`。
 两种日频特征组只允许搭配三个日频标签；14:30 特征组只允许搭配 14:30 标签。
-四种标签均读取 `y_rank_return`，预测目标是排名分数，不是收益率本身。
+已有四种标签均读取 `y_rank_return`，预测目标是排名分数，不是收益率本身。
 未知名称和不同决策网格的组合在 submission 构造时拒绝，不创建 Job。
 研究候选 `stock_1430_daily_l2/v1` 不在选项中，分区存在不表示可用于本入口。
 Feature producer 拥有数值含义、价格口径、排名细节和可见性，训练及消费侧不重新计算；
@@ -551,8 +574,8 @@ trainer；未配置的已知名称或不支持的模型实现必须失败。解�
 
 Workflow 从唯一 PathManager 创建 Access，按正式日历解析每个闭区间中的全部交易日，
 两端允许休市日，不以周一至周五近似交易日。空训练区间或显式空评价区间失败；省略
-eval_range 或为 null 才表示纯训练。评价样本必须晚于全部训练样本，单日评价使用相同
-起止日期，多日不重复训练。实际日期非空、升序且唯一，不从文件列表或过滤后的拟合样本
+eval_range 或为 null 表示不请求最终评估。最终评估样本必须晚于整个 train_range，单日评估使用相同
+起止日期，多日预测始终使用同一个已冻结模型。实际日期非空、升序且唯一，不从文件列表或过滤后的拟合样本
 重算；某日样本全被过滤，模型仍保留该训练日期。缺少目标日期的必要输入必须失败，
 不缩短区间。Job scope 和 experiment 名称的 start/end 是请求区间的整体包络，不重新选择样本。
 
@@ -569,7 +592,8 @@ session 由精确标签定义及正式日历解析。最后一个训练样本的
 训练请求的客户端声明代替。
 
 训练前在 schedule.json 保存一个 TrainingRunRecord 对象，字段精确为 `request`（已校验
-请求的 JSON，包含默认 null）、`train_dates`、`eval_dates`、`model_ref`、`configuration`
+请求的 JSON，包含默认值）、`train_dates`（实际拟合日期）、`validation_dates`、`purged_dates`、
+`eval_dates`（最终评估日期）、`model_ref`、`configuration`
 （解析后的 ModelConfig）与 `label_maturity_ts_us`（上述理论下界）。消费侧读取解析字段，
 不把归档 request 重新反序列化为公共请求 DTO。记录日期与配置可解释当次选择，但不归档
 全部训练输入、代码或环境；不增加模型内时间字段或发布确认字段。计划中的 ref 不证明
@@ -589,12 +613,19 @@ SGD 的 `model_params.random_state` 必须显式给出整数，禁止缺失、No
 当前 base.yml 明确选择 7，不在 trainer 内补默认种子。种子与输入内容、顺序、一次
 partial_fit 及锁定环境共同构成确定性重训条件，不承诺任意算法或跨环境逐位一致。
 
+ModelPreset.sample_weight 为 uniform（默认）或 date_equal；后者在删除未知标签后按日期
+赋予每行 1/该日有效训练行数，再将全部权重归一到均值1，并传入 trainer。预处理若删除行，
+同步选择权重并重新归一；未删除行不二次归一。不能按未来标签筛选推理样本。
+
 每次训练一次构造完整 InferenceModel，内容精确为：
 
 ```text
 model, preprocess, feature_set, feature_version,
-train_dates, label_set, label_version, label_column
+train_dates, label_set, label_version, label_column, prediction_method
 ```
+
+prediction_method 为 value 或 positive_probability。后者要求 classes_ 恰为[0,1]的
+二元概率模型，返回 predict_proba 的正例列，不能用0/1类别值进行 Top50 排序。
 
 `feature_names` 仍来自 preprocess。来源身份来自本次实际消费的已校验配置，train_dates
 直接来自窗口；保存与加载不重新校验这些来源字段，回测只在运行绑定边界核对它们与所引
@@ -603,15 +634,46 @@ train_dates, label_set, label_version, label_column
 相同；drop 行为留下 NaN，零是有效预测。没有保留行时返回等长全 NaN（空输入返回空数组）
 并不调用预测器。预测器返回的维度、行数及有限性必须在回填前验证，非法输出抛 RuntimeError。
 
-Workflow 的单一 steps 顺序为 dataset load → train-only preprocess → fresh model train
-→ ArtifactPersistStep；存在评价时再接 PredictionStep → ICEvaluateStep → MetricsPersistStep
-→ ReportStep。TrainingWindow 只包含 train_dates、model_ref 和逐日 EvaluationDay tuple；
-每个 EvaluationDay 包含 trade_date、decision_ts_us、prediction_ref。一次任务独立交付一个
-模型，保存不等待评价；后续错误保留已经交付的模型。纯训练只组装前四步。
+一次任务只拟合一个模型，steps 为 dataset load → train-only preprocess → fresh model train
+→ ArtifactPersistStep；需要内部验证或最终评估时接 PredictionStep → ICEvaluateStep
+→ MetricsPersistStep。TrainingPipeline 执行一次链，返回 None。模型保存不等待评价；后续
+错误保留已交付模型。TrainingWindow 包含实际 train_dates、model_ref 和逐日 EvaluationDay，
+后者包含日期、决策时间、预测路径和 validation/evaluation 阶段。
+
+validation_sessions 为非负整数，默认0。大于0时，将 train_range 的最后 N 个正式交易日
+留作内部验证，其余日期作为拟合候选。按标签成熟时间剔除在首个验证决策时尚不可用的
+候选日期，记录 purged_dates；实际拟合日期不能为空。预处理与样本权重只在实际拟合行上
+计算。模型参数已由配置固定，验证仅计算独立指标，不做调参、早停、追加训练或全区间重拟合。
+验证后的同一模型继续用于 eval_range，最后评估标签不参与训练和验证。所有分区仍需完整；
+边界隔离是显式日期划分，不是缺数据时的缩短区间。
+
+例如一个134日训练区间留27日验证，若次日22:00才有标签而验证在09:00决策，则分界前
+1日需要隔离：106日拟合、1日隔离、27日验证。另设17日 eval_range，这17日始终只用于
+最终评估。134和17是请求日期在正式日历上的计数，不是服务端硬编码的周期。
+
+盘前标签按 T+1 22:00 成熟，其他标签保持原理论成熟时点。首个最终评估决策不能早于
+整个 train_range 最后日期的标签成熟时点；内部验证不能绕过最终评估的信息边界。
+当前输入版本和情景就绪时间不证明真实历史部署。
+
+eval_gap_sessions 表示 train_range 最后一个交易日与 eval_range 首个交易日之间至少
+跳过的交易日数，默认0，不含两端，休市日不计数。周五结束训练区间、周一开市时，0允许
+最早周一评估，1要求最早周二。违反间隔失败，不暗改显式日期；间隔不替代标签成熟检查。
+
+验证和最终评估的逐日预测共享 predictions 目录，阶段由 schedule 中的日期清单确定；
+IC 分别写 validation-metrics.json 和 metrics.json，不混合汇总。盘前 Top50 结果按 stage
+分别汇总并生成 HTML；其他模型使用已有诊断报告，最终评估指标不混入内部验证。
+
+盘前评价读取保存的模型分数，先按分数降序、symbol升序冻结 Top50，缺分数排末尾；然后
+连接原排名标签。资格候选保留未知标签，不补选。令 N 为有效池、P 为池中排名>0.9数、
+K 为固定名单中有效数、H 为命中数，则 Precision=H/K、Recall=H/P、F1=2H/(K+P)、
+随机基准=P/N、Lift=Precision/随机基准；零分母为 null。保存全部原数量、未知/有效数量
+与逐日名单，池覆盖率=有效池/原池、名单覆盖率=有效名单/原名单；按日期等权汇总，
+旧固定分母 Precision 下界/上界单列保留。五个数据规则
+对照分别按原成交额、动量、反转、波动率排名、换手率排名选取，均不额外训练模型或创建 Job。
 
 Workflow 在解析模型及数据组身份、确认 experiment 未存在后，进入日历读取前输出一条
 “训练任务”开始事件：中文表格说明模型、特征组及列数、标签组、请求训练/评价区间、
-特征缺失处理和单次 partial_fit 的单轮行为；表外解释当前标签的预测目标及排名分数量纲。
+特征缺失处理、内部验证日数与拟合方式；表外解释当前标签的预测目标及排名分数量纲。
 完整参数、特征顺序和实际交易日由已有 schedule.json 归档，日志不展开全部参数及列名。
 准备阶段失败不宣称已写入运行配置。只有 Pipeline 正常返回，workflow 才写任务完成事件；
 纯训练明确写“本次未请求评价”，提供模型和运行配置路径，不宣称生成 metrics 或 HTML。

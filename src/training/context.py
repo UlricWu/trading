@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Literal
 
 import pandas as pd
 
@@ -27,6 +28,7 @@ class EvaluationDay:
     trade_date: str
     decision_ts_us: int
     prediction_ref: Path
+    stage: Literal["validation", "evaluation"] = "evaluation"
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,5 +60,6 @@ class TrainingContext:
     observations: list[ICObservation] = field(default_factory=list)
     train_X: pd.DataFrame | None = None
     train_y: pd.Series | None = None
+    sample_weight: pd.Series | None = None
     preprocess: FittedPreprocessor | None = None
     model: InferenceModel | None = None

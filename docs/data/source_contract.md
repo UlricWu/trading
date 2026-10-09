@@ -127,6 +127,89 @@ response 仍按单日保存。Broker 不改变正式 processed 字段。
 `sh_trade` 与 `sz_trade` 的字段和 index 由
 [`docs/data/level2_normalization.md`](level2_normalization.md) 所有。
 
+<a id="level2-delivery-contents"></a>
+
+### 五类交付文件的内容与当前消费范围
+
+本节说明交付文件的内容和当前正式消费范围；原始字段观测不新增 source、processed
+dataset 或标准化映射。`Index`、`Level2Market` 尚未列入上表的正式 source。
+建模用途及待验证方向由
+[subscription-training](../../research/subscription-training/README.md#level2-delivery-modeling) 记录。
+
+| 交付压缩包 | 内容与记录粒度 | 主要字段 | 当前正式消费范围 |
+|---|---|---|---|
+| `Index.csv.7z` | 指数行情快照；本批包含沪、深、北市场的指数代码记录 | `SecurityID/ExchangeID`、`TradeDate/TradeTime`；`PreClosePrice/OpenPrice/HighestPrice/LowestPrice/LastPrice/ClosePrice`；`TotalVolumeTrade/TotalValueTrade/NumTrades`、`LocalTimeStamp` | 没有现行正式 source、指数快照 parser 或 processed 输出 |
+| `Level2Market.csv.7z` | 证券盘口快照；本批包含股票、ETF、债券等品类及沪、深、北市场记录 | `BidPrice1..10/BidVolume1..10`、`AskPrice1..10/AskVolume1..10`；成交价量、委买/委卖总量及加权均价、涨跌停价、委托笔数、`IOPV`、`Withdraw*`、时间字段 | 没有现行正式 source、盘口快照 parser 或 processed 输出 |
+| `SH_Stock_OrderTrade.csv.7z` | 上海合并逐笔事件流，含状态、委托、撤单和成交；文件名中的 Stock 不保证只含股票 | `TickTime/TickType`、`BuyNo/SellNo`、`Price/Volume/TradeMoney`、`Side/TradeBSFlag/MDSecurityStat`、`MainSeq/SubSeq`、`TradeTime/LocalTimeStamp` | `sh_stock_ordertrade -> sh_trade/v1`，只消费现行正成交；其他事件没有正式 processed 对象 |
+| `SZ_Trade.csv.7z` | 深圳成交及撤单逐笔事件流，不能将每一行都当作成交 | `TickTime`、`TradePrice/TradeVolume`、`ExecType`、`BuyNo/SellNo`、`MainSeq/SubSeq`、`TradeTime/LocalTimeStamp` | `sz_trade -> sz_trade/v1`，按现行事件映射及正成交条件消费，撤单不进入 processed trade |
+| `SZ_Order.csv.7z` | 深圳逐笔委托事件，带订单编号、方向及委托类型 | `OrderTime`、`Price/Volume`、`Side/OrderType`、`OrderNO/OrderStatus`、`MainSeq/SubSeq`、`TradeTime/LocalTimeStamp` | `sz_order` 的 `outputs=[]`；按现行契约在网盘保留，日常 workflow 不下载、不解压，没有 processed order 对象 |
+
+`Level2Market` 描述快照时刻的价格与挂单量；逐笔文件描述单次事件的价格与数量。
+快照中的 `TotalVolumeTrade/TotalValueTrade/NumTrades` 是累计统计，不能跨快照直接相加；
+`TotalBidVolume/TotalAskVolume` 是快照委托总量，不能解释为累计成交量或资金流。
+完整订单队列、逐单撤补及事件顺序不能仅由间隔快照恢复。
+
+成交编码、CSV 十进制价格与数量尺度、`TradeMoney` 与正式 `notional` 的关系、时间转换、
+源端方向与 tick-rule 的区别、序号及订单字段的限制均沿用
+[归一化 owner](level2_normalization.md)，不在本节另定义。该 owner 当前只定义 trade：
+不能直接把 snapshot 的 `TradeTime` 接入现行 `TickTime` parser，也不能凭实时接口的
+整数价格字典给这些十进制 CSV 再除以 10000。
+
+#### 2026-09-22 单日文件核查（2026-10-03）
+
+输入目录为 `/home/wsw/Downloads/4564934805_铁皮卡lh/2026-09-22-New/`；核对时仓库
+HEAD 为 `0ab4b31d75741a91410e842cb7f7c89258ef24ca`。每包只有一个同名 CSV 成员。
+`Index` 和 `Level2Market` 已用 `7zz x -so`（7zz 23.01）与 Python 3.13.10、PyArrow 23.0.0
+分批完整读取，解码退出码为 0、没有 stderr，CRC 校验通过；其全部 `TradeDate` 均为
+`2026-09-22`。另外三个文件用同一解码器及 Python `csv` 读取表头和开头连续 100,000 行，
+所读 `TradeTime` 日期前缀均为 `2026-09-22`；样本偏向盘前与早盘，不代表全日事件比例，
+未做这三包的全量 CSV 或 CRC 校验。
+
+所有 SHA-256 均对整个压缩包计算；文件在各自哈希读取期间的尺寸和修改时间保持不变，
+两个快照包的哈希与完整读取时一致。哈希标识输入内容，不替代全量质量或交易所覆盖验证，
+也不表示已有不可变归档或该日数据已正式入库。
+
+| 压缩包 | CSV 列数 | 压缩字节数 | CSV 成员字节数（7z 目录） | 本次读取范围 |
+|---|---:|---:|---:|---|
+| `Index.csv.7z` | 14 | 44,121,201 | 450,938,318 | 全量 2,972,913 行 |
+| `Level2Market.csv.7z` | 68 | 1,380,330,138 | 18,986,217,006 | 全量 45,502,080 行 |
+| `SH_Stock_OrderTrade.csv.7z` | 16 | 2,906,484,946 | 28,532,221,446 | 前 100,000 行 |
+| `SZ_Trade.csv.7z` | 12 | 1,530,469,342 | 14,690,893,265 | 前 100,000 行 |
+| `SZ_Order.csv.7z` | 13 | 1,536,355,281 | 15,748,264,978 | 前 100,000 行 |
+
+| 压缩包 | SHA-256 |
+|---|---|
+| `Index.csv.7z` | `e1549b4db5e0c07cf5d6de903089a40e8c3f96f84d921e25d5ffc15f1f7c421a` |
+| `Level2Market.csv.7z` | `06aa2453fbd6a2411fe7ac338b66f722f648e8fde5e8a179c29cb50171f7e88f` |
+| `SH_Stock_OrderTrade.csv.7z` | `fa59087bdc038a84d490e4b8304e6df11489bf93a1b019200d48ffd27138014a` |
+| `SZ_Trade.csv.7z` | `c182f438444d1575d12f897ef9609af0d3dcd062ec892181443895b890f3e778` |
+| `SZ_Order.csv.7z` | `918a1c591206e5d898f692563ec1a1b3cda2574e9394bd351561a3e9d2fe2727` |
+
+本次观测的关键限制如下，均仅绑定上述输入：
+
+- `Index` 在 SH/SZ/BJ 分别有 1,201,941/1,762,418/8,554 行，对应 200/375/12 个
+  `SecurityID`；这些是交易所内代码数，不能相加后宣称同样数量的不同经济指数。
+  `Level2Market` 对应 27,443,278/17,422,783/636,019 行与 25,863/23,819/345 个代码，
+  代码数不等于股票资格集合。两包整体记录时间范围都是 09:14 至 15:30，不证明全部证券
+  在此区间连续可观测。
+- `Index` 的 `000001.SH/000300.SH/399001.SZ/399006.SZ` 及 `Level2Market` 的
+  `600000.SH/000001.SZ/510300.SH/159915.SZ` 均观察到相邻 3 秒更新及其他时间间隔，
+  不能按固定 3 秒网格补造数据。后两只深圳证券还出现同一 `TradeTime` 多帧；这里只确认
+  时间重复，不证明整行重复，也没有执行去重。这里的交易所后缀只用于区分展示代码，
+  不改变正式 processed `symbol` 的源值语义。
+- `Level2Market` 的 `WithdrawBuyNumber/WithdrawBuyAmount/WithdrawBuyMoney` 及
+  `WithdrawSellNumber/WithdrawSellAmount/WithdrawSellMoney` 六列在全量中全部为空，
+  不能直接提供撤单统计；这不表示其他逐笔文件没有撤单事件。
+  SH 的 `IOPV` 全部为 0，SZ 有 2,651,430 行大于 0，BJ 全部为 0；不能把列存在视为
+  对所有证券、市场都有效。盘前和非活跃证券等记录中还存在零价格及空盘口。
+- 上海前缀样本的 `TickType` 出现 S/A/D/T，`Side` 还出现 O/T/N，不能跨事件类型统一
+  解释成买卖方向；深圳成交前缀的 `ExecType` 为 `4/F`，`4` 即使价格和数量为正也不属于
+  正式成交。深圳委托前缀的 `Side=1/2`、`OrderType=2/3`、`OrderStatus` 全空；这些只是
+  原始编码观测，不建立正式 order 映射，也不排除文件后续出现其他编码。
+- 三个逐笔前缀的 `SubSeq` 全为 0；仍按现行 owner 保留，不能以它作为订单身份或去重键。
+  `OrderNO`、`BuyNo/SellNo` 与 `MainSeq` 的存在不证明可唯一关联和完整恢复订单簿。
+  `LocalTimeStamp` 不表示策略实际收到消息的时刻，也不因本次核查获得 `ServerTime` 映射。
+
 ### 百度网盘交付与按需下载
 
 历史及未来交付全部使用百度网盘，保留既有 `level2_ftp` 本地 broker identity 与路径；

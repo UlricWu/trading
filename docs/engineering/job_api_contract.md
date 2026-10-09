@@ -119,7 +119,7 @@ Job ID 自动写入 Collection 的 `testJobId` 或 `trainingJobId`，查询和�
 请求 body 必须是 JSON object，`kind` 是唯一判别字段，额外字段必须拒绝：
 
 CLI-only 的 `data-calendar`、`data-standard-bootstrap`、`data-level2-minute-backfill`、
-`data-stock-1430-backfill`、`data-stock-1430-fusion-backfill` 与 `data-feature-backfill`
+`data-stock-1430-backfill`、`data-stock-1430-fusion-backfill`、`data-previous-day-backfill` 与 `data-feature-backfill`
 不属于 Job kind；`POST /jobs` 必须将
 它们作为不支持的 kind 拒绝。
 
@@ -129,14 +129,22 @@ CLI-only 的 `data-calendar`、`data-standard-bootstrap`、`data-level2-minute-b
   - 完整闭区间是一个 workflow 执行单位，因此只创建一个 Job。单日使用
     `start == end`。
 - `train`
-  - 必须提供 `train_range`、`model` 和 `dataset`，可选 `eval_range`；不允许其他字段。
+  - 必须提供 `train_range`、`model` 和 `dataset`，可选 `eval_range`、
+    `validation_sessions` 和 `eval_gap_sessions`；不允许其他字段。一次 POST 始终只创建一个训练 Job，
+    不接受 `recipe` 或 `combinations`，不按模型对照拆成多个 Job。
   - train_range 和非 null 的 eval_range 必须各自只包含规范日期 `start`、`end`，
     且 start <= end；dataset 必须且只包含 `feature_group` 和 `label_group`。
   - model 与两个组名必须是已支持名称；选项含义及允许组合由
     [training workflow](../offline_workflow_contract.md#training-workflow) 拥有。
     未知名称、跨决策网格组合及嵌套额外字段在创建 Job 前拒绝。
-  - eval_range 省略或为 null 表示纯训练；起止相同表示单日评价，多日评价复用同一次
-    训练产物。日期两端可以是休市日，正式日历解析、空区间、成熟时序及数据完整性在
+  - eval_range 省略或为 null 时不请求最终评估。整个区间使用同一个模型，不接受
+    retrain、eval_ranges 或月度重训配置。
+  - validation_sessions 为非负整数，默认0；大于0时把 train_range 末尾 N 个正式交易日
+    留作内部验证。实际拟合样本、标签边界隔离及分开保存指标由 workflow 拥有。
+  - eval_gap_sessions 为非负整数，默认0，表示 train_range 最后交易日与首个最终评估日之间至少跳过的
+    正式交易日数，不含两端；周五训练结束且周一开市时，0允许周一、1最早周二评价。
+    标签成熟约束始终有效。参数不改写显式评价日期，精确选择与失败由 workflow 拥有。
+  - 日期两端可以是休市日，正式日历解析、空区间、成熟时序及数据完整性在
     workflow 中核验，违反时 Job 为 FAILED，不静默缩短区间。
   - 只创建一个 Job；公开 scope.start/end 是原始训练及评价闭区间的整体包络，
     不使用过滤后的交易日期重新计算。不接受 windows、逐日日期或技术时间参数。

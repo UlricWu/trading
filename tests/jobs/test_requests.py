@@ -317,3 +317,25 @@ def test_training_scope_covers_both_ranges_before_runtime_information_checks() -
         "eval_range": {"start": "2026-07-02", "end": "2026-07-02"},
     })[0]
     assert (submission.start, submission.end) == ("2026-07-02", "2026-07-20")
+
+
+def test_training_remains_one_job_with_explicit_gap() -> None:
+    submissions = parse_job_request({**_training_request(), "eval_gap_sessions": 1, "validation_sessions": 27})
+    assert len(submissions) == 1
+    command = build_cli_command(submissions[0], "one-job")
+    assert command[command.index("--eval-gap-sessions") + 1] == "1"
+    assert command[command.index("--validation-sessions") + 1] == "27"
+
+
+@pytest.mark.parametrize("field", ["recipe", "combinations", "retrain", "eval_ranges"])
+def test_train_rejects_recipe_and_multi_job_expansion(field: str) -> None:
+    with pytest.raises(InvalidJobRequest) as caught:
+        parse_job_request({**_training_request(), field: []})
+    assert caught.value.field == field
+
+
+@pytest.mark.parametrize("gap", [-1, True, 1.5, "1"])
+@pytest.mark.parametrize("field", ["eval_gap_sessions", "validation_sessions"])
+def test_session_counts_must_be_nonnegative_integers(gap: object, field: str) -> None:
+    with pytest.raises(InvalidJobRequest):
+        parse_job_request({**_training_request(), field: gap})

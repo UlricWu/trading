@@ -21,6 +21,7 @@ from src.data_system.steps.calendar_materialize import CalendarMaterializeStep
 from src.data_system.steps.fact_materialize import FactMaterializeStep
 from src.data_system.steps.feature_build import FeatureBuildStep
 from src.data_system.steps.label_build import LabelBuildStep
+from src.data_system.steps.previous_day_materialize import PreviousDayMaterializeStep
 from src.data_system.steps.level2_fact_materialize import Level2FactMaterializeStep
 from src.data_system.steps.level2_minute_build import Level2MinuteBuildStep
 from src.data_system.steps.stock_1430_daily_l2_materialize import (
@@ -37,6 +38,7 @@ from src.jobs.requests import (
     StandardFactBootstrapSubmission,
     Stock1430BackfillSubmission,
     Stock1430FusionBackfillSubmission,
+    TrainingDateRange,
 )
 from src.observability.instrumentation import Instrumentation
 from src.pipeline import PipelineStep
@@ -46,6 +48,21 @@ from src.workflows import PROCESSED_VERSION, _get_broker
 OFFLINE_STANDARD = "offline_standard"
 OFFLINE_LEVEL2 = "offline_level2"
 _LEVEL2_MINUTE_SYMBOL_BATCH_SIZE = 16
+
+
+def run_previous_day_backfill(*, path_manager: PathManager, interval: TrainingDateRange) -> None:
+    """Prepare qualified preopen features and high labels without network access.
+
+    Example:
+        run_previous_day_backfill(path_manager=pm, interval=TrainingDateRange(start="2026-07-01", end="2026-07-31"))
+    """
+    access = Access(pm=path_manager, processed_version=PROCESSED_VERSION)
+    dates = tuple(access.trade_dates(start_date=interval.start, end_date=interval.end))
+    if not dates:
+        raise ValueError("preopen backfill interval contains no trading sessions")
+    DataPipeline(steps=(PreviousDayMaterializeStep(pm=path_manager, access=access),),
+        instrumentation=Instrumentation(f"data-previous-day-backfill_{interval.start}_{interval.end}"),
+    ).run(DataContext(start=interval.start, end=interval.end, trade_dates=dates))
 
 
 def _require_tushare_source_names() -> tuple[str, ...]:
