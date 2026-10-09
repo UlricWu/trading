@@ -23,6 +23,12 @@ execution_eval 与 full_backtest 必须使用同一价格模型，tradable_alpha
 owner 拥有；H02/H03 为尚未采用的研究草案。此次拆分不修改正式 owner、源码、配置或
 测试，不改变已确认的交易规则、价格模型适用模式及原有未覆盖事项。
 
+2026-10-09 用户进一步要求对照本卷宗与 `src/trading/` 重新设计，并明确交付为
+“先重写代码级设计（接口、调用链、关键代码），暂不改运行代码”。本次修改按 open research
+维护 H02/H03：以现有模块为起点重写接口和状态交接，给出实施映射与验收条件，只修改
+本卷宗，不创建候选源码。入口见[代码级设计](#五种模式的代码级设计)、
+[执行接口](#执行接口与单一结算入口)及[实施映射](#实施映射与候选验收)。
+
 ## 对训练能力的依赖
 
 回测依赖[训练的交付边界](../training/README.md#与回测的交付边界)，不依赖训练 workflow
@@ -351,6 +357,13 @@ live〔最后处理〕：交易目标 → 单一 broker 执行〔具体 API 待�
 `197f4bc3878bf4d6a495f3fce211e21b61ac6ba0`，没有查询远端最新状态。
 工作树中的拟议 Offline owner 不替代该目标分支快照。
 
+2026-10-09 按用户“阅读 backtest、trading，根据现有代码进行重新设计编码”的要求，
+再次逐模块核对 `src/trading/` 的 67 个 Python 文件及请求、workflow、预测评价和相关测试。
+本次 HEAD 为 `26c10185493c1085d4cdc0a9fe1ba54872a70707`，开始时工作树干净；
+`src/trading/`、backtest workflow/config 及其已有测试相对上述 `76c25a2` 没有差异。
+本地目标分支仍是上述 `197f4bc`，没有查询远端。以下新增的接口收敛是候选编码设计，
+不能由基线测试通过推出新流程已经实施。
+
 | 可定位的实现事实 | 对本次目标的影响 |
 | --- | --- |
 | `run_daily_alpha_backtest` 在所有 mode 下组装同一套八个逐日 Step，见 [workflow](../../src/workflows/backtest.py) | 信号评价也依赖策略、现金、执行和账户，任务没有真正分离 |
@@ -361,6 +374,11 @@ live〔最后处理〕：交易目标 → 单一 broker 执行〔具体 API 待�
 | [SettlementEngine](../../src/trading/execution/settlement.py) 在账户处理成交后无条件追加账本，账户内单独去重 | 重复处理同一成交时，持仓与账本可能不一致；H03 的唯一结算入口须覆盖全部副作用 |
 | [SignalStep](../../src/trading/backtest/steps/backtest_layers.py) 按日期生成预测文件名；[汇总](../../src/training/evaluation.py) 以观察条数填充 date_count | 同日多次决策须区分记录身份、决策次数与交易日数，不能直接沿用日频消费假设 |
 | [PerformanceReport](../../src/trading/reporting/performance.py) 对相邻事件权益计算收益，调用侧固定年化因子；[EquityCurve](../../src/trading/core/equity.py) 每次 append 扫描历史回撤 | 增加无变化唤醒也能改变 Sharpe；分钟路径还需增量维护权益统计，不能把事件数量当作等间隔报告样本 |
+| `SignalStep` 每次预测调用 `on_trading_day_start`，后者无条件清空 `buy_qty_today` | 直接扩展为同日多次信号会重置当日可卖限制；日切必须由交易日程拥有，初始快照和同日后续唤醒均不得清空它 |
+| `IdealExecution` 自行调用 `PortfolioState.apply_fill` 并写 ledger，没有经过结算，也不约束资金或 T+1 | 不能把它直接当作新 tradable 的参考执行；应只替换价格处理，三种交易流程共用接纳、占用和结算 |
+| `BehaviorReport` 与 `execution_quality_frame` 均以 fill 条数除以 submit 条数 | 一笔订单分两次成交会被报为 200%；新报告须按 order_id 和累计数量汇总，原目标差量不能代替冻结订单数量 |
+| `MaxGrossExposureRule` 只计算最终目标市值，缺价格按 0 计；`RiskManager` 只保存最后 reason | 现有规则不能直接证明在途敞口合规或各规则覆盖；候选须补齐价格责任、当前持仓及买单占用，并保留每条实际计算的观察 |
+| Threshold / TopKHysteresis 只输出固定股数目标，没有固定等权入场及下一交易日退出计划 | 复用构造器不等于实现了交易基线；需显式区分既有目标策略与尚待落地的固定期限策略，不能让模拟器补出退出行为 |
 
 上述结构判断来自静态阅读；重复成交和采样问题另有本节 Evidence 中的合成复现。
 不能将相对本次目标的能力缺口直接描述为实现违反当前正式 owner；目标分支
@@ -764,9 +782,9 @@ composition root 显式传入。记录输入的 `start/end` 选择决策时点�
 | 类型/事实 | 必要内容与所有权 |
 | --- | --- |
 | `ModelSignalInput` | 具体 `model_ref` 与现有 `ModelUse`；加载绑定及历史可用性核对沿用[训练交付边界](../training/README.md#显式模型绑定与可用性)，不隐式训练 |
-| `RecordedSignalInput` | 有序、明确的预测记录引用；读取现有 `PredictionInputs` 及原始样本键，保留模型和输入关联，不另建 Signal registry |
+| `RecordedSignalInput` | `prediction_refs: tuple[Path, ...]` 与 `binding_refs: tuple[Path, ...]`；前者有序定位固定预测，后者引用已有模型绑定记录。纯事后 signal 评价可明确传空绑定序列；用于 tradable/full 的每个模型必须有可核对的历史使用依据 |
 | `SignalInput` | 上述两种类型的联合；由来源准备边界分别处理，交易计算只看到同一 `SignalEvent`，不识别来源类型 |
-| 初始账户 | 现金、持仓数量、可卖数量、持仓成本和计算所需的既有权益状态；全现金起步明确给空持仓，不能把已有仓位假装为零成本；运行时构造本次独占的 `PortfolioState` |
+| 初始账户 | 快照时刻与账户交易日、现金、持仓数量、可卖数量、持仓成本和计算所需的既有权益状态；全现金起步明确给空持仓，不能把已有仓位假装为零成本；运行时构造本次独占的 `PortfolioState` |
 | 风控输入记录 | `case_id`、风控前目标或表示定时检查的 None、当时 `RiskContext`；必要的历史峰值、估值和挂单占用属于输入，不能在离线复验时用后来账户补齐 |
 | Fake 成交配置 | 交易日程、模拟终点、执行观察与价格来源、资金/数量约束、明确费用及滑点；tradable 固定为参考成交，execution/full 必须声明 H03 的价格模型及适用数量假设，不能缺失后回退参考成交；小资金假设不推导未知冲击或排队模型 |
 | 报价规则或固定报价 | full 在原有策略配置中声明买卖报价来源与参数，由现有目标转委托计算根据最终方向生成 limit_price；execution 直接读取订单上的报价；tradable 无报价可成交性要求，不要求提供无用参数 |
@@ -776,6 +794,14 @@ composition root 显式传入。记录输入的 `start/end` 选择决策时点�
 不能为使构造方便而发明默认现金、风险阈值、交易时点或物理单位。现有 `StrategyConfig`
 及其两个具名参数模型继续复用。所选规则缺少正式语义时，保留具体待定项，不从代码常量
 反推已采用的规则。
+
+固定预测的 `PredictionInputs` 当前只关联模型内容、特征摘要和决策时刻，不含
+`ModelUse` 的历史可用证据。读取记录仍复用现有身份校验；用于交易时，再读取显式提供的
+绑定记录，按模型引用及内容摘要关联其 `ModelUse`、`TrainingRunRecord` 和训练数据定义，
+沿用现有成熟时间与生效时间检查，并以这批记录实际首次决策时刻核对。绑定引用缺失或
+不匹配时准备失败，不从文件名猜测，也不因为文件今天已存在就允许过去交易。
+这复用当前 workflow 写出的 `binding.json` 所含事实，不创建模型或 Signal registry，
+也不重新指定另一份推理模型。纯事后信号统计不据此声称历史可交易。
 
 具体 submission 字段如下。`InitialAccount`、`FakeExecutionConfig`、`RiskConfig` 是上表
 所述配置的拟议名称，放在现有
@@ -909,7 +935,7 @@ Components 容器；其中挂单、订单条款和新时间字段依赖 H03 的�
 | 位置 | 字段 | 含义与准备责任 |
 | --- | --- | --- |
 | Context | `execution_target: TargetEvent \| None` | 本时点待提交目标；每个新 Context 初始化为 None，提交后清空 |
-| Context | `cancel_order_ids: tuple[int, ...]` | 本时点风险要求撤销的旧单，初始为空；执行步骤先消费撤单，再处理目标，不使报告成为下单入口 |
+| Context | `cancel_order_ids: tuple[int, ...]` | 本时点风险要求撤销的旧单，初始为空；与目标一起交给执行边界对账，仅撤单时也必须消费，不使报告成为下单入口 |
 | Context | `mark_prices: Mapping[str, float]` | 当前可见且覆盖估值及所选风险规则所需证券的价格，由前置事实准备步骤取得独立只读映射 |
 | Context | `market: MarketDataView` | 当前时点的市场查询视图；历史案例保存取出的事实快照，不保存会继续推进的视图引用 |
 | Context | `order_terms: Mapping[str, OrderTerms]` | 本时点适用的委托条款；从已校验日程及执行配置准备，不把首笔订单的绝对生效/到期时刻用于所有时点 |
@@ -923,7 +949,7 @@ Components 容器；其中挂单、订单条款和新时间字段依赖 H03 的�
 | --- | --- |
 | `PortfolioStep` | 由当前信号或有效策略计划产生并记录风控前 TargetEvent，将其设为本时点 `execution_target`；历史目标只用于解释，不供定时风控恢复请求 |
 | `RiskDecisionStep`，仅需要时组装 | 对原始目标或表示定时检查的 None 及当前事实调用 `RiskManager.apply`，记录案例与决策，取得明确撤单要求及待提交目标 |
-| `SubmitTargetsStep` | 先消费 `cancel_order_ids`，再将存在的 `execution_target` 交给同一 `submit_targets`；不依赖风险 Step 补记原始策略目标，拒绝后不恢复原目标 |
+| `SubmitTargetsStep` | 有目标时将目标与撤单要求一起交给 `submit_targets`，由执行边界在撤销前保留替代单所需的原条件；仅有撤单时调用 `cancel_orders`。不依赖风险 Step 补记原始策略目标，拒绝后不恢复原目标 |
 | `RecordedOrdersStep` | 固定委托直接进入同一 `submit_orders/cancel_orders`，不虚构目标或 RiskResult |
 
 例如策略希望持有 1,000 股：参考回放省略风险 Step，执行接收到的目标仍是 1,000 股；
@@ -1100,8 +1126,10 @@ PortfolioStep 展示有新信号时的策略分支；计划退出仍须在其对
 不能以没有新信号为由取消已声明的退出任务。
 
 RiskDecisionStep 保存原始请求或定时检查事实，再调用同一风险入口取得动作；不再读取
-target_tape 最后一项作为新请求。SubmitTargetsStep 先处理明确撤单，再提交存在的目标，
-即使没有目标也不能漏掉撤单。持续冻结与恢复不在示例范围；清仓目标自身不等于清仓成交。
+target_tape 最后一项作为新请求。SubmitTargetsStep 将目标与撤单要求同时交给执行边界，
+由该边界先计算对账动作、再撤销和提交；只有撤单时也必须执行。原示例在 Step 先删除
+挂单，再要求 submit_targets 继承旧报价和期限，丢失了继承依据，不能直接编码。
+持续冻结与恢复不在示例范围；清仓目标自身不等于清仓成交。
 
 ```python
 # filepath: src/trading/backtest/steps/backtest_layers.py
@@ -1235,23 +1263,27 @@ class SubmitTargetsStep:
         Example:
             context = step.run(context)
         """
-        if context.cancel_order_ids:
+        target = context.execution_target
+        if target is None:
+            if not context.cancel_order_ids:
+                return context
             self.execution.cancel_orders(
                 ts_us=context.timing.ts_us,
                 order_ids=context.cancel_order_ids,
             )
-            context.cancel_order_ids = ()
-
-        target = context.execution_target
-        if target is None:
-            return context
-
-        self.execution.submit_targets(
-            target=target,
-            terms=context.order_terms,
-            market=context.market,
-        )
+        else:
+            self.execution.submit_targets(
+                target=target,
+                cancel_order_ids=context.cancel_order_ids,
+                terms=context.order_terms,
+                market=context.market,
+            )
+        context.cancel_order_ids = ()
         context.execution_target = None
+        context.requested_wakeup_ts_us.update(
+            pending.intent.expires_ts_us
+            for pending in context.state.pending_orders.values()
+        )
         return context
 ```
 
@@ -1271,6 +1303,10 @@ advance，按新可见观察撮合并通过唯一结算入口更新账户；返�
 重复结算。示例没有实现撮合器，也没有用立即全量成交替代 H03 的市场假设。
 当前 order_terms 对于策略新请求来自有效计划；定时风险缩减旧买单时则必须继承该单的
 原到期时刻。条款准备不能一律使用“当前时刻加一个新窗口”，否则会重新引入过期补买。
+提交后将仍有效订单的到期时刻加入 `requested_wakeup_ts_us`，Pipeline 才能在没有行情
+时继续处理到期。`RecordedOrdersStep` 接纳固定订单后承担相同的调度职责；重复时刻由
+时钟合并，已撤单留下的唤醒不会恢复订单。这里遍历当前挂单的明确事实，不另存一份
+到期状态；这些订单在前置 advance 后仍有效，截止时刻均晚于当前时刻。
 
 #### 关键代码：五种模式只改变组装
 
@@ -1349,15 +1385,39 @@ RecordedOrdersStep 的输入包含按原顺序排列的委托及撤单命令，�
 
 ### 实施映射与候选验收
 
-| 现有位置 | 所需调整 |
-| --- | --- |
-| `src/jobs/requests.py`、`src/config/backtest_config.py`、`src/cli.py`、`src/workflows/backtest.py` | 保留五种 mode 和有类型 submission；workflow 只组装共享组件与顺序，仅适配边界路由；移除原入口对模型、策略、资金一律必填的假设 |
-| `src/trading/backtest/pipeline.py`、`context.py` | 保留按需 Step 调度，三种交易回放共用时间和账户生命周期；单次评价使用最小 Context；增加本时点 execution_target 和撤单要求，清除 State 中仅属于事后报告的五组累积框架，不向单项评价塞空账户 |
-| `src/trading/backtest/steps/backtest_layers.py`、`src/trading/sim/components.py` | 执行消费 TargetEvent，解除 RiskResult 前置依赖；行情/日切脱离信号产生副作用，原始目标记录脱离风险副作用；按需绑定组件，替换调用链后清除失效的全量 Components 和 NoOp；评价移到固定结果的消费路径 |
-| `src/training/evaluation.py`、`src/trading/engines/backtest_eval.py` | 在已有记录及公式上增加批次评价；tradable 与 full 从各自策略/账户/成本事实调用同一组合评价；execution 与 full 调用同一委托/成交评价；原两期价格诊断不充当完整组合评价，不复制 IC |
-| 拟新增 `src/trading/risk/evaluation.py`，以及已有 `risk/engine.py`、`risk/base.py` | 固定案例与 full 调用同一风险计算；可空请求表达定时检查，输出明确目标与撤单；不读取历史目标恢复意图；规则循环与动作计算各只有一份 |
-| `src/trading/execution`、`core/events.py`、`core/ledger.py`、`portfolio/state.py` | H03 独立采用边界：提交/推进拆开、挂单和资源占用、成交身份与唯一结算；参考和市场模拟复用这些业务事实 |
-| `src/trading/reporting`、`backtest/steps/metrics_persist.py`、`report.py` | 消费已固定事实；逐决策预测与按日 IC 汇总区分，组合统计使用明确日终采样，执行完成率按订单/数量计算；输出实际覆盖，不生成五类成功占位指标 |
+编码时沿用现有模块的领域职责，整合后的改动清单如下。这里描述替换完成后的代码结构，
+不要求先创建新目录或同时维护旧、新两套流程；没有 `src/` 前缀的位置均相对
+`src/trading/`。执行、事件与结算属于 H03 的独立采用边界，具体时序见该节。
+
+| 代码单元 | 保留及修改后的职责 | 替换完成后删除的内容 |
+| --- | --- | --- |
+| `src/jobs/requests.py`、`src/config/backtest_config.py`、`src/cli.py` | 保留五种 mode；解析为各自有类型 submission，仅在适配边界路由，参数按实际能力提供 | 模型、策略、资金对所有模式一律必填的假设；核心中的 mode 分支 |
+| `src/workflows/backtest.py` | 五个具名入口；各自直接列出 Step tuple，复用现有 experiment 身份、Access 与 Instrumentation；模型绑定准备由信号来源消费方共同调用 | `run_daily_alpha_backtest` 的全模式八层组装；已无调用方的全量 Components |
+| `backtest/pipeline.py`、`context.py` | 三种交易模式共用时间和账户生命周期；两个单次评价 Context；交易 Context 传当前可见事实、execution_target 和撤单要求，State 延续账户、挂单及原始事实 | `SignalEvaluationResult` 对未来价格的交易 Context 依赖；运行中累积的五套评价 frame；单项评价的空账户 |
+| `backtest/steps/backtest_layers.py`、`sim/components.py` | 共享信号、组合、风控、提交、推进、估值动作；日切由推进拥有，目标由策略记录；执行直接消费 TargetEvent，评价消费固定结果；`run` 本身就是 Step 边界 | RiskResult 前置依赖、NoOp、日切依赖信号及风险步骤代记目标的副作用；没有独立计算用途、仅被 `run` 转调的 `__call__` |
+| `src/training/evaluation.py` | 增加有序批次评价，复用已有记录读取及 Rank IC 公式 | 将训练日频汇总直接用于同日多次决策的调用 |
+| 拟新增 `risk/evaluation.py`，已有 `risk/engine.py`、`risk/base.py` | 固定案例与 full 共用风险链和动作计算；可空请求表示定时检查，输出明确目标、撤单及规则观察 | 用历史目标恢复过期意图；blocked 混指拒绝和清仓；报告中另跑一遍风险规则 |
+| `engines/replay.py` | 完整目标的领域归一和估值；有效挂单、缺分数持仓与容量共同参与目标形成 | 下游再按缺键推断清仓、保持或新增仓位的逻辑 |
+| `portfolio/constructors` | 保留 Threshold / TopKHysteresis 的信号到目标计算；有状态构造器每次运行新建 | 无调用方的 `name()` 转发用途、仅为反射日志保留的类型结构；不凭目录大小做清理 |
+| `execution/engine.py` | 订单接纳、挂单生命周期和结算顺序；目标路径和冻结订单路径汇合到同一接纳方法 | 同次调用即撮合的 `execute_targets`；强制平仓时跳过 T+1 的开关 |
+| `execution/venue`、`ideal.py` | 参考成交计算与报价/观察量计算共用订单和成交类型，venue 不记账；参考规则不调用报价模型 | IdealExecution 中另一份现金、持仓、费用与 ledger 路径；即时全量 fill 假设 |
+| `execution/policies` | 目标差量、报价和数量形成属于 constraints；外部具体订单合法性属于 validation | clipping 后对相同可信数量、价格、T+1 条件反复执行相同检查 |
+| `core/events.py`、`core/ledger.py` | 保存委托窗口、报价、状态与稳定成交身份；同时用于固定委托复演和 full，ledger 拥有结算身份索引 | 关键交易字段藏在 meta 中；只保存提交与即时全量成交的记录形状 |
+| `execution/settlement.py`、`portfolio/state.py` | settlement 唯一协调费用、账户和 ledger；portfolio 只应用已经认可的精确成交数量 | 以价格/数量拼接的 FillKey；卖出不足时偷偷 `min(qty, position)` 后仍将原数量写入账本 |
+| `sim/kernel.py`、`session.py`、`core/time.py` | 时间和可见性归 ReplayClock、行情准备与交易 Pipeline；按剩余独立调用方决定 Kernel/Session 是否仍必要 | 只为一条日线构造 Session → Kernel → BarContext 的多层往返；由 frequency 推断执行许可 |
+| `reporting`、`engines/backtest_eval.py`、`backtest/steps/metrics_persist.py`、`report.py` | 固定事实上的纯评价、持久化与展示；tradable/full 共用组合评价，execution/full 共用成交评价；逐决策及按日 IC 分开、收益按日终采样、成交按订单及数量计算，输出实际覆盖 | 用两期价格诊断冒充策略收益；fill 条数当订单数；五类成功占位指标；把无定义值统一改成 0 或把非法值改成成功的 null |
+
+固定等权、固定期限策略不能伪装成现有 Threshold / TopKHysteresis 的一个参数组合。
+它需要保存本轮固定名单、仍有效的入场窗口和退出计划；数量按当时现金、延续持仓、
+可见价格及证券数量规则产生。该策略计算放在 `portfolio/constructors` 的具名实现内，
+退出计划与窗口也是策略自身状态；订单器只处理已经生成的目标。是否采用这一具体策略
+由对应交易任务决定；当前两个构造器仍可作为分别具名的对照策略，不据此声称固定基线
+已经实现。固定期限的起算、失败后的下一正式日重试按 H03 日程处理，不能借更换类名
+改变已有用户决定。
+
+输入准备遵循上文预测来源与绑定契约。模型推理只接收按决策时点准备的特征，signal
+来源不能顺便提供未来标签或执行区间。Full 的标签读取严格在交易完成之后；相同固定
+记录交给单项评价得到相同逐条结果。
 
 拟采用时，[Offline owner](../../docs/offline_workflow_contract.md#backtest-workflow) 扩充其
 Backtest 章节，唯一拥有验证任务、编排、状态与输出解释；
@@ -1383,6 +1443,8 @@ Backtest 章节，唯一拥有验证任务、编排、状态与输出解释；
 | 报价可成交性与小资金假设 | execution/full 必须经过同一价格模型；tradable 固定按参考价成交合法数量；没有盘口数据时仅报告所声明模型的条件结果 |
 | 冻结命令复演 | 保存输入委托/撤单的原始顺序及全部条件；成交、拒单和到期作为输出比较 |
 | 模型或策略是否值得采用 | 另行固定比较基线、选择数据和最终验证数据；本轮工程验收不作盈利结论 |
+| 首轮风险规则的精确输入与动作 | 单证券/总敞口和回撤候选须给出完整目标、有效买卖单、所需价格及参数；缺少价格不能按零敞口通过，拒绝与显式减仓分别编码；非正权益及数量量化等未明确条件在正式化前确定，不继承旧实现的 pass 或 int 截断 |
+| 金额、报价与部分成交收费精度 | 根据任务费用和价格步长给出舍入及累计收费口径；不默认二进制浮点足以履行现金与报价不变量。工程夹具可使用精确、可人工核算的数值，不把其精度假设推为真实市场契约 |
 
 实施验收固定为：五种 mode 名称保留，不增加或用 `replay` 替换；信号模式没有策略/资金
 仍能评价，且不创建交易事实；`tradable_alpha_eval` 确实消费声明的组合规则与成本，改变
@@ -1476,8 +1538,24 @@ mode 或 CLI；没有 `getattr`/反射发现组件、动态 Step registry、全�
   2026-10-09 首次文档整合后、补充价格模型之前，导言/索引及 H02/H03 的 66 个不同本地文件与锚点引用检查通过，
   全文 37 对代码围栏配对，H02/H03 的 9 个 Python 代码块通过 AST 解析；非占位函数的
   参数/返回注解及 15 个公开定义的 Example docstring 检查通过。H01 主体与修改前快照
-  一致，表格列数和 `git diff --check` 通过。本次只修改文档，没有执行拟议业务代码，
-  也没有重跑运行源码测试；这些静态检查不替代候选接口、账户闭环或真实数据验收。
+  一致，表格列数和 `git diff --check` 通过。该次只修改文档，没有执行拟议业务代码，
+  也没有重跑运行源码测试；这些历史静态检查不替代候选接口、账户闭环或真实数据验收。
+  2026-10-09 按用户最新的代码级设计要求，以本节所列 `26c1018` HEAD 及 Python 3.13.13
+  核查现状，运行
+  `PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -B -m pytest -q -p no:cacheprovider tests/trading tests/workflows/test_backtest.py tests/config/test_backtest_config.py`，
+  结果为 52 passed、42 warnings；警告来自 joblib 对 NumPy shape 的弃用调用。测试输入为
+  该 HEAD 的既有夹具及临时目录，没有历史行情实验或生产写入，只证明现有实现的覆盖。
+  同一源码的额外合成反例：现金 20,000、空持仓，先以 `2026-07-03` 调用日切，再应用
+  `FillEvent(ts_us=1, symbol="600000", side=Side.BUY, qty=100, price=10, order_id=1)`，
+  cost=None；可卖数量为 0，再用相同日期日切后变为 100。另在空 ledger 中记录一笔
+  200 股买单、ts_us=1、order_id=1，再分别于 2、3 记录该单各 100 股、价格 10 的成交，
+  将其与空 EquityCurve 交给 BehaviorReport，fill_rate 为 2.0。两例分别定位同日日切
+  与按成交条数计算完成率的问题，不把暴露缺口的检查称为修复通过。
+  本次整合后的本卷宗有 60 个不同本地文件/锚点引用、14 对代码围栏、10 个 Python
+  代码块；链接、围栏、AST、表格列数、非占位函数注解及 15 个公开定义的 Example
+  检查通过，67 个 trading 模块 AST 与 `git diff --check` 通过。历史已确认交易边界
+  与 HEAD 原文一致。仅本 README 有工作树差异；关键代码是文档草案，未执行新 API、
+  报价撮合、订单对账、动态调度或候选闭环，相关验收仍待实施后运行。
 - Conclusion: 已交付保留五种 mode 的代码级设计，包含共享组件及组合矩阵、编排入口、
   请求字段、调用链、状态所有权、预测评价、风险计算与目标传递的关键代码、五种组装、
   执行接口、改动清单及可证伪验收。
@@ -1490,8 +1568,11 @@ mode 或 CLI；没有 `getattr`/反射发现组件、动态 Step registry、全�
   实施依赖。现有调度测试及六个动作算例不足以证明候选闭环完成。
   随后的用户澄清明确两种执行验证模式必须采用价格模型，其余默认价格可成交；已同步
   模式输入、共享组装、比较归因及 H03 报价设计，未将旧成交假设的检查视为新模型通过。
-- 状态：设计为 open draft；本轮仅修改本卷宗，工作树中的其他既有及并行改动原样保留；
-  本轮无 commit、push、merge、release、deploy 或外部状态写入。
+  最新源码复核将字段和改动位置落到现有模块，补齐固定预测的历史绑定、撤单前对账及
+  到期唤醒；52 项既有测试通过不代表这些候选接口已经落地。
+- 状态：设计为 open draft；2026-10-09 用户授权提交本次代码级设计记录，本提交仅包含
+  本卷宗。运行代码、配置、测试与正式 owner 未修改；未 push、merge、release、deploy
+  或写入外部状态。
 
 ## H03 后续行情驱动的模拟执行
 
@@ -2127,7 +2208,7 @@ clipping、validation、settlement 和选定 venue。容器仍由 `BacktestState
 
 | `ExecutionOrchestrator` 拟议方法，均为 keyword-only 参数 | 返回与副作用 |
 | --- | --- |
-| `submit_targets(target: TargetEvent, terms: Mapping[str, OrderTerms], market: MarketDataView) -> tuple[OrderEvent, ...]` | 对账当前持仓和仍有效委托，先撤冲突订单，再共用数量与报价规则形成 intent 并调用 submit_orders；纯缩减的替代委托保留原报价和到期；只记录订单事实和占用，不产生 fill |
+| `submit_targets(target: TargetEvent, cancel_order_ids: Sequence[int], terms: Mapping[str, OrderTerms], market: MarketDataView) -> tuple[OrderEvent, ...]` | 对账撤销前的持仓与有效委托，保留纯缩减替代单的原条件；确认所需撤单后，再根据已释放资源共用数量与报价规则形成 intent 并调用 submit_orders。只记录订单事实和占用，不产生 fill |
 | `submit_orders(orders: Sequence[OrderIntent], market: MarketDataView) -> tuple[OrderEvent, ...]` | 校验具体委托、记录接纳/拒绝、占用资源；固定委托回放保持输入数量，合法性失败明确拒绝，不暗中缩量后冒充原订单成交 |
 | `advance(ts_us: int, observations: Sequence[ExecutionObservation]) -> tuple[FillEvent, ...]` | 撮合此前有效订单，依次结算新成交、更新剩余量及占用，再使到期剩余量失效；返回本次已结算成交；空观察仍处理到期 |
 | `cancel_orders(ts_us: int, order_ids: Sequence[int]) -> tuple[OrderEvent, ...]` | 处理已记录撤单请求并释放剩余占用；不回滚成交；对已终结订单的请求记录明确未执行原因 |
@@ -2136,6 +2217,24 @@ clipping、validation、settlement 和选定 venue。容器仍由 `BacktestState
 有效委托，不在 `SubmitTargetsStep` 或 workflow 复制一份。目标路径可以在产生具体
 intent 前按既定规则约束数量；冻结委托路径则评价原订单是否合法及能成交多少，不能
 把已经明确的请求改小以提高完成率。具体订单的接纳和所有后续生命周期共用同一实现。
+
+**撤单与替代单必须在同一对账边界内计算。** H02 的目标提交 Step 不能先删掉旧单，
+再要求执行器从空挂单集合推断继承关系。submit_targets 在修改状态前保存本次涉及的
+PendingOrder 快照，据此区分保留、完全取消、纯缩量替换和新的反向委托；这些是本次
+调用的局部计算，不建立另一个长期订单状态。真正可复用的资金和可卖量仍在确认撤单后
+从账户与剩余挂单计算，预先生成的对账意图不能提前释放资源。
+
+例如持仓 600、旧买单余量 400、报价 10、到期 14:32，14:31 风险目标降到 800：
+先从原快照算出仅需保留买入 200；记录旧单撤销后，新单生效不得早于 14:31、报价仍为
+10、到期仍为 14:32。即使当前行情已涨到 10.20，也不能借缩量重新报价。若目标降到
+500，则旧买单完全撤销，新卖单数量为 100，报价按本次明确的卖出规则生成；两种动作
+不能共用“沿用旧报价”的分支。仅撤单而无目标时使用 cancel_orders；目标存在时，
+传入的撤单要求与目标须在同一边界对账，不得原样重发被明确禁止的增仓。
+
+目标等于当前持仓加净挂单承诺时不新建委托。存在多个同证券挂单时，按生效时间和原始
+提交顺序处理，每个替代量保留对应旧单的条件，不能把不同报价或期限合成一个新窗口。
+对应取消与新委托依次进入本次原始命令记录，execution 模式读取该顺序复演；只保存
+最终目标无法复现报价、窗口及部分成交路径。
 
 同一 Fake 实现以当前挂单和新可用观察产生 `FillEvent`，venue 不写账户或账本。
 tradable 在后续参考价格上默认成交，忽略价格可达性及市场量限制，仍保留账户和委托
@@ -2162,9 +2261,24 @@ Step 和报告不能再对 `advance` 返回的成交调用结算。唯一入账�
 成交更新挂单余量及占用。去重覆盖整条路径，不只是现金。不同身份的两笔成交即使所有
 数值相同也分别入账，不能使用当前 PortfolioState 的价格/数量组合键替代成交身份；
 重复处理不得再次扣减剩余量或释放资源。
+
+具体将 `SettlementEngine.settle_fill` 改为
+`settle_fill(*, fill: FillEvent, portfolio: PortfolioState, ledger: ExecutionLedger) -> bool`：
+首次完成账户与账本写入返回 True；已完成且全部事实一致返回 False。相同 fill_id 对应
+不同内容属于事实冲突，抛错并中止；False 不能兼指拒单、无持仓或结算失败。该返回值由
+advance 消费，仅在 True 时递减订单余量和重算占用，返回给 Step 的也只有首次结算的
+成交。成交身份索引由已有 ledger 持有并与记录同时更新，不再由 portfolio 独立维护
+一份去重状态。ledger 的 FILL 记录保留 fill_id、observation_id、reference_price 及
+实际费用，不能将这些用于复演的字段藏在无约束 meta 中。
+
 未知的内部不变量错误中止本次回放，不在更新了一半账户后返回成功。这里不设计跨进程
-恢复或数据库事务平台。成本模型由 settlement 持有，数量预估使用同一费用定义；部分成交
+恢复或数据库事务平台；失败后的内存状态不能继续推进或输出成功报告，重新运行从同一
+初始输入开始。账户只应用已接纳的精确成交数量，不能把超量卖出截小后留下不同数量的
+账本。成本模型由 settlement 持有，数量预估使用同一费用定义；部分成交
 所需的订单累计金额/已收费用从同一 ledger 获取，不能每笔成交都重置整单最低收费。
+例如夹具规定每单佣金为 `max(成交累计金额 × 0.0003, 5)`，其余费用为零，同单两笔
+各 100 股、价格均为 10：两次增量佣金分别为 5 和 0，合计为 5；不是每笔都收 5。
+该数值仅验证明确的累计收费规则，真实费用和舍入参数由任务提供。
 当前 `settle_fill(fill, market_price, portfolio, ledger)` 的独立参考价参数改从
 `fill.reference_price` 读取，避免回调者把当前新价格代入过去成交。
 
@@ -2183,7 +2297,7 @@ Step 和报告不能再对 `advance` 返回的成交调用结算。唯一入账�
 | 3 | `SignalStep`：在声明的决策时点产生或读取固定信号，保存预测记录 | tradable、full |
 | 4 | `PortfolioStep`：调用同一策略产生目标，记录风控前原始目标；计划退出不依赖新信号 | tradable、full |
 | 5 | `RiskDecisionStep`：在策略目标或风险日程触发时保存真实上下文并调用风险链，记录调整与旧单处置要求 | full |
-| 6 | `SubmitTargetsStep`：先消费明确撤单，再将存在的目标及条款交给 `submit_targets` | tradable、full |
+| 6 | `SubmitTargetsStep`：将目标、撤单要求及条款一起交给 `submit_targets`；仅撤单时调用 `cancel_orders`，接纳后登记到期唤醒 | tradable、full |
 | 3，替代策略阶段 | `RecordedOrdersStep`：按记录顺序消费本时点撤单/委托，调用 `cancel_orders/submit_orders` | execution |
 
 本时点 `execution_target` 的读写和原始事实保存沿用 H02 的目标数据契约。
@@ -2228,6 +2342,7 @@ Step 基类、装饰器注册或依赖图。最终指标从已经保存的交易
 | 候选价恰好等于报价；滑点后越过报价 | 前者按本轮假设进入数量判断，后者等待；两种模式使用相同规则 |
 | tradable 的参考价为 10.05，账户及时间条件满足 | 按参考价成交合法数量，不调用报价筛选；signal/risk 不生成 fill |
 | full 风控将原买入目标降到当前持仓以下 | 新减仓单使用卖出报价规则；纯缩量的旧单保留原报价及到期时间 |
+| 持仓 600、旧买单余量 400/报价 10/到期 14:32，14:31 目标降为 800，当前价 10.20 | 撤销旧单后只重发 200，报价仍为 10、到期仍为 14:32；撤销前保留的条件可查，冻结命令包含按序的撤单与替代单 |
 | 任意后续行情改变；冻结委托交给 execution 复演 | 不改写已提交报价；同输入下与 full 的价格判断、成交及未完成原因一致 |
 | 14:30 才提交委托，修改 14:30 后行情或标签 | 此前信号、目标和委托不变；随后成交可随行情变化；不能使用刚结束分钟完成新单 |
 | 零费率夹具，现金 20,000、买入 1,000 单位，随后价格均为 10，两分钟可分配量各 300 | 只成交 600，现金 14,000、持仓 600；窗口结束撤销余下 400，不出现 1,000 的虚拟持仓 |
@@ -2238,7 +2353,10 @@ Step 基类、装饰器注册或依赖图。最终指标从已经保存的交易
 | 无新信号时触发持仓风险，或已有增仓挂单 | 风控仍被调度；按明确规则处理旧单和减仓；减仓未成交继续报告持仓风险 |
 | 缺少分钟行、缺少完整数据对象 | 前者报告观察不足，后者按 owner 失败；二者都不能变成“已验证成交/零成交” |
 | 同一成交事件重复处理，与两笔属性相同但身份不同的成交 | 前者只结算一次，后者均入账 |
+| 相同 fill_id 的价格或数量被改变 | 明确失败，账户、账本或余量不得被当作一次合法重放继续处理 |
 | 当日可卖、首轮支持范围、到期边界与费用 | 按夹具契约执行；不支持的订单条件在入口拒绝；无行情也到期；部分成交费用与整单规则一致 |
+| 当日买入 100 后再次产生信号；从当日快照启动 | 同日后续信号及首次调度均保留当日买入限制；仅进入下一个正式账户交易日才更新可卖事实 |
+| 一笔 200 股订单分两次各成交 100，按上文佣金夹具 | 数量完成率与订单完成率均为 100%，佣金累计 5；不能报告 200% 或累计佣金 10 |
 | 最后完整分钟恰好在窗口结束可用；执行观察明确晚到 | 前者先撮合再撤余；后者在首轮准备边界拒绝，不吞掉观察并宣称已覆盖延迟回补 |
 | 同一底层成交同时形成日线和分钟聚合 | 可分别用于特征或估值，不能作为两份执行量预算 |
 | FakeLive 仅改变交付批次，保持可用时刻及命令顺序 | 与离线回放的信号、目标、风险、成交及账户一致 |
@@ -2315,7 +2433,10 @@ BarTime、交易窗口及持有期限规则拟由 Offline owner 的回测章节�
   VWAP，保留基础报价模型，省略复杂订单、盘口及延迟回补，定义 FakeLive 交付一致性与
   具体账户轨迹。按用户澄清，价格模型只用于 execution/full，tradable 默认成交；
   报价来源、滑点前后判断、资金占用、风险减仓报价和模型结论边界均已补齐。
+  最新代码级设计将目标与撤单要求交给同一次对账，撤销前保存继承条件；结算返回是否
+  首次应用，约束身份冲突、部分成交收费与全部副作用，并将日切及完成率反例列入验收。
   纯时间计算通过有限合成检查，重复成交问题已复现；订单生命周期、动态回放、真实数据
   及新账本场景尚未实现或运行，不能将时间算术或定时动作算例通过当作回测完成。
-- 状态：设计为 open draft；本轮仅修改本卷宗，工作树中的其他既有及并行改动原样保留；
-  本轮无 commit、push、merge、release、deploy、真实下单或权威外部状态写入。
+- 状态：设计为 open draft；2026-10-09 用户授权提交本次代码级设计记录，本提交仅包含
+  本卷宗。运行代码、配置、测试与正式 owner 未修改；未 push、merge、release、deploy、
+  真实下单或写入权威外部状态。
