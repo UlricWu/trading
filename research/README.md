@@ -12,4 +12,5 @@
 - [股票标签设计与学习目标](label-design/README.md)
 - [量化交易与研究假设：从收益来源到跌停反弹示例](hypothesis-design/README.md)
 - [有限 L2 订阅下的机器学习训练与实盘对齐](subscription-training/README.md)
-- [训练回测与 live 共用计算边界](training-backtest-live/README.md)
+- [训练、模型交付与推理](training/README.md)
+- [回测架构与模拟执行](backtest/README.md)
