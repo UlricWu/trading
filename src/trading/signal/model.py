@@ -6,7 +6,6 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from src.trading.market.data_view import MarketDataView
 from src.trading.signal.base import SignalProvider
 from src.trading.signal.diagnostics import SignalDiagnostics
 from src.training.inference_model import InferenceModel
@@ -20,7 +19,7 @@ class ModelSignalProvider(SignalProvider):
         provider = ModelSignalProvider(model=inference_model)
         scores = provider.scores(
             ts_us=1,
-            data_view=data_view,
+            features=features,
             symbols=("600000",),
         )
     """
@@ -40,7 +39,7 @@ class ModelSignalProvider(SignalProvider):
         self,
         *,
         ts_us: int,
-        data_view: MarketDataView,
+        features: np.ndarray,
         symbols: Sequence[str],
     ) -> dict[str, float]:
         """Return scores only for rows retained by fitted preprocessing.
@@ -48,12 +47,10 @@ class ModelSignalProvider(SignalProvider):
         Example:
             scores = provider.scores(
                 ts_us=1,
-                data_view=data_view,
+                features=features,
                 symbols=("600000", "000001"),
             )
         """
-        features = data_view.get_feature_matrix(symbols)
-
         if self.diagnostics:
             self.diagnostics.on_before_predict(
                 ts_us=ts_us,

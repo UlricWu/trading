@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 from src.trading.core.equity import EquityCurve
 from src.trading.core.ledger import ExecutionLedger
 from src.trading.core.tape import SignalTape, TargetTape
-from src.trading.engines.backtest_eval import (
+from src.trading.backtest.evaluation import (
     ExecutionQualityFrame,
     FullBacktestFrame,
     RiskEffectFrame,

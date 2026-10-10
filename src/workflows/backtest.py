@@ -29,7 +29,7 @@ from src.trading.backtest.steps.facts_persist import FactsPersistStep
 from src.trading.backtest.steps.metrics_persist import MetricsPersistStep
 from src.trading.backtest.steps.report import ReportStep
 from src.trading.backtest.timing import resolve_backtest_timing
-from src.trading.sim import components as sim_components
+from src.trading.backtest import components as sim_components
 from src.training.record import TrainingRunRecord
 from src.utils.path import PathManager
 from src.utils.datetime_utils import DateTimeUtils

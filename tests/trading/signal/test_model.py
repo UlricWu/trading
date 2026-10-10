@@ -17,11 +17,6 @@ class _FirstColumnModel:
         return values[:, 0]
 
 
-class _DataView:
-    def get_feature_matrix(self, symbols: object) -> np.ndarray:
-        return np.array([[1.0], [np.nan], [3.0]])
-
-
 class _Diagnostics:
     def __init__(self) -> None:
         self.after: tuple[Mapping[str, float], int, int] | None = None
@@ -59,7 +54,7 @@ def test_scores_map_only_retained_rows_to_their_original_symbols() -> None:
 
     scores = provider.scores(
         ts_us=1,
-        data_view=_DataView(),  # type: ignore[arg-type]
+        features=np.array([[1.0], [np.nan], [3.0]]),
         symbols=("600000", "000001", "600001"),
     )
 

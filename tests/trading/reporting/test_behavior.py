@@ -4,7 +4,7 @@ from decimal import Decimal
 from src.trading.core.equity import EquityCurve
 from src.trading.core.events import FillEvent, Side
 from src.trading.core.ledger import ExecutionLedger
-from src.trading.execution.settlement import SettlementEngine
+from src.trading.backtest.execution.settlement import SettlementEngine
 from src.trading.portfolio.state import PortfolioState
 from src.trading.reporting.behavior import BehaviorReport
 

@@ -5,7 +5,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from src.trading.core.time import (
-    BarTime, ReplayClock, TradingWindow, advance_trading_minutes, trading_day_exit_ts,
+    BarTime, TradingWindow, advance_trading_minutes, trading_day_exit_ts,
 )
 from src.utils.datetime_utils import DateTimeUtils
 
@@ -52,22 +52,6 @@ def test_trading_days_count_entry_as_zero_and_require_coverage() -> None:
             open_dates=dates, timezone=ZoneInfo("Asia/Shanghai"))
 
 
-def test_clock_merges_dynamic_deadlines_once_without_synthetic_bars() -> None:
-    clock = ReplayClock.from_iterable((1, 3, 3, 5))
-    visited: list[int] = []
-    for ts in clock:
-        visited.append(ts)
-        if ts == 1:
-            clock.schedule(ts_us=2)
-            clock.schedule(ts_us=3)
-            clock.schedule(ts_us=2)
-        if ts == 3:
-            clock.schedule(ts_us=4)
-    assert visited == [1, 2, 3, 4, 5]
-    with pytest.raises(ValueError, match="strictly after"):
-        clock.schedule(ts_us=5)
-
-
 def test_complete_bar_time_supports_late_availability_without_granting_execution() -> None:
     bar = BarTime("minute", 1, "2026-07-03", 0, 60_000_000, 60_000_002)
     assert bar.available_ts_us > bar.end_ts_us
@@ -75,26 +59,3 @@ def test_complete_bar_time_supports_late_availability_without_granting_execution
         BarTime("minute", 1, "2026-07-03", 0, 60_000_000, 1)
     with pytest.raises(ValueError, match="match declared size"):
         BarTime("minute", 1, "2026-07-03", 0, 1, 1)
-
-
-def test_dynamic_deadline_cannot_extend_the_explicit_simulation_endpoint() -> None:
-    clock = ReplayClock.from_iterable((1, 3, 7), end_us=3)
-    visited: list[int] = []
-    for ts in clock:
-        visited.append(ts)
-        if ts == 1:
-            clock.schedule(ts_us=2)
-            clock.schedule(ts_us=4)
-    assert visited == [1, 2, 3]
-
-
-def test_clock_queries_include_dynamic_pending_deadlines() -> None:
-    clock = ReplayClock.from_iterable((1, 3))
-    clock.schedule(ts_us=2)
-    assert clock.to_list() == [1, 2, 3]
-    assert len(clock) == 3
-    assert clock.first() == 1
-    assert clock.last() == 3
-    iterator = iter(clock)
-    assert next(iterator) == 1
-    assert clock.to_list() == [2, 3]

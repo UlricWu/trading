@@ -7,8 +7,6 @@ from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR
 import math
 
 from src.trading.core.events import OrderIntent, OrderTerms, PendingOrder, Side, TargetEvent
-from src.trading.core.ledger import ExecutionLedger
-from src.trading.execution.settlement import SettlementEngine
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,29 +64,6 @@ class QuoteRule:
         boundary = reference * (1 + offset / 10_000 if side == Side.BUY else 1 - offset / 10_000)
         rounding = ROUND_FLOOR if side == Side.BUY else ROUND_CEILING
         return (boundary / tick).to_integral_value(rounding=rounding) * tick
-
-
-def affordable_quantity(
-    *, order: OrderIntent, price: Decimal, maximum: int, step: int,
-    cash: Decimal, settlement: SettlementEngine, ledger: ExecutionLedger,
-) -> int:
-    """Find the largest step-aligned buy including remaining cumulative fees.
-
-    Example:
-        qty = affordable_quantity(order=order, price=Decimal("10"), maximum=100,
-            step=1, cash=Decimal("1005"), settlement=settlement, ledger=ledger)
-    """
-    low, high = 0, maximum // step
-    while low < high:
-        middle = (low + high + 1) // 2
-        turnover = price * middle * step
-        cost = settlement.incremental_cost(order_id=order.order_id, side=order.side,
-            symbol=order.symbol, turnover=turnover, ledger=ledger)
-        if turnover + cost.total <= cash:
-            low = middle
-        else:
-            high = middle - 1
-    return low * step
 
 
 @dataclass(frozen=True, slots=True)

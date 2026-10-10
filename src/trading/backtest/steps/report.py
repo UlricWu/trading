@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from src.trading.backtest.context import BacktestContext
-from src.trading.reporting.bundle import ReportingBundle
+from src.trading.backtest.reporting.bundle import ReportingBundle
 from src.utils.path import PathManager
 
 

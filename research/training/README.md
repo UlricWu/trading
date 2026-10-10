@@ -53,15 +53,15 @@
   特征身份和实际列顺序；[模型信号提供侧](../../src/trading/signal/model.py) 调用它进行预测。
 - [训练入口](../../src/workflows/offline_training.py) 把持久化放在最终步骤，
   [训练流程](../../src/training/pipeline.py) 只把最后一个窗口的 Context 交给最终步骤。
-  [回测组件构造](../../src/trading/sim/components.py) 加载单个训练产物。
+  [回测组件构造](../../src/trading/backtest/components.py) 加载单个训练产物。
 - [回测入口](../../src/workflows/backtest.py) 把依赖未来价格的评价步骤放在组合和执行之间。
   这一编排不能直接作为 live 的运行链。
-- [执行器](../../src/trading/execution/engine.py) 直接依赖即时模拟成交，并在同一次调用中
+- [执行器](../../src/trading/backtest/execution/engine.py) 直接依赖即时模拟成交，并在同一次调用中
   处理成交和结算；这尚未定义真实订单的生命周期。
 - [训练产物步骤](../../src/training/steps/artifact_persist.py) 将 `asof_day` 设为训练样本最后日期，
   该字段不表示标签已经成熟、模型已经完成训练或运行已经加载它。
 - [训练评价](../../src/training/engines/rank_ic.py) 在样本不足或 Rank IC 非有限时失败；
-  [回测评价](../../src/trading/engines/backtest_eval.py) 的相关系数可返回 `None`，
+  [回测评价](../../src/trading/backtest/evaluation.py) 的相关系数可返回 `None`，
   当时的 `src/trading/reporting/alpha.py` 可返回 `NaN`。统一方向见
   [评价中的无定义与错误](#评价中的无定义与错误)。本轮复核确认 alpha、alpha_tape、
   forward_return 三文件仅互相引用，没有运行入口、测试或其他调用方，也没有正式外部
@@ -1574,7 +1574,7 @@ NumPy 2.5.1 下恢复数组时设置 shape 的弃用提示；没有压制警告�
 | 多日使用记录 | 同一模型连续 07-03/07-06，模型字节不变、两天文件各自存在；输入证券顺序反转且中间行缺失，仍保留全部原键和 NaN 位置 | 通过；[backtest workflow](../../tests/workflows/test_backtest.py)、[prediction record](../../tests/training/test_prediction.py) |
 | 独立评价 | 只读持久预测；把 InferenceModel.predict 改成一调用就失败，评价仍可完成；标签修订改变观察与摘要，预测字节不变；错误第三键和 Inf 失败 | 通过；[IC Step](../../tests/training/steps/test_ic_evaluate.py)、[evaluation](../../tests/training/test_evaluation.py) |
 | 独立进程复演 | 启动两次独立 Python 子进程，从具体 Parquet、已保存模型和现有 Feature 恢复；精确比较 dtype、形状、缺失位置与有限数值；分别修订特征、模型或预测时拒绝且不重写原记录；空记录保留身份并可复演 | 通过；[prediction record](../../tests/training/test_prediction.py) |
-| 统一 Rank IC 与无值 | 同序、逆序、并列、常量、零/一个配对；None 与全部原因、互斥计数、JSON null、日期覆盖及等权汇总；原 raw-close 诊断也保留原因和有定义日期数 | 通过；[Rank IC](../../tests/training/engines/test_rank_ic.py)、[raw-close 诊断](../../tests/trading/engines/test_backtest_eval.py) |
+| 统一 Rank IC 与无值 | 同序、逆序、并列、常量、零/一个配对；None 与全部原因、互斥计数、JSON null、日期覆盖及等权汇总；原 raw-close 诊断也保留原因和有定义日期数 | 通过；[Rank IC](../../tests/training/engines/test_rank_ic.py)、[raw-close 诊断](../../tests/trading/backtest/test_evaluation.py) |
 | 无未来信息回流及无信号日 | 修改未来标签/行情，之前预测文件逐字节相同、目标相同；次日全部特征缺失仍保留三行 null 预测及两个已有持仓 | 通过；[backtest workflow](../../tests/workflows/test_backtest.py) |
 | 入口与数据边界 | 完整键（含第三键）、输入列序、分区身份和 Meta；model_use 缺失/空白/相对路径/bool 时间/额外字段失败；HTTP 到 CLI 保留完整模型使用依据 | 通过；[Feature/Label](../../tests/access/test_feature_label.py)、[requests](../../tests/jobs/test_requests.py)、CLI/Job/交易相关测试 |
 

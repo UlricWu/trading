@@ -16,7 +16,7 @@ from src.access import Access
 from src.trading.backtest.context import BacktestContext, BacktestState
 from src.trading.backtest.timing import BacktestTiming
 from src.trading.core.events import SignalEvent, TargetEvent
-from src.trading.engines.backtest_eval import (
+from src.trading.backtest.evaluation import (
     ExecutionQualityFrame,
     FullBacktestFrame,
     RiskEffectFrame,
@@ -28,22 +28,22 @@ from src.trading.engines.backtest_eval import (
     signal_eval_frame,
     tradable_alpha_frame,
 )
-from src.trading.engines.replay import make_executable_targets, mark_to_market
-from src.trading.execution.engine import ExecutionOrchestrator
-from src.trading.execution.ideal import IdealExecution
-from src.trading.market.daily_signal_data import (
+from src.trading.portfolio.engine import make_executable_targets, mark_to_market
+from src.trading.backtest.execution.engine import ExecutionOrchestrator
+from src.trading.backtest.execution.ideal import IdealExecution
+from src.trading.backtest.market.daily_signal_data import (
     RAW_PRICE_COL,
     read_daily_raw_signal_view_data,
     read_raw_close,
 )
-from src.trading.market.daily_view import DailyView
-from src.trading.market.data_view import MarketDataView
+from src.trading.backtest.market.daily_view import DailyView
+from src.trading.backtest.market.data_view import MarketDataView
 from src.trading.portfolio.constructors.base import PortfolioConstructor
 from src.trading.risk.base import RiskContext
 from src.trading.risk.engine import NoOpRiskManager, RiskManager
 from src.trading.signal.base import SignalProvider
-from src.trading.sim.kernel import BacktestKernel, BarContext
-from src.trading.sim.session import ReplaySession
+from src.trading.backtest.kernel import BacktestKernel, BarContext
+from src.trading.backtest.session import ReplaySession
 from src.training.evaluation import ICObservation, evaluate_prediction_record
 from src.training.prediction import save_prediction_record
 from src.utils.path import PathManager
@@ -226,7 +226,7 @@ class SignalStep:
             raise ValueError("daily backtest decision time disagrees with feature sample keys")
         scores = self._signal.scores(
             ts_us=bar.ts_us,
-            data_view=bar.data_view,
+            features=bar.data_view.get_feature_matrix(signal_symbols),
             symbols=signal_symbols,
         )
         score_map = dict(scores)

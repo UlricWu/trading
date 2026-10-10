@@ -30,6 +30,11 @@ owner 拥有；H02/H03 为尚未采用的研究草案。卷宗拆分本身未修
 [执行接口](#执行接口与单一结算入口)及[实施映射](#实施映射与候选验收)；当前实现与限制见
 [H03 独立实施](#h03-独立实施与验收2026-10-09)。
 
+2026-10-10 用户要求记录并按已讨论的目录方案组织代码。本轮只落实
+[交易领域命名与代码组织](#交易领域命名与代码组织)：保留 trading，集中回测专用实现，
+明确未来 live 的归属；不改变当前交易行为、五种模式、入口、配置或制品契约，不代表
+H02/H03 正式采用，也不接入真实 broker。
+
 ## 对训练能力的依赖
 
 回测依赖[训练的交付边界](../training/README.md#与回测的交付边界)，不依赖训练 workflow
@@ -73,6 +78,7 @@ flowchart TD
 
 - [对训练能力的依赖](#对训练能力的依赖)
 - [已确认的交易与运行边界](#已确认的交易与运行边界)
+- [交易领域命名与代码组织](#交易领域命名与代码组织)
 - [固定规则交易基线](#固定规则交易基线)
 - [既定交易与复演验收](#既定交易与复演验收)
 - [回测任务输入](#回测任务输入)
@@ -123,6 +129,110 @@ Context、Step 及统一测量仍遵循 Offline owner，本次训练实施保留
 研究中的 Top50 观察名单不能直接解释为买入名单。本轮不预设必须使用两个模型。
 
 真实执行仍停在外部接口边界；不把现有同步模拟成交接口推广成统一的 live 执行接口。
+
+#### 交易领域命名与代码组织
+
+2026-10-10 用户在审阅命名、目录职责及源码依据后明确要求“记录到文档，按照这样的方式
+组织代码”。本次按该确定方案进行结构维护，不新增研究假设或 Change；当前业务行为继续
+由目标分支的 Offline 及所引用 owner 定义。用户随后明确授权 commit；本次提交不包含
+H02/H03 的业务采用、push、合入或发布部署。
+
+`trading` 表示交易领域，`backtest` 与 `live` 表示各自的运行方式。当前接通的运行用途
+主要是回测，但信号、组合和风控已有独立的交易计算，因此保留 `src/trading/`，不将整个
+领域包重命名为 backtest。回测专用实现集中在 `src/trading/backtest/`；未来实盘归
+`src/trading/live/`，由 `src/workflows/live.py` 准备依赖及启动运行。现有
+`src/workflows/backtest.py` 继续拥有回测组装，五种 mode 表达验证范围，不增加 live mode。
+
+```text
+src/
+├── data_system/                  数据接入、规范化、特征计算
+├── training/                     训练、模型交付与已有预测评价
+├── workflows/
+│   ├── backtest.py               回测任务准备与组件组装
+│   └── live.py                   未来实盘组装，当前不创建
+└── trading/
+    ├── core/                     交易事实、记录、权益与交易时间计算
+    ├── signal/                   已准备特征与就绪模型生成信号
+    ├── portfolio/                策略、目标形成、持仓与估值计算
+    ├── risk/                     风险规则与风险决策
+    ├── execution/policies/       数量、报价、目标到委托及合法性计算
+    ├── reporting/                固定交易事实上的指标计算
+    ├── backtest/
+    │   ├── pipeline.py           历史运行推进
+    │   ├── context.py            本次回测上下文与状态
+    │   ├── timing.py             回测日程
+    │   ├── clock.py              ReplayClock
+    │   ├── components.py         当前回测组件构造
+    │   ├── kernel.py             当前历史行情推进
+    │   ├── session.py            当前行情与时钟绑定
+    │   ├── evaluation.py         五类回测评价及其汇总
+    │   ├── market/               历史输入、可见性与回放视图
+    │   ├── execution/            模拟执行、成交模型与模拟结算
+    │   ├── reporting/            回测指标组装与报告发布
+    │   └── steps/                回测步骤与制品持久化
+    └── live/                     未来有具体实现时创建
+        ├── runtime.py            实时事件、定时动作与运行生命周期
+        ├── market.py             订阅、接收时间与实时输入交付
+        └── broker.py             所选券商提交、查询、回报与账户核对
+```
+
+共享交易模块不导入 backtest 或 live；两种运行方式沿用上文的共用计算和独立状态边界。
+信号直接接收按证券顺序准备的特征矩阵，不要求历史时间轴；ReplayClock 与历史
+MarketDataView 一起归回测。
+BarTime、TradingWindow 和交易期限的纯计算仍归 core/time.py，不随回放时钟迁移。
+原 engines/replay.py 的目标归一与估值计算归 portfolio/engine.py，避免把领域计算按
+当前调用环境命名。模拟费用参与可负担量计算的 affordable_quantity 与模拟结算归同一
+模块，execution/policies 不反向依赖模拟器。测试按源码新路径镜像，不留旧路径转发层。
+
+边界按职责判断，不能只看类名。例如 ExecutionOrchestrator 绑定 SimImmediateVenue，
+FakeExecution 根据后续观察产生成交，SettlementEngine 通过成本模型计算费用再入账，
+这些当前都是回测执行能力。共享事实上的收益、费用和行为计算仍可留在 reporting，
+但读取回测 experiment、组装 metrics 和发布 HTML 属于 backtest/reporting。
+原 sim 和 engines 中仍被当前入口调用的实现按上述职责归位；本次不借移动提前删除 H02
+尚未替换的调用链，也不创建通用运行引擎。
+
+共享账务计算不代表共享账户权威或已经具备实盘协议。当前 FillEvent 要求
+observation_id/reference_price，OrderStatus 表达本轮 Fake 状态，PortfolioState 使用
+当前股票账户规则；本次保留这些已有字段与行为，不将其宣布为 broker 的通用回报。
+实盘实施时按实际 API 对齐身份、费用和账户事实。例如提交超时后订单可能已经成立，
+需要按 broker 查询结果处理；模拟器即时撤单与本地终态不能替代这一保证。该边界沿用
+[单一 broker 的真实执行边界](#单一-broker-的真实执行边界)，不在这里重复定义恢复算法。
+
+这份布局复用已有 backtest 子包，并使未来实盘能够消费相同交易计算；不需要提前建立
+多券商抽象或空的 live 模块。FakeLive 继续属于测试场景驱动。实时接入的业务字段和特征
+仍沿用数据侧定义，不在 live 内另写特征公式；数据侧已有 brokers 是原始数据获取接口，
+不因此成为真实下单模块。
+
+本次完成条件在编辑前固定为：现有交易及 workflow/CLI/Job 回归场景保持通过；共享模块
+没有对 backtest/live 的反向导入；源码、测试、路径标识与当前文档引用一致；历史 SHA、
+外部固定版本链接、测试结果与失败证据保持其原有时点含义；不创建 live 占位或改变制品
+schema。H02/H03 的功能范围与未覆盖项继续在其原段落维护。下文源码与测试的本地链接
+随目录迁移指向当前位置；历史 Evidence 的提交、命令、源码指纹和结果仍指原快照，
+不能以新位置重新解释当时的实现状态。
+
+本轮已按上述布局移动实现、调用方和镜像测试；没有创建 live 文件或旧路径兼容层。
+验证绑定 `feature/backtest-h03` 的基线 `0c7105859e32218463e37bd6c0ee9e14d30397b0`
+及提交前验证的工作树；输入为仓库已有测试夹具和临时目录，不使用真实行情或生产凭证。
+本次修改或新增的 50 个最终 Python 文件按路径排序，依次拼接
+`UTF-8 相对路径 + NUL + 文件字节 + NUL` 的 SHA-256 为
+`85b51407ca85f70860259990d0c67f6e82ee55b7516ffbccc02096225e751c96`；删除的旧路径
+由上述迁移关系及工作树 diff 定位，文档不计入该指纹。
+
+- Python 3.13.13 下，修改前及提交前分别执行
+  `.venv/bin/python -m pytest -q tests/trading tests/workflows/test_backtest.py tests/test_cli.py tests/jobs tests/config/test_backtest_config.py --tb=short`，
+  均为 312 passed、128 条既有 joblib/NumPy 弃用警告。覆盖现有成交、账户、时钟、
+  信号、报告以及 workflow/CLI/Job 调用方；未删除断言或缩小既有场景。
+- 30 个移动文件在归一导入、日志模块过滤路径及文档字符串后，可执行 AST 保持一致；
+  单独迁移的 ReplayClock 与 affordable_quantity 的 AST 原样一致。信号消费已准备矩阵的
+  内部接口由原证券行对应测试及 workflow 回归覆盖。
+- 71 个 trading 模块导入成功；共享模块对 backtest/live 的反向导入为零；50 个改动
+  Python 文件语法、路径标识及受影响测试的源码镜像检查通过。回测与训练卷宗分别有
+  68、95 个不同本地文件/锚点引用，10、8 个 Python 代码块，路径、锚点和语法检查通过；
+  `git diff --cached --check` 通过。
+
+未运行全仓库测试、真实历史实验或实盘接入，因为本轮只调整上述代码组织和输入责任。
+这些检查证明受影响的既有行为保持，不证明 H02 完整接入或真实 broker 已可用。本次提交
+包含设计记录与源码/测试修改；未 push、merge、release 或 deploy。
 
 #### 固定规则交易基线
 
@@ -369,11 +479,11 @@ live〔最后处理〕：交易目标 → 单一 broker 执行〔具体 API 待�
 | 可定位的实现事实 | 对本次目标的影响 |
 | --- | --- |
 | `run_daily_alpha_backtest` 在所有 mode 下组装同一套八个逐日 Step，见 [workflow](../../src/workflows/backtest.py) | 信号评价也依赖策略、现金、执行和账户，任务没有真正分离 |
-| [build_components](../../src/trading/sim/components.py) 只按 mode 切换 IdealExecution / ExecutionOrchestrator，risk 始终是 NoOpRiskManager | `risk_eval` 名称不能证明启用过风险规则；[现有组件测试](../../tests/trading/sim/test_components.py)还明确验证这种固定映射 |
-| [TradableAlphaEvalStep](../../src/trading/backtest/steps/backtest_layers.py) 调用基于两期价格及固定成本扣减的 [tradable_alpha_frame](../../src/trading/engines/backtest_eval.py)，没有委托、成交量或盘口输入 | 它是条件收益诊断，不能证明可交易性；当前调用也没有传入非零成本 |
-| [SimImmediateVenue](../../src/trading/execution/venue/sim_immediate.py) 对有价格的 intent 一次生成全量 fill | 没有部分成交、有效挂单和跨时点等待，不能回答价格出现时自己的订单能否完成 |
+| [build_components](../../src/trading/backtest/components.py) 只按 mode 切换 IdealExecution / ExecutionOrchestrator，risk 始终是 NoOpRiskManager | `risk_eval` 名称不能证明启用过风险规则；[现有组件测试](../../tests/trading/backtest/test_components.py)还明确验证这种固定映射 |
+| [TradableAlphaEvalStep](../../src/trading/backtest/steps/backtest_layers.py) 调用基于两期价格及固定成本扣减的 [tradable_alpha_frame](../../src/trading/backtest/evaluation.py)，没有委托、成交量或盘口输入 | 它是条件收益诊断，不能证明可交易性；当前调用也没有传入非零成本 |
+| [SimImmediateVenue](../../src/trading/backtest/execution/venue/sim_immediate.py) 对有价格的 intent 一次生成全量 fill | 没有部分成交、有效挂单和跨时点等待，不能回答价格出现时自己的订单能否完成 |
 | [metrics persist](../../src/trading/backtest/steps/metrics_persist.py) 总是写入全部五类结果 | “有指标字段”会掩盖实际只使用了理想执行或空风控 |
-| [SettlementEngine](../../src/trading/execution/settlement.py) 在账户处理成交后无条件追加账本，账户内单独去重 | 重复处理同一成交时，持仓与账本可能不一致；H03 的唯一结算入口须覆盖全部副作用 |
+| [SettlementEngine](../../src/trading/backtest/execution/settlement.py) 在账户处理成交后无条件追加账本，账户内单独去重 | 重复处理同一成交时，持仓与账本可能不一致；H03 的唯一结算入口须覆盖全部副作用 |
 | [SignalStep](../../src/trading/backtest/steps/backtest_layers.py) 按日期生成预测文件名；[汇总](../../src/training/evaluation.py) 以观察条数填充 date_count | 同日多次决策须区分记录身份、决策次数与交易日数，不能直接沿用日频消费假设 |
 | [PerformanceReport](../../src/trading/reporting/performance.py) 对相邻事件权益计算收益，调用侧固定年化因子；[EquityCurve](../../src/trading/core/equity.py) 每次 append 扫描历史回撤 | 增加无变化唤醒也能改变 Sharpe；分钟路径还需增量维护权益统计，不能把事件数量当作等间隔报告样本 |
 | `SignalStep` 每次预测调用 `on_trading_day_start`，后者无条件清空 `buy_qty_today` | 直接扩展为同日多次信号会重置当日可卖限制；日切必须由交易日程拥有，初始快照和同日后续唤醒均不得清空它 |
@@ -741,7 +851,7 @@ PY-016～021、PY-025～027：公开类型完整，业务动作独立，容器�
 | 风控观察的汇总计算 | — | — | 复用 | — | 复用 |
 | 委托/成交事实的评价计算 | — | — | — | 复用 | 复用 |
 
-表中的指标计算分别归已有预测评价、风险评价及 `src/trading/engines/backtest_eval.py`
+表中的指标计算分别归已有预测评价、风险评价及 `src/trading/backtest/evaluation.py`
 所属职责，消费稳定的观察、ledger 和权益事实；不按 mode 复制公式。参考成交和价格模型
 由 workflow 固定组装，委托生命周期、账户和结算仍使用同一实现。核心不知道 mode，
 也不为信号或风险单项模式构造一个 NoOp 价格模型。
@@ -1141,8 +1251,8 @@ from dataclasses import dataclass
 
 from src.trading.backtest.context import BacktestContext
 from src.trading.core.events import TargetEvent
-from src.trading.engines.replay import make_executable_targets
-from src.trading.execution.engine import ExecutionOrchestrator
+from src.trading.portfolio.engine import make_executable_targets
+from src.trading.backtest.execution.engine import ExecutionOrchestrator
 from src.trading.portfolio.constructors.base import PortfolioConstructor
 from src.trading.risk.base import RiskContext
 from src.trading.risk.engine import RiskManager
@@ -1398,18 +1508,18 @@ RecordedOrdersStep 的输入包含按原顺序排列的委托及撤单命令，�
 | `src/jobs/requests.py`、`src/config/backtest_config.py`、`src/cli.py` | 保留五种 mode；解析为各自有类型 submission，仅在适配边界路由，参数按实际能力提供 | 模型、策略、资金对所有模式一律必填的假设；核心中的 mode 分支 |
 | `src/workflows/backtest.py` | 五个具名入口；各自直接列出 Step tuple，复用现有 experiment 身份、Access 与 Instrumentation；模型绑定准备由信号来源消费方共同调用 | `run_daily_alpha_backtest` 的全模式八层组装；已无调用方的全量 Components |
 | `backtest/pipeline.py`、`context.py` | 三种交易模式共用时间和账户生命周期；两个单次评价 Context；交易 Context 传当前可见事实、execution_target 和撤单要求，State 延续账户、挂单及原始事实 | `SignalEvaluationResult` 对未来价格的交易 Context 依赖；运行中累积的五套评价 frame；单项评价的空账户 |
-| `backtest/steps/backtest_layers.py`、`sim/components.py` | 共享信号、组合、风控、提交、推进、估值动作；日切由推进拥有，目标由策略记录；执行直接消费 TargetEvent，评价消费固定结果；`run` 本身就是 Step 边界 | RiskResult 前置依赖、NoOp、日切依赖信号及风险步骤代记目标的副作用；没有独立计算用途、仅被 `run` 转调的 `__call__` |
+| `backtest/steps/backtest_layers.py`、`backtest/components.py` | 共享信号、组合、风控、提交、推进、估值动作；日切由推进拥有，目标由策略记录；执行直接消费 TargetEvent，评价消费固定结果；`run` 本身就是 Step 边界 | RiskResult 前置依赖、NoOp、日切依赖信号及风险步骤代记目标的副作用；没有独立计算用途、仅被 `run` 转调的 `__call__` |
 | `src/training/evaluation.py` | 增加有序批次评价，复用已有记录读取及 Rank IC 公式 | 将训练日频汇总直接用于同日多次决策的调用 |
 | 拟新增 `risk/evaluation.py`，已有 `risk/engine.py`、`risk/base.py` | 固定案例与 full 共用风险链和动作计算；可空请求表示定时检查，输出明确目标、撤单及规则观察 | 用历史目标恢复过期意图；blocked 混指拒绝和清仓；报告中另跑一遍风险规则 |
-| `engines/replay.py` | 完整目标的领域归一和估值；有效挂单、缺分数持仓与容量共同参与目标形成 | 下游再按缺键推断清仓、保持或新增仓位的逻辑 |
+| `portfolio/engine.py` | 完整目标的领域归一和估值；有效挂单、缺分数持仓与容量共同参与目标形成 | 下游再按缺键推断清仓、保持或新增仓位的逻辑 |
 | `portfolio/constructors` | 保留 Threshold / TopKHysteresis 的信号到目标计算；有状态构造器每次运行新建 | 无调用方的 `name()` 转发用途、仅为反射日志保留的类型结构；不凭目录大小做清理 |
-| `execution/engine.py` | 订单接纳、挂单生命周期和结算顺序；目标路径和冻结订单路径汇合到同一接纳方法 | 同次调用即撮合的 `execute_targets`；强制平仓时跳过 T+1 的开关 |
-| `execution/venue`、`ideal.py` | 参考成交计算与报价/观察量计算共用订单和成交类型，venue 不记账；参考规则不调用报价模型 | IdealExecution 中另一份现金、持仓、费用与 ledger 路径；即时全量 fill 假设 |
+| `backtest/execution/engine.py` | 订单接纳、挂单生命周期和结算顺序；目标路径和冻结订单路径汇合到同一接纳方法 | 同次调用即撮合的 `execute_targets`；强制平仓时跳过 T+1 的开关 |
+| `backtest/execution/venue`、`backtest/execution/ideal.py` | 参考成交计算与报价/观察量计算共用订单和成交类型，venue 不记账；参考规则不调用报价模型 | IdealExecution 中另一份现金、持仓、费用与 ledger 路径；即时全量 fill 假设 |
 | `execution/policies` | 目标差量、报价和数量形成属于 constraints；外部具体订单合法性属于 validation | clipping 后对相同可信数量、价格、T+1 条件反复执行相同检查 |
 | `core/events.py`、`core/ledger.py` | 保存委托窗口、报价、状态与稳定成交身份；同时用于固定委托复演和 full，ledger 拥有结算身份索引 | 关键交易字段藏在 meta 中；只保存提交与即时全量成交的记录形状 |
-| `execution/settlement.py`、`portfolio/state.py` | settlement 唯一协调费用、账户和 ledger；portfolio 只应用已经认可的精确成交数量 | 以价格/数量拼接的 FillKey；卖出不足时偷偷 `min(qty, position)` 后仍将原数量写入账本 |
-| `sim/kernel.py`、`session.py`、`core/time.py` | 时间和可见性归 ReplayClock、行情准备与交易 Pipeline；按剩余独立调用方决定 Kernel/Session 是否仍必要 | 只为一条日线构造 Session → Kernel → BarContext 的多层往返；由 frequency 推断执行许可 |
-| `reporting`、`engines/backtest_eval.py`、`backtest/steps/metrics_persist.py`、`report.py` | 固定事实上的纯评价、持久化与展示；tradable/full 共用组合评价，execution/full 共用成交评价；逐决策及按日 IC 分开、收益按日终采样、成交按订单及数量计算，输出实际覆盖 | 用两期价格诊断冒充策略收益；fill 条数当订单数；五类成功占位指标；把无定义值统一改成 0 或把非法值改成成功的 null |
+| `backtest/execution/settlement.py`、`portfolio/state.py` | settlement 唯一协调费用、账户和 ledger；portfolio 只应用已经认可的精确成交数量 | 以价格/数量拼接的 FillKey；卖出不足时偷偷 `min(qty, position)` 后仍将原数量写入账本 |
+| `backtest/kernel.py`、`backtest/session.py`、`backtest/clock.py`、`core/time.py` | 时间和可见性归 ReplayClock、行情准备与交易 Pipeline；按剩余独立调用方决定 Kernel/Session 是否仍必要 | 只为一条日线构造 Session → Kernel → BarContext 的多层往返；由 frequency 推断执行许可 |
+| `reporting`、`backtest/reporting`、`backtest/evaluation.py`、`backtest/steps/metrics_persist.py`、`report.py` | 固定事实上的纯评价、持久化与展示；tradable/full 共用组合评价，execution/full 共用成交评价；逐决策及按日 IC 分开、收益按日终采样、成交按订单及数量计算，输出实际覆盖 | 用两期价格诊断冒充策略收益；fill 条数当订单数；五类成功占位指标；把无定义值统一改成 0 或把非法值改成成功的 null |
 
 固定等权、固定期限策略不能伪装成现有 Threshold / TopKHysteresis 的一个参数组合。
 它需要保存本轮固定名单、仍有效的入场窗口和退出计划；数量按当时现金、延续持仓、
@@ -1642,7 +1752,7 @@ execution/full 仍保留价格不满足导致的等待、明确数量限制下�
 
 回放轴由实际市场观察的可用时刻、策略决策、入退场窗口边界和规则要求的风控检查时点
 共同构成。计时触发不伪造行情行；当天没有成交分钟，也必须能执行到期撤单或计划退出。
-现有 [ReplayClock](../../src/trading/core/time.py) 仅合并 DataView 的 bar 时间，不能直接
+现有 [ReplayClock](../../src/trading/backtest/clock.py) 仅合并 DataView 的 bar 时间，不能直接
 承担这些新的交易日程语义；在现有 backtest Pipeline 内明确组织，不另建通用事件平台。
 
 对分钟区间 `[m, m+1min)`，完整 VWAP 与成交量只在该区间结束且数据可用后交给模拟侧。
@@ -1726,10 +1836,10 @@ OHLC 一并暴露给开盘决策。由日线推导的结果必须标明成交假
 
 | 实现位置 | 已有能力与需要解除的限制 |
 | --- | --- |
-| [ReplayClock](../../src/trading/core/time.py) | 能遍历显式给出的时间戳，不要求固定间隔；当前 from_data_view 只取得 bar 时间，尚未合并交易日程 |
+| [ReplayClock](../../src/trading/backtest/clock.py) | 能遍历显式给出的时间戳，不要求固定间隔；当前 from_data_view 只取得 bar 时间，尚未合并交易日程 |
 | [BacktestTiming](../../src/trading/backtest/timing.py) | 目前只有 signal_date/forward_date，须落实 H03 的时点与到期动作；标签日期不能继续充当交易时钟 |
 | [SignalStep](../../src/trading/backtest/steps/backtest_layers.py) | 当前读取日频对象、构造 DailyView、要求单个交易 bar，并按日期保存预测；分钟决策需按决策时点保存事实，消费与汇总修正见 H02 的评价采样章节 |
-| [MinuteFeatureDataView](../../src/trading/market/minute_feature_view.py) | 已有分钟特征/价格矩阵与 on_time 查询；默认时间列为 ts_utc，并按输入时间戳暴露对应行，不能据此保证完整分钟结束前不可见 |
+| [MinuteFeatureDataView](../../src/trading/backtest/market/minute_feature_view.py) | 已有分钟特征/价格矩阵与 on_time 查询；默认时间列为 ts_utc，并按输入时间戳暴露对应行，不能据此保证完整分钟结束前不可见 |
 | [分钟事实 owner](../../docs/data/level2_minute_contract.md#分钟身份与稀疏关系) | 正式数据是 minute_start_ts_utc 加 phase 的稀疏成交事实，当前不定义 Feature/Label；不能仅替换 DataView 类就假装完成 schema、可用时刻、数量单位和模型输入接线 |
 
 分钟路径的数据读取按日或必要窗口组织，不以全区间的稠密特征立方体作为必须的公共
@@ -2182,7 +2292,7 @@ tradable 只保留参考价及账户条件。参与率上限、提交延迟、�
 ### 执行接口与单一结算入口
 
 以下接口是 H03 的候选形状，配合 H02 的五个 workflow 使用。本轮已在
-`execution/fake.py` 实施独立挂单生命周期；当前正式入口仍调用同步 `execute_targets`，
+`backtest/execution/fake.py` 实施独立挂单生命周期；当前正式入口仍调用同步 `execute_targets`，
 其替换随 H02 的 workflow 接入完成。两个入口复用费用、可负担数量和唯一结算，不新增
 公共 mode，也不为尚未接入的 broker 设计客户端层。
 
@@ -2195,7 +2305,7 @@ tradable 只保留参考价及账户条件。参与率上限、提交延迟、�
 | `PendingOrder`，`core/events.py` | `intent: OrderIntent`、`remaining_qty: int`、`reserved_cash: Decimal`、`reserved_sell_qty: int`、`reservation_price: Decimal` | 不可变快照；执行器替换调用方拥有的挂单容器中的条目，终态删除。资金估计价用于部分成交后重算余量及累计费用，不能从含最低佣金的占用金额反推单价；H02 接入后容器由 BacktestState 持有 |
 | `OrderEvent`，`core/events.py` | `ts_us: int`、`order_id: int`、`status: OrderStatus`、`remaining_qty: int`、`reason: str`；撮合观察字段 `observation_id: str \| None`、`candidate_price: Decimal \| None` | 报价检查未满足时保持待成交/部分成交状态，记录观察与候选价及原因；提交、撤单、到期没有撮合观察时两字段为 None。合法订单等待不冒充拒单 |
 | `FillEvent`，`core/events.py` | 增加 `fill_id: str`、`observation_id: str` 和 `reference_price: Decimal`，保留订单、方向、数量，成交价格同样为 Decimal | `fill_id` 在运行内唯一且可确定复现；关联观察解释价格和量预算，参考价用于记录偏离，不用随后价格重算本次事实 |
-| `ExecutionObservation`，`market/data_view.py` | `observation_id: str`、`symbol: str`、`time: BarTime`、`price: Decimal`、`volume_qty: int \| None` | 时间统一使用 BarTime；分钟价格为单位已核实的区间 VWAP，日线为已声明的不复权收盘参考价；仅参考场景可用 None 明示不限制观察量，需要数量约束的场景缺量不能写成无限量；只消费本次新可用观察 |
+| `ExecutionObservation`，`backtest/market/data_view.py` | `observation_id: str`、`symbol: str`、`time: BarTime`、`price: Decimal`、`volume_qty: int \| None` | 时间统一使用 BarTime；分钟价格为单位已核实的区间 VWAP，日线为已声明的不复权收盘参考价；仅参考场景可用 None 明示不限制观察量，需要数量约束的场景缺量不能写成无限量；只消费本次新可用观察 |
 
 `OrderStatus` 对应上节生命周期，不引入暂不支持的撮合种类或 OrderType 枚举。
 `OrderTerms` 不增加 builder；`PendingOrder` 对外以只读映射或有序 tuple 提供，报告不能
@@ -2387,7 +2497,7 @@ Step 基类、装饰器注册或依赖图。最终指标从已经保存的交易
 新执行器验证成交 300＋60、到期余量 40、现金 16,400 及持仓 360。原目标 1,000 到风险
 目标 400 的计算和 14:33 定时风控属于 H02，未以该执行器测试宣称完整策略/风控路径通过。
 
-执行实施集中在 `src/trading/execution/fake.py`、`venue`、`settlement.py`、`core/events.py`、
+执行实施集中在 `src/trading/backtest/execution/fake.py`、同目录的 `venue`、`settlement.py`、`core/events.py`、
 `execution/policies/constraints.py`、`core/ledger.py`、`portfolio/state.py` 及回测日程/Context/Step；
 沿用本卷宗已确认的策略和风险计算边界，报价参数进入现有策略配置，价格公式归现有 venue。
 日程/Context/Step 与策略配置仍待 H02 接入。现有正式入口仍调用同步 `ExecutionOrchestrator`，
@@ -2398,9 +2508,9 @@ Step 基类、装饰器注册或依赖图。最终指标从已经保存的交易
 
 | 位置 | 所需修改 |
 | --- | --- |
-| `core/time.py` | 已增加 BarTime、TradingWindow、两个期限计算及 ReplayClock 动态唤醒；动态时点去重且不能扩展明示模拟终点。MarketDataView 移入 TYPE_CHECKING，避免循环导入 |
+| `core/time.py`、`backtest/clock.py` | 前者保留 BarTime、TradingWindow 和两个期限计算；后者拥有 ReplayClock 动态唤醒，时点去重且不能扩展明示模拟终点。回放时钟对历史 MarketDataView 的依赖留在 backtest 内 |
 | `backtest/timing.py`、`pipeline.py`、`context.py` | 待 H02：以当前微秒时刻与账户交易日推进，合并到期动作并消费 requested_wakeup_ts_us；Pipeline 绑定时钟，不预先冻结所有未来 timing |
-| `market/data_view.py` 及行情读取 | 已增加带 BarTime、身份和明确价格/数量的 ExecutionObservation；待源适配按 available_ts_us 暴露原事实及版本，按日线/分钟源契约换算单位，不重建已缺失事实 |
+| `backtest/market/data_view.py` 及行情读取 | 已增加带 BarTime、身份和明确价格/数量的 ExecutionObservation；待源适配按 available_ts_us 暴露原事实及版本，按日线/分钟源契约换算单位，不重建已缺失事实 |
 | `backtest/steps/backtest_layers.py` | 待 H02：策略事件使用当前 timing.ts_us；信号、退出、风险独立调度，日切脱离信号，实际截止时刻请求唤醒 |
 | `workflows/backtest.py` | 待 H02：通过已有 Access 绑定真实日历、时区、观察与日程，构造同一时钟并选择 Step 组合 |
 | `core/equity.py`、`reporting` | 已增量维护事件权益峰值/回撤，按 order_id 与累计成交量修正订单完成率；日终收益采样与完整指标持久化仍待 H02 |
@@ -2417,7 +2527,7 @@ BarTime、交易窗口及持有期限规则拟由 Offline owner 的回测章节�
 ### H03 独立实施与验收（2026-10-09）
 
 本轮交付独立 Python 执行接口及受影响的既有调用方，范围以本节 Scope 为准。
-[FakeExecution](../../src/trading/execution/fake.py) 的目标提交和冻结命令提交共用委托、
+[FakeExecution](../../src/trading/backtest/execution/fake.py) 的目标提交和冻结命令提交共用委托、
 占用及结算，提交不产生成交；随后完整观察按生效时间及提交次序分配资源。
 同刻的不同证券观察须先合并再推进一次，交付批次不能改变全局委托优先级或到期结果；
 相同身份的相同观察可重放，冲突、晚到及重叠执行区间失败。分钟和日线只改变输入区间，
@@ -2440,14 +2550,14 @@ BarTime、交易窗口及持有期限规则拟由 Offline owner 的回测章节�
 | 代码状态 | 本地 `feature/backtest-h03`，基线 HEAD `ea3414873c6132adf17d3df70b0bec574adfa4fd`；候选为未提交工作树。目标 owner 只读对照本地 dev `197f4bc3878bf4d6a495f3fce211e21b61ac6ba0`，未查询远端状态 |
 | 源码指纹 | 本次修改及新增的 25 个 Python 源码/测试文件，路径排序后依次拼接 `UTF-8 相对路径 + NUL + 文件字节 + NUL` 的 SHA-256 为 `d30a6cf3362a64316a56aca205aae59b9ed4255de9d7e028d9752a023516981b`；卷宗文档不计入该代码指纹 |
 | 验证环境 | 仓库 `.venv`，Python 3.13.13、pytest 9.0.3、numpy 2.5.1、pandas 3.0.2；无新增依赖 |
-| 可复现输入 | [执行场景](../../tests/trading/execution/test_fake.py) 明列账户、报价、量价、费用、条款和命令；[时间场景](../../tests/trading/core/test_time.py) 使用 2026-07-03/06/07/08 四个合成交易日、Asia/Shanghai 及每日 09:30–11:30、13:00–15:00 窗口。其余回归输入在同次测试文件中，无真实市场数据或生产凭证 |
+| 可复现输入 | [执行场景](../../tests/trading/backtest/execution/test_fake.py) 明列账户、报价、量价、费用、条款和命令；[时间场景](../../tests/trading/core/test_time.py) 使用 2026-07-03/06/07/08 四个合成交易日、Asia/Shanghai 及每日 09:30–11:30、13:00–15:00 窗口。其余回归输入在同次测试文件中，无真实市场数据或生产凭证 |
 | 验证命令 | `.venv/bin/python -m pytest tests/trading tests/workflows/test_backtest.py -q --tb=short`：94 项通过，42 条既有 joblib/numpy 弃用警告；未运行全仓库测试或真实历史回测 |
-| 缺陷与修复证据 | 修改前复现相同成交重复记账、超额卖出被静默截断、同日唤醒清空当日买入限制三个失败；[结算](../../tests/trading/execution/test_settlement.py)及[账户](../../tests/trading/portfolio/test_state.py)回归现通过。另从基线加载行为报告复现一单两次成交得到 200% 完成率，[订单报告](../../tests/trading/reporting/test_behavior.py)现验证为 100% |
+| 缺陷与修复证据 | 修改前复现相同成交重复记账、超额卖出被静默截断、同日唤醒清空当日买入限制三个失败；[结算](../../tests/trading/backtest/execution/test_settlement.py)及[账户](../../tests/trading/portfolio/test_state.py)回归现通过。另从基线加载行为报告复现一单两次成交得到 200% 完成率，[订单报告](../../tests/trading/reporting/test_behavior.py)现验证为 100% |
 | 生命周期验收 | 验证报价相等/越界、滑点后判断、共享成交量及跨证券优先级、冻结量拒单、撤单释放占用、纯缩量继承原报价/到期、反向目标新报价、T+1、逐笔费用、身份重放/冲突、完整区间资格、无行情到期、终点留仓及日线复用；既有日频调用使用同一资金计算与结算的回归通过 |
 | 时间及复演验收 | 交易分钟跳过午休/休市并保留微秒，交易日以入场日为 0，覆盖不足失败；动态唤醒去重且不越终点。冻结命令复演得到相同成交/账户；FakeLive 场景仅改变交付批次，合并同刻观察后得到相同执行事实 |
 
-上述为当前工作树的工程验收草稿，包含新增未跟踪文件；尚未形成可跨任务引用的提交或
-归档证据，不构成 adoption。测试固定输入验证本节假设，未用数据搜索或筛选策略。
+上述为 2026-10-09 实施时的工程验收草稿，包含当时新增未跟踪文件；该时点尚未形成可跨
+任务引用的提交或归档证据，不构成 adoption。测试固定输入验证本节假设，未用数据搜索或筛选策略。
 H02 的信号、策略、定时风控、五模式组装、日终收益报告及真实行情/日历准备未接入新
 执行器，所以完整 FakeLive 信号/目标/风险一致性和真实历史表现未验收。单位转换、真实
 费率/舍入、公司行为、盘口队列、延迟回补与 broker 也不在本轮证据范围内。
@@ -2488,6 +2598,7 @@ H02 的信号、策略、定时风控、五模式组装、日终收益报告及�
   首次应用，约束身份冲突、部分成交收费与全部副作用，并将日切及完成率反例列入验收。
   本轮已实现独立订单生命周期、唯一结算、账户日切修复、动态时钟与期限计算，并以 94 项
   相关工程测试验证；真实数据与 H02 集成尚未运行，不能将独立执行验收当作完整回测完成。
-- 状态：设计仍为 open draft，正式 owner 未修改；工作树在 `feature/backtest-h03` 包含
-  候选源码、测试及本卷宗修改。本轮未 commit、push、merge、release、deploy、真实下单
-  或写入权威外部状态。
+- 2026-10-09 实施轮次状态：设计为 open draft，正式 owner 未修改；当时工作树在
+  `feature/backtest-h03` 包含候选源码、测试及本卷宗修改。该轮未 commit、push、merge、
+  release、deploy、真实下单或写入权威外部状态。后续目录维护及其验证状态见
+  [交易领域命名与代码组织](#交易领域命名与代码组织)，不覆盖上述历史证据。

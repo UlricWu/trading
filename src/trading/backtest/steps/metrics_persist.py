@@ -7,14 +7,14 @@ import json
 
 from src import logs
 from src.trading.backtest.context import BacktestContext, BacktestState
-from src.trading.engines.backtest_eval import (
+from src.trading.backtest.evaluation import (
     summarize_execution_quality_frames,
     summarize_full_backtest_frames,
     summarize_risk_effect_frames,
     summarize_signal_eval_frames,
     summarize_tradable_alpha_frames,
 )
-from src.trading.reporting.metrics import build_backtest_metrics
+from src.trading.backtest.reporting.metrics import build_backtest_metrics
 from src.training.evaluation import ICEvaluation, summarize_observations
 from src.utils.filesystem import FileSystem
 from src.utils.path import PathManager
