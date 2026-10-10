@@ -180,7 +180,7 @@ Stock1430DailyL2MaterializeStep,
 DatasetBuildStep, PreprocessStep, ModelTrainStep, PredictionStep, ICEvaluateStep,
 ArtifactPersistStep, SignalStep, SignalEvalStep, TradableAlphaEvalStep,
 PortfolioStep, RiskEvalStep, ExecutionEvalStep, AccountingStep,
-FullBacktestStep, MetricsPersistStep, ReportStep
+FullBacktestStep, FactsPersistStep, MetricsPersistStep, ReportStep
 ```
 
 Workflow 不统一包装异常，不把失败改成空制品或 success，也不重复记录 traceback。
@@ -805,9 +805,9 @@ model_ref 与所用模型相同。首个决策时刻由请求范围内首个正�
 label_maturity_ts_us <= 首个决策时刻。范围起点是休市日时采用范围内首个交易日，而不是
 起点午夜；不因标签尚未成熟而自动把起点推迟到后续交易日。
 
-加载后核对模型的 train_dates、Feature/Label 身份、列顺序及标签列与记录一致，再保存
-binding.json 并记录加载绑定事件。归档 request 不作为反序列化入口。训练记录缺失、
-格式错误、模型关联或时序不合规均失败；加载失败不得写成功绑定记录。训练记录和回测
+加载后核对模型的 train_dates、Feature/Label 身份、列顺序及标签列与记录一致，再记录
+模型加载成功事件。归档 request 不作为反序列化入口。训练记录缺失、格式错误、模型关联
+或时序不合规均失败；加载失败不得记录加载成功事件。训练记录和回测
 时钟由服务端解析，调用者不提供 model_use，也不手填生效时间或证据引用。
 
 label_maturity_ts_us 只是理论必要下界，不是实际训练完成时间或历史模型可用证明。
@@ -851,12 +851,84 @@ metrics.model_evaluation；原 signal_eval 继续表示 T+1 raw-close 收益诊�
 
 Workflow 以 `per_timing_steps` 显式声明 signal → portfolio → risk evaluate → execution
 evaluate → accounting → signal evaluate → tradable-alpha evaluate → full-backtest，并以
-`final_steps` 声明 metrics persist → report。
+`final_steps` 声明 facts persist → metrics persist → report。
 当次预测与目标、执行先完成，再读取未来价格和标签；后验评价不进入此前决策的依赖链。
 初始 cash 只来自静态 config，universe 的 listing age 原样交给 Access。日线执行价格与
 phase 语义保持不变。公共返回值为 `None`。
 
+FactsPersistStep 在全部 timing 完成后，先保存实际执行与估值事实，再进入指标计算与报告。
+它只序列化已有 ExecutionLedger 和 EquityCurve，不重新撮合、结算、补造交易事件或重算
+估值。只有收益、费用和回撤摘要无法回答某笔成交如何收费、回撤在哪些时点形成；因此
+execution.parquet 和 equity.parquet 是核查这些结果的明细来源，不能由日志或汇总替代。
+
+execution.parquet 保留 `ledger.records` 和 `ledger.order_events` 两个现有事实序列：
+
+| 字段 | Parquet 类型与来源 |
+| --- | --- |
+| `source` | 必需 string，取 `records` 或 `order_events`，区分原始序列 |
+| `sequence` | 必需 int64，在各自原始序列中从 0 开始的位置 |
+| `ts_us`、`order_id` | 必需 int64，原始事件的 UTC epoch 微秒时间与订单 ID |
+| `event` | nullable string，仅 records 行使用原值 `ORDER_SUBMIT`、`ORDER_REJECT` 或 `FILL` |
+| `symbol`、`side`、`qty` | 前两列 nullable string，qty 为 nullable int64；来自 records 原值 |
+| `reason`、`observation_id` | nullable string，来自对应记录；未记录时为 null |
+| `fill_id` | nullable string，来自 FILL 的稳定成交身份 |
+| `price`、`reference_price`、`commission`、`stamp_tax`、`transfer_fee` | nullable string，原样保存账本中的十进制价格和费用，不经 float 转换 |
+| `meta` | nullable string，仅 records 行保存原始 meta 的 JSON，保留嵌套结构，不展平或覆盖同名主字段 |
+| `status`、`remaining_qty`、`candidate_price` | 仅 order_events 行使用，分别为 nullable string、nullable int64、nullable string；status 使用已有枚举值，候选价按 Decimal 文本保存 |
+
+文件先按记录顺序保存 records，再按事件顺序保存 order_events；`source + sequence` 保留
+各自顺序。两个来源没有统一的序号，不将文件行序或同一 ts_us 下的人为排序声称为跨来源
+因果顺序。OrderEvent 没有的 symbol/side 等字段保持 null，不通过后续状态猜补；可用
+order_id 关联账本记录。无成交时不补零价或零费用，无任何执行记录时写带固定 schema 的
+零行表，明确区分正常无交易和明细未成功发布。
+
+equity.parquet 按 `EquityCurve.points` 的原有顺序保存六列：`ts_us` 为 int64；
+`cash`、`market_value`、`equity`、`peak_equity`、`drawdown` 为 float64。
+各列均不为空。保留实际估值时点与计算精度，不重采样为每日结果，不在空日期插值。
+同一时点已由 EquityCurve 替换的值只保存最终快照；该文件不是账户状态变更日志。
+
+两个明细都复用公共单文件 Parquet writer，依次原子发布 execution、equity；全部成功后
+才执行 metrics persist 与 report。写入失败原样传播，已发布文件保留，后续步骤不执行；
+它们不组成多文件事务。Timing 尚未完成时不进入最终持久化，也不在异常路径补写部分汇总。
+这些制品支持执行和权益核查，不宣称已经归档原始指令、全部行情、环境或完整复现包。
+
+运行参数随最终指标保存到现有 `metrics.json.parameters`，其他顶层指标字段保持原口径。
+该对象的字段由本节唯一规定：
+
+| 字段 | 保存内容 |
+| --- | --- |
+| `mode` | 本次显式选择的五种模式之一 |
+| `start`、`end` | 用户请求的原始起止日期，不替换为筛选后的交易日 |
+| `model_ref` | 本次指定模型文件的绝对路径 |
+| `strategy` | 已解析的策略类型及完整参数，包含实际采用的默认值 |
+| `backtest_config` | 本次实际采用的静态回测配置：`init_cash`、`min_listing_calendar_days` |
+
+例如请求从周六 `2026-07-04` 开始，实际首个决策在 `2026-07-06`，仍保存
+`parameters.start="2026-07-04"`；指标原有 `start_date` 继续表示实际处理的首个交易日。
+策略未填写 `target_quantity` 而采用默认 `100` 时，参数快照中明确保存 `100`，便于直接
+解释结果，不必用后来的默认配置反推本次运行。
+
+Workflow 在确定新 experiment 名称后、读取日历或模型前，一次生成参数 JSON 快照并输出
+一条带 `experiment=...` 和 `parameters=<JSON>` 的 INFO 开始事件。最终 MetricsPersistStep
+把同一份快照与指标一起原子写入；不得在日志和指标出口分别重新组装参数。参数中的数值
+保留序列化精度和 JSON 类型，不使用指标展示中的舍入或百分比格式。HTML 报告从 metrics
+展示完整参数；报告日志的指标摘要不重复输出参数，以免套用指标的展示格式。
+日志沿用公共 logger 进入 CLI stderr，HTTP 任务由 JobRuntime 捕获到该 Job 日志，不写入 Flask system log，
+不新增 sink。加载、日历或执行失败而尚未写出 metrics 时，仍可用启动日志定位请求与配置；
+不为失败补写空指标，也不把开始事件当成模型校验通过或任务成功。
+
+独立 `binding.json` 不再生成。模型合法性由前述运行时核验保证；预测文件已经保留模型
+内容摘要与决策时刻，因此删除该文件不删除核验或预测证据。`event` 属于日志事件，
+`training_record` 继续从模型同目录的 `schedule.json` 读取，不整份复制到回测结果；
+首个决策时点等推导值也不混入用户运行参数。
+
+选择 metrics 承载参数，是因为保存或比较一个结果时必须同时知道它的模式、日期、模型、
+策略和配置；只放日志会让这种解释依赖另一份文件及日志格式。启动日志则覆盖尚无结果时
+的排错需要。两者使用同一快照，各有明确的读取场景，无须第三份独立参数制品。该快照只保存
+这里列出的运行参数，不宣称已归档完整应用配置、代码版本、运行环境、历史输入修订或
+模型历史可用证明。metrics 写出后 ReportStep 仍可能失败，文件存在不能证明整个任务成功。
+
 ## 失败现场
 
-Artifact persist 或 report 失败时原异常传播，已经创建的 experiment 目录和制品保留为失败
+制品持久化或 report 失败时原异常传播，已经创建的 experiment 目录和制品保留为失败
 现场；它们不表示成功，也不被本次 workflow 自动清理。后续同名运行仍因目录存在而失败。

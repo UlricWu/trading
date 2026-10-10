@@ -25,14 +25,18 @@ def persist_backtest_metrics(
     state: BacktestState,
     pm: PathManager,
     experiment_name: str,
+    parameters_json: str,
 ) -> None:
-    """Persist all accumulated layer and replay metrics.
+    """Persist metrics with the parameter JSON already emitted by the workflow.
+
+    The snapshot is serialized output, never an input to backtest calculations.
 
     Example:
         persist_backtest_metrics(
             state=state,
             pm=path_manager,
             experiment_name="backtest_2026-07-01_2026-07-20_run-1",
+            parameters_json=parameters_json,
         )
     """
     metrics = build_backtest_metrics(
@@ -45,6 +49,7 @@ def persist_backtest_metrics(
     )
     metrics.update(
         {
+            "parameters": json.loads(parameters_json),
             "model_evaluation": ICEvaluation(
                 observations=tuple(state.model_observations),
                 summary=summarize_observations(state.model_observations),
@@ -89,21 +94,24 @@ class MetricsPersistStep:
         step = MetricsPersistStep(
             pm=path_manager,
             experiment_name="backtest_2026-07-01_2026-07-20_run-1",
+            parameters_json=parameters_json,
         )
         persisted_context = step.run(completed_context)
     """
 
-    def __init__(self, *, pm: PathManager, experiment_name: str) -> None:
-        """Bind the experiment metrics destination.
+    def __init__(self, *, pm: PathManager, experiment_name: str, parameters_json: str) -> None:
+        """Bind the metrics destination and the workflow's serialized parameter snapshot.
 
         Example:
             step = MetricsPersistStep(
                 pm=path_manager,
                 experiment_name="backtest_2026-07-01_2026-07-20_run-1",
+                parameters_json=parameters_json,
             )
         """
         self._pm = pm
         self._experiment_name = experiment_name
+        self._parameters_json = parameters_json
 
     def run(self, context: BacktestContext) -> BacktestContext:
         """Persist metrics and preserve the final backtest Context.
@@ -115,5 +123,6 @@ class MetricsPersistStep:
             state=context.state,
             pm=self._pm,
             experiment_name=self._experiment_name,
+            parameters_json=self._parameters_json,
         )
         return context

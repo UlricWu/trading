@@ -322,10 +322,6 @@ class PathManager:
         """Return the training artifact directory for one experiment."""
         return self.experiment_dir(experiment_name=experiment_name) / "training"
 
-    def experiment_backtest_dir(self, *, experiment_name: str) -> Path:
-        """Return the backtest artifact directory for one experiment."""
-        return self.experiment_dir(experiment_name=experiment_name) / "backtest"
-
     def experiment_report_dir(self, *, experiment_name: str) -> Path:
         """Return the report artifact directory for one experiment."""
         return self.experiment_dir(experiment_name=experiment_name) / "report"
@@ -361,11 +357,34 @@ class PathManager:
         return self.experiment_training_dir(experiment_name=experiment_name) / "schedule.json"
 
     def experiment_backtest_metrics(self, *, experiment_name: str) -> Path:
-        """Return one backtest experiment's metrics artifact path."""
-        return (
-            self.experiment_backtest_dir(experiment_name=experiment_name)
-            / "metrics.json"
-        )
+        """Return the parameters and metrics file in the backtest experiment root.
+
+        Example:
+            path = pm.experiment_backtest_metrics(
+                experiment_name="backtest_2026-07-01_2026-07-20_run-1",
+            )
+        """
+        return self.experiment_dir(experiment_name=experiment_name) / "metrics.json"
+
+    def experiment_backtest_execution(self, *, experiment_name: str) -> Path:
+        """Return the backtest execution facts file.
+
+        Example:
+            path = pm.experiment_backtest_execution(
+                experiment_name="backtest_2026-07-01_2026-07-20_run-1",
+            )
+        """
+        return self.experiment_dir(experiment_name=experiment_name) / "execution.parquet"
+
+    def experiment_backtest_equity(self, *, experiment_name: str) -> Path:
+        """Return the backtest valuation history file.
+
+        Example:
+            path = pm.experiment_backtest_equity(
+                experiment_name="backtest_2026-07-01_2026-07-20_run-1",
+            )
+        """
+        return self.experiment_dir(experiment_name=experiment_name) / "equity.parquet"
 
     def experiment_training_report(self, *, experiment_name: str) -> Path:
         """Return one training experiment's HTML report path."""
@@ -375,11 +394,14 @@ class PathManager:
         )
 
     def experiment_backtest_report(self, *, experiment_name: str) -> Path:
-        """Return one backtest experiment's HTML report path."""
-        return (
-            self.experiment_report_dir(experiment_name=experiment_name)
-            / "backtest_report.html"
-        )
+        """Return the HTML view in the backtest experiment root.
+
+        Example:
+            path = pm.experiment_backtest_report(
+                experiment_name="backtest_2026-07-01_2026-07-20_run-1",
+            )
+        """
+        return self.experiment_dir(experiment_name=experiment_name) / "report.html"
 
     def _raw_partition(
         self,

@@ -250,13 +250,7 @@ Meta 必须在实际部署迁移前单独确认。
 `experiments/` 保存一次研究运行的当前正式现场。当前只有彼此独立的 training experiment
 和 backtest experiment，不定义 train-to-backtest 组合 experiment。
 
-```text
-experiments/<experiment_name>/
-├── training/
-├── backtest/
-└── report/
-```
-
+Training 使用下述 training/report 子目录；backtest 直接在实验根目录保存自身制品。
 子目录按实际产物创建，不要求空目录。Experiment name 的生成规则由
 `docs/offline_workflow_contract.md` 拥有；PathManager 只校验生成后的名称并返回完整路径。
 
@@ -315,32 +309,41 @@ Metrics 与 HTML 在模型交付后分别原子写入，不组成多文件事务
 
 ```text
 experiments/<experiment_name>/
-├── backtest/
-│   ├── binding.json
-│   ├── predictions/
-│   │   ├── YYYY-MM-DD.parquet
-│   │   └── ...
-│   └── metrics.json
-└── report/
-    └── backtest_report.html
+├── predictions/
+│   ├── YYYY-MM-DD.parquet
+│   └── ...
+├── execution.parquet
+├── equity.parquet
+├── metrics.json
+└── report.html
 ```
 
-binding.json 仅在指定模型加载并通过使用时序核验后写入，保存具体 ref、模型内容摘要、
-training_schedule_ref、training_record、首个决策时点、本次 mode、strategy 和静态
-backtest_config。training_schedule_ref 是指定模型同目录 `schedule.json` 的绝对路径，
-由服务端解析；首个决策时点由请求的回测区间和正式日历确定，业务核验由
+本次实验已经由 `backtest_{start}_{end}_{experiment_id}` 标识类型；不再增加重复的 backtest
+子目录，也不为单个 HTML 增加 report 子目录。五种 mode 共用上述布局，mode 保存在运行
+参数中，不按 mode 再分目录。预测仍逐实际预测日保存，保留既有的日级输入身份及读取边界，
+不为合并文件改变预测 schema。HTML 是可由 metrics 重新生成的阅读视图，不拥有另一份结果。
+
+metrics.json 同时保存结果及 `parameters` 运行参数对象，不另写 binding.json。
+execution.parquet 保存实际执行账本中的事件、成交与费用；equity.parquet 保存实际估值
+时点的权益历史。两个明细的字段、来源、顺序、空值与发布时机，以及参数字段、模型关联
+及使用时序核验、启动日志和最终结果之间的关系由
 [Backtest workflow](../offline_workflow_contract.md#backtest-workflow) 拥有。
-实际事件时间沿用运行日志；上述记录不表示模型历史发布时间或历史可用性证明。
 每个 signal_date 拥有独立预测文件；不会写回 training 的 predictions 目录，也不会
 以最后一天覆盖前一天。预测文件与训练采用相同 schema；metrics.model_evaluation
 保存模型目标评价，原 signal_eval 保留 T+1 raw-close 诊断。
-Experiment 不另写 run_meta.json、输入副本或通用 replay metadata；training_record 保存
-模型与数据组的解析配置，不声称已归档整个应用配置、代码版本、运行环境或历史输入修订事实。
+Experiment 不另写 run_meta.json、输入副本或通用 replay metadata。训练记录仍由模型同目录
+schedule.json 保存，回测不再复制；运行参数与预测摘要不构成完整环境、输入归档或模型
+历史可用性证明。
 
 PathManager 为已定义的 experiment、模型、schedule、metrics 与 report 提供精确方法；
-逐日预测文件名由本节固定。不接受任意 experiment 文件名，也不
+另外为 backtest 的 execution/equity 明细提供固定路径；逐日预测文件名由本节固定。
+不接受任意 experiment 文件名，也不
 根据文件存在性判断 experiment 是否成功。
 
-Training 或 backtest 在 artifact persist、metrics persist 或 report 阶段失败时，已经创建的
+新运行采用上述布局，历史结果保持原位，不自动移动或增加旧路径探测。旧 metrics 的
+model_evaluation observations 含绝对 prediction_ref，直接移动预测目录会破坏引用；
+若另行要求迁移，必须一并更新这些引用并重新生成报告，不能只移动目录。
+
+Training 或 backtest 在 artifact persist、facts persist、metrics persist 或 report 阶段失败时，已经创建的
 experiment 目录和制品保留为失败现场，不自动删除、回滚、续跑或恢复。残留目录不表示
 experiment 成功，但会继续触发同名 experiment 的禁止覆盖规则。

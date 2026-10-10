@@ -18,8 +18,8 @@ class ReportingBundle:
     Generate the formal backtest HTML report from experiment artifacts.
 
     The current report boundary is intentionally small: read summary metrics
-    from `backtest/metrics.json`, render its top-level key/value pairs, and
-    write `report/backtest_report.html`. This class does not read runtime
+    from `metrics.json`, render its top-level key/value pairs, and
+    write `report.html` in the same experiment root. This class does not read runtime
     context, scan detail Parquet artifacts, or write CSV artifacts.
 
     Example:
@@ -31,7 +31,7 @@ class ReportingBundle:
     pm: PathManager
 
     def run(self, *, experiment_name: str) -> Path:
-        """Generate `backtest_report.html` for one experiment.
+        """Generate `report.html` for one experiment.
 
         Example:
             report_path = ReportingBundle(pm=path_manager).run(
@@ -51,9 +51,10 @@ class ReportingBundle:
             metrics=metrics,
         )
         FileSystem.write_bytes_atomic(report_path, html.encode("utf-8"))
+        metric_values = {key: value for key, value in metrics.items() if key != "parameters"}
         logs.info(
             f"✅ backtest report publish; path={report_path}\n"
-            f"{format_log_json('backtest_metrics', metrics)}"
+            f"{format_log_json('backtest_metrics', metric_values)}"
         )
         return report_path
 

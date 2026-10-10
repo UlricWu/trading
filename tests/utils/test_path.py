@@ -226,19 +226,17 @@ def test_formal_dataset_paths_use_canonical_partition_files(tmp_path: Path) -> N
     assert not label_partition.exists()
 
 
-def test_experiment_paths_are_exact_and_experiment_scoped(tmp_path: Path) -> None:
+def test_training_paths_are_exact_and_experiment_scoped(tmp_path: Path) -> None:
     storage_root = tmp_path / "storage"
     storage_root.mkdir()
     pm = PathManager(storage_root)
     experiment_name = "training_2026-05-01_2026-05-31_run-1"
     experiment_dir = storage_root / "experiments" / experiment_name
     training_dir = experiment_dir / "training"
-    backtest_dir = experiment_dir / "backtest"
     report_dir = experiment_dir / "report"
 
     assert pm.experiment_dir(experiment_name=experiment_name) == experiment_dir
     assert pm.experiment_training_dir(experiment_name=experiment_name) == training_dir
-    assert pm.experiment_backtest_dir(experiment_name=experiment_name) == backtest_dir
     assert pm.experiment_report_dir(experiment_name=experiment_name) == report_dir
     assert (
         pm.experiment_training_model(experiment_name=experiment_name)
@@ -253,18 +251,21 @@ def test_experiment_paths_are_exact_and_experiment_scoped(tmp_path: Path) -> Non
         == training_dir / "metrics.json"
     )
     assert (
-        pm.experiment_backtest_metrics(experiment_name=experiment_name)
-        == backtest_dir / "metrics.json"
-    )
-    assert (
         pm.experiment_training_report(experiment_name=experiment_name)
         == report_dir / "training_report.html"
     )
-    assert (
-        pm.experiment_backtest_report(experiment_name=experiment_name)
-        == report_dir / "backtest_report.html"
-    )
     assert not experiment_dir.exists()
+
+
+def test_backtest_artifacts_share_the_experiment_root(tmp_path: Path) -> None:
+    pm = PathManager(tmp_path)
+    name = "backtest_2026-05-01_2026-05-31_run-1"
+    run_dir = tmp_path / "experiments" / name
+    assert pm.experiment_backtest_metrics(experiment_name=name) == run_dir / "metrics.json"
+    assert pm.experiment_backtest_report(experiment_name=name) == run_dir / "report.html"
+    assert pm.experiment_backtest_execution(experiment_name=name) == run_dir / "execution.parquet"
+    assert pm.experiment_backtest_equity(experiment_name=name) == run_dir / "equity.parquet"
+    assert not run_dir.exists()
 
 
 @pytest.mark.parametrize(

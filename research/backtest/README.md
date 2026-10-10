@@ -802,8 +802,10 @@ composition root 显式传入。记录输入的 `start/end` 选择决策时点�
 绑定记录，按模型引用及内容摘要关联其 `ModelUse`、`TrainingRunRecord` 和训练数据定义，
 沿用现有成熟时间与生效时间检查，并以这批记录实际首次决策时刻核对。绑定引用缺失或
 不匹配时准备失败，不从文件名猜测，也不因为文件今天已存在就允许过去交易。
-这复用当前 workflow 写出的 `binding.json` 所含事实，不创建模型或 Signal registry，
-也不重新指定另一份推理模型。纯事后信号统计不据此声称历史可交易。
+上述绑定记录属于本候选的拟议输入，不能将当前 workflow 视为其生产方。当前固定模型入口
+将运行参数保存于 `metrics.json.parameters` 和任务启动日志；模型内容摘要及决策时刻沿用
+预测制品。这些记录不含这里拟议的 `ModelUse` 历史可用证据；候选仍复用已有模型与预测身份，
+不创建模型或 Signal registry，也不重新指定另一份推理模型。纯事后信号统计不据此声称历史可交易。
 
 具体 submission 字段如下。`InitialAccount`、`FakeExecutionConfig`、`RiskConfig` 是上表
 所述配置的拟议名称，放在现有

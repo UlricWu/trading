@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 from datetime import date, time
 
@@ -25,6 +24,7 @@ from src.trading.backtest.steps.backtest_layers import (
     SignalStep,
     TradableAlphaEvalStep,
 )
+from src.trading.backtest.steps.facts_persist import FactsPersistStep
 from src.trading.backtest.steps.metrics_persist import MetricsPersistStep
 from src.trading.backtest.steps.report import ReportStep
 from src.trading.backtest.timing import resolve_backtest_timing
@@ -32,7 +32,6 @@ from src.trading.sim import components as sim_components
 from src.training.record import TrainingRunRecord
 from src.utils.path import PathManager
 from src.utils.datetime_utils import DateTimeUtils
-from src.utils.filesystem import FileSystem
 from src.workflows import PROCESSED_VERSION, require_new_experiment
 
 
@@ -60,6 +59,15 @@ def run_daily_alpha_backtest(
         end_date=submission.end,
         experiment_id=experiment_id,
     )
+    parameters_json = json.dumps({
+        "mode": submission.mode.value,
+        "start": submission.start,
+        "end": submission.end,
+        "model_ref": str(submission.model_ref),
+        "strategy": submission.strategy.model_dump(mode="json"),
+        "backtest_config": backtest_config.model_dump(mode="json"),
+    }, ensure_ascii=False, allow_nan=False)
+    logs.info(f"▶️ backtest; experiment={experiment_name} parameters={parameters_json}")
     access = Access(pm=path_manager, processed_version=PROCESSED_VERSION)
     open_dates = access.trade_dates(
         start_date=submission.start,
@@ -101,25 +109,9 @@ def run_daily_alpha_backtest(
         raise ValueError("model dataset disagrees with the referenced training record")
     if model.feature_set == "l2_stock_1430":
         raise ValueError("daily-close backtest cannot execute a 14:30 decision model")
-    with submission.model_ref.open("rb") as source:
-        model_digest = hashlib.file_digest(source, "sha256").hexdigest()
-    run_dir = path_manager.experiment_backtest_dir(experiment_name=experiment_name)
-    FileSystem.write_bytes_atomic(
-        run_dir / "binding.json",
-        json.dumps({
-            "event": "model_loaded_and_bound",
-            "model_ref": str(submission.model_ref),
-            "model_sha256": model_digest,
-            "training_schedule_ref": str(training_schedule_ref),
-            "training_record": record.model_dump(mode="json"),
-            "first_decision_ts_us": first_decision,
-            "mode": submission.mode.value,
-            "strategy": submission.strategy.model_dump(mode="json"),
-            "backtest_config": backtest_config.model_dump(mode="json"),
-        }, ensure_ascii=False, indent=2, allow_nan=False).encode("utf-8"),
-    )
+    run_dir = path_manager.experiment_dir(experiment_name=experiment_name)
     logs.info(
-        f"✅ model binding; model_ref={submission.model_ref} model_sha256={model_digest} "
+        f"✅ model load; experiment={experiment_name} model_ref={submission.model_ref} "
         f"first_decision_ts_us={first_decision}"
     )
     per_timing_steps: tuple[PipelineStep[BacktestContext], ...] = (
@@ -146,9 +138,11 @@ def run_daily_alpha_backtest(
         FullBacktestStep(),
     )
     final_steps: tuple[PipelineStep[BacktestContext], ...] = (
+        FactsPersistStep(pm=path_manager, experiment_name=experiment_name),
         MetricsPersistStep(
             pm=path_manager,
             experiment_name=experiment_name,
+            parameters_json=parameters_json,
         ),
         ReportStep(
             pm=path_manager,
