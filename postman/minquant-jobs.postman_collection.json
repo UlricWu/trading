@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "fc39e20c-21d1-44c2-abe1-9771b39af721",
     "name": "MinQuant Jobs API",
-    "description": "单文件导入，包含「测试环境 · 5050」和「训练环境 · 5051」两个文件夹，分别访问 http://192.168.50.227:5050 和 http://192.168.50.227:5051。每个文件夹覆盖全部 5 个 Flask 路由、9 个请求示例，共 18 个请求。无需额外导入 Postman Environment。运行前在 Collection Variables 填写训练区间、可选评价区间、模型及特征/标签组；回测另填对应环境的具体模型绝对 ref；训练 Job ID 只标识任务，不推导模型引用。模型发布结果见服务存储中的 schedule.json 和具体模型文件。按需单独发送请求；批量运行会创建全部示例 Job 并执行取消。服务端 ENV 和监听配置由服务启动配置决定。",
+    "description": "单文件导入，包含「测试环境 · 5050」和「训练环境 · 5051」两个文件夹，分别访问 http://192.168.50.227:5050 和 http://192.168.50.227:5051。每个文件夹覆盖全部 5 个 Flask 路由、9 个请求示例，共 18 个请求。无需额外导入 Postman Environment。运行前在 Collection Variables 填写训练区间、可选评价区间、模型及特征/标签组；信号评价另填对应环境的具体模型绝对 ref，固定风控填写案例绝对路径及显式规则；训练 Job ID 只标识任务，不推导模型引用。模型发布结果见服务存储中的 schedule.json 和具体模型文件。按需单独发送请求；批量运行会创建全部示例 Job 并执行取消。服务端 ENV 和监听配置由服务启动配置决定。",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "item": [
@@ -198,7 +198,7 @@
               "response": []
             },
             {
-              "name": "Create Threshold Backtest Job",
+              "name": "Create Signal Evaluation Job",
               "event": [
                 {
                   "listen": "test",
@@ -226,7 +226,7 @@
                 ],
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"kind\": \"backtest\",\n  \"mode\": \"{{backtestMode}}\",\n  \"start\": \"{{backtestStart}}\",\n  \"end\": \"{{backtestEnd}}\",\n  \"model_ref\": \"{{testModelRef}}\",\n  \"strategy\": {\n    \"type\": \"threshold\",\n    \"params\": {\n      \"threshold\": 0.5,\n      \"target_quantity\": 100\n    }\n  }\n}",
+                  "raw": "{\n  \"kind\": \"backtest\",\n  \"mode\": \"signal_eval\",\n  \"start\": \"{{backtestStart}}\",\n  \"end\": \"{{backtestEnd}}\",\n  \"signal\": {\n    \"type\": \"model\",\n    \"model_ref\": \"{{testModelRef}}\"\n  }\n}",
                   "options": {
                     "raw": {
                       "language": "json"
@@ -242,12 +242,12 @@
                     "jobs"
                   ]
                 },
-                "description": "使用 testModelRef 中明确指定的已发布模型文件绝对路径。mode 支持 signal_eval、tradable_alpha_eval、execution_eval、risk_eval、full_backtest。"
+                "description": "独立评价指定模型的预测；无需策略、资金或执行参数。模型绝对路径与训练记录必须实际存在。"
               },
               "response": []
             },
             {
-              "name": "Create Top-K Hysteresis Backtest Job",
+              "name": "Create Risk Evaluation Job",
               "event": [
                 {
                   "listen": "test",
@@ -275,7 +275,7 @@
                 ],
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"kind\": \"backtest\",\n  \"mode\": \"{{backtestMode}}\",\n  \"start\": \"{{backtestStart}}\",\n  \"end\": \"{{backtestEnd}}\",\n  \"model_ref\": \"{{testModelRef}}\",\n  \"strategy\": {\n    \"type\": \"topk_hysteresis\",\n    \"params\": {\n      \"max_positions\": 10,\n      \"entry_threshold\": 0.5,\n      \"exit_threshold\": 0.2,\n      \"rebalance_interval_minutes\": 1,\n      \"keep_winners\": false,\n      \"target_quantity\": 100\n    }\n  }\n}",
+                  "raw": "{\n  \"kind\": \"backtest\",\n  \"mode\": \"risk_eval\",\n  \"case_refs\": [\n    \"{{testRiskCaseRef}}\"\n  ],\n  \"risk\": {\n    \"rules\": {{riskRulesJson}}\n  }\n}",
                   "options": {
                     "raw": {
                       "language": "json"
@@ -291,7 +291,7 @@
                     "jobs"
                   ]
                 },
-                "description": "使用 testModelRef 中明确指定的已发布模型文件绝对路径。mode 支持 signal_eval、tradable_alpha_eval、execution_eval、risk_eval、full_backtest。"
+                "description": "独立评价固定风控前案例；无需模型、日期或行情。填写案例绝对路径和本任务明确选择的 riskRulesJson；示例 0.2 不是默认业务阈值。"
               },
               "response": []
             }
@@ -530,7 +530,7 @@
               "response": []
             },
             {
-              "name": "Create Threshold Backtest Job",
+              "name": "Create Signal Evaluation Job",
               "event": [
                 {
                   "listen": "test",
@@ -558,7 +558,7 @@
                 ],
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"kind\": \"backtest\",\n  \"mode\": \"{{backtestMode}}\",\n  \"start\": \"{{backtestStart}}\",\n  \"end\": \"{{backtestEnd}}\",\n  \"model_ref\": \"{{trainingModelRef}}\",\n  \"strategy\": {\n    \"type\": \"threshold\",\n    \"params\": {\n      \"threshold\": 0.5,\n      \"target_quantity\": 100\n    }\n  }\n}",
+                  "raw": "{\n  \"kind\": \"backtest\",\n  \"mode\": \"signal_eval\",\n  \"start\": \"{{backtestStart}}\",\n  \"end\": \"{{backtestEnd}}\",\n  \"signal\": {\n    \"type\": \"model\",\n    \"model_ref\": \"{{trainingModelRef}}\"\n  }\n}",
                   "options": {
                     "raw": {
                       "language": "json"
@@ -574,12 +574,12 @@
                     "jobs"
                   ]
                 },
-                "description": "使用 trainingModelRef 中明确指定的已发布模型文件绝对路径。mode 支持 signal_eval、tradable_alpha_eval、execution_eval、risk_eval、full_backtest。"
+                "description": "独立评价指定模型的预测；无需策略、资金或执行参数。模型绝对路径与训练记录必须实际存在。"
               },
               "response": []
             },
             {
-              "name": "Create Top-K Hysteresis Backtest Job",
+              "name": "Create Risk Evaluation Job",
               "event": [
                 {
                   "listen": "test",
@@ -607,7 +607,7 @@
                 ],
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"kind\": \"backtest\",\n  \"mode\": \"{{backtestMode}}\",\n  \"start\": \"{{backtestStart}}\",\n  \"end\": \"{{backtestEnd}}\",\n  \"model_ref\": \"{{trainingModelRef}}\",\n  \"strategy\": {\n    \"type\": \"topk_hysteresis\",\n    \"params\": {\n      \"max_positions\": 10,\n      \"entry_threshold\": 0.5,\n      \"exit_threshold\": 0.2,\n      \"rebalance_interval_minutes\": 1,\n      \"keep_winners\": false,\n      \"target_quantity\": 100\n    }\n  }\n}",
+                  "raw": "{\n  \"kind\": \"backtest\",\n  \"mode\": \"risk_eval\",\n  \"case_refs\": [\n    \"{{trainingRiskCaseRef}}\"\n  ],\n  \"risk\": {\n    \"rules\": {{riskRulesJson}}\n  }\n}",
                   "options": {
                     "raw": {
                       "language": "json"
@@ -623,7 +623,7 @@
                     "jobs"
                   ]
                 },
-                "description": "使用 trainingModelRef 中明确指定的已发布模型文件绝对路径。mode 支持 signal_eval、tradable_alpha_eval、execution_eval、risk_eval、full_backtest。"
+                "description": "独立评价固定风控前案例；无需模型、日期或行情。填写案例绝对路径和本任务明确选择的 riskRulesJson；示例 0.2 不是默认业务阈值。"
               },
               "response": []
             }
@@ -693,11 +693,6 @@
       "type": "string"
     },
     {
-      "key": "backtestMode",
-      "value": "full_backtest",
-      "type": "string"
-    },
-    {
       "key": "testBaseUrl",
       "value": "http://192.168.50.227:5050",
       "type": "string"
@@ -755,6 +750,21 @@
     {
       "key": "trainingLabelGroup",
       "value": "daily_close_return_rank_d1/v1",
+      "type": "string"
+    },
+    {
+      "key": "testRiskCaseRef",
+      "value": "/data/risk-cases.json",
+      "type": "string"
+    },
+    {
+      "key": "trainingRiskCaseRef",
+      "value": "/data/risk-cases.json",
+      "type": "string"
+    },
+    {
+      "key": "riskRulesJson",
+      "value": "[{\"type\":\"max_single_name\",\"max_ratio\":0.2}]",
       "type": "string"
     }
   ]

@@ -1,52 +1,37 @@
 # filepath: src/trading/risk/rules/max_drawdown.py
 from __future__ import annotations
 
-from dataclasses import dataclass
 import math
+from dataclasses import dataclass
+from decimal import Decimal
 
-from src.trading.risk.base import RiskContext, RiskDecision, TargetPositions, RiskRule
+from src.trading.risk.base import RiskContext, RuleObservation, TargetPositions
 
 
 @dataclass(frozen=True, slots=True)
-class MaxDrawdownKillSwitchRule(RiskRule):
-    """
-    Hard risk: if drawdown exceeds limit, block all trading (flat).
+class MaxDrawdownRule:
+    """Request a zero target at the threshold without claiming the liquidation filled.
 
-    drawdown = 1 - equity / peak_equity
+    Example:
+        rule = MaxDrawdownRule(max_drawdown=0.1)
+        observation = rule.apply(target=target, ctx=context)
     """
+
     max_drawdown: float
-    name: str = "max_drawdown_kill"
 
     def __post_init__(self) -> None:
-        if (
-            not math.isfinite(self.max_drawdown)
-            or not 0.0 <= self.max_drawdown <= 1.0
-        ):
-            raise ValueError("max_drawdown must be finite and between 0 and 1")
+        if not math.isfinite(self.max_drawdown) or not 0 <= self.max_drawdown <= 1:
+            raise ValueError("max_drawdown must be in [0, 1]")
 
-    def apply(self, *, target: TargetPositions, ctx: RiskContext) -> RiskDecision:
+    def apply(self, *, target: TargetPositions, ctx: RiskContext) -> RuleObservation:
+        """Evaluate the current snapshot; no persistent freeze is introduced.
 
+        Example:
+            observation = rule.apply(target=target, ctx=context)
+        """
         if ctx.peak_equity <= 0:
-            return RiskDecision(
-                adjusted=dict(target),
-                blocked=False,
-                scaled=False,
-                reason="peak<=0",
-            )
-
-        dd = 1.0 - (ctx.equity / ctx.peak_equity)
-
-        if dd >= float(self.max_drawdown):
-            return RiskDecision(
-                adjusted={str(symbol): 0 for symbol in ctx.positions},
-                blocked=True,
-                scaled=False,
-                reason=f"dd>={self.max_drawdown:.2%}",
-            )
-
-        return RiskDecision(
-            adjusted=dict(target),
-            blocked=False,
-            scaled=False,
-            reason="pass",
-        )
+            return RuleObservation("max_drawdown", target, target, False, "nonpositive_peak_equity", checked=False)
+        peak = Decimal(str(ctx.peak_equity))
+        triggered = peak - Decimal(str(ctx.equity)) >= Decimal(str(self.max_drawdown)) * peak
+        adjusted = {symbol: 0 for symbol in target} if triggered else dict(target)
+        return RuleObservation("max_drawdown", target, adjusted, triggered, "liquidate" if triggered else "pass")

@@ -10,6 +10,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
+from src.trading.portfolio.state import PortfolioState
 from src.trading.backtest.context import BacktestContext, BacktestState
 from src.trading.backtest.steps.facts_persist import FactsPersistStep
 from src.trading.backtest.timing import BacktestTiming
@@ -22,8 +23,8 @@ from src.utils.path import PathManager
 @pytest.fixture
 def context() -> BacktestContext:
     return BacktestContext(
-        timing=BacktestTiming(signal_date="2026-07-03", forward_date="2026-07-06"),
-        state=BacktestState.initial(initial_cash=20_000),
+        timing=BacktestTiming(ts_us=1, trade_date="2026-07-03"),
+        state=BacktestState(PortfolioState(20_000, 20_000)),
     )
 
 

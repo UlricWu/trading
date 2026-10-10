@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -12,7 +13,6 @@ import pytest
 from typer.testing import CliRunner
 
 from src import cli
-from src.config.backtest_config import BacktestMode
 from src.jobs.requests import build_cli_command, create_training_submission
 from src.utils.path import PathManager
 
@@ -287,50 +287,34 @@ def test_train_command_round_trip_preserves_named_choices_and_ranges(
     assert isinstance(arguments["path_manager"], PathManager)
 
 
-def test_backtest_loads_static_config_without_runtime_override(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize(("mode", "workflow"), [
+    ("signal_eval", "run_signal_evaluation"), ("risk_eval", "run_risk_evaluation"),
+    ("execution_eval", "run_execution_evaluation"), ("tradable_alpha_eval", "run_tradable_alpha_evaluation"),
+    ("full_backtest", "run_full_backtest"),
+])
+def test_backtest_routes_validated_input_to_its_workflow(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    backtest_payload: Callable[[str], dict[str, object]], mode: str, workflow: str,
 ) -> None:
-    backtest_config = object()
-    load_config = Mock(
-        return_value=SimpleNamespace(
-            storage_root=tmp_path,
-            backtest=backtest_config,
-        )
-    )
-    run_backtest = Mock()
+    config = object()
+    load_config = Mock(return_value=SimpleNamespace(storage_root=tmp_path, backtest=config))
+    run = Mock()
     monkeypatch.setattr(cli.AppConfig, "load", load_config)
-    monkeypatch.setattr(cli, "run_daily_alpha_backtest", run_backtest)
-
-    result = CliRunner().invoke(
-        cli.app,
-        [
-            "backtest",
-            "--mode",
-            BacktestMode.FULL_BACKTEST.value,
-            "--start",
-            "2026-07-01",
-            "--end",
-            "2026-07-20",
-            "--experiment-id",
-            "run-1",
-            "--model-ref",
-            "/data/models/training-1.joblib",
-            "--strategy-json",
-            '{"type":"threshold","params":{"threshold":0.5}}',
-        ],
-    )
-
+    monkeypatch.setattr(cli, workflow, run)
+    fields = backtest_payload(mode)
+    del fields["kind"], fields["mode"]
+    result = CliRunner().invoke(cli.app, ["backtest", "--mode", mode,
+        "--experiment-id", "run-1", "--input-json", json.dumps(fields)])
     assert result.exit_code == 0, result.output
     load_config.assert_called_once_with()
-    arguments = run_backtest.call_args.kwargs
-    submission = arguments["submission"]
-    assert arguments["backtest_config"] is backtest_config
-    assert submission.mode is BacktestMode.FULL_BACKTEST
-    assert str(submission.model_ref) == "/data/models/training-1.joblib"
-    assert submission.strategy.params.target_quantity == 100
-    assert arguments["experiment_id"] == "run-1"
-    assert isinstance(arguments["path_manager"], PathManager)
+    args = run.call_args.kwargs
+    assert args["submission"].mode.value == mode
+    assert args["experiment_id"] == "run-1"
+    assert isinstance(args["path_manager"], PathManager)
+    if mode in ("signal_eval", "tradable_alpha_eval", "full_backtest"):
+        assert args["backtest_config"] is config
+    else:
+        assert "backtest_config" not in args
 
 
 @pytest.mark.parametrize(
@@ -346,21 +330,10 @@ def test_backtest_loads_static_config_without_runtime_override(
         ),
         (
             [
-                "backtest",
-                "--mode",
-                "full_backtest",
-                "--start",
-                "2026-07-01",
-                "--end",
-                "2026-07-02",
-                "--experiment-id",
-                "run-1",
-                "--model-ref",
-                "/data/models/training-1.joblib",
-                "--strategy-json",
-                '{"type":"threshold","params":{"threshold":0.5}}',
+                "backtest", "--mode", "signal_eval", "--experiment-id", "run-1",
+                "--input-json", '{"start":"2026-07-01","end":"2026-07-02","signal":{"type":"recorded","prediction_refs":[]}}',
             ],
-            "run_daily_alpha_backtest",
+            "run_signal_evaluation",
         ),
     ],
 )

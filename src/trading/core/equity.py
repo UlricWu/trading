@@ -49,6 +49,7 @@ class EquityCurve:
     """
 
     points: list[EquityPoint] = field(default_factory=list)
+    starting_peak_equity: float = 0.0
 
     # internal rolling state (NOT exposed)
     _peak_equity: float = 0.0
@@ -90,7 +91,7 @@ class EquityCurve:
         replacing = bool(self.points and self.points[-1].ts_us == ts_us)
         previous_index = len(self.points) - (2 if replacing else 1)
         if previous_index < 0:
-            peak = equity
+            peak = max(self.starting_peak_equity, equity)
             historical_max_drawdown = 0.0
         else:
             peak = max(self.points[previous_index].peak_equity, equity)

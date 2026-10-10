@@ -11,18 +11,17 @@ from src.trading.portfolio.state import FillCost
 class AShareCostModel:
     """Scenario fees on cumulative order notional, without currency rounding.
 
-    H03 callers explicitly supply all rates; the existing defaults belong to
-    the existing daily workflow. Actual market fee rounding is not inferred.
+    Callers explicitly supply every rate. Actual market fee rounding is not inferred.
 
     Example:
         costs = AShareCostModel(0.0003, 0, 0, 5)
         fee = costs.compute(side="BUY", price=Decimal("10"), qty=200, symbol="600000")
     """
 
-    commission_rate: float = 0.0003
-    stamp_tax_rate: float = 0.001
-    transfer_rate: float = 0.00001
-    min_commission: float = 5.0
+    commission_rate: Decimal | float
+    stamp_tax_rate: Decimal | float
+    transfer_rate: Decimal | float
+    min_commission: Decimal | float
 
     def __post_init__(self) -> None:
         for value in (self.commission_rate, self.stamp_tax_rate, self.transfer_rate, self.min_commission):

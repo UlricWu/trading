@@ -1,89 +1,77 @@
 # filepath: src/trading/backtest/context.py
-"""Persistent state and per-timing Context for the daily-alpha backtest."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from pathlib import Path
 
-from src.trading.core.equity import EquityCurve
+from src.trading.backtest.market.signals import RecordedSignalBatch
+from src.trading.backtest.timing import BacktestTiming
+from src.trading.core.equity import EquityCurve, EquityPoint
+from src.trading.core.events import PendingOrder, TargetEvent
 from src.trading.core.ledger import ExecutionLedger
 from src.trading.core.tape import SignalTape, TargetTape
-from src.trading.backtest.evaluation import (
-    ExecutionQualityFrame,
-    FullBacktestFrame,
-    RiskEffectFrame,
-    SignalEvalFrame,
-    TradableAlphaFrame,
-)
 from src.trading.portfolio.state import PortfolioState
+from src.trading.risk.evaluation import RiskCase, RiskObservation
 from src.training.evaluation import ICObservation
 
-if TYPE_CHECKING:
-    from src.trading.backtest.steps.backtest_layers import (
-        PortfolioResult,
-        RiskResult,
-        SignalEvaluationResult,
-        SignalResult,
-    )
-    from src.trading.backtest.timing import BacktestTiming
+
+@dataclass(slots=True)
+class SignalEvaluationContext:
+    """Single-pass evaluation facts with no trading state.
+
+    Example:
+        context = SignalEvaluationContext((prediction_ref,), {decision_us: "2026-07-03"})
+    """
+
+    prediction_refs: tuple[Path, ...]
+    decision_dates: dict[int, str]
+    observations: tuple[ICObservation, ...] = ()
+
+
+@dataclass(slots=True)
+class RiskEvaluationContext:
+    """Fixed risk inputs and actual rule observations, never a mutable account.
+
+    Example:
+        context = RiskEvaluationContext(cases=(case,))
+    """
+
+    cases: tuple[RiskCase, ...]
+    observations: tuple[RiskObservation, ...] = ()
 
 
 @dataclass(slots=True)
 class BacktestState:
-    """Carry only values that persist across backtest timings.
+    """Run-owned trading facts; no future labels or accumulated evaluation frames.
 
     Example:
-        state = BacktestState.initial(initial_cash=200_000)
-        cash = state.portfolio_state.cash
+        state = BacktestState(portfolio_state=account)
     """
 
     portfolio_state: PortfolioState
     execution_ledger: ExecutionLedger = field(default_factory=ExecutionLedger)
+    pending_orders: dict[int, PendingOrder] = field(default_factory=dict)
     equity_curve: EquityCurve = field(default_factory=EquityCurve)
+    daily_equity: dict[str, EquityPoint] = field(default_factory=dict)
     signal_tape: SignalTape = field(default_factory=SignalTape)
     target_tape: TargetTape = field(default_factory=TargetTape)
-    signal_eval_frames: list[SignalEvalFrame] = field(default_factory=list)
-    model_observations: list[ICObservation] = field(default_factory=list)
-    tradable_alpha_frames: list[TradableAlphaFrame] = field(default_factory=list)
-    risk_decision_frames: list[RiskEffectFrame] = field(default_factory=list)
-    execution_eval_frames: list[ExecutionQualityFrame] = field(default_factory=list)
-    full_backtest_frames: list[FullBacktestFrame] = field(default_factory=list)
-    bar_count: int = 0
-    signal_count: int = 0
+    risk_observations: list[RiskObservation] = field(default_factory=list)
+    prediction_refs: list[Path] = field(default_factory=list)
+    decision_dates: dict[int, str] = field(default_factory=dict)
     last_mark_prices: dict[str, float] = field(default_factory=dict)
-    trade_dates: list[str] = field(default_factory=list)
-
-    @classmethod
-    def initial(cls, *, initial_cash: int) -> BacktestState:
-        """Create a fully initialized state for one backtest.
-
-        Example:
-            state = BacktestState.initial(initial_cash=200_000)
-        """
-        cash = float(initial_cash)
-        return cls(
-            portfolio_state=PortfolioState(
-                initial_cash=cash,
-                cash=cash,
-            )
-        )
 
 
 @dataclass(slots=True)
 class BacktestContext:
-    """Carry one timing's transient values and shared persistent state.
+    """Current visible facts and explicit actions for a single clock tick.
 
     Example:
-        context = BacktestContext(
-            timing=timing,
-            state=BacktestState.initial(initial_cash=200_000),
-        )
+        context = BacktestContext(timing=timing, state=state)
     """
 
     timing: BacktestTiming
     state: BacktestState
-    signal: SignalResult | None = None
-    signal_evaluation: SignalEvaluationResult | None = None
-    portfolio: PortfolioResult | None = None
-    risk: RiskResult | None = None
+    signal: RecordedSignalBatch | None = None
+    execution_target: TargetEvent | None = None
+    cancel_order_ids: tuple[int, ...] = ()
+    requested_wakeup_ts_us: set[int] = field(default_factory=set)

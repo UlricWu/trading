@@ -1,155 +1,71 @@
 # filepath: src/trading/backtest/components.py
-"""Backtest runtime component construction."""
-
 from __future__ import annotations
 
-from dataclasses import dataclass, fields, is_dataclass
-from pathlib import Path
-
-from src import logs
+from src.access import Access
 from src.config.backtest_config import (
-    BacktestConfig,
-    BacktestMode,
-    StrategyConfig,
+    FakeExecutionConfig, InitialAccount, RiskConfig, SingleNameRiskConfig, GrossRiskConfig,
 )
-from src.trading.backtest.execution.engine import ExecutionOrchestrator
-from src.trading.backtest.execution.ideal import IdealExecution
-from src.trading.backtest.execution.models.cost_a_share import AShareCostModel
-from src.trading.backtest.execution.models.slippage_fixed_bp import FixedBPSlippageModel
-from src.trading.execution.policies.constraints import AShareTargetClippingPolicy
-from src.trading.execution.policies.validation import AShareOrderValidation
-from src.trading.backtest.execution.settlement import SettlementEngine
-from src.trading.backtest.execution.venue.sim_immediate import SimImmediateVenue
-from src.trading.portfolio.constructors.base import PortfolioConstructor
-from src.trading.portfolio.constructors.factory import build_portfolio_constructor
-from src.trading.portfolio.constructors.topk_hysteresis import TopKHysteresisConstructor
-from src.trading.risk.engine import NoOpRiskManager
-from src.trading.signal.diagnostics import BasicSignalDiagnostics
-from src.trading.signal.model import ModelSignalProvider
-from src.training.artifact import load
+from src.trading.backtest.context import BacktestState
+from src.trading.backtest.market.replay import ReplayMarket, ReplayMarketInput
+from src.trading.core.equity import EquityCurve
+from src.trading.portfolio.state import PortfolioState
+from src.trading.risk.base import RiskRule
+from src.trading.risk.engine import RiskManager
+from src.trading.risk.rules.max_drawdown import MaxDrawdownRule
+from src.trading.risk.rules.max_position import MaxSingleNameNotionalRule, MaxGrossExposureRule
 
 
-@dataclass(frozen=True)
-class Components:
-    """Runtime components consumed by the fixed backtest layer graph.
+def prepare_market(*, config: FakeExecutionConfig, initial: InitialAccount, access: Access) -> ReplayMarket:
+    """Validate normalized input coverage against the formal account calendar.
 
     Example:
-        components = Components(
-            signal=model_signal, feature_set="tushare_daily_basic",
-            feature_version="v1", feature_names=("f_d_close_return_1d",),
-            constructor=portfolio_constructor, risk=NoOpRiskManager(),
-            execution=IdealExecution(), target_capacity=None,
-        )
+        market = prepare_market(config=execution_config, initial=account_snapshot, access=access)
     """
+    source = ReplayMarketInput.model_validate_json(config.market_ref.read_bytes(), strict=True)
+    actual = access.trade_dates(start_date=source.sessions[0].trade_date, end_date=source.sessions[-1].trade_date)
+    if tuple(actual) != tuple(session.trade_date for session in source.sessions):
+        raise ValueError("prepared account sessions must exactly cover the formal trading calendar")
+    market = ReplayMarket(source)
+    if market.session_at(initial.ts_us).trade_date != initial.trade_date:
+        raise ValueError("initial snapshot trade_date disagrees with replay start")
+    market.session_at(config.end_ts_us)
+    for ts_us in config.risk_check_ts_us:
+        market.session_at(ts_us)
+        if not initial.ts_us <= ts_us <= config.end_ts_us:
+            raise ValueError("risk check is outside the simulation interval")
+    if config.slippage_bp is not None and any(o.volume_qty is None for o in source.observations):
+        raise ValueError("price-model execution requires explicit observed volume_qty")
+    symbols = {o.symbol for o in source.observations} | initial.positions.keys()
+    if not symbols <= config.quantity_rules.keys():
+        raise ValueError("execution quantity rules must cover all observed and held symbols")
+    return market
 
-    signal: ModelSignalProvider
-    feature_set: str
-    feature_version: str
-    feature_names: tuple[str, ...]
-    constructor: PortfolioConstructor
-    risk: NoOpRiskManager
-    execution: IdealExecution | ExecutionOrchestrator
-    target_capacity: int | None
 
-
-def build_components(
-    *,
-    mode: BacktestMode,
-    model_ref: Path,
-    strategy: StrategyConfig,
-    cfg: BacktestConfig,
-) -> Components:
-    """Build artifact-backed components from static config and submission data.
+def create_state(initial: InitialAccount) -> BacktestState:
+    """Give this run its own account while retaining same-day sellable restrictions.
 
     Example:
-        components = build_components(
-            mode=BacktestMode.FULL_BACKTEST,
-            model_ref=Path("/data/models/training-1.joblib"),
-            strategy=strategy,
-            cfg=backtest_config,
-        )
+        state = create_state(initial_account)
     """
-
-    inference_model = load(model_ref)
-
-    constructor = build_portfolio_constructor(strategy)
-    signal = ModelSignalProvider(
-        model=inference_model,
-        diagnostics=BasicSignalDiagnostics(
-            log_daily_only=True,
-            score_thresholds=_score_thresholds_for_constructor(constructor),
-        ),
-    )
-
-    execution: IdealExecution | ExecutionOrchestrator
-    if mode in {
-        BacktestMode.SIGNAL_EVAL,
-        BacktestMode.TRADABLE_ALPHA_EVAL,
-        BacktestMode.RISK_EVAL,
-    }:
-        execution = IdealExecution()
-    else:
-        cost_model = AShareCostModel()
-        execution = ExecutionOrchestrator(
-            clip_policy=AShareTargetClippingPolicy(),
-            validator=AShareOrderValidation(),
-            venue=SimImmediateVenue(slippage_model=FixedBPSlippageModel(bp=5.0)),
-            settlement=SettlementEngine(cost_model=cost_model),
-        )
-
-    logs.debug(
-        f"✅ components; mode={mode.value} "
-        f"signal={type(signal).__name__} "
-        f"feature_set={inference_model.feature_set} "
-        f"feature_version={inference_model.feature_version} "
-        f"feature_count={len(inference_model.feature_names)} "
-        f"constructor={type(constructor).__name__} "
-        f"constructor_params={_constructor_log_params(constructor)} "
-        f"execution={type(execution).__name__}"
-    )
-    return Components(
-        signal=signal,
-        feature_set=inference_model.feature_set,
-        feature_version=inference_model.feature_version,
-        feature_names=inference_model.feature_names,
-        constructor=constructor,
-        risk=NoOpRiskManager(),
-        execution=execution,
-        target_capacity=_target_capacity_for_constructor(constructor),
-    )
+    account = PortfolioState(initial_cash=initial.cash, cash=initial.cash,
+        positions=initial.positions, avg_cost=initial.average_cost,
+        buy_qty_today={s: qty - initial.sellable[s] for s, qty in initial.positions.items()},
+        current_day=initial.trade_date)
+    return BacktestState(account, equity_curve=EquityCurve(starting_peak_equity=initial.peak_equity))
 
 
-def _constructor_log_params(constructor: PortfolioConstructor) -> str:
-    """Return public constructor params for one-line operational diagnostics."""
-    if not is_dataclass(constructor):
-        return "none"
+def build_risk(config: RiskConfig) -> RiskManager:
+    """Construct the explicitly selected rule order without a registry or NoOp fallback.
 
-    parts: list[str] = []
-    for field in fields(constructor):
-        if field.name.startswith("_"):
-            continue
-        value = getattr(constructor, field.name)
-        parts.append(f"{field.name}:{value}")
-    return ",".join(parts) or "none"
-
-
-def _score_thresholds_for_constructor(
-    constructor: PortfolioConstructor,
-) -> tuple[float, ...]:
-    """Expose strategy score cutoffs to score-distribution diagnostics."""
-    threshold_names = ("threshold", "entry_threshold")
-    out: list[float] = []
-    for name in threshold_names:
-        if not hasattr(constructor, name):
-            continue
-        out.append(float(getattr(constructor, name)))
-    return tuple(out)
-
-
-def _target_capacity_for_constructor(
-    constructor: PortfolioConstructor,
-) -> int | None:
-    """Return the execution target capacity exposed by the constructor provider."""
-    if isinstance(constructor, TopKHysteresisConstructor):
-        return int(constructor.max_positions)
-    return None
+    Example:
+        risk = build_risk(risk_config)
+    """
+    rules: list[RiskRule] = []
+    for rule in config.rules:
+        if isinstance(rule, SingleNameRiskConfig):
+            rules.append(MaxSingleNameNotionalRule(rule.max_ratio))
+        elif isinstance(rule, GrossRiskConfig):
+            rules.append(MaxGrossExposureRule(rule.max_gross_ratio))
+        else:
+            rules.append(MaxDrawdownRule(rule.max_drawdown))
+    return RiskManager(tuple(rules))

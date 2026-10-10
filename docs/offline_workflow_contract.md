@@ -1,7 +1,7 @@
 # Offline 工作流契约
 
 - **状态**：正式 owner
-- **适用范围**：offline data、CLI-only backfill、offline training 与 daily-alpha backtest
+- **适用范围**：offline data、CLI-only backfill、offline training 与五种 backtest 验证任务
   的配置选择、日程、calendar bootstrap、执行编排、运行结果和实验命名。
 - **CLI owner**：[`docs/engineering/cli_contract.md`](engineering/cli_contract.md)
 
@@ -51,15 +51,21 @@ run_offline_training(
     submission: TrainingSubmission, experiment_id: str,
 ) -> None
 
-run_daily_alpha_backtest(
-    *, backtest_config: BacktestConfig, path_manager: PathManager,
-    submission: BacktestSubmission, experiment_id: str,
-) -> None
+run_signal_evaluation(*, submission: SignalEvalSubmission, path_manager: PathManager,
+                      experiment_id: str, backtest_config: BacktestConfig) -> None
+run_risk_evaluation(*, submission: RiskEvalSubmission, path_manager: PathManager,
+                    experiment_id: str) -> None
+run_execution_evaluation(*, submission: ExecutionEvalSubmission, path_manager: PathManager,
+                         experiment_id: str) -> None
+run_tradable_alpha_evaluation(*, submission: TradableAlphaEvalSubmission, path_manager: PathManager,
+                              experiment_id: str, backtest_config: BacktestConfig) -> None
+run_full_backtest(*, submission: FullBacktestSubmission, path_manager: PathManager,
+                  experiment_id: str, backtest_config: BacktestConfig) -> None
 ```
 
 `src/workflows` 只负责自身拥有的入口前置条件、实验身份、日程解析和依赖组装，并通过不可变 tuple 显式
-声明具体 step 及其顺序。Data 只使用一个 `DataPipeline`，Training 与 Backtest 分别使用
-`TrainingPipeline` 和 `BacktestPipeline`。`DataPipeline` 只拥有 workflow 传入的单一 `steps`
+声明具体 step 及其顺序。Data 只使用一个 `DataPipeline`，Training 使用 `TrainingPipeline`；
+三种交易任务使用 `BacktestPipeline`，signal/risk 单次评价直接使用 `run_steps`。`DataPipeline` 只拥有 workflow 传入的单一 `steps`
 tuple 和 Instrumentation 作用域，不知道 data kind、日期 schedule、source、step 分类或具体
 step 类型；它必须严格按传入顺序把同一个 Context 交给每个 step，一次 `run` 中每个 step
 实例只调用一次。TrainingPipeline 拥有一个已解析的训练窗口及单一 Step 链，
@@ -143,8 +149,8 @@ workflow 自行生成范围时负责在执行准备前建立相同的日期格�
 Calendar Step 对该范围执行年度物化与正式交易日解析；Access 的独立 public 请求校验继续由
 [`Access 契约`](engineering/access.md#错误归属)定义。
 
-每个 workflow 必须从收到的同一个 `PathManager` 创建唯一
-`Access(pm=path_manager, processed_version="v1")`，组装对应 Pipeline 后调用一次 `run`；公共
+需要 Access 的 workflow 从收到的同一个 `PathManager` 创建唯一
+`Access(pm=path_manager, processed_version="v1")`；固定风险案例不创建无用 Access。公共
 入口不接受第二个 `Access`，从而不能把不同 storage root 组合到同一次执行。正式 processed
 version 固定为 `v1`，配置和 submission 都不得选择它。
 
@@ -153,10 +159,12 @@ Training 与 backtest 的 experiment name 分别固定为：
 ```text
 training_{start}_{end}_{experiment_id}
 backtest_{start}_{end}_{experiment_id}
+backtest_risk_{experiment_id}  # 无日期范围的 risk_eval
 ```
 
-两者共用同一个命名和冲突检查边界。最终 experiment 目录已存在时，在日历读取和执行前
-以 `FileExistsError` 失败；该检查不创建、预留、锁定、清理或恢复目录。
+有日期范围的任务共用命名检查；risk 使用案例任务前缀，沿用相同 ID 与冲突规则。最终 experiment 目录已存在时，在日历读取和执行前
+以 `FileExistsError` 失败；该检查不创建、预留、锁定、清理或恢复目录。回测输入准备通过后，以 exist_ok=False
+创建运行目录，避免并发同名任务覆盖；后续失败保留现场。
 
 Instrumentation 衡量 workflow 显式组装的 step，返回 `step.run(context)` 的原始结果，以
 `finally` 累计耗时和次数；异常只附加 scope 与 step 名称的 note，保留原异常对象及类型，
@@ -178,9 +186,9 @@ CalendarMaterializeStep, FactMaterializeStep, FeatureBuildStep, LabelBuildStep,
 Level2FactMaterializeStep, Level2MinuteBuildStep, Stock1430MaterializeStep, Stock1430DailyMaterializeStep,
 Stock1430DailyL2MaterializeStep,
 DatasetBuildStep, PreprocessStep, ModelTrainStep, PredictionStep, ICEvaluateStep,
-ArtifactPersistStep, SignalStep, SignalEvalStep, TradableAlphaEvalStep,
-PortfolioStep, RiskEvalStep, ExecutionEvalStep, AccountingStep,
-FullBacktestStep, FactsPersistStep, MetricsPersistStep, ReportStep
+ArtifactPersistStep, ReportStep, SignalEvaluationStep, RiskEvaluationStep,
+AdvanceExecutionStep, AccountingStep, SignalStep, PortfolioStep, FixedHoldingStep,
+RiskDecisionStep, SubmitTargetsStep, RecordedOrdersStep, FactsPersistStep
 ```
 
 Workflow 不统一包装异常，不把失败改成空制品或 success，也不重复记录 traceback。
@@ -791,75 +799,180 @@ metrics。制品按“模型”“IC 指标 JSON”“完整诊断 HTML 报告�
 
 ## Backtest workflow
 
-Runtime mode、model ref、strategy、start 和 end 只来自 `BacktestSubmission`。
-`BacktestConfig` 只拥有静态 `init_cash` 与 `min_listing_calendar_days`；不得再声明 name、
-dates、mode、model 或 strategy。
+本节唯一拥有五种回测任务、交易编排、账户与执行假设、策略和风险规则及输出解释。
+任务字段与 CLI/HTTP 映射分别由 [CLI](engineering/cli_contract.md#backtest) 和
+[Job API](engineering/job_api_contract.md) 拥有。数据含义、交易日历、Feature/Label 的
+可见时刻和价格口径继续由对应数据 owner 定义。`BacktestConfig` 只保存静态
+`min_listing_calendar_days`；现金、成本、时点、数量规则和风险阈值必须由交易任务提供。
+不从旧代码的初始资金、费率、滑点或 NoOp 反推业务默认值。
 
-Workflow 通过 Access 读取正式交易日，并把相邻日期映射为
-`BacktestTiming(signal_date, forward_date)`；signal date 同时是 feature date。无 timing 时
-在 component 构造和 Instrumentation 前抛 `ValueError`。
+### 五种任务与组装
 
-起止日期与 mode 必须显式选择，不由训练日期推导，也不默认运行完整回测。首轮固定模型
-由 model_ref 指定；入口读取该文件同目录 `schedule.json` 的 TrainingRunRecord，要求其中
-model_ref 与所用模型相同。首个决策时刻由请求范围内首个正式交易日的 15:00 计算，要求
-label_maturity_ts_us <= 首个决策时刻。范围起点是休市日时采用范围内首个交易日，而不是
-起点午夜；不因标签尚未成熟而自动把起点推迟到后续交易日。
+| mode / workflow | 计算及输入边界 | 结果及解释 |
+| --- | --- | --- |
+| `signal_eval` / `run_signal_evaluation` | 已保存预测，或给定模型产生的预测；复用训练的固定预测评价 | 模型目标 Rank IC、逐决策覆盖、缺失与无定义原因；不要求策略、资金或市场，不创建交易账户 |
+| `risk_eval` / `run_risk_evaluation` | 固定的风控前目标或定时检查案例及明确规则 | 原始案例、决定及逐条规则观察；不加载模型，不撮合，不从后来的账户反推输入 |
+| `execution_eval` / `run_execution_evaluation` | 固定委托/撤单、初始账户、市场和价格模型 | 订单接纳、报价判断、部分成交、费用、未完成原因和最终账户；不运行策略或业务风控 |
+| `tradable_alpha_eval` / `run_tradable_alpha_evaluation` | 信号、策略、账户和参考成交 | 原始目标、参考成交、费用、权益和策略收益；保留资金/可卖约束，不证明报价或市场量下可成交 |
+| `full_backtest` / `run_full_backtest` | 信号、策略、非空真实风控、账户、价格模型 | 在一条共享反馈路径内保存并评价信号、风控、成交和组合事实 |
 
-加载后核对模型的 train_dates、Feature/Label 身份、列顺序及标签列与记录一致，再记录
-模型加载成功事件。归档 request 不作为反序列化入口。训练记录缺失、格式错误、模型关联
-或时序不合规均失败；加载失败不得记录加载成功事件。训练记录和回测
-时钟由服务端解析，调用者不提供 model_use，也不手填生效时间或证据引用。
-
-label_maturity_ts_us 只是理论必要下界，不是实际训练完成时间或历史模型可用证明。
-这一路径验证给定模型在训练标签成熟约束下的条件回测；今天的成功加载和日志实际时间
-不能证明过去已经拥有模型，服务端也不由模型文件时间或记录路径伪造历史可用性证据。
-本入口仍只有一个固定模型，不增加周期换模管理器。14:30 决策模型不得被该 15:00 日频
-交易入口静默使用。
-
-Component builder 直接接收 submission 的 mode、绝对 Path model_ref、strategy，以及静态
-config。五种 mode 都构造同一套其余 capability、执行完整八层图并持久化
-全部 metrics。执行映射固定为：
+五个入口的公共返回值均为 `None`。只有模式路由和组装识别 mode；策略、风险、撮合、
+结算及指标计算不接收 mode。每个交易入口直接声明自己的 Step tuple：
 
 ```text
-signal_eval, tradable_alpha_eval, risk_eval -> IdealExecution
-execution_eval, full_backtest              -> ExecutionOrchestrator
+signal_eval: SignalEvaluationStep
+risk_eval: RiskEvaluationStep
+execution_eval: AdvanceExecutionStep → AccountingStep → RecordedOrdersStep
+tradable_alpha_eval: AdvanceExecutionStep → AccountingStep → SignalStep → PortfolioStep → SubmitTargetsStep
+full_backtest: AdvanceExecutionStep → AccountingStep → SignalStep → PortfolioStep → RiskDecisionStep → SubmitTargetsStep
 ```
 
-Simulated execution 的 slippage 固定为 `5.0` bp；risk 固定为 `NoOpRiskManager`，均不是
-配置项或 fallback。
+选择 `fixed_holding` 时用 `FixedHoldingStep` 执行其有状态日程，替代同位置的 PortfolioStep。
+两个单次评价使用独立 Context 和 `run_steps`，不创建交易 State。三种交易入口共用
+`ReplayClock`、`BacktestPipeline`、推进、估值、FakeExecution 和唯一 SettlementEngine。
+不构造全量 Components、空策略、NoOpRiskManager 或模式专用指标公式。
 
-Component builder 通过 `load(model_ref)` 直接恢复指定模型，不扫描目录或从实验选择最后模型。推理中的
-`missing.method="drop"` 对所有请求 symbol 使用同一个 fitted transform：被跳过的 symbol
-当天没有 score；所有 symbol 都被跳过仍是成功的“无信号”日。未持有的跳过 symbol 不产生
-新仓位；已持有的跳过 symbol 保持原数量，并占用 portfolio 的持仓容量，不得因缺少 score
-隐式生成清仓目标。
+### 信号来源与历史使用边界
 
-`BacktestState` 只保存跨 timing 持续的 portfolio、ledger、equity、signal/target tape、五类
-evaluation frame、模型目标 IC observations、bar/signal count、last mark prices 和 trade dates。它构造后立即可用，不含
-path/config/experiment/timing/bar/price/score/target 等单 timing scratch 值。每层从最小
-`BacktestContext` 读取前一层结果并写入自己的命名结果；具体 step 明确把需持久的
-frame/event/accounting 结果追加到 state，不提供通用 `record_results`。
+`ModelSignalInput` 直接加载具体模型；不扫描目录、挑选最后模型或隐式训练。
+读取模型同目录 `schedule.json`，核对其 model_ref、train_dates、Feature/Label 身份、
+特征列顺序及标签列。使用首次实际选中决策时刻验证 `label_maturity_ts_us <= decision_ts_us`。
+归档 request 不重新解析为当前请求，缺失、损坏、关联错误及成熟时间不合规原样失败。
+这只验证给定模型的条件回测；理论成熟下界和今天加载成功都不是模型当时已存在的证据。
+不新增 ModelUse、binding.json 或历史换模平台。
 
-SignalStep 对当时 universe 的每个输入保留完整键和预测，无分数行仍在记录中，按日期保存
-到本次 backtest 的 predictions 目录。记录来自实际一次预测，不为持久化再次调用模型。
-SignalEvalStep 用共用 evaluate_prediction_record 对模型声明的 Label 评价，写入
-metrics.model_evaluation；原 signal_eval 继续表示 T+1 raw-close 收益诊断，不能冒充
-模型目标的评价。两者使用同一 rank_ic 数学实现，但标签及样本口径分别保留。
-原收益诊断也保留 Rank IC 配对数和全部无定义原因，汇总报告有定义日期数及原因计数。
-空分数是合法无信号，不因无法构造收益配对而失败；有分数时仍要求价格输入，
-非法分数或费用不转换为正常无值。
+特征由共享 `read_features` 读取并按当日历史合格集合过滤。含 `decision_ts_utc` 的表按
+明确时点分组，其他日频特征在当日 15:00 决策；不得将 14:30 特征静默改成 15:00。
+准备只提供特征，不提供后验标签；交易 Step 在当前决策才调用一次 `InferenceModel.predict`。
+固定预测保留全部实际输入行和缺失预测，按 `predictions/<trade_date>/<ts_us>.parquet` 写出，
+同日多个决策不会覆盖。同一时刻只允许一个批次，每批 symbol 唯一。
 
-Workflow 以 `per_timing_steps` 显式声明 signal → portfolio → risk evaluate → execution
-evaluate → accounting → signal evaluate → tradable-alpha evaluate → full-backtest，并以
-`final_steps` 声明 facts persist → metrics persist → report。
-当次预测与目标、执行先完成，再读取未来价格和标签；后验评价不进入此前决策的依赖链。
-初始 cash 只来自静态 config，universe 的 listing age 原样交给 Access。日线执行价格与
-phase 语义保持不变。公共返回值为 `None`。
+`RecordedSignalInput` 直接消费预测文件及其已有模型身份，不重新推理。纯事后 signal
+评价无需交易使用核验；tradable/full 对每个模型的首次使用应用同一训练记录及成熟下界。
+预测缺失是合法无信号，非法数值或身份错误不是无信号。Threshold/TopK 对缺分数的已有
+持仓和有效委托保留承诺并占用容量；不因缺少评分自动平仓。
 
-FactsPersistStep 在全部 timing 完成后，先保存实际执行与估值事实，再进入指标计算与报告。
-它只序列化已有 ExecutionLedger 和 EquityCurve，不重新撮合、结算、补造交易事件或重算
-估值。只有收益、费用和回撤摘要无法回答某笔成交如何收费、回撤在哪些时点形成；因此
-execution.parquet 和 equity.parquet 是核查这些结果的明细来源，不能由日志或汇总替代。
+`start/end` 选择决策日期；execution 的范围选择原始命令日期；risk 直接评价全部所选案例，
+不要求虚构日期范围。模拟终点、订单有效窗口、退出日程和后验标签覆盖是独立边界，
+不能统一截在决策结束日期，亦不能无限延长至所有订单完成。Full 只有交易事实持久化后
+才读取评价标签；改变未来价格或标签不得改变此前信号、原始目标和委托。
+
+### 时间、市场与账户
+
+每个交易任务提供规范化 JSON 市场引用，明确 `price_basis="raw"`、`quantity_unit="shares"`：
+
+- `sessions` 包含正式交易日、账户日起点、收盘时刻和有序不重叠的 `TradingWindow`。
+  声明的日期序列必须与 Access 在该范围读到的正式日历完全一致，不从实际有行情的日期
+  推导日历，也不把周一至周五当开市日。
+- `marks` 是按可见时间排序的估值价格，每条包含 ts_us、trade_date、prices 和
+  kind（mark/daily_close）。同证券同刻只允许一个明确标记；正式 daily_close 必须在该日
+  声明的收盘时刻可用。早先标记不能覆盖后来执行观察的价格；同刻显式 mark 拥有估值口径。
+- `observations` 是按可用时间排序的 ExecutionObservation，包含稳定 observation_id、
+  symbol、完整 BarTime、正数 Decimal price 和可选 volume_qty。BarTime 明确 minute 或
+  trading_day、size、交易日、区间起止和可用时刻；minute 长度匹配 size，日线只支持完整
+  单日源端区间。执行要求 available=end，拒绝迟到、冲突身份和复用流动性的重叠区间。
+  同刻批次先合并，再推进一次；缺量不得回退参考成交。
+
+来源准备必须已经根据数据 owner 完成数量单位与价格口径转换。这里不猜“股/手”、
+不把缺失 VWAP 当零价，也不从一条日线推断盘中触价先后。声明 raw/shares 不是独立的
+真实数据质量证明。当前提供本地有界输入回放；源端分钟读取、公司行动现金/股数事件、
+冲击、盘口排队和真实 broker 不由此接口补造。
+
+初始账户显式给出快照时刻、账户交易日、现金、持仓、可卖数量、平均成本及既有峰值权益。
+持仓、可卖和成本的证券键一致，可卖不超过持仓；空账户明确传空字典。本轮从无挂单
+账户起步，挂单由随后命令产生。每次运行独占 PortfolioState、ledger、pending 容器及策略状态。
+同日推进不重置可卖数量；跨正式交易日才解除前日买入的 T+1 限制。
+
+ReplayClock 合并账户日程、信号、命令、市场可用时间和显式风险检查；提交和策略日程
+还可加入未来唤醒。先推进旧订单并结算，再估值，再产生当前新决策。没有新信号或行情
+仍处理日切、风险、退出和到期。动态时钟去重、严格递增、受显式终点裁切。
+交易分钟沿 TradingWindow 累加，跳过午休和休市并保留微秒；覆盖不足失败，不能缩短
+窗口。交易日持有的入场日为 0，由正式日期序列及显式退出时刻求下一日。
+
+### 策略目标与退出计划
+
+Threshold 和 TopKHysteresis 保留各自具名选择/固定股数规则。完整目标覆盖已有持仓和
+有效委托证券；0 明确请求平仓，缺键不能由下游猜测。策略在风控前记录唯一原始 TargetEvent。
+没有新信号时这两个策略不恢复历史目标，也不隐式续开入场窗口。
+
+`fixed_holding` 是独立的固定名单、等现金名额和下一正式交易日退出策略。任务明确提供
+max_positions、decision_time、exit_time、初始持仓的 initial_exit_dates 和 order_window_minutes。
+时间使用市场时区；信号必须恰在声明决策时刻。初始正持仓必须逐证券给退出日期，
+不能从平均成本或当日快照推断其入场日。窗口时长同时用于本策略每次入场及退出尝试。
+
+当时有评分且合格的候选按预测降序、symbol 升序排序。延续持仓和有效买单占名额；
+可用现金扣除有效买单预占后按剩余名额等分，以当前可见价格和证券买入步长向下取整。
+候选不足时不增补无预测证券，空余名额对应现金保留。未完成卖单仍占持仓和资金，
+不得提前花计划卖出所得。随后报价及含费资金接纳可能进一步减少合法下单数量，因此
+等权意图不保证最终等权持仓或全部成交。
+
+选中证券的退出计划从信号/入场计划日算下一正式交易日，使用任务明确的 exit_time，
+不从首次成交重新起算。入场余量到期撤余，当轮不补选、不由风险定时检查重新买入。
+没有新信号也按策略日程提交退出；未完成持仓在下一正式交易日同一时刻继续尝试，
+直到模拟终点。期末不虚构强制成交，保留持仓和有效订单事实。日终持仓必须以当时可见、
+显式声明的正式不复权日收盘价估值；不能把后来收盘价倒写到更早盘中。
+
+### 风险规则与动作
+
+risk/full 的 rules 必须非空且参数显式给出，按声明顺序执行。RiskContext 是当时现金、
+权益、峰值、价格、持仓、有效委托和证券数量步长的不可变快照；RiskCase 保存风控前
+完整目标，target=None 唯一表示检查当前承诺。缺失受控证券的价格或步长必须失败。
+
+- max_single_name：权益×max_ratio 除以价格形成单证券数量上限，按声明步长向下取整，
+  与请求数量取较小值。
+- max_gross_exposure：上限为权益×max_gross_ratio。先保留当前已成交持仓占用，再对
+  新买增量按剩余预算同比例缩减并量化；未完成卖出不释放预算。当前持仓已经超限时，
+  按上限/持仓市值比例减仓，目标只能减少，不能反向扩大已有卖出承诺。
+- max_drawdown：`峰值－权益 >= max_drawdown×峰值` 时输出显式零目标，边界包含等号。
+  比较按输入十进制值计算，避免 10% 恰触边被浮点减法误判为未触发；不引入持续冻结状态。
+- 非正权益先禁止新增买入、撤销有效买单，保留合法减仓方向。此时比例敞口规则不作比率
+  计算，观察记录 checked=false 和 nonpositive_equity；峰值为正时回撤规则仍执行。
+  峰值非正时回撤无定义并记录原因，不能把未检查写成通过。
+
+交易流程中的风险数量步长使用该证券显式 buy_step_qty；最终买卖委托分别按其自身
+buy/sell_step_qty 量化。允许、缩减、拒绝及清仓分别记录；RiskDecision.adjusted=None 表示
+无待提交目标，零数量映射才表示清仓。风险动作不修改账户，减仓仍需满足可卖数量、
+报价和观察量后实际结算。回撤阈值不是损失保证，价格跳变或卖不出必须保留实际结果。
+
+定时检查基于“持仓＋未完成买入－未完成卖出”的现有承诺，不读取 target tape 最后一项。
+例如原买 400、已成 360、40 到期后，没有新策略请求就不能恢复 400。敞口预算的计算
+不提前扣卖单；动作对账则保留已有卖出方向。缩减买单时撤销冲突旧单，替代单保留原报价
+和原到期时刻，不重开窗口。每条规则保存 before/after、triggered、checked 和原因；
+报告只汇总当时观察，不再运行第二遍规则。未触发不等于未检查，未检查不等于通过。
+
+### Fake 执行与唯一结算
+
+三种交易模式使用同一提交、挂单、撤单、成交、费用、账户和账本路径。目标路径可以
+根据已有持仓/挂单差量与现金/可卖预算生成合法数量；冻结具体订单保持其原数量，
+不满足接纳条件时明确拒绝，不能暗中缩量冒充原订单成交。策略输入只生成原始目标；
+买卖方向、报价和数量合法化在最终目标进入订单边界后完成。
+
+OrderIntent 显式保存 ts_us、symbol、side、qty、order_id、active_ts_us、expires_ts_us、
+limit_price。full 的报价来自提交时可见价格及显式买卖 offset_bp：买价上界向下取
+price_tick，卖价下界向上取 price_tick；execution 消费订单原报价。价格模型将观察
+价格先加/减显式滑点，再检查买价不高于上限、卖价不低于下限，不能把不匹配价格夹回
+限价。tradable 不要求报价或滑点，不调用报价判断，使用随后完整观察的参考价。
+
+只有 `active <= observation.start < observation.end <= expires` 的完整后续区间可成交。
+提交时不成交；最后可执行区间先撮合后到期撤余。价格模型的数量预算同时受余量、
+该观察量、fill_step_qty、实际现金及可卖量约束；参考成交只忽略报价和市场观察量，
+仍遵守账户及数量约束。竞争同一观察量或资金时按生效时间、原提交顺序分配，
+不按输入证券顺序改变全局优先级。同一完整区间不能证明卖先于买，买入不得预用本批
+卖出所得；只有以后时点已结算现金才能用于后续买入。
+
+买单按报价/当前参考价及费用预占现金，卖单按可卖量预占数量；撤销、过期、成交释放
+对应占用。T+1 由显式证券规则决定。金额和费用使用 Decimal，佣金最低收费按每单累计
+成交金额计算增量，不对每次部分成交重复收最低费；卖出印花税和沪市过户费使用任务
+声明费率。本轮不进行未声明的分币舍入，不把示例费率当真实市场成本。SettlementEngine
+是费用、持仓和 ledger 的唯一协调入口，以稳定 fill_id 去重；完全相同的回报只应用一次，
+冲突身份或超卖在改变账户前失败。
+
+### 评价、制品与日志
+
+交易完成后先由 FactsPersistStep 保存原始 execution/equity、orders.json、targets.json，
+full 另保存 risk-cases.json；随后评价、写 metrics.json、生成 report.html。单项 signal/risk
+只保存自己的评价与报告，不写交易占位文件。每个文件原子写入，但整体不是多文件事务；
+失败保留已写制品且阻止后续步骤，同名 experiment 不覆盖。
 
 execution.parquet 保留 `ledger.records` 和 `ledger.order_events` 两个现有事实序列：
 
@@ -887,70 +1000,41 @@ equity.parquet 按 `EquityCurve.points` 的原有顺序保存六列：`ts_us` �
 各列均不为空。保留实际估值时点与计算精度，不重采样为每日结果，不在空日期插值。
 同一时点已由 EquityCurve 替换的值只保存最终快照；该文件不是账户状态变更日志。
 
-两个明细都复用公共单文件 Parquet writer，依次原子发布 execution、equity；全部成功后
-才执行 metrics persist 与 report。写入失败原样传播，已发布文件保留，后续步骤不执行；
-它们不组成多文件事务。Timing 尚未完成时不进入最终持久化，也不在异常路径补写部分汇总。
-这些制品支持执行和权益核查，不宣称已经归档原始指令、全部行情、环境或完整复现包。
+orders.json 按原顺序保存完整 OrderIntent/CancelOrders，可直接用于 execution_eval；
+targets.json 保存风控前目标。risk-cases.json 保存账户与挂单快照，可直接用于 risk_eval。
+预测引用及内容摘要、市场/命令/案例输入 SHA-256、模型身份及标签摘要随指标/预测记录保存；
+行情原文件和运行环境没有自动复制归档，完整复演还需保留这些输入及准确源码版本。
 
-运行参数随最终指标保存到现有 `metrics.json.parameters`，其他顶层指标字段保持原口径。
-该对象的字段由本节唯一规定：
+metrics.json 的稳定顶层结构是 mode、parameters、not_run、input_sha256、prediction_refs，
+以及实际执行的 signal_eval、risk_eval、execution_eval、portfolio、final_account。
+未运行字段不写入；无样本保留零条目计数；数学无定义保存 null+reason；非法数值与 I/O
+错误不能被改成成功 null。具体解释：
 
-| 字段 | 保存内容 |
-| --- | --- |
-| `mode` | 本次显式选择的五种模式之一 |
-| `start`、`end` | 用户请求的原始起止日期，不替换为筛选后的交易日 |
-| `model_ref` | 本次指定模型文件的绝对路径 |
-| `strategy` | 已解析的策略类型及完整参数，包含实际采用的默认值 |
-| `backtest_config` | 本次实际采用的静态回测配置：`init_cash`、`min_listing_calendar_days` |
+- 信号先保留逐决策 ICObservation，再对同日有定义决策等权、最后对有定义交易日等权。
+  decision_count 与 trade_day_count 分开，缺失日期不补零，不再把 T+1 raw-close 诊断
+  冒充模型目标 IC。
+- 风控保存原始案例和逐条决定，分别统计 checked 与 triggered；不根据回测收益判断
+  规则是否正确，未覆盖规则需另用固定案例验证。
+- 成交按原始订单身份和请求数量统计接纳率、完成订单率、累计成交数量率、首次及完全
+  成交等待时间与最终未完成原因，不能用 fill 条数当订单完成数。
+- 组合净收益用本次真实结算路径；gross_return 是同一路径加回已收费用，不是另一条
+  无费交易路径。收益和 Sharpe 按正式日终权益采样，年化因子任务显式提供；样本不足、
+  方差为零、初始权益非正等分别记录无定义原因。换手为成交金额合计除以初始及各日终
+  权益的算术平均。事件权益继续用于回撤，因此增加不改变账户/价格的唤醒不会改变日报告。
+  组合结果不自动包含未声明的比较基线，不能据此给出模型/策略盈利采用结论。
 
-例如请求从周六 `2026-07-04` 开始，实际首个决策在 `2026-07-06`，仍保存
-`parameters.start="2026-07-04"`；指标原有 `start_date` 继续表示实际处理的首个交易日。
-策略未填写 `target_quantity` 而采用默认 `100` 时，参数快照中明确保存 `100`，便于直接
-解释结果，不必用后来的默认配置反推本次运行。
+运行参数来自同一份已解析 submission 快照，记录全部实际值及默认值；使用模型的入口
+另保存 min_listing_calendar_days。原始请求日期不被筛选后的日期替换。开始日志在读输入前
+按模式、日期、信号/案例/委托、策略、账户、风控、执行和静态设置逐项显示 JSON；
+最终 metrics/HTML 复用该快照，不另生成参数制品。这样既能解释已保存结果，也能在
+输入失败、尚无 metrics 时定位请求；开始日志不是成功证据。
 
-Workflow 在确定新 experiment 名称后、读取日历或模型前，一次生成参数 JSON 快照并输出
-一条带 `experiment=...` 的“回测任务”INFO 开始事件。续行按模式、开始日期、结束日期、
-模型、策略、运行配置分列中文标签及 `key=<JSON value>`，避免把路径与所有配置挤在一行。
-这些值从同一份 JSON 快照读取，最终 MetricsPersistStep 把该快照与指标一起原子写入；
-不得在日志和指标出口分别重新组装参数。参数中的数值保留序列化精度和 JSON 类型，
-不使用指标展示中的舍入或百分比格式。HTML 报告继续从 metrics 展示完整参数。
-日志沿用公共 logger 进入 CLI stderr，HTTP 任务由 JobRuntime 捕获到该 Job 日志，不写入 Flask system log，
-不新增 sink。加载、日历或执行失败而尚未写出 metrics 时，仍可用启动日志定位请求与配置；
-不为失败补写空指标，也不把开始事件当成模型校验通过或任务成功。
-
-回测默认日志服务于阅读任务状态与结果，不复制完整 `metrics.json`。组件身份、特征缺失
-分布、评分分位数、逐日预测路径、逐日账本计数及 metrics 发布细节降为 `DEBUG`；无分数
-等既有警告仍输出。模型核验通过后，INFO 仅说明实际首个决策日期、决策日数，不重复模型
-长路径或内部 epoch 微秒时间。BacktestPipeline 由 workflow 注入单调 clock，每完成一个
-timing 后，距上次进度至少 5 秒且仍有剩余日期时才输出当前日期、累计日期进度、评分行数
-及持仓数；短任务不打印逐日进度，不增加心跳线程。移除逐日 INFO 后，失败 timing 必须在
-原异常上附加 signal/forward 日期，仍由外层终止边界输出原 traceback。
-
-ReportStep 在 HTML 成功发布后只输出一条中文“回测报告”摘要：实际决策区间及日数、期末
-权益/现金/持仓、区间收益/最大回撤/夏普、订单提交/完全成交/拒绝笔数、成交股数与数量成交率、
-费用及其佣金/税费/滑点组成、模型目标 Rank IC 及有效日期覆盖、次日原始收盘收益 Rank IC
-及其有效日期覆盖、可交易样本覆盖与风控影响。两类 IC 使用不同标签和样本口径，不能合并
-为一个“IC”；完全成交订单数与成交股数也不能混称“成交数”。只格式化已经保存的指标，不
-在日志阶段重算收益、调整费用或重新评价模型。金额使用千分位和两位小数，收益及回撤使用
-四位小数的百分比（例如 `0.0012%`，避免小收益显示为零），比例使用百分比，IC 使用六位
-小数，计数显示整数；合法 null 明确显示“无值”，无交易时明确说明未提交订单。
-
-摘要不展开逐日 observations、最终持仓字典或运行参数；完整结果仍可从 metrics/HTML
-读取。制品位置只写一次实验根目录，随后按相对文件名说明预测、执行、权益、指标和报告
-用途。实际决策末日可能早于请求结束日期，因为请求区间最后一个交易日用于次日评价，
-摘要须说明这一差异。步骤耗时继续使用公共 Instrumentation，workflow 提供中文步骤说明。
-这样既能直接看到关键结果，又保留失败定位与精细核查入口；不回写历史 Job 日志。
-
-独立 `binding.json` 不再生成。模型合法性由前述运行时核验保证；预测文件已经保留模型
-内容摘要与决策时刻，因此删除该文件不删除核验或预测证据。`event` 属于日志事件，
-`training_record` 继续从模型同目录的 `schedule.json` 读取，不整份复制到回测结果；
-首个决策时点等推导值也不混入用户运行参数。
-
-选择 metrics 承载参数，是因为保存或比较一个结果时必须同时知道它的模式、日期、模型、
-策略和配置；只放日志会让这种解释依赖另一份文件及日志格式。启动日志则覆盖尚无结果时
-的排错需要。两者使用同一快照，各有明确的读取场景，无须第三份独立参数制品。该快照只保存
-这里列出的运行参数，不宣称已归档完整应用配置、代码版本、运行环境、历史输入修订或
-模型历史可用证明。metrics 写出后 ReportStep 仍可能失败，文件存在不能证明整个任务成功。
+Pipeline 使用注入的单调时钟，处理后距上次进度至少 5 秒且仍有后续唤醒时输出当前交易日、
+时点及累计处理数；短任务没有逐时进度。异常保留原对象，并附加 trade_date、ts_us。
+Instrumentation 只测量明确 Step，不把准备、事后评价及报告的未测量时间说成端到端耗时。
+报告成功后输出一条中文摘要，按实际模式展示 IC、规则覆盖、收益、订单及数量结果，
+不展开逐条观察或持仓字典。金额两位小数、收益/回撤四位百分比、IC 六位小数，null 显示
+“无值”；完整明细链接 metrics 和事实制品。metrics 存在不能证明随后的 report 已成功。
 
 ## 失败现场
 

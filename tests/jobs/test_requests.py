@@ -4,13 +4,13 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 
 from src.config.backtest_config import BacktestMode
 from src.jobs.requests import (
-    BacktestSubmission,
     DataSubmission,
     FeatureBackfillSubmission,
     InvalidJobRequest,
@@ -160,45 +160,20 @@ def test_fusion_backfill_rejects_invalid_ranges(
 
 @pytest.mark.parametrize("mode", list(BacktestMode))
 def test_backtest_command_preserves_mode_and_uses_job_id_as_experiment_id(
-    mode: BacktestMode,
+    mode: BacktestMode, backtest_payload: Callable[[BacktestMode], dict[str, object]],
 ) -> None:
-    submission = parse_job_request(
-        {
-            "kind": "backtest",
-            "mode": mode.value,
-            "start": "2026-07-01",
-            "end": "2026-07-20",
-            "model_ref": "/data/models/training-1.joblib",
-            "strategy": {
-                "type": "threshold",
-                "params": {"threshold": 0.5},
-            },
-        }
-    )[0]
-    assert isinstance(submission, BacktestSubmission)
+    submission = parse_job_request(backtest_payload(mode))[0]
     assert submission.mode is mode
-
-    command = build_cli_command(
-        submission,
-        "00000000-0000-4000-8000-000000000001",
-        python_executable=Path("/candidate/python"),
-    )
-
-    experiment_index = command.index("--experiment-id")
-    assert command[experiment_index + 1] == ("00000000-0000-4000-8000-000000000001")
-    assert command[:4] == (
-        "/candidate/python",
-        "-m",
-        "src.cli",
-        "backtest",
-    )
+    command = build_cli_command(submission, "run-1", python_executable=Path("/candidate/python"))
+    assert command[:4] == ("/candidate/python", "-m", "src.cli", "backtest")
+    assert command[command.index("--experiment-id") + 1] == "run-1"
     assert command[command.index("--mode") + 1] == mode.value
-    assert command[command.index("--start") + 1] == "2026-07-01"
-    assert command[command.index("--end") + 1] == "2026-07-20"
-    assert "--model-use-json" not in command
-    assert json.loads(command[command.index("--strategy-json") + 1]) == (
-        submission.strategy.model_dump(mode="json")
-    )
+    fields = json.loads(command[command.index("--input-json") + 1])
+    assert parse_job_request({"kind": "backtest", "mode": mode.value, **fields}) == [submission]
+    if mode == BacktestMode.RISK_EVAL:
+        assert "start" not in fields and "signal" not in fields
+    if mode == BacktestMode.SIGNAL_EVAL:
+        assert "strategy" not in fields and "initial_account" not in fields
 
 
 @pytest.mark.parametrize(
@@ -297,10 +272,10 @@ def test_backtest_requires_a_concrete_absolute_model_reference(ref: object) -> N
     from src.jobs.requests import create_backtest_submission
     with pytest.raises(InvalidJobRequest) as caught:
         create_backtest_submission(
-            mode="signal_eval", start="2026-07-01", end="2026-07-02", model_ref=ref,
-            strategy={"type": "threshold", "params": {"threshold": 0.5}},
+            mode="signal_eval", start="2026-07-01", end="2026-07-02",
+            signal={"type": "model", "model_ref": ref},
         )
-    assert caught.value.field == "model_ref"
+    assert caught.value.field == "signal.model_ref"
 
 
 def test_training_scope_covers_both_ranges_before_runtime_information_checks() -> None:
@@ -331,3 +306,61 @@ def test_train_rejects_recipe_and_multi_job_expansion(field: str) -> None:
 def test_session_counts_must_be_nonnegative_integers(gap: object, field: str) -> None:
     with pytest.raises(InvalidJobRequest):
         parse_job_request({**_training_request(), field: gap})
+
+
+def test_signal_evaluation_accepts_fixed_predictions_without_trading_inputs() -> None:
+    submission = parse_job_request({
+        "kind": "backtest", "mode": "signal_eval",
+        "start": "2026-07-03", "end": "2026-07-03",
+        "signal": {"type": "recorded", "prediction_refs": ["/data/fixed.parquet"]},
+    })[0]
+    assert submission.signal.prediction_refs == (Path("/data/fixed.parquet"),)
+    assert "--strategy-json" not in build_cli_command(submission, "signal-run")
+
+
+def test_signal_evaluation_rejects_unrelated_strategy() -> None:
+    with pytest.raises(InvalidJobRequest, match="Extra inputs|not allowed"):
+        parse_job_request({
+            "kind": "backtest", "mode": "signal_eval",
+            "start": "2026-07-03", "end": "2026-07-03",
+            "signal": {"type": "recorded", "prediction_refs": ["/data/fixed.parquet"]},
+            "strategy": {"type": "threshold", "params": {"threshold": 0.5}},
+        })
+
+
+@pytest.mark.parametrize(('field', 'value'), [('risk', None), ('risk', {'rules': []}),
+    ('unexpected', True)])
+def test_full_rejects_missing_or_empty_risk_and_unrelated_fields(
+    backtest_payload: Callable[[BacktestMode | str], dict[str, object]], field: str, value: object,
+) -> None:
+    payload = backtest_payload('full_backtest')
+    payload[field] = value
+    with pytest.raises(InvalidJobRequest):
+        parse_job_request(payload)
+
+
+@pytest.mark.parametrize(('section', 'field', 'value'), [
+    ('execution', 'slippage_bp', None), ('execution', 'slippage_bp', float('nan')),
+    ('strategy', 'quote', None), ('strategy', 'order_window_minutes', True)])
+def test_full_rejects_incomplete_execution_assumptions(
+    backtest_payload: Callable[[BacktestMode | str], dict[str, object]],
+    section: str, field: str, value: object,
+) -> None:
+    payload = backtest_payload('full_backtest')
+    payload[section][field] = value
+    with pytest.raises(InvalidJobRequest):
+        parse_job_request(payload)
+
+
+def test_quantity_rules_reject_coercion_and_unknown_fields(
+    backtest_payload: Callable[[BacktestMode | str], dict[str, object]],
+) -> None:
+    payload = backtest_payload('full_backtest')
+    rule = payload['execution']['quantity_rules']['600000']
+    rule['buy_min_qty'] = True
+    with pytest.raises(InvalidJobRequest):
+        parse_job_request(payload)
+    rule['buy_min_qty'] = 100
+    rule['lot_guess'] = 100
+    with pytest.raises(InvalidJobRequest):
+        parse_job_request(payload)

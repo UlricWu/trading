@@ -1,17 +1,12 @@
 # filepath: tests/trading/backtest/test_timing.py
-"""Date-relation tests for daily-alpha backtest timing."""
-
-from __future__ import annotations
-
-from src.trading.backtest.timing import resolve_backtest_timing
+from src.trading.backtest.market.replay import ReplayMarket, ReplayMarketInput
 
 
-def test_timing_pairs_adjacent_open_dates() -> None:
-    timings = resolve_backtest_timing(
-        open_dates=("2026-07-01", "2026-07-02", "2026-07-03")
-    )
-
-    assert [(timing.signal_date, timing.forward_date) for timing in timings] == [
-        ("2026-07-01", "2026-07-02"),
-        ("2026-07-02", "2026-07-03"),
-    ]
+def test_account_day_comes_from_schedule_even_without_bars_or_signals() -> None:
+    market = ReplayMarket(ReplayMarketInput.model_validate({'price_basis': 'raw', 'quantity_unit': 'shares',
+        'sessions': [{'trade_date': day, 'start_ts_us': start, 'close_ts_us': start + 10,
+                      'windows': [{'trade_date': day, 'start_ts_us': start, 'end_ts_us': start + 10}]}
+                     for day, start in (('2026-07-03', 1), ('2026-07-06', 20))],
+        'marks': [], 'observations': []}))
+    assert market.timestamps() == (1, 11, 20, 30)
+    assert market.session_at(20).trade_date == '2026-07-06'

@@ -7,6 +7,8 @@ from datetime import date, time
 from typing import Literal
 from zoneinfo import ZoneInfo
 
+from pydantic import ConfigDict
+
 from src.utils.datetime_utils import DateTimeUtils
 
 US_PER_SECOND = 1_000_000
@@ -24,6 +26,8 @@ class BarTime:
     Example:
         bar = BarTime("minute", 1, "2026-07-03", minute_start_us, minute_end_us, minute_end_us)
     """
+
+    __pydantic_config__ = ConfigDict(extra="forbid")
 
     unit: Literal["minute", "trading_day"]
     size: int
@@ -51,6 +55,8 @@ class TradingWindow:
     Example:
         window = TradingWindow("2026-07-03", morning_open_us, morning_close_us)
     """
+
+    __pydantic_config__ = ConfigDict(extra="forbid")
 
     trade_date: str
     start_ts_us: int

@@ -45,7 +45,6 @@ def test_topk_strategy_applies_confirmed_defaults() -> None:
 def test_backtest_requires_explicit_listing_age() -> None:
     config = BacktestConfig.model_validate(
         {
-            "init_cash": 200_000,
             "min_listing_calendar_days": 120,
         }
     )
@@ -69,7 +68,6 @@ def test_backtest_rejects_runtime_submission_fields(
     value: object,
 ) -> None:
     payload: dict[str, object] = {
-        "init_cash": 200_000,
         "min_listing_calendar_days": 120,
         field_name: value,
     }
@@ -89,7 +87,6 @@ def test_backtest_rejects_invalid_universe_policy(
     value: object,
 ) -> None:
     payload: dict[str, object] = {
-        "init_cash": 200_000,
         "min_listing_calendar_days": 120,
     }
     payload[field_name] = value

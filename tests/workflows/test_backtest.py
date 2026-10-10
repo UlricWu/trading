@@ -2,8 +2,8 @@
 """Fixed-model delivery through actual backtest composition and persisted replay."""
 
 import json
-from collections.abc import Iterator, Mapping
-from dataclasses import replace
+import re
+from collections.abc import Iterator
 from datetime import date, time
 from decimal import Decimal
 from pathlib import Path
@@ -17,17 +17,21 @@ import pytest
 
 from src import logs
 from src.access import Access, meta
-from src.config.backtest_config import BacktestConfig, BacktestMode
+from src.config.backtest_config import BacktestConfig
 from src.config.model_config import FeatureGroupConfig, MissingConfig, ModelPreset, PreprocessingConfig
-from src.jobs.requests import BacktestSubmission, create_backtest_submission, create_training_submission
-from src.trading.portfolio.constructors.threshold import ThresholdConstructor
-from src.trading.portfolio.state import PortfolioState
+from src.jobs.requests import SignalInput, create_backtest_submission, create_training_submission
 from src.training.evaluation import evaluate_prediction_record
 from src.training.prediction import read_prediction_record, verify_prediction_record
 from src.utils.parquet_writer import write_parquet_atomic
 from src.utils.datetime_utils import DateTimeUtils
 from src.utils.path import PathManager
-from src.workflows.backtest import run_daily_alpha_backtest
+from src.workflows.backtest import (run_signal_evaluation, run_risk_evaluation, run_execution_evaluation,
+    run_tradable_alpha_evaluation, run_full_backtest)
+from src.training.artifact import load
+from src.training.prediction import save_prediction_record
+from src.trading.backtest.market.replay import ReplayMarketInput
+from src.trading.backtest.market.data_view import ExecutionObservation
+from src.trading.core.time import US_PER_MINUTE
 from src.workflows.offline_training import run_offline_training
 
 
@@ -54,16 +58,18 @@ def _logged_parameters(log_path: Path, *, experiment_name: str) -> dict[str, obj
     assert lines[0] == f"▶️ 回测任务; experiment={experiment_name}"
     assert sum(line.startswith("▶️ 回测任务;") for line in lines) == 1
     parameters = {}
-    for line in lines[1:7]:
-        key, value = line.split(" ", 1)[1].split("=", 1)
-        parameters[key] = json.loads(value)
+    for line in lines[1:]:
+        match = re.fullmatch(r"[^ ]+ ([a-z_]+)=(.+)", line)
+        if match is None:
+            break
+        parameters[match[1]] = json.loads(match[2])
     return parameters
 
 
 @pytest.fixture
 def delivery(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> tuple[PathManager, BacktestSubmission, Mock]:
+) -> tuple[PathManager, Path, Mock]:
     pm = PathManager(tmp_path)
     days = ("2026-07-01", "2026-07-02", "2026-07-03", "2026-07-06", "2026-07-07")
     access = Mock(spec=Access)
@@ -77,7 +83,6 @@ def delivery(
     })
     monkeypatch.setattr("src.workflows.offline_training.Access", Mock(return_value=access))
     monkeypatch.setattr("src.workflows.backtest.Access", Mock(return_value=access))
-    monkeypatch.setattr("src.workflows.backtest.monotonic", lambda: 0.0)
     for day in ("2026-07-01", "2026-07-03", "2026-07-06"):
         keys = {"symbol": ["000001", "000002", "600000"], "trade_date": [day] * 3}
         feature_ref = pm.feature_object(
@@ -113,396 +118,493 @@ def delivery(
         ),
     )
     training_name = "training_2026-07-01_2026-07-01_delivery"
-    submission = create_backtest_submission(
-        mode="signal_eval", start="2026-07-03", end="2026-07-07",
-        model_ref=pm.experiment_training_model(experiment_name=training_name),
-        strategy={"type": "threshold", "params": {"threshold": -1.0}},
-    )
-    return pm, submission, access
+    model_ref = pm.experiment_training_model(experiment_name=training_name)
+    return pm, model_ref, access
 
 
-@pytest.mark.parametrize("mode", list(BacktestMode))
-def test_fixed_model_closes_parameters_prediction_evaluation_and_replay(
-    delivery: tuple[PathManager, BacktestSubmission, Mock], backtest_log: Path, mode: BacktestMode,
-) -> None:
-    pm, submission, _ = delivery
-    submission = create_backtest_submission(
-        mode=mode, start=submission.start, end=submission.end, model_ref=submission.model_ref,
-        strategy={"type": "threshold", "params": {"threshold": -1.123456789}},
-    )
-    original_model = submission.model_ref.read_bytes()
-    run_daily_alpha_backtest(
-        backtest_config=BacktestConfig(init_cash=200_000, min_listing_calendar_days=120), path_manager=pm,
-        submission=submission, experiment_id="verified",
-    )
-    name = "backtest_2026-07-03_2026-07-07_verified"
-    run_dir = pm.experiment_dir(experiment_name=name)
-    assert {path.name for path in run_dir.iterdir()} == {
-        "predictions", "execution.parquet", "equity.parquet", "metrics.json", "report.html",
+def _ts(day: str, hour: int, minute: int = 0) -> int:
+    return DateTimeUtils.local_time_to_utc_epoch_us(time(hour, minute), date.fromisoformat(day))
+
+
+@pytest.fixture
+def scenario(delivery: tuple[PathManager, Path, Mock], tmp_path: Path) -> tuple[PathManager, dict[str, object], Mock]:
+    pm, model_ref, access = delivery
+    day = "2026-07-03"
+    ts = _ts(day, 14, 30)
+    model = load(model_ref)
+    features = pd.read_parquet(pm.feature_object(feature_set=model.feature_set, version=model.feature_version,
+                                                 trade_date=day).payload_path)
+    predictions = model.predict(features[list(model.feature_names)].to_numpy())
+    prediction_ref = tmp_path / "fixed.parquet"
+    save_prediction_record(prediction_ref, model_ref=model_ref, trade_date=day, decision_ts_us=ts,
+        features=features, feature_names=model.feature_names, predictions=predictions)
+    price = {"600000": "10", "000001": "10", "000002": "10"}
+    market = {
+        "price_basis": "raw", "quantity_unit": "shares",
+        "sessions": [{"trade_date": day, "start_ts_us": _ts(day, 0), "close_ts_us": _ts(day, 15),
+                      "windows": [{"trade_date": day, "start_ts_us": _ts(day, 9, 30), "end_ts_us": _ts(day, 11, 30)},
+                                  {"trade_date": day, "start_ts_us": _ts(day, 13), "end_ts_us": _ts(day, 15)}]}],
+        "marks": [{"ts_us": ts, "trade_date": day, "prices": price, "kind": "mark"},
+                  {"ts_us": _ts(day, 15), "trade_date": day, "prices": price, "kind": "daily_close"}],
+        "observations": [{"observation_id": f"minute-{index}", "symbol": "600000", "time": {
+            "unit": "minute", "size": 1, "trade_date": day,
+            "start_ts_us": ts + index * US_PER_MINUTE, "end_ts_us": ts + (index + 1) * US_PER_MINUTE,
+            "available_ts_us": ts + (index + 1) * US_PER_MINUTE,
+        }, "price": "10", "volume_qty": volume} for index, volume in enumerate((300, 60))],
     }
-    assert not (run_dir / "binding.json").exists()
-    metrics = json.loads(pm.experiment_backtest_metrics(experiment_name=name).read_text())
-    assert metrics["parameters"] == {
-        "mode": mode.value,
-        "start": "2026-07-03",
-        "end": "2026-07-07",
-        "model_ref": str(submission.model_ref),
-        "strategy": {
-            "type": "threshold", "params": {"threshold": -1.123456789, "target_quantity": 100},
-        },
-        "backtest_config": {"init_cash": 200_000, "min_listing_calendar_days": 120},
+    market_ref = tmp_path / "market.json"
+    market_ref.write_text(json.dumps(market))
+    rule = {"buy_min_qty": 1, "buy_step_qty": 1, "sell_min_qty": 1, "sell_step_qty": 1,
+            "fill_step_qty": 1, "price_tick": "0.01", "enforce_t1": True}
+    fields = {
+        "start": day, "end": day,
+        "signal": {"type": "recorded", "prediction_refs": [str(prediction_ref)]},
+        "strategy": {"type": "threshold", "params": {"threshold": float((predictions[0] + predictions[2]) / 2),
+                     "target_quantity": 1000}, "order_window_minutes": 2,
+                     "quote": {"buy_offset_bp": "0", "sell_offset_bp": "0"}},
+        "risk": {"rules": [{"type": "max_single_name", "max_ratio": 0.2}]},
+        "initial_account": {"ts_us": ts, "trade_date": day, "cash": "20000", "positions": {},
+                            "sellable": {}, "average_cost": {}, "peak_equity": 20000},
+        "execution": {"market_ref": str(market_ref), "end_ts_us": _ts(day, 15),
+                      "quantity_rules": {symbol: rule for symbol in price},
+                      "fees": {"commission_rate": 0, "stamp_tax_rate": 0, "transfer_rate": 0, "min_commission": 0},
+                      "annual_factor": 252, "slippage_bp": 0, "risk_check_ts_us": [ts + 3 * US_PER_MINUTE]},
     }
-    assert _logged_parameters(backtest_log, experiment_name=name) == metrics["parameters"]
-    execution = pq.read_table(run_dir / "execution.parquet").to_pylist()
-    fills = [row for row in execution if row["event"] == "FILL"]
-    assert len(fills) == 2
-    assert sum(row["qty"] for row in fills) == 200
-    assert {row["symbol"] for row in fills} == {"000001", "600000"}
-    assert float(sum(Decimal(row["commission"]) for row in fills)) == metrics["cost_commission"]
-    equity = pq.read_table(run_dir / "equity.parquet").to_pylist()
-    assert [point["ts_us"] for point in equity] == [_decision("2026-07-03"), _decision("2026-07-06")]
-    assert equity[-1]["cash"] == metrics["final_cash"]
-    assert equity[-1]["equity"] == metrics["final_equity"]
-    assert equity[-1]["market_value"] == metrics["final_market_value"]
-    evaluation = metrics["model_evaluation"]
-    assert evaluation["summary"]["date_count"] == 2
-    for index, day in enumerate(("2026-07-03", "2026-07-06")):
-        prediction_ref = run_dir / "predictions" / f"{day}.parquet"
-        inputs, frame = read_prediction_record(prediction_ref)
-        assert inputs.model_ref == submission.model_ref
-        assert inputs.decision_ts_us == _decision(day)
-        assert evaluation["observations"][index]["prediction_ref"] == str(prediction_ref)
-        assert frame["symbol"].tolist() == ["600000", "000002", "000001"]
-        assert frame["prediction"].isna().tolist() == [False, True, False]
-        verify_prediction_record(prediction_ref, pm=pm)
-        assert evaluate_prediction_record(prediction_ref, pm=pm).model_dump(mode="json") == evaluation["observations"][index]
-    assert submission.model_ref.read_bytes() == original_model
-    report = pm.experiment_backtest_report(experiment_name=name).read_text()
-    assert "model_evaluation" in report
-    assert "parameters" in report
-    assert mode.value in report
-    assert "-1.123456789" in report
-    output = backtest_log.read_text()
-    assert "✅ 回测报告;" in output
-    assert "决策日期：2026-07-03 ~ 2026-07-06（2 个交易日）" in output
-    assert "模型目标 Rank IC：" in output
-    assert "次日原始收盘收益 Rank IC：" in output
-    assert "完全成交 2 笔" in output
-    assert "有效评分 4 行" in output
-    assert "backtest_metrics=" not in output
-    assert "observations" not in output
-    assert "decision_ts_us" not in output
-    assert "feature diagnostics" not in output
-    assert "score diagnostics" not in output
-    assert "backtest prediction" not in output
-    assert "full backtest;" not in output
-    assert "⏳ 回测推进;" not in output
-    assert len(output.splitlines()) < 40
+    return pm, fields, access
 
 
-def test_topk_parameters_include_resolved_defaults(
-    delivery: tuple[PathManager, BacktestSubmission, Mock], backtest_log: Path,
+def _metrics(pm: PathManager, name: str) -> dict[str, object]:
+    return json.loads(pm.experiment_backtest_metrics(experiment_name=name).read_text())
+
+
+def test_full_pipeline_closes_target_risk_partial_fills_and_expiry(
+    scenario: tuple[PathManager, dict[str, object], Mock],
 ) -> None:
-    pm, submission, _ = delivery
-    submission = create_backtest_submission(
-        mode=submission.mode, start=submission.start, end=submission.end, model_ref=submission.model_ref,
-        strategy={
-            "type": "topk_hysteresis",
-            "params": {"max_positions": 2, "entry_threshold": -0.1, "exit_threshold": -0.2},
-        },
-    )
-    run_daily_alpha_backtest(
-        backtest_config=BacktestConfig(init_cash=300_000, min_listing_calendar_days=90),
-        path_manager=pm, submission=submission, experiment_id="topk",
-    )
-    name = "backtest_2026-07-03_2026-07-07_topk"
-    parameters = json.loads(pm.experiment_backtest_metrics(experiment_name=name).read_text())["parameters"]
-    assert parameters["strategy"] == {
-        "type": "topk_hysteresis",
-        "params": {
-            "max_positions": 2, "entry_threshold": -0.1, "exit_threshold": -0.2,
-            "rebalance_interval_minutes": 1, "keep_winners": False, "target_quantity": 100,
-        },
-    }
-    assert parameters["backtest_config"] == {"init_cash": 300_000, "min_listing_calendar_days": 90}
-    assert _logged_parameters(backtest_log, experiment_name=name) == parameters
+    pm, fields, _ = scenario
+    run_full_backtest(submission=create_backtest_submission(mode="full_backtest", **fields), path_manager=pm,
+        experiment_id="full", backtest_config=BacktestConfig(min_listing_calendar_days=120))
+    name = "backtest_2026-07-03_2026-07-03_full"
+    metrics = _metrics(pm, name)
+    assert Decimal(metrics["final_account"]["cash"]) == Decimal("16400")
+    assert metrics["final_account"]["positions"] == {"600000": 360}
+    assert metrics["execution_eval"]["requested_qty"] == 400
+    assert metrics["execution_eval"]["filled_qty"] == 360
+    assert metrics["execution_eval"]["orders"][0]["remaining_qty"] == 40
+    assert metrics["execution_eval"]["orders"][0]["status"] == "expired"
+    cases = metrics["risk_eval"]["observations"]
+    assert cases[0]["case"]["target"]["600000"] == 1000
+    assert cases[0]["decision"]["adjusted"]["600000"] == 400
+    assert all(item["decision"]["adjusted"] is None for item in cases[1:])
+    assert metrics["portfolio"]["total_return"] == 0
+    assert metrics["portfolio"]["sharpe"] is None
+    assert "not_run" in metrics
+    assert pm.experiment_backtest_report(experiment_name=name).is_file()
 
 
-def test_all_skipped_day_keeps_prediction_rows_and_existing_positions(
-    delivery: tuple[PathManager, BacktestSubmission, Mock],
+def test_full_facts_reproduce_independent_signal_risk_and_execution(
+    scenario: tuple[PathManager, dict[str, object], Mock],
 ) -> None:
-    pm, submission, _ = delivery
-    feature_ref = pm.feature_object(
-        feature_set="tushare_daily_basic", version="v1", trade_date="2026-07-06",
-    ).payload_path
+    pm, fields, _ = scenario
+    run_full_backtest(submission=create_backtest_submission(mode="full_backtest", **fields), path_manager=pm,
+        experiment_id="original", backtest_config=BacktestConfig(min_listing_calendar_days=120))
+    original_name = "backtest_2026-07-03_2026-07-03_original"
+    original = _metrics(pm, original_name)
+    run_dir = pm.experiment_dir(experiment_name=original_name)
+    run_signal_evaluation(submission=create_backtest_submission(mode="signal_eval",
+        start=fields["start"], end=fields["end"], signal=fields["signal"]), path_manager=pm,
+        experiment_id="signal", backtest_config=BacktestConfig(min_listing_calendar_days=120))
+    signal = _metrics(pm, "backtest_2026-07-03_2026-07-03_signal")
+    assert signal["signal_eval"] == original["signal_eval"]
+    assert "final_account" not in signal and "execution_eval" not in signal
+    assert not pm.experiment_backtest_execution(experiment_name="backtest_2026-07-03_2026-07-03_signal").exists()
+    run_risk_evaluation(submission=create_backtest_submission(mode="risk_eval",
+        case_refs=[str(run_dir / "risk-cases.json")], risk=fields["risk"]), path_manager=pm, experiment_id="risk")
+    assert _metrics(pm, "backtest_risk_risk")["risk_eval"] == original["risk_eval"]
+    execution = dict(fields["execution"])
+    execution["risk_check_ts_us"] = []
+    run_execution_evaluation(submission=create_backtest_submission(mode="execution_eval",
+        start=fields["start"], end=fields["end"], order_refs=[str(run_dir / "orders.json")],
+        initial_account=fields["initial_account"], execution=execution), path_manager=pm, experiment_id="execution")
+    replay = _metrics(pm, "backtest_2026-07-03_2026-07-03_execution")
+    assert replay["execution_eval"] == original["execution_eval"]
+    assert replay["final_account"] == original["final_account"]
+    assert "signal_eval" not in replay and "risk_eval" not in replay
+
+
+def test_reference_fills_are_account_constrained_and_ignore_quote_and_market_volume(
+    scenario: tuple[PathManager, dict[str, object], Mock],
+) -> None:
+    pm, fields, _ = scenario
+    fields.pop("risk")
+    fields["strategy"].pop("quote")
+    fields["execution"].pop("slippage_bp")
+    fields["execution"].pop("risk_check_ts_us")
+    fields["initial_account"]["cash"] = "5000"
+    fields["initial_account"]["peak_equity"] = 5000
+    run_tradable_alpha_evaluation(submission=create_backtest_submission(mode="tradable_alpha_eval", **fields),
+        path_manager=pm, experiment_id="reference", backtest_config=BacktestConfig(min_listing_calendar_days=120))
+    metrics = _metrics(pm, "backtest_2026-07-03_2026-07-03_reference")
+    assert metrics["final_account"]["positions"] == {"600000": 500}
+    assert metrics["final_account"]["cash"] == "0"
+    assert "execution_eval" not in metrics and "risk_eval" not in metrics
+    assert metrics["not_run"]["price_feasibility"] == "reference_fills"
+
+
+def test_fixed_holding_exits_without_signal_retries_and_retains_unfilled_end_position(
+    scenario: tuple[PathManager, dict[str, object], Mock],
+) -> None:
+    pm, fields, _ = scenario
+    ref = Path(fields['execution']['market_ref'])
+    market = json.loads(ref.read_text())
+    for day in ('2026-07-06', '2026-07-07'):
+        market['sessions'].append({'trade_date': day, 'start_ts_us': _ts(day, 0), 'close_ts_us': _ts(day, 15),
+            'windows': [{'trade_date': day, 'start_ts_us': _ts(day, 9, 30), 'end_ts_us': _ts(day, 11, 30)},
+                        {'trade_date': day, 'start_ts_us': _ts(day, 13), 'end_ts_us': _ts(day, 15)}]})
+        market['marks'].append({'ts_us': _ts(day, 15), 'trade_date': day, 'kind': 'daily_close',
+                                'prices': {'600000': '10', '000001': '10', '000002': '10'}})
+    ts = _ts('2026-07-07', 14)
+    market['observations'].append({'observation_id': 'partial-exit', 'symbol': '600000',
+        'time': {'unit': 'minute', 'size': 1, 'trade_date': '2026-07-07', 'start_ts_us': ts,
+                 'end_ts_us': ts + US_PER_MINUTE, 'available_ts_us': ts + US_PER_MINUTE},
+        'price': '10', 'volume_qty': 100})
+    ref.write_text(json.dumps(market))
+    fields['execution']['end_ts_us'] = _ts('2026-07-07', 15)
+    fields['strategy'] = {'type': 'fixed_holding', 'params': {'max_positions': 1,
+        'decision_time': '14:30:00', 'exit_time': '14:00:00', 'initial_exit_dates': {}},
+        'order_window_minutes': 2, 'quote': {'buy_offset_bp': 0, 'sell_offset_bp': 0}}
+    run_full_backtest(submission=create_backtest_submission(mode='full_backtest', **fields), path_manager=pm,
+        experiment_id='scheduled', backtest_config=BacktestConfig(min_listing_calendar_days=120))
+    run_dir = pm.experiment_dir(experiment_name='backtest_2026-07-03_2026-07-03_scheduled')
+    result = _metrics(pm, run_dir.name)
+    assert result['signal_eval']['decision_count'] == 1
+    assert result['final_account']['positions'] == {'600000': 260}
+    assert Decimal(result['final_account']['cash']) == 17400
+    orders = [cmd for cmd in json.loads((run_dir / 'orders.json').read_text()) if 'side' in cmd]
+    assert [(o['side'], o['ts_us'], o['qty']) for o in orders] == [
+        ('BUY', _ts('2026-07-03', 14, 30), 400), ('SELL', _ts('2026-07-06', 14), 360),
+        ('SELL', _ts('2026-07-07', 14), 360)]
+    assert result['portfolio']['daily_returns'] == {'2026-07-03': 0, '2026-07-06': 0, '2026-07-07': 0}
+    assert all(not row.get('forced_close', False) for row in pq.read_table(run_dir / 'execution.parquet').to_pylist())
+
+
+@pytest.fixture
+def daily_scenario(scenario: tuple[PathManager, dict[str, object], Mock]) -> tuple[PathManager, dict[str, object], Mock]:
+    pm, fields, access = scenario
+    inputs, _ = read_prediction_record(Path(fields['signal']['prediction_refs'][0]))
+    fields['signal'] = {'type': 'model', 'model_ref': str(inputs.model_ref)}
+    fields['end'] = '2026-07-06'
+    fields['risk'] = {'rules': [{'type': 'max_single_name', 'max_ratio': 1.0}]}
+    fields['strategy']['params'] = {'threshold': -1.123456789, 'target_quantity': 100}
+    fields['execution']['end_ts_us'] = _ts('2026-07-07', 15)
+    fields['execution']['risk_check_ts_us'] = []
+    ref = Path(fields['execution']['market_ref'])
+    market = json.loads(ref.read_text())
+    for day in ('2026-07-06', '2026-07-07'):
+        market['sessions'].append({'trade_date': day, 'start_ts_us': _ts(day, 0), 'close_ts_us': _ts(day, 15),
+            'windows': [{'trade_date': day, 'start_ts_us': _ts(day, 9, 30), 'end_ts_us': _ts(day, 11, 30)},
+                        {'trade_date': day, 'start_ts_us': _ts(day, 13), 'end_ts_us': _ts(day, 15)}]})
+        market['marks'].append({'ts_us': _ts(day, 15), 'trade_date': day, 'kind': 'daily_close',
+                                'prices': {'600000': '10', '000001': '10', '000002': '10'}})
+        for symbol in ('600000', '000001'):
+            ts = _ts(day, 9, 30)
+            market['observations'].append({'observation_id': f'{day}-{symbol}', 'symbol': symbol,
+                'time': {'unit': 'minute', 'size': 1, 'trade_date': day, 'start_ts_us': ts,
+                         'end_ts_us': ts + US_PER_MINUTE, 'available_ts_us': ts + US_PER_MINUTE},
+                'price': '10', 'volume_qty': 300})
+    ref.write_text(json.dumps(market))
+    return pm, fields, access
+
+
+def test_daily_model_inference_preserves_rows_and_all_skipped_holdings(daily_scenario: tuple[PathManager, dict[str, object], Mock], backtest_log: Path) -> None:
+    pm, fields, _ = daily_scenario
+    feature_ref = pm.feature_object(feature_set='tushare_daily_basic', version='v1', trade_date='2026-07-06').payload_path
     features = pd.read_parquet(feature_ref)
-    features["f_d_close_return_1d"] = np.nan
+    features['f_d_close_return_1d'] = np.nan
     features.to_parquet(feature_ref, index=False)
     meta.commit(pm=pm, payload_path=feature_ref)
-    run_daily_alpha_backtest(
-        backtest_config=BacktestConfig(init_cash=200_000, min_listing_calendar_days=120),
-        path_manager=pm, submission=submission, experiment_id="all-skipped",
-    )
-    name = "backtest_2026-07-03_2026-07-07_all-skipped"
-    run_dir = pm.experiment_dir(experiment_name=name)
-    frame = pd.read_parquet(run_dir / "predictions/2026-07-06.parquet")
-    assert len(frame) == 3
-    assert frame["prediction"].isna().all()
-    metrics = json.loads(pm.experiment_backtest_metrics(experiment_name=name).read_text())
-    observation = metrics["model_evaluation"]["observations"][1]
-    assert observation["input_count"] == observation["no_prediction_count"] == 3
-    assert observation["value"] is None
-    assert observation["undefined_reasons"] == ["insufficient_pairs"]
-    assert metrics["full_backtest"]["final_positions"] == 2
+    original_model = Path(fields['signal']['model_ref']).read_bytes()
+    run_full_backtest(submission=create_backtest_submission(mode='full_backtest', **fields), path_manager=pm,
+        experiment_id='daily', backtest_config=BacktestConfig(min_listing_calendar_days=120))
+    name = 'backtest_2026-07-03_2026-07-06_daily'
+    result = _metrics(pm, name)
+    assert result['final_account']['positions'] == {'000001': 100, '600000': 100}
+    assert result['execution_eval']['order_count'] == 2
+    assert result['signal_eval']['decision_count'] == result['signal_eval']['trade_day_count'] == 2
+    for ref in result['prediction_refs']:
+        verify_prediction_record(Path(ref), pm=pm)
+    inputs, rows = read_prediction_record(Path(result['prediction_refs'][1]))
+    assert inputs.decision_ts_us == _ts('2026-07-06', 15)
+    assert rows['symbol'].tolist() == ['000001', '000002', '600000']
+    assert rows['prediction'].isna().all()
+    observation = result['signal_eval']['observations'][1]
+    assert observation['input_count'] == observation['no_prediction_count'] == 3
+    assert observation['value'] is None and observation['undefined_reasons'] == ['insufficient_pairs']
+    assert original_model == Path(fields['signal']['model_ref']).read_bytes()
+    assert result['parameters']['backtest_config'] == {'min_listing_calendar_days': 120}
+    assert _logged_parameters(backtest_log, experiment_name=name) == result['parameters']
+    assert 'observations' not in backtest_log.read_text()
 
 
-@pytest.mark.parametrize("maturity", [_decision("2026-07-03") + 1, _decision("2026-07-06")])
-def test_unmatured_training_labels_stop_before_predictions(
-    delivery: tuple[PathManager, BacktestSubmission, Mock], maturity: int,
-) -> None:
-    pm, submission, _ = delivery
-    schedule = submission.model_ref.with_name("schedule.json")
-    record = json.loads(schedule.read_text())
-    record["label_maturity_ts_us"] = maturity
-    schedule.write_text(json.dumps(record))
-    with pytest.raises(ValueError, match="label maturity"):
-        run_daily_alpha_backtest(
-            backtest_config=BacktestConfig(init_cash=200_000, min_listing_calendar_days=120), path_manager=pm,
-            submission=submission, experiment_id="invalid",
-        )
-    run_dir = pm.experiment_dir(experiment_name="backtest_2026-07-03_2026-07-07_invalid")
-    assert not run_dir.exists()
-
-
-@pytest.mark.parametrize("maturity", [_decision("2026-07-03") - 1, _decision("2026-07-03")])
-def test_training_labels_mature_by_first_decision_can_be_used(
-    delivery: tuple[PathManager, BacktestSubmission, Mock], maturity: int,
-) -> None:
-    pm, submission, _ = delivery
-    schedule = submission.model_ref.with_name("schedule.json")
-    record = json.loads(schedule.read_text())
-    record["label_maturity_ts_us"] = maturity
-    schedule.write_text(json.dumps(record))
-    run_daily_alpha_backtest(
-        backtest_config=BacktestConfig(init_cash=200_000, min_listing_calendar_days=120),
-        path_manager=pm, submission=submission, experiment_id="mature",
-    )
-
-    name = "backtest_2026-07-03_2026-07-07_mature"
-    inputs, _ = read_prediction_record(
-        pm.experiment_dir(experiment_name=name) / "predictions/2026-07-03.parquet",
-    )
-    assert inputs.decision_ts_us == _decision("2026-07-03")
-    assert pm.experiment_backtest_metrics(experiment_name=name).is_file()
-
-
-def test_start_on_closed_day_uses_first_selected_trading_day(
-    delivery: tuple[PathManager, BacktestSubmission, Mock],
-) -> None:
-    pm, submission, _ = delivery
-    submission = replace(submission, start="2026-07-04")
-    run_daily_alpha_backtest(
-        backtest_config=BacktestConfig(init_cash=200_000, min_listing_calendar_days=120),
-        path_manager=pm, submission=submission, experiment_id="closed-start",
-    )
-
-    name = "backtest_2026-07-04_2026-07-07_closed-start"
-    inputs, _ = read_prediction_record(
-        pm.experiment_dir(experiment_name=name) / "predictions/2026-07-06.parquet",
-    )
-    assert inputs.decision_ts_us == _decision("2026-07-06")
-    metrics = json.loads(pm.experiment_backtest_metrics(experiment_name=name).read_text())
-    assert metrics["parameters"]["start"] == "2026-07-04"
-    assert metrics["parameters"]["end"] == "2026-07-07"
-    assert metrics["start_date"] == "2026-07-06"
-
-
-def test_missing_training_record_logs_parameters_without_publishing_results(
-    delivery: tuple[PathManager, BacktestSubmission, Mock], backtest_log: Path,
-) -> None:
-    pm, submission, _ = delivery
-    submission.model_ref.with_name("schedule.json").unlink()
-    with pytest.raises(FileNotFoundError, match="schedule.json"):
-        run_daily_alpha_backtest(
-            backtest_config=BacktestConfig(init_cash=200_000, min_listing_calendar_days=120),
-            path_manager=pm, submission=submission, experiment_id="missing-record",
-        )
-
-    name = "backtest_2026-07-03_2026-07-07_missing-record"
-    assert not pm.experiment_dir(experiment_name=name).exists()
-    parameters = _logged_parameters(backtest_log, experiment_name=name)
-    assert parameters["model_ref"] == str(submission.model_ref)
-    assert parameters["start"] == submission.start
-    assert parameters["end"] == submission.end
-    assert parameters["mode"] == submission.mode.value
-    assert parameters["strategy"] == submission.strategy.model_dump(mode="json")
-    assert parameters["backtest_config"] == {"init_cash": 200_000, "min_listing_calendar_days": 120}
-    assert "✅ 模型加载;" not in backtest_log.read_text()
-
-
-def test_model_load_failure_cannot_publish_results(
-    delivery: tuple[PathManager, BacktestSubmission, Mock], backtest_log: Path,
-) -> None:
-    pm, submission, _ = delivery
-    submission.model_ref.unlink()
-    with pytest.raises(FileNotFoundError):
-        run_daily_alpha_backtest(
-            backtest_config=BacktestConfig(init_cash=200_000, min_listing_calendar_days=120), path_manager=pm,
-            submission=submission, experiment_id="missing",
-        )
-    name = "backtest_2026-07-03_2026-07-07_missing"
-    assert not pm.experiment_dir(experiment_name=name).exists()
-    assert _logged_parameters(backtest_log, experiment_name=name)["model_ref"] == str(submission.model_ref)
-    assert "✅ 模型加载;" not in backtest_log.read_text()
-
-
-@pytest.mark.parametrize("failure", ["calendar", "prices"])
-def test_failed_backtest_keeps_parameter_log_without_empty_metrics(
-    delivery: tuple[PathManager, BacktestSubmission, Mock], backtest_log: Path, failure: str,
-) -> None:
-    pm, submission, access = delivery
-    if failure == "calendar":
-        access.trade_dates.side_effect = RuntimeError("source unavailable")
+@pytest.mark.parametrize('offset', [-1, 0, 1])
+def test_model_maturity_boundary_precedes_first_selected_decision(delivery: tuple[PathManager, Path, Mock], offset: int) -> None:
+    pm, model_ref, _ = delivery
+    ref = model_ref.with_name('schedule.json')
+    record = json.loads(ref.read_text())
+    record['label_maturity_ts_us'] = _ts('2026-07-06', 15) + offset
+    record['request'] = {'archived_intent': 'not a current request'}
+    ref.write_text(json.dumps(record))
+    submission = create_backtest_submission(mode='signal_eval', start='2026-07-04', end='2026-07-06',
+        signal={'type': 'model', 'model_ref': str(model_ref)})
+    name = 'backtest_2026-07-04_2026-07-06_maturity'
+    if offset > 0:
+        with pytest.raises(ValueError, match='label maturity'):
+            run_signal_evaluation(submission=submission, path_manager=pm, experiment_id='maturity',
+                                  backtest_config=BacktestConfig(min_listing_calendar_days=120))
+        assert not pm.experiment_dir(experiment_name=name).exists()
     else:
-        original_read = access.daily_bars.side_effect
-
-        def read_prices(*, trade_date: str, **kwargs: object) -> pd.DataFrame:
-            if trade_date == "2026-07-06":
-                raise RuntimeError("source unavailable")
-            return original_read(trade_date=trade_date, **kwargs)
-
-        access.daily_bars.side_effect = read_prices
-    with pytest.raises(RuntimeError, match="source unavailable"):
-        run_daily_alpha_backtest(
-            backtest_config=BacktestConfig(init_cash=200_000, min_listing_calendar_days=120),
-            path_manager=pm, submission=submission, experiment_id="unavailable",
-        )
-    name = "backtest_2026-07-03_2026-07-07_unavailable"
-    assert _logged_parameters(backtest_log, experiment_name=name)["start"] == submission.start
-    assert not pm.experiment_backtest_metrics(experiment_name=name).exists()
-    assert not pm.experiment_backtest_report(experiment_name=name).exists()
-    run_dir = pm.experiment_dir(experiment_name=name)
-    assert not (run_dir / "binding.json").exists()
-    assert not (run_dir / "execution.parquet").exists()
-    assert not (run_dir / "equity.parquet").exists()
-    if failure == "prices":
-        assert (run_dir / "predictions/2026-07-03.parquet").exists()
+        run_signal_evaluation(submission=submission, path_manager=pm, experiment_id='maturity',
+                              backtest_config=BacktestConfig(min_listing_calendar_days=120))
+        result = _metrics(pm, name)
+        assert result['signal_eval']['trade_day_count'] == 1
+        assert result['signal_eval']['observations'][0]['decision_ts_us'] == _ts('2026-07-06', 15)
 
 
-def test_fact_publish_failure_keeps_prior_files_and_stops_metrics_and_report(
-    delivery: tuple[PathManager, BacktestSubmission, Mock], monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    pm, submission, _ = delivery
+@pytest.mark.parametrize('change', ['model_ref', 'train_dates', 'dataset', 'unordered_dates', 'missing_maturity'])
+def test_invalid_training_identity_fails_without_publishing(delivery: tuple[PathManager, Path, Mock], change: str) -> None:
+    pm, model_ref, _ = delivery
+    ref = model_ref.with_name('schedule.json')
+    record = json.loads(ref.read_text())
+    if change == 'model_ref':
+        record['model_ref'] = str(model_ref.with_name('another.joblib'))
+    elif change == 'train_dates':
+        record['train_dates'] = ['2026-06-30']
+    elif change == 'dataset':
+        record['configuration']['dataset']['label_set'] = 'daily_close_return_rank_d3'
+    elif change == 'unordered_dates':
+        record['train_dates'] = ['2026-07-01', '2026-06-30']
+    else:
+        del record['label_maturity_ts_us']
+    ref.write_text(json.dumps(record))
+    with pytest.raises(ValueError):
+        run_signal_evaluation(submission=create_backtest_submission(mode='signal_eval', start='2026-07-03',
+            end='2026-07-03', signal={'type': 'model', 'model_ref': str(model_ref)}), path_manager=pm,
+            experiment_id='identity', backtest_config=BacktestConfig(min_listing_calendar_days=120))
+    assert not pm.experiment_dir(experiment_name='backtest_2026-07-03_2026-07-03_identity').exists()
 
-    def write_facts(*, output_file: Path, table: pa.Table) -> None:
-        if output_file.name == "equity.parquet":
-            raise OSError("equity storage unavailable")
+
+@pytest.mark.parametrize('failure', ['model', 'record', 'calendar', 'features'])
+def test_input_failure_keeps_parameters_without_success_artifacts(delivery: tuple[PathManager, Path, Mock], backtest_log: Path, failure: str) -> None:
+    pm, model_ref, access = delivery
+    if failure == 'model':
+        model_ref.unlink()
+    elif failure == 'record':
+        model_ref.with_name('schedule.json').unlink()
+    elif failure == 'calendar':
+        access.trade_dates.side_effect = RuntimeError('source unavailable')
+    else:
+        pm.feature_object(feature_set='tushare_daily_basic', version='v1', trade_date='2026-07-03').payload_path.unlink()
+    with pytest.raises((FileNotFoundError, RuntimeError)):
+        run_signal_evaluation(submission=create_backtest_submission(mode='signal_eval', start='2026-07-03',
+            end='2026-07-03', signal={'type': 'model', 'model_ref': str(model_ref)}), path_manager=pm,
+            experiment_id='failure', backtest_config=BacktestConfig(min_listing_calendar_days=120))
+    assert '信号输入 signal=' in backtest_log.read_text()
+    assert '✅ 回测报告' not in backtest_log.read_text()
+    assert not pm.experiment_dir(experiment_name='backtest_2026-07-03_2026-07-03_failure').exists()
+
+
+def test_fact_write_failure_keeps_prior_files_and_rejects_overwrite(scenario: tuple[PathManager, dict[str, object], Mock], monkeypatch: pytest.MonkeyPatch) -> None:
+    pm, fields, _ = scenario
+    def write(*, output_file: Path, table: pa.Table) -> None:
+        if output_file.name == 'equity.parquet':
+            raise OSError('equity storage unavailable')
         write_parquet_atomic(output_file=output_file, table=table)
-
-    monkeypatch.setattr("src.trading.backtest.steps.facts_persist.write_parquet_atomic", write_facts)
-    config = BacktestConfig(init_cash=200_000, min_listing_calendar_days=120)
-    with pytest.raises(OSError, match="equity storage unavailable"):
-        run_daily_alpha_backtest(
-            backtest_config=config, path_manager=pm, submission=submission, experiment_id="write-error",
-        )
-    run_dir = pm.experiment_dir(experiment_name="backtest_2026-07-03_2026-07-07_write-error")
-    assert {path.name for path in run_dir.iterdir()} == {"predictions", "execution.parquet"}
-    assert len(list((run_dir / "predictions").iterdir())) == 2
-    assert pq.read_table(run_dir / "execution.parquet").num_rows == 4
-    original_execution = (run_dir / "execution.parquet").read_bytes()
-    with pytest.raises(FileExistsError, match="experiment already exists"):
-        run_daily_alpha_backtest(
-            backtest_config=config, path_manager=pm, submission=submission, experiment_id="write-error",
-        )
-    assert (run_dir / "execution.parquet").read_bytes() == original_execution
+    monkeypatch.setattr('src.trading.backtest.steps.facts_persist.write_parquet_atomic', write)
+    submission = create_backtest_submission(mode='full_backtest', **fields)
+    with pytest.raises(OSError, match='equity storage unavailable'):
+        run_full_backtest(submission=submission, path_manager=pm, experiment_id='write-error',
+                          backtest_config=BacktestConfig(min_listing_calendar_days=120))
+    ref = pm.experiment_dir(experiment_name='backtest_2026-07-03_2026-07-03_write-error')
+    assert {p.name for p in ref.iterdir()} == {'execution.parquet'}
+    original = (ref / 'execution.parquet').read_bytes()
+    with pytest.raises(FileExistsError, match='experiment already exists'):
+        run_full_backtest(submission=submission, path_manager=pm, experiment_id='write-error',
+                          backtest_config=BacktestConfig(min_listing_calendar_days=120))
+    assert (ref / 'execution.parquet').read_bytes() == original
 
 
-@pytest.mark.parametrize(("change", "message"), [
-    ("model_ref", "model_ref from the training record"),
-    ("train_dates", "train_dates disagree"),
-    ("dataset", "dataset disagrees"),
-    ("unordered_dates", "unique and increasing"),
-    ("missing_maturity", "label_maturity_ts_us"),
-])
-def test_invalid_training_record_cannot_publish_results(
-    delivery: tuple[PathManager, BacktestSubmission, Mock], change: str, message: str,
-) -> None:
-    pm, submission, _ = delivery
-    schedule = submission.model_ref.with_name("schedule.json")
-    record = json.loads(schedule.read_text())
-    if change == "model_ref":
-        record["model_ref"] = str(submission.model_ref.with_name("another.joblib"))
-    elif change == "train_dates":
-        record["train_dates"] = ["2026-06-30"]
-    elif change == "dataset":
-        record["configuration"]["dataset"]["label_set"] = "daily_close_return_rank_d3"
-    elif change == "unordered_dates":
-        record["train_dates"] = ["2026-07-01", "2026-06-30"]
+@pytest.mark.parametrize('stage', ['risk', 'report'])
+def test_rule_and_report_errors_preserve_the_original_exception(scenario: tuple[PathManager, dict[str, object], Mock], monkeypatch: pytest.MonkeyPatch, stage: str) -> None:
+    pm, fields, _ = scenario
+    error = RuntimeError(f'{stage} unavailable')
+    if stage == 'risk':
+        monkeypatch.setattr('src.trading.risk.engine.RiskManager.apply', Mock(side_effect=error))
     else:
-        del record["label_maturity_ts_us"]
-    schedule.write_text(json.dumps(record))
-    with pytest.raises(ValueError, match=message):
-        run_daily_alpha_backtest(
-            backtest_config=BacktestConfig(init_cash=200_000, min_listing_calendar_days=120),
-            path_manager=pm, submission=submission, experiment_id="invalid-record",
-        )
-    name = "backtest_2026-07-03_2026-07-07_invalid-record"
-    assert not pm.experiment_dir(experiment_name=name).exists()
+        monkeypatch.setattr('src.trading.backtest.reporting.bundle.ReportingBundle.run', Mock(side_effect=error))
+    with pytest.raises(RuntimeError) as caught:
+        run_full_backtest(submission=create_backtest_submission(mode='full_backtest', **fields), path_manager=pm,
+            experiment_id=stage, backtest_config=BacktestConfig(min_listing_calendar_days=120))
+    assert caught.value is error
+    name = f'backtest_2026-07-03_2026-07-03_{stage}'
+    assert not pm.experiment_backtest_report(experiment_name=name).exists()
+    assert pm.experiment_backtest_metrics(experiment_name=name).exists() == (stage == 'report')
 
 
-def test_backtest_consumes_resolved_record_without_parsing_archived_request(
-    delivery: tuple[PathManager, BacktestSubmission, Mock],
-) -> None:
-    pm, submission, _ = delivery
-    schedule = submission.model_ref.with_name("schedule.json")
-    record = json.loads(schedule.read_text())
-    record["request"] = {"archived_intent": "not a current submission"}
-    schedule.write_text(json.dumps(record))
-    run_daily_alpha_backtest(
-        backtest_config=BacktestConfig(init_cash=200_000, min_listing_calendar_days=120),
-        path_manager=pm, submission=submission, experiment_id="resolved-record",
-    )
-    name = "backtest_2026-07-03_2026-07-07_resolved-record"
-    metrics = json.loads(pm.experiment_backtest_metrics(experiment_name=name).read_text())
-    assert metrics["parameters"]["model_ref"] == record["model_ref"]
-    assert metrics["model_evaluation"]["summary"]["date_count"] == 2
-    assert "training_record" not in metrics["parameters"]
+def test_future_labels_and_prices_cannot_change_prior_signal_target_or_order(scenario: tuple[PathManager, dict[str, object], Mock]) -> None:
+    pm, fields, _ = scenario
+    before = None
+    for run in ('before', 'after'):
+        if run == 'after':
+            ref = pm.label_object(label_set='daily_close_return_rank_d1', version='v1', trade_date='2026-07-03').payload_path
+            labels = pd.read_parquet(ref)
+            labels['y_rank_return'] = [np.nan, np.nan, np.nan]
+            labels.to_parquet(ref, index=False)
+            meta.commit(pm=pm, payload_path=ref)
+            ref = Path(fields['execution']['market_ref'])
+            market = json.loads(ref.read_text())
+            for observation in market['observations']:
+                observation['price'] = '11'
+            ref.write_text(json.dumps(market))
+        run_full_backtest(submission=create_backtest_submission(mode='full_backtest', **fields), path_manager=pm,
+            experiment_id=run, backtest_config=BacktestConfig(min_listing_calendar_days=120))
+        root = pm.experiment_dir(experiment_name=f'backtest_2026-07-03_2026-07-03_{run}')
+        facts = ((root / 'targets.json').read_bytes(), [cmd for cmd in json.loads((root / 'orders.json').read_text())
+            if cmd['ts_us'] <= fields['initial_account']['ts_us']])
+        result = _metrics(pm, root.name)
+        if run == 'before':
+            before = facts
+            assert result['execution_eval']['filled_qty'] == 360
+            assert result['signal_eval']['mean_ic'] == 1
+        else:
+            assert facts == before
+            assert result['execution_eval']['filled_qty'] == 0
+            assert result['signal_eval']['mean_ic'] is None
 
 
-def test_changed_future_labels_and_prices_cannot_change_prior_predictions_or_targets(
-    delivery: tuple[PathManager, BacktestSubmission, Mock], monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    pm, submission, access = delivery
-    targets: list[dict[str, int]] = []
-    original_targets = ThresholdConstructor.targets
+def test_two_minute_decisions_are_distinct_and_extra_wakeups_do_not_change_returns(scenario: tuple[PathManager, dict[str, object], Mock]) -> None:
+    pm, fields, _ = scenario
+    original = Path(fields['signal']['prediction_refs'][0])
+    inputs, frame = read_prediction_record(original)
+    model = load(inputs.model_ref)
+    features = pd.read_parquet(pm.feature_object(feature_set=model.feature_set, version=model.feature_version,
+                                                 trade_date='2026-07-03').payload_path)
+    second = original.with_name('second.parquet')
+    save_prediction_record(second, model_ref=inputs.model_ref, trade_date=inputs.trade_date,
+        decision_ts_us=inputs.decision_ts_us + US_PER_MINUTE, features=features,
+        feature_names=model.feature_names, predictions=frame['prediction'].to_numpy())
+    fields['signal']['prediction_refs'].append(str(second))
+    portfolios = []
+    for run, wakeups in [('sparse', []), ('dense', [inputs.decision_ts_us + n * 1000000 for n in range(1, 40)])]:
+        fields['execution']['risk_check_ts_us'] = wakeups
+        run_full_backtest(submission=create_backtest_submission(mode='full_backtest', **fields), path_manager=pm,
+            experiment_id=run, backtest_config=BacktestConfig(min_listing_calendar_days=120))
+        result = _metrics(pm, f'backtest_2026-07-03_2026-07-03_{run}')
+        assert result['signal_eval']['decision_count'] == 2 and result['signal_eval']['trade_day_count'] == 1
+        assert len(result['prediction_refs']) == 2
+        portfolios.append(result['portfolio'])
+    assert portfolios[0] == portfolios[1]
 
-    def record_targets(
-        self: ThresholdConstructor, *, ts_us: int,
-        scores: Mapping[str, float], state: PortfolioState,
-    ) -> dict[str, int]:
-        result = original_targets(self, ts_us=ts_us, scores=scores, state=state)
-        targets.append(result.copy())
-        return result
 
-    monkeypatch.setattr(ThresholdConstructor, "targets", record_targets)
-    for run_id in ("original", "changed"):
-        if run_id == "changed":
-            label_ref = pm.label_object(
-                label_set="daily_close_return_rank_d1", version="v1", trade_date="2026-07-03",
-            ).payload_path
-            labels = pd.read_parquet(label_ref)
-            labels["y_rank_return"] = [np.nan, np.nan, np.nan]
-            labels.to_parquet(label_ref, index=False)
-            meta.commit(pm=pm, payload_path=label_ref)
-            access.daily_bars.side_effect = lambda *, trade_date, **kwargs: pd.DataFrame({
-                "symbol": ["000001", "000002", "600000"],
-                "close": [10.0, 20.0, 30.0] if trade_date == "2026-07-03" else [1.0, 2.0, 3.0],
-            })
-        run_daily_alpha_backtest(
-            backtest_config=BacktestConfig(init_cash=200_000, min_listing_calendar_days=120), path_manager=pm,
-            submission=submission, experiment_id=run_id,
-        )
-    before = pm.experiment_dir(experiment_name="backtest_2026-07-03_2026-07-07_original")
-    after = pm.experiment_dir(experiment_name="backtest_2026-07-03_2026-07-07_changed")
-    assert (before / "predictions/2026-07-03.parquet").read_bytes() == (after / "predictions/2026-07-03.parquet").read_bytes()
-    assert targets[0] == targets[2]
+def test_strategy_and_cost_changes_affect_returns_without_changing_fixed_predictions(scenario: tuple[PathManager, dict[str, object], Mock]) -> None:
+    from copy import deepcopy
+    pm, original, _ = scenario
+    prediction = Path(original['signal']['prediction_refs'][0])
+    frozen = prediction.read_bytes()
+    original_ic = evaluate_prediction_record(prediction, pm=pm)
+    results = []
+    for name, quantity, fee in [('small', 100, 0), ('large', 200, 0), ('fee', 200, 5)]:
+        fields = deepcopy(original)
+        fields.pop('risk')
+        fields['strategy'].pop('quote')
+        fields['strategy']['params']['target_quantity'] = quantity
+        fields['execution'].pop('slippage_bp')
+        fields['execution'].pop('risk_check_ts_us')
+        fields['execution']['fees']['min_commission'] = fee
+        run_tradable_alpha_evaluation(submission=create_backtest_submission(mode='tradable_alpha_eval', **fields),
+            path_manager=pm, experiment_id=name, backtest_config=BacktestConfig(min_listing_calendar_days=120))
+        results.append(_metrics(pm, f'backtest_2026-07-03_2026-07-03_{name}'))
+    assert [r['final_account']['positions']['600000'] for r in results] == [100, 200, 200]
+    assert [Decimal(r['portfolio']['total_fees']) for r in results] == [0, 0, 5]
+    assert results[2]['portfolio']['total_return'] < results[1]['portfolio']['total_return']
+    assert prediction.read_bytes() == frozen
+    assert evaluate_prediction_record(prediction, pm=pm) == original_ic
+
+
+def test_full_with_daily_execution_waits_for_the_subsequent_complete_day(daily_scenario: tuple[PathManager, dict[str, object], Mock]) -> None:
+    pm, fields, _ = daily_scenario
+    fields['end'] = '2026-07-03'
+    fields['strategy']['order_window_minutes'] = 240
+    ref = Path(fields['execution']['market_ref'])
+    market = json.loads(ref.read_text())
+    market['observations'] = []
+    for day in ('2026-07-03', '2026-07-06'):
+        for symbol in ('000001', '600000'):
+            market['observations'].append({'observation_id': f'daily-{day}-{symbol}', 'symbol': symbol,
+                'time': {'unit': 'trading_day', 'size': 1, 'trade_date': day, 'start_ts_us': _ts(day, 9, 30),
+                    'end_ts_us': _ts(day, 15), 'available_ts_us': _ts(day, 15)}, 'price': '10', 'volume_qty': 100})
+    ref.write_text(json.dumps(market))
+    run_full_backtest(submission=create_backtest_submission(mode='full_backtest', **fields), path_manager=pm,
+        experiment_id='daily-execution', backtest_config=BacktestConfig(min_listing_calendar_days=120))
+    root = pm.experiment_dir(experiment_name='backtest_2026-07-03_2026-07-03_daily-execution')
+    fills = [row for row in pq.read_table(root / 'execution.parquet').to_pylist() if row['event'] == 'FILL']
+    assert len(fills) == 2 and all(row['ts_us'] == _ts('2026-07-06', 15) for row in fills)
+
+
+def test_fake_live_batch_delivery_reproduces_full_signal_target_risk_and_accounts(daily_scenario: tuple[PathManager, dict[str, object], Mock], monkeypatch: pytest.MonkeyPatch) -> None:
+    from itertools import groupby
+    from src.trading.backtest.market.replay import ReplayMarket
+    from src.trading.backtest.market.signals import SignalBatch, prepare_signals
+    pm, fields, _ = daily_scenario
+    submission = create_backtest_submission(mode='full_backtest', **fields)
+    run_full_backtest(submission=submission, path_manager=pm, experiment_id='offline',
+                      backtest_config=BacktestConfig(min_listing_calendar_days=120))
+    source = ReplayMarketInput.model_validate_json(Path(fields['execution']['market_ref']).read_bytes())
+    # The local live driver knows the schedule but releases each delivery batch only at availability.
+    deliveries = iter((ts, tuple(group)) for ts, group in groupby(source.observations,
+                                                                key=lambda o: o.time.available_ts_us))
+    next_batch = next(deliveries, None)
+    received = []
+    def deliver(market: ReplayMarket, ts: int) -> tuple[ExecutionObservation, ...]:
+        nonlocal next_batch
+        batch = []
+        if next_batch is not None and next_batch[0] == ts:
+            for observation in next_batch[1]:
+                batch.extend((observation,))
+                received.append(observation.observation_id)
+            next_batch = next(deliveries, None)
+        assert next_batch is None or next_batch[0] > ts
+        return tuple(batch)
+    released_signals: list[int] = []
+    def prepare_live(
+        signal: SignalInput, *, start: str, end: str, access: Access,
+        pm: PathManager, min_listing_calendar_days: int,
+    ) -> dict[int, SignalBatch]:
+        batches = prepare_signals(signal, start=start, end=end, access=access, pm=pm,
+                                  min_listing_calendar_days=min_listing_calendar_days)
+        deliveries = iter(batches.items())
+        ready = next(deliveries, None)
+        class DeliveredSignals(dict[int, SignalBatch]):
+            def get(self, timestamp: int, default: SignalBatch | None = None) -> SignalBatch | None:
+                nonlocal ready
+                if ready is None or timestamp < ready[0]:
+                    return default
+                assert timestamp == ready[0]
+                released_signals.append(timestamp)
+                batch = ready[1]
+                ready = next(deliveries, None)
+                return batch
+        return DeliveredSignals(batches)
+    monkeypatch.setattr('src.workflows.backtest.prepare_signals', prepare_live)
+    monkeypatch.setattr(ReplayMarket, 'observations_at', deliver)
+    run_full_backtest(submission=submission, path_manager=pm, experiment_id='live',
+                      backtest_config=BacktestConfig(min_listing_calendar_days=120))
+    assert received == [o.observation_id for o in source.observations]
+    assert released_signals == [_ts('2026-07-03', 15), _ts('2026-07-06', 15)]
+    offline = pm.experiment_dir(experiment_name='backtest_2026-07-03_2026-07-06_offline')
+    live = pm.experiment_dir(experiment_name='backtest_2026-07-03_2026-07-06_live')
+    for artifact in ('orders.json', 'targets.json', 'risk-cases.json', 'execution.parquet', 'equity.parquet'):
+        assert (offline / artifact).read_bytes() == (live / artifact).read_bytes()
+    for original in (offline / 'predictions').rglob('*.parquet'):
+        assert original.read_bytes() == (live / original.relative_to(offline)).read_bytes()
+    before, after = _metrics(pm, offline.name), _metrics(pm, live.name)
+    for key in ('risk_eval', 'execution_eval', 'portfolio', 'final_account'):
+        assert before[key] == after[key]

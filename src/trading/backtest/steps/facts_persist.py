@@ -7,6 +7,11 @@ import json
 from dataclasses import asdict
 
 import pyarrow as pa
+from pydantic import TypeAdapter
+
+from src.trading.core.events import OrderIntent, CancelOrders, TargetEvent
+from src.trading.risk.evaluation import RiskCase
+from src.utils.filesystem import FileSystem
 
 from src.trading.backtest.context import BacktestContext
 from src.utils.parquet_writer import write_parquet_atomic
@@ -109,4 +114,13 @@ class FactsPersistStep:
                 [asdict(point) for point in context.state.equity_curve.points], schema=_EQUITY_SCHEMA,
             ),
         )
+        run_dir = self._pm.experiment_dir(experiment_name=self._experiment_name)
+        FileSystem.write_bytes_atomic(run_dir / "orders.json",
+            TypeAdapter(tuple[OrderIntent | CancelOrders, ...]).dump_json(tuple(ledger.commands)))
+        FileSystem.write_bytes_atomic(run_dir / "targets.json",
+            TypeAdapter(tuple[TargetEvent, ...]).dump_json(tuple(context.state.target_tape.events)))
+        if context.state.risk_observations:
+            FileSystem.write_bytes_atomic(run_dir / "risk-cases.json",
+                TypeAdapter(tuple[RiskCase, ...]).dump_json(
+                    tuple(item.case for item in context.state.risk_observations)))
         return context

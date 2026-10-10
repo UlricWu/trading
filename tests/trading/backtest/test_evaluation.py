@@ -1,31 +1,33 @@
 # filepath: tests/trading/backtest/test_evaluation.py
-"""Raw-close diagnostics retain Rank IC undefined reasons and coverage."""
+from pathlib import Path
 
-from src.trading.backtest.evaluation import signal_eval_frame, summarize_signal_eval_frames
+import numpy as np
+
+from src.trading.backtest.evaluation import evaluate_portfolio, evaluate_signals
+from src.trading.core.equity import EquityCurve
+from src.trading.core.ledger import ExecutionLedger
+from src.training.evaluation import evaluate_predictions
 
 
-def test_raw_close_diagnostics_keep_undefined_dates_and_all_reasons() -> None:
-    empty = signal_eval_frame(scores={}, entry_prices={}, exit_prices={})
-    singleton = signal_eval_frame(
-        scores={"000001": 0.0}, entry_prices={"000001": 10.0}, exit_prices={"000001": 11.0},
-    )
-    defined = signal_eval_frame(
-        scores={"000001": 0.0, "600000": 1.0},
-        entry_prices={"000001": 10.0, "600000": 10.0},
-        exit_prices={"000001": 10.0, "600000": 11.0},
-    )
-    assert empty["rank_ic"] is None
-    assert empty["rank_ic_pair_count"] == 0
-    assert empty["rank_ic_undefined_reasons"] == ("insufficient_pairs",)
-    assert singleton["rank_ic"] is None
-    assert singleton["rank_ic_undefined_reasons"] == (
-        "insufficient_pairs", "constant_prediction", "constant_label",
-    )
-    assert defined["rank_ic"] == 1.0
-    summary = summarize_signal_eval_frames([empty, singleton, defined])
-    assert summary["frames"] == 3
-    assert summary["rank_ic_defined_date_count"] == 1
-    assert summary["mean_rank_ic"] == 1.0
-    assert summary["rank_ic_undefined_reason_counts"] == {
-        "insufficient_pairs": 2, "constant_prediction": 1, "constant_label": 1,
-    }
+def test_signal_evaluation_retains_undefined_reasons_and_weights_days_equally() -> None:
+    observations = tuple(evaluate_predictions(model_ref=Path('/model'), decision_ts_us=ts,
+        predictions=np.array(x, dtype=float), labels=np.array(y, dtype=float))
+        for ts, x, y in ((1, [], []), (2, [0], [1]), (3, [0, 1], [0, 1]),
+                         (4, [0, 1], [1, 0]), (5, [0, 1], [0, 1])))
+    summary = evaluate_signals(observations, decision_dates={1: '2026-07-01', 2: '2026-07-01',
+        3: '2026-07-02', 4: '2026-07-02', 5: '2026-07-03'})
+    assert summary.decision_count == 5 and summary.trade_day_count == 3
+    assert summary.defined_day_count == 2 and summary.mean_ic == .5
+    assert summary.daily_ic == {'2026-07-01': None, '2026-07-02': 0, '2026-07-03': 1}
+    assert summary.undefined_reason_counts == {'insufficient_pairs': 2, 'constant_prediction': 1, 'constant_label': 1}
+
+
+def test_unchanged_event_wakeups_cannot_change_day_sampled_returns_or_sharpe() -> None:
+    sparse, dense = EquityCurve(), EquityCurve()
+    for ts, value in ((1, 100), (3, 110), (5, 99)):
+        sparse.append(ts_us=ts, cash=value, market_value=0)
+    for ts, value in ((1, 100), (2, 100), (3, 110), (4, 110), (5, 99)):
+        dense.append(ts_us=ts, cash=value, market_value=0)
+    daily = {'2026-07-02': sparse.points[1], '2026-07-03': sparse.points[2]}
+    assert evaluate_portfolio(sparse, daily_equity=daily, ledger=ExecutionLedger(), annual_factor=252) == (
+        evaluate_portfolio(dense, daily_equity=daily, ledger=ExecutionLedger(), annual_factor=252))

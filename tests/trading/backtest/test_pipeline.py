@@ -1,19 +1,16 @@
 # filepath: tests/trading/backtest/test_pipeline.py
-"""Timing scheduling tests for the daily-alpha Backtest Pipeline."""
-
-from __future__ import annotations
-
-from pathlib import Path
-from typing import Self, cast
+from collections.abc import Callable
+from types import SimpleNamespace
+from typing import Self
 from unittest.mock import Mock
 
 import pytest
 
 from src import logs
-from src.observability.instrumentation import Instrumentation
+from src.trading.backtest.clock import ReplayClock
 from src.trading.backtest.context import BacktestContext, BacktestState
 from src.trading.backtest.pipeline import BacktestPipeline
-from src.trading.backtest.timing import BacktestTiming
+from src.trading.portfolio.state import PortfolioState
 
 
 class _Instrumentation:
@@ -23,134 +20,60 @@ class _Instrumentation:
     def __exit__(self, *args: object) -> None:
         return None
 
-    def measure(
-        self,
-        operation_name: str,
-        operation: object,
-        *args: object,
-    ) -> object:
-        return cast("object", operation)(*args)
+    def measure[T](self, name: str, operation: Callable[..., T], *args: object) -> T:
+        return operation(*args)
 
 
-class _FirstStep:
-    def __init__(self, events: list[tuple[str, str]], context_ids: list[int]) -> None:
-        self._events = events
-        self._context_ids = context_ids
-
-    def run(self, context: BacktestContext) -> BacktestContext:
-        self._events.append(("first", context.timing.signal_date))
-        self._context_ids.append(id(context))
-        context.state.bar_count += 1
-        return context
-
-
-class _SecondStep:
-    def __init__(self, events: list[tuple[str, str]]) -> None:
-        self._events = events
-
-    def run(self, context: BacktestContext) -> BacktestContext:
-        self._events.append(("second", context.timing.signal_date))
-        return context
-
-
-class _FinalStep:
-    def __init__(
-        self, events: list[tuple[str, str]], states: list[BacktestState]
-    ) -> None:
-        self._events = events
-        self._states = states
-
-    def run(self, context: BacktestContext) -> BacktestContext:
-        self._events.append(("final", context.timing.signal_date))
-        self._states.append(context.state)
-        return context
+def test_pipeline_uses_fresh_contexts_shared_account_and_dynamic_deadlines() -> None:
+    contexts, events = [], []
+    state = BacktestState(PortfolioState(100, 100))
+    def first(ctx: BacktestContext) -> BacktestContext:
+        contexts.append(ctx)
+        events.append(('first', ctx.timing.ts_us))
+        if ctx.timing.ts_us == 1:
+            ctx.requested_wakeup_ts_us.add(2)
+        assert ctx.execution_target is None
+        return ctx
+    def second(ctx: BacktestContext) -> BacktestContext:
+        events.append(('second', ctx.timing.ts_us))
+        return ctx
+    final = Mock(side_effect=lambda ctx: ctx)
+    BacktestPipeline(clock=ReplayClock.from_iterable((1, 3), end_us=3),
+        session_at=lambda ts: SimpleNamespace(trade_date='2026-07-03'),
+        per_timing_steps=(SimpleNamespace(run=first), SimpleNamespace(run=second)),
+        final_steps=(SimpleNamespace(run=final),), instrumentation=_Instrumentation()).run(state)
+    assert events == [('first', 1), ('second', 1), ('first', 2), ('second', 2), ('first', 3), ('second', 3)]
+    assert len({id(ctx) for ctx in contexts}) == 3
+    assert all(ctx.state is state for ctx in contexts)
+    final.assert_called_once_with(contexts[-1])
 
 
-def test_backtest_pipeline_uses_fresh_timing_contexts_and_shared_state() -> None:
-    events: list[tuple[str, str]] = []
-    context_ids: list[int] = []
-    final_states: list[BacktestState] = []
-    state = BacktestState.initial(initial_cash=200_000)
-    pipeline = BacktestPipeline(
-        timings=(
-            BacktestTiming(
-                signal_date="2026-07-01",
-                forward_date="2026-07-02",
-            ),
-            BacktestTiming(
-                signal_date="2026-07-02",
-                forward_date="2026-07-03",
-            ),
-        ),
-        per_timing_steps=(
-            _SecondStep(events),
-            _FirstStep(events, context_ids),
-        ),
-        final_steps=(_FinalStep(events, final_states),),
-        instrumentation=cast("Instrumentation", _Instrumentation()),
-        clock=lambda: 0.0,
-    )
-
-    pipeline.run(state)
-
-    assert events == [
-        ("second", "2026-07-01"),
-        ("first", "2026-07-01"),
-        ("second", "2026-07-02"),
-        ("first", "2026-07-02"),
-        ("final", "2026-07-02"),
-    ]
-    assert len(set(context_ids)) == 2
-    assert state.bar_count == 2
-    assert final_states == [state]
+def test_failed_tick_preserves_original_exception_and_stops_final_steps() -> None:
+    error = RuntimeError('source unavailable')
+    final = Mock()
+    pipeline = BacktestPipeline(clock=ReplayClock.from_iterable((1,)),
+        session_at=lambda ts: SimpleNamespace(trade_date='2026-07-03'),
+        per_timing_steps=(Mock(run=Mock(side_effect=error)),), final_steps=(final,),
+        instrumentation=_Instrumentation())
+    with pytest.raises(RuntimeError) as raised:
+        pipeline.run(BacktestState(PortfolioState(100, 100)))
+    assert raised.value is error
+    assert error.__notes__ == ['回测时点; trade_date=2026-07-03 ts_us=1']
+    final.run.assert_not_called()
 
 
-@pytest.mark.parametrize(
-    ("times", "progress_dates"),
-    [
-        ([0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6], []),
-        ([0.0, 1.0, 4.99, 5.0, 9.99, 10.0, 15.0], ["2026-07-03", "2026-07-05"]),
-    ],
-)
-def test_progress_is_throttled_and_omits_final_date(
-    tmp_path: Path, times: list[float], progress_dates: list[str],
-) -> None:
-    output = tmp_path / "progress.log"
-    sink = logs.add(output, format="{message}", level="INFO", filter="src.trading.backtest.pipeline")
-    pipeline = BacktestPipeline(
-        timings=tuple(
-            BacktestTiming(signal_date=f"2026-07-{day:02d}", forward_date=f"2026-07-{day + 1:02d}")
-            for day in range(1, 7)
-        ),
-        per_timing_steps=(_FirstStep([], []),), final_steps=(),
-        instrumentation=cast("Instrumentation", _Instrumentation()), clock=Mock(side_effect=times),
-    )
+@pytest.mark.parametrize(('times', 'expected'), [([0, .1, .2, .3], []), ([0, 5, 10, 15], [1, 2])])
+def test_progress_is_throttled_and_omits_final_tick(times: list[float], expected: list[int]) -> None:
+    messages = []
+    sink = logs.add(lambda message: messages.append(str(message)), format='{message}',
+                    filter='src.trading.backtest.pipeline')
     try:
-        pipeline.run(BacktestState.initial(initial_cash=200_000))
+        BacktestPipeline(clock=ReplayClock.from_iterable((1, 2, 3)),
+            session_at=lambda ts: SimpleNamespace(trade_date='2026-07-03'),
+            per_timing_steps=(), final_steps=(), instrumentation=_Instrumentation(),
+            progress_clock=Mock(side_effect=times)).run(BacktestState(PortfolioState(100, 100)))
     finally:
         logs.remove(sink)
-
-    messages = output.read_text().splitlines()
-    assert len(messages) == len(progress_dates)
-    for message, day in zip(messages, progress_dates, strict=True):
-        assert message.startswith(f"⏳ 回测推进; trade_date={day} ")
-        assert f"progress={int(day[-2:])}/6" in message
-
-
-def test_failed_timing_keeps_original_error_and_adds_dates() -> None:
-    error = RuntimeError("source unavailable")
-    step = Mock()
-    step.run.side_effect = error
-    final = Mock()
-    pipeline = BacktestPipeline(
-        timings=(BacktestTiming(signal_date="2026-07-03", forward_date="2026-07-06"),),
-        per_timing_steps=(step,), final_steps=(final,),
-        instrumentation=cast("Instrumentation", _Instrumentation()), clock=lambda: 0.0,
-    )
-
-    with pytest.raises(RuntimeError, match="source unavailable") as raised:
-        pipeline.run(BacktestState.initial(initial_cash=200_000))
-
-    assert raised.value is error
-    assert error.__notes__ == ["回测日期; signal_date=2026-07-03 forward_date=2026-07-06"]
-    final.run.assert_not_called()
+    assert len(messages) == len(expected)
+    for message, ts in zip(messages, expected, strict=True):
+        assert f'ts_us={ts} processed={ts}' in message

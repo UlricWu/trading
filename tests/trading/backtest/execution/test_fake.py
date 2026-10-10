@@ -418,3 +418,22 @@ def test_sell_fees_cannot_spend_another_orders_reserved_cash() -> None:
     assert execution.portfolio.cash == 1005
     assert execution.pending_orders[2].reserved_cash == 1005
     assert execution.ledger.order_events[-1].reason == "insufficient_cash_for_fees"
+
+
+def test_target_budget_includes_minimum_fee_before_the_first_fill() -> None:
+    from unittest.mock import Mock
+    from src.trading.backtest.market.data_view import PriceView
+    account = PortfolioState(2005, 2005, current_day='2026-07-03')
+    ledger = ExecutionLedger()
+    rule = QuantityRules(100, 100, 1, 1, 1, Decimal('.01'), True)
+    execution = FakeExecution(account, ledger, {}, SettlementEngine(AShareCostModel(.0003, 0, 0, 5)),
+                              ReferenceVenue(), {'A': rule}, None)
+    market = Mock(spec=PriceView)
+    market.get_price.return_value = Decimal(10)
+    execution.submit_targets(target=TargetEvent(1, {'A': 200}), cancel_order_ids=(),
+        terms={'A': OrderTerms(1, 60_000_001)}, market=market)
+    observation = ExecutionObservation('bar', 'A', BarTime('minute', 1, '2026-07-03', 1, 60_000_001, 60_000_001), Decimal(10), 200)
+    fills = execution.advance(ts_us=60_000_001, observations=(observation,))
+    assert len(fills) == 1
+    assert account.cash == 0 and account.positions == {'A': 200}
+    assert ledger.order_costs[1].total == 5 and len(ledger.fills_by_id) == 1

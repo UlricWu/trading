@@ -216,21 +216,21 @@ live〔最后处理〕：交易目标 → 单一 broker 执行〔具体 API 待�
   减仓和订单获接纳，分别不能代替策略盈利、风险消除和实际成交的证据。
 - Scope: 验证任务的输入、编排、状态所有权、事实消费、报告解释、Python 接口、调用链、
   关键代码、实施映射及工程验收；这些也是拟正式化范围。
-- Not included: H02 本轮只交付设计，不修改运行代码或正式 owner，不训练模型、选择策略
-  或风险阈值、运行真实历史实验或接入 broker。持续冻结及恢复机制未纳入首轮。
+- Not included: 不训练模型、选择实际策略或风险阈值、运行真实历史收益实验或接入 broker。
+  持续冻结及恢复机制未纳入首轮。2026-10-10 用户要求“执行”后，本轮扩展到隔离候选实施与工程验收。
 - Depends on: [共用交易计算](#共用交易计算与各自运行)、[交易基线](#固定规则交易基线)及
   训练的[固定结果评价](../training/README.md#评价独立消费固定结果)。训练实现和正式状态见
   [训练卷宗](../training/README.md#设计与仓库状态)。独立信号、固定风控案例可先实施，
   三种交易流程依赖 H03 的挂单、推进与结算；H02 通过不表示 H03 已采用。
-- Acceptance / Stop: 以[候选验收](#实施映射与候选验收)为实施前条件，验证独立任务不消费
-  无关输入、完整回放共用计算、报告如实说明覆盖。本轮完成现状核查、设计、有限工程
-  检查和文档验证即停止，无收益实验或方案搜索；缺少业务 owner 或决定时停止相应正式化。
-- Conclusion: 五种模式及共享组装的代码级设计已交付；独立运行、策略收益评价、真实
-  风控接线与新报告尚未实现。历史调度测试、静态 API 核查和合成算例的范围见
-  [验证记录](#h02-验证记录)，不作为候选闭环通过证据。
-- Next: 按实施映射落实独立评价、Fake 账户闭环、多频率流程及 FakeLive 一致性。具体
-  规则参数由任务提供；获得实施范围授权后，在独立 feature 工作树同步 owner、入口、
-  实现与测试，并按 H03 的实际依赖审查采用边界。
+- Acceptance / Stop: 沿用实施前[候选验收](#候选验收)，验证独立任务不消费无关输入、完整
+  回放共用计算、报告如实说明覆盖；本地实现、对应回归与文档完成后停止，不自动运行真实
+  市场实验或执行 Git 发布。缺少单位、费用、公司行动或可用性依据时停止相应真实实验。
+- Conclusion: 五个入口、独立信号/风控、H03 共享账户闭环、固定期限策略、真实风险接线和
+  报告已在隔离候选工作树实现，证据及限制见[H02 集成实施](#h02-集成实施2026-10-10)。
+  工程测试不构成盈利结论，也不构成目标分支已采用。
+- Next: 审查本轮候选与所依赖的 H03/训练交付边界；在用户决定整体采用及授权对应 Git 操作后，
+  同步 owner、实现、测试进入目标分支。真实历史实验另需确定输入口径、费用来源、
+  比较基线和保留数据，不能直接把合成验收参数投入正式实验。
 
 **用户约束与决定。** 2026-10-08 用户以 `Signal = model(x)`、`Orders = strategy(signal)`、
 `execute(orders)` 提出三个验证问题，随后澄清“代码层面的5种模式就是我的想法，具体的表示”。
@@ -338,7 +338,7 @@ full 组装的是同一账户反馈闭环内的组件，不是依次启动其他
 | `run_daily_alpha_backtest` 在所有 mode 下组装同一套八个逐日 Step，见 [workflow](../../src/workflows/backtest.py) | 信号评价也依赖策略、现金、执行和账户，任务没有真正分离 |
 | [build_components](../../src/trading/backtest/components.py) 只按 mode 切换 IdealExecution / ExecutionOrchestrator，risk 始终是 NoOpRiskManager | `risk_eval` 名称不能证明启用过风险规则；[现有组件测试](../../tests/trading/backtest/test_components.py)还明确验证这种固定映射 |
 | [TradableAlphaEvalStep](../../src/trading/backtest/steps/backtest_layers.py) 调用基于两期价格及固定成本扣减的 [tradable_alpha_frame](../../src/trading/backtest/evaluation.py)，没有委托、成交量或盘口输入 | 它是条件收益诊断，不能证明可交易性；当前调用也没有传入非零成本 |
-| [SimImmediateVenue](../../src/trading/backtest/execution/venue/sim_immediate.py) 对有价格的 intent 一次生成全量 fill | 没有部分成交、有效挂单和跨时点等待，不能回答价格出现时自己的订单能否完成 |
+| [SimImmediateVenue](https://github.com/UlricWu/trading/blob/f733a2bc87903de4f218dfc0e1fc34b2d83768be/src/trading/backtest/execution/venue/sim_immediate.py) 对有价格的 intent 一次生成全量 fill | 没有部分成交、有效挂单和跨时点等待，不能回答价格出现时自己的订单能否完成 |
 | [metrics persist](../../src/trading/backtest/steps/metrics_persist.py) 总是写入全部五类结果 | “有指标字段”会掩盖实际只使用了理想执行或空风控 |
 | [SettlementEngine](../../src/trading/backtest/execution/settlement.py) 在账户处理成交后无条件追加账本，账户内单独去重 | 重复处理同一成交时，持仓与账本可能不一致；H03 的唯一结算入口须覆盖全部副作用 |
 | [SignalStep](../../src/trading/backtest/steps/backtest_layers.py) 按日期生成预测文件名；[汇总](../../src/training/evaluation.py) 以观察条数填充 date_count | 同日多次决策须区分记录身份、决策次数与交易日数，不能直接沿用日频消费假设 |
@@ -427,7 +427,7 @@ NoOp，主要按 mode 切换 IdealExecution 与 ExecutionOrchestrator。它保�
 `BacktestKernel` 的名称并不决定是否需要保留。所需的时钟推进与行情可见性能力继续复用；
 H03 的交易回放统一由 BacktestPipeline 拥有时点、账户和挂单生命周期，不再让另一个
 Kernel 同时推进同一交易账户。输入侧仅有的 bar 遍历可以保留自己的职责，不能承担第二套
-交易编排。此处是最终设计建议，正式 owner 与运行代码尚未同步。
+交易编排。该设计已在本轮候选 owner 与实现同步；目标分支正式化仍待采用。
 
 ### 信号价值与策略价值的判定
 
@@ -464,7 +464,10 @@ Kernel 同时推进同一交易账户。输入侧仅有的 bar 遍历可以保�
 风险上下文含已成交持仓及有效委托的占用。禁止新增风险的规则必须阻止相关新委托，并
 按规则处理仍有效的增仓委托；把新目标改为零却放任旧买单继续成交，不构成有效拦截。
 首轮可使用现有单证券敞口、总敞口和回撤减仓能力，实际启用项及参数在本次运行前固定，
-不由本设计代选阈值。持续冻结及恢复机制未纳入首轮，不因为存在 kill-switch 类名就补出
+不由本设计代选阈值。2026-10-10 用户明确回答“采用上述规则”：启用可配置的这三类
+规则，数量按显式证券步长向下取整，非正权益禁止新增买入并撤销有效买单，减仓仍受
+可卖与成交约束，阈值由任务提供。候选记录无定义比率为未检查；峰值为正时，非正权益
+仍执行回撤减仓。持续冻结及恢复机制未纳入首轮，不因为存在 kill-switch 类名就补出
 另一套状态机。
 
 当前 `blocked` 同时表达拒绝与清仓，无法确定是否应提交零目标。修正后的 RiskDecision
@@ -594,9 +597,9 @@ date_count，其调用前提是日频评价，不能把分钟观察直接传入�
 
 ### 五种模式的代码级设计
 
-本节是 2026-10-08 用户明确要求的设计交付。所有拟新增名称均是候选 API，不代表它们
-已经存在或可以从当前 `src/` 导入。代码块给出接口或关键函数的拟议内容，不创建空实现
-文件、`NotImplementedError` 占位或新的研究运行平台。
+本节起于 2026-10-08 的设计交付，2026-10-10 实施时对齐了已交付训练 API 与 H03 的
+FakeExecution。可运行签名以本轮所链接候选源码为准；保留关键设计理由和反例，不再
+维护与源码重复的整段实现。候选尚未合入目标分支，不创建空实现或研究运行平台。
 
 设计依据是 [Python 编码规范入口](../../docs/engineering/python_coding_style_for_ai.md)及其
 [细则](../../docs/engineering/references/python_coding_style_rules.md)。重点落实 PY-004～013、
@@ -648,8 +651,8 @@ composition root 显式传入。记录输入的 `start/end` 选择决策时点�
 
 | 类型/事实 | 必要内容与所有权 |
 | --- | --- |
-| `ModelSignalInput` | 具体 `model_ref` 与现有 `ModelUse`；加载绑定及历史可用性核对沿用[训练交付边界](../training/README.md#显式模型绑定与可用性)，不隐式训练 |
-| `RecordedSignalInput` | `prediction_refs: tuple[Path, ...]` 与 `binding_refs: tuple[Path, ...]`；前者有序定位固定预测，后者引用已有模型绑定记录。纯事后 signal 评价可明确传空绑定序列；用于 tradable/full 的每个模型必须有可核对的历史使用依据 |
+| `ModelSignalInput` | 具体 model_ref；自动读取同目录 TrainingRunRecord，核对模型身份、训练数据定义和首次决策前的理论标签成熟下界，不隐式训练 |
+| `RecordedSignalInput` | prediction_refs 有序定位固定预测；事后 signal 复用已有模型身份校验，tradable/full 对每个模型首个实际决策增加与模型输入相同的训练记录核验 |
 | `SignalInput` | 上述两种类型的联合；由来源准备边界分别处理，交易计算只看到同一 `SignalEvent`，不识别来源类型 |
 | 初始账户 | 快照时刻与账户交易日、现金、持仓数量、可卖数量、持仓成本和计算所需的既有权益状态；全现金起步明确给空持仓，不能把已有仓位假装为零成本；运行时构造本次独占的 `PortfolioState` |
 | 风控输入记录 | `case_id`、风控前目标或表示定时检查的 None、当时 `RiskContext`；必要的历史峰值、估值和挂单占用属于输入，不能在离线复验时用后来账户补齐 |
@@ -659,20 +662,17 @@ composition root 显式传入。记录输入的 `start/end` 选择决策时点�
 
 初始账户、费用、风控及执行配置应使用明确模型。业务数值仍由具体任务和已确定规则给出，
 不能为使构造方便而发明默认现金、风险阈值、交易时点或物理单位。现有 `StrategyConfig`
-及其两个具名参数模型继续复用。所选规则缺少正式语义时，保留具体待定项，不从代码常量
+及原两个具名参数模型继续复用，固定期限基线另用 fixed_holding。所选规则缺少正式语义时，保留具体待定项，不从代码常量
 反推已采用的规则。
 
-固定预测的 `PredictionInputs` 当前只关联模型内容、特征摘要和决策时刻，不含
-`ModelUse` 的历史可用证据。读取记录仍复用现有身份校验；用于交易时，再读取显式提供的
-绑定记录，按模型引用及内容摘要关联其 `ModelUse`、`TrainingRunRecord` 和训练数据定义，
-沿用现有成熟时间与生效时间检查，并以这批记录实际首次决策时刻核对。绑定引用缺失或
-不匹配时准备失败，不从文件名猜测，也不因为文件今天已存在就允许过去交易。
-上述绑定记录属于本候选的拟议输入，不能将当前 workflow 视为其生产方。当前固定模型入口
-将运行参数保存于 `metrics.json.parameters` 和任务启动日志；模型内容摘要及决策时刻沿用
-预测制品。这些记录不含这里拟议的 `ModelUse` 历史可用证据；候选仍复用已有模型与预测身份，
-不创建模型或 Signal registry，也不重新指定另一份推理模型。纯事后信号统计不据此声称历史可交易。
+原草案要求 ModelUse/binding_refs，但训练候选已收敛到同目录 TrainingRunRecord 和明确
+model_ref，不能为了旧设计重新发明绑定平台。本轮对模型输入及交易用固定预测统一读取
+现有记录，核对模型与训练数据身份和 label_maturity_ts_us；纯事后 signal 评价继续沿用
+固定结果评价。实际训练完成及历史模型可用证据仍未建立，不从文件名、今天存在的文件或
+加载日志伪造过去可用。PredictionInputs 保留模型内容、特征摘要及决策时刻，只支持这些
+明确条件下的复演；不据此声称历史上已经可交易，也不新增 Signal registry。
 
-`InitialAccount`、`FakeExecutionConfig`、`RiskConfig` 是上表配置的拟议名称，放在
+`InitialAccount`、`FakeExecutionConfig`、`RiskConfig` 是上表已实现的候选配置名称，放在
 现有 `src/config/backtest_config.py`；来源类型及 submission 放在 `src/jobs/requests.py`。
 读取 JSON 的边界校验后产生这些有类型对象，不让文件路径充当运行时领域参数。
 原草稿的 ReferenceExecutionConfig / MarketExecutionConfig 收敛为同一 Fake 配置；
@@ -731,8 +731,8 @@ Manager、五个引擎或只有转发职责的 `BacktestService`。
 | 策略自身状态 | 当前有效的入场/退出计划及必要策略记忆；历史 target tape 不拥有持续下单权限，不再建立第二份持仓账本 |
 | 模型、策略、风控、执行器、Access、PathManager | 在具体 workflow 构造并绑定给需要的 Step；不塞进 Context 或全局单例 |
 
-Context 的可选值逐字段定义：评价结果的 `None` 表示尚未执行，空序列表示已执行但无
-条目；`execution_target` 的 `None` 表示本时点无待提交目标。固定 Step 链保证内部顺序，
+最终指标的可选值逐字段定义：评价字段的 None 表示未运行，已运行但空的 observations
+表示无条目；`execution_target` 的 `None` 表示本时点无待提交目标。固定 Step 链保证内部顺序，
 不逐层重验入口已保证的日期、JSON 字段或模型类型；预测记录和市场对象的独立存储/
 身份责任仍在读取边界检查。
 
@@ -779,8 +779,7 @@ TargetEvent 表示完整的总持仓目标，覆盖本次受控的持仓、挂�
 示例同步展示该拟议参数，不在每个下游 Step 再补一遍键。
 
 策略输出的股数不变量由其领域计算建立，外部记录的同一契约在读取边界建立；真实风险
-输出的股数由风险边界负责。当前浮点截断行为不因删除 NoOp 而自动采用或取消，需要按
-已明确的规则量化后形成 TargetEvent；内部执行不重复验证同一可信目标。执行边界原有
+输出的股数由风险边界负责。数量按用户已确认的显式证券步长向下量化后形成 TargetEvent；内部执行不重复验证同一可信目标。执行边界原有
 资金、可卖和委托合法性职责仍然保留，独立于是否启用业务风控。
 
 省略某个能力只能发生在明确允许的 workflow 组合中：`signal_eval`、`tradable_alpha_eval`
@@ -791,32 +790,11 @@ TargetEvent 表示完整的总持仓目标，覆盖本次受控的持仓、挂�
 #### 关键代码：复用已有预测评价
 
 `evaluate_prediction_record` 和 `ICObservation` 已经存在于 `src/training/evaluation.py`。
-拟在同一模块增加下面的批次操作，供独立信号评价与完整回测完成后的评价共同调用；
+已在同一模块增加批次操作，供独立信号评价与完整回测完成后的评价共同调用；
 它不复制 Rank IC，也不执行模型预测。结果由上文多频率报告路径消费，不直接套用训练
 日频制品的汇总语义。
 
-```python
-# filepath: src/training/evaluation.py
-def evaluate_prediction_records(
-    prediction_refs: Sequence[Path],
-    *,
-    pm: PathManager,
-) -> tuple[ICObservation, ...]:
-    """Evaluate the supplied fixed records in their declared order.
-
-    Example:
-        observations = evaluate_prediction_records(
-            (Path("/data/run/predictions/2026-07-03/1783056600000000.parquet"),),
-            pm=path_manager,
-        )
-        assert len(observations) == 1
-    """
-    observations: list[ICObservation] = []
-    for prediction_ref in prediction_refs:
-        observation = evaluate_prediction_record(prediction_ref, pm=pm)
-        observations.append(observation)
-    return tuple(observations)
-```
+候选实现：[evaluate_prediction_records](../../src/training/evaluation.py)。
 
 `Sequence`、`Path`、`ICObservation` 及单条评价函数都是现有类型/导入。该函数具有明确的
 批次行为和两个实际调用场景，不是给单条 API 改名的薄包装。返回不可变、有序的观察序列；
@@ -828,79 +806,12 @@ def evaluate_prediction_records(
 
 #### 关键代码：直接验证真实风险计算
 
-拟新增 `src/trading/risk/evaluation.py`，只拥有固定风控输入的批次评价。
+候选 `src/trading/risk/evaluation.py`，只拥有固定风控输入的批次评价。
 `TargetEvent`、`RiskContext`、`RiskDecision` 和 `RiskManager` 复用现有类型；目标和上下文
-已有只读映射所有权，不再复制一份风险公式或伪造零现金账户。下例使用本轮拟议的可空
-目标及明确动作字段，现有源码尚未具备这些签名；原静态风险计算证据仍只适用于旧 API。
+已有只读映射所有权，不再复制一份风险公式或伪造零现金账户。实现使用可空
+目标及明确动作字段；原静态风险计算证据仍只适用于旧 API，本轮另有输入复演测试。
 
-```python
-# filepath: src/trading/risk/evaluation.py
-from collections.abc import Sequence
-from dataclasses import dataclass
-
-from src.trading.core.events import TargetEvent
-from src.trading.risk.base import RiskContext, RiskDecision
-from src.trading.risk.engine import RiskManager
-
-
-@dataclass(frozen=True, slots=True)
-class RiskCase:
-    """Keep a strategy request or periodic review and its exact context.
-
-    Example:
-        case = RiskCase(
-            case_id="single-name-cap",
-            target=TargetEvent(ts_us=1, targets={"600000": 1000}),
-            context=RiskContext(
-                ts_us=1, prices={"600000": 10.0}, equity=20000.0,
-                cash=20000.0, peak_equity=20000.0, positions={},
-                pending_orders=(),
-            ),
-        )
-        assert case.target.targets["600000"] == 1000
-    """
-
-    case_id: str
-    target: TargetEvent | None
-    context: RiskContext
-
-
-@dataclass(frozen=True, slots=True)
-class RiskObservation:
-    """Associate a risk decision with the exact evaluated case.
-
-    Example:
-        decision = risk_manager.apply(
-            target=case.target.targets, ctx=case.context,
-        )
-        observation = RiskObservation(case_id=case.case_id, decision=decision)
-        assert observation.decision.adjusted["600000"] == 400
-    """
-
-    case_id: str
-    decision: RiskDecision
-
-
-def evaluate_risk_cases(
-    cases: Sequence[RiskCase],
-    *,
-    risk: RiskManager,
-) -> tuple[RiskObservation, ...]:
-    """Evaluate fixed inputs with the same rules used by trading.
-
-    Example:
-        observations = evaluate_risk_cases((case,), risk=risk_manager)
-        approved_targets = observations[0].decision.adjusted
-    """
-    observations: list[RiskObservation] = []
-    for case in cases:
-        requested = None if case.target is None else case.target.targets
-        decision = risk.apply(target=requested, ctx=case.context)
-        observations.append(
-            RiskObservation(case_id=case.case_id, decision=decision)
-        )
-    return tuple(observations)
-```
+候选实现：[RiskCase 与固定案例评价](../../src/trading/risk/evaluation.py)、[风险链](../../src/trading/risk/engine.py)。
 
 数值只展示单证券上限 20% 的合成调用。读取边界负责案例身份、目标与上下文时刻一致、
 数量/价格单位和规则必需输入；定时案例也保留完整账户与挂单快照，批次函数不重验可信
@@ -910,20 +821,14 @@ def evaluate_risk_cases(
 当时的观察，不为复用批次评价而重新决策；固定案例评价才遍历调用规则。两条路径共用
 规则计算及观察汇总，执行次数由输入生命周期决定。
 
-现有 `RiskManager` 只保留最终 reason；拟在 `risk/base.py` 定义 `RiskRuleObservation`，
-字段为 `rule_name: str`、`input_targets: Mapping[str, int]`、
-`adjusted_targets: Mapping[str, int] | None`、
-`action: Literal["allow", "resize", "reject", "reduce"]`、`reason: str`，
-输入/输出映射在观察构造时取得不可变所有权。`RiskDecision` 使用上文的明确动作字段及
-`rule_observations: tuple[RiskRuleObservation, ...]`；单条规则的决策不含链路观察，
-`RiskManager` 在现有循环内按顺序收集一次，并随最终决策返回。中止后没有执行的规则
-保持未覆盖，不生成虚假的允许记录。不得在报告里再跑一次风险链，也不得由新增
-evaluation 模块重新实现规则循环。None 拒绝结果中止当前请求的后续规则；零目标仍表示
-需要减仓，不能作为“不提交”的同义词。
+旧 RiskManager 只保留最终 reason。现实现的 RuleObservation 保存 rule、before、after、
+triggered、reason、checked，映射在构造时取得不可变所有权；RiskDecision.rules 保存
+按顺序收集的一次实际规则观察。最终 adjusted=None 才表示没有待执行目标，不能用
+中间的零目标跳过剩余规则。非正权益先拦新增买，敞口比率无定义时记录未检查，但仍能
+执行有正峰值的回撤规则；拒绝、缩减和清仓不再混用 blocked。
 
-风险输出的整数股数责任沿用[目标契约](#省略风险-step-所需的数据契约)，float 计算与
-int 归一化仍须在规则正式化时核对；挂单上下文按 H03 增补。可空请求、动作字段及规则
-追踪仍是候选，不因上述片段而视为已实现。
+风险输入、挂单快照和量化由已确认规则建立，候选实现与完整闭环共用，不由报告另跑
+一次或重建后验上下文。整数步长和阈值触边均有专门回归，详见集成验收记录。
 
 #### 关键代码：策略目标、风险决策与委托提交
 
@@ -937,161 +842,7 @@ PortfolioStep 展示有新信号时的策略分支；计划退出仍须在其对
 SubmitTargetsStep 将目标与撤单要求同时交给执行边界；原示例先删除挂单再要求继承
 报价和期限，会丢失继承依据。完整对账理由及数值例子见[执行接口](#执行接口与单一结算入口)。
 
-```python
-# filepath: src/trading/backtest/steps/backtest_layers.py
-from dataclasses import dataclass
-
-from src.trading.backtest.context import BacktestContext
-from src.trading.core.events import TargetEvent
-from src.trading.portfolio.engine import make_executable_targets
-from src.trading.backtest.execution.engine import ExecutionOrchestrator
-from src.trading.portfolio.constructors.base import PortfolioConstructor
-from src.trading.risk.base import RiskContext
-from src.trading.risk.engine import RiskManager
-from src.trading.risk.evaluation import RiskCase, RiskObservation
-
-
-@dataclass(frozen=True, slots=True)
-class PortfolioStep:
-    """根据本时点信号生成并记录风控前目标。
-
-    Example:
-        step = PortfolioStep(constructor=strategy, target_capacity=None)
-        context = step.run(context)
-    """
-
-    constructor: PortfolioConstructor
-    target_capacity: int | None
-
-    def run(self, context: BacktestContext) -> BacktestContext:
-        """处理有新信号的策略决策时点。
-
-        Example:
-            context = step.run(context)
-        """
-        signal = context.signal
-        if signal is None:
-            return context
-
-        account = context.state.portfolio_state
-        raw_targets = self.constructor.targets(
-            ts_us=context.timing.ts_us,
-            scores=signal.scores,
-            state=account,
-        )
-        targets = make_executable_targets(
-            raw_targets=raw_targets,
-            positions=account.positions,
-            pending_orders=tuple(context.state.pending_orders.values()),
-            current_raw_prices=signal.raw_prices,
-            hold_symbols=signal.skipped_symbols,
-            max_positions=self.target_capacity,
-        )
-        target = TargetEvent(ts_us=context.timing.ts_us, targets=targets)
-
-        context.state.target_tape.append(target)
-        context.execution_target = target
-        return context
-
-
-@dataclass(frozen=True, slots=True)
-class RiskDecisionStep:
-    """检查目标，记录风险输入与决策，更新待执行目标。
-
-    Example:
-        step = RiskDecisionStep(risk=risk_manager)
-        context = step.run(context)
-    """
-
-    risk: RiskManager
-
-    def run(self, context: BacktestContext) -> BacktestContext:
-        """使用当前账户事实执行一次风险决策。
-
-        Example:
-            context = step.run(context)
-        """
-        state = context.state
-        account = state.portfolio_state
-        ts_us = context.timing.ts_us
-        target = context.execution_target
-
-        if target is None and not context.timing.risk_check_due:
-            return context
-
-        # AccountingStep 已在本时点完成估值。
-        valuation = state.equity_curve.points[-1]
-        case = RiskCase(
-            case_id=f"risk:{ts_us}",
-            target=target,
-            context=RiskContext(
-                ts_us=ts_us,
-                prices=context.mark_prices,
-                equity=valuation.equity,
-                cash=account.cash,
-                peak_equity=valuation.peak_equity,
-                positions=account.positions,
-                pending_orders=tuple(state.pending_orders.values()),
-            ),
-        )
-        state.risk_cases.append(case)
-
-        decision = self.risk.apply(
-            target=None if case.target is None else case.target.targets,
-            ctx=case.context,
-        )
-        state.risk_observations.append(
-            RiskObservation(case_id=case.case_id, decision=decision)
-        )
-        context.cancel_order_ids = decision.cancel_order_ids
-        context.execution_target = (
-            None
-            if decision.adjusted is None
-            else TargetEvent(ts_us=ts_us, targets=decision.adjusted)
-        )
-        return context
-
-
-@dataclass(frozen=True, slots=True)
-class SubmitTargetsStep:
-    """将本时点目标提交给本次运行的执行器。
-
-    Example:
-        step = SubmitTargetsStep(execution=execution)
-        context = step.run(context)
-    """
-
-    execution: ExecutionOrchestrator
-
-    def run(self, context: BacktestContext) -> BacktestContext:
-        """提交目标；成交由后续市场推进产生。
-
-        Example:
-            context = step.run(context)
-        """
-        target = context.execution_target
-        if target is None:
-            if not context.cancel_order_ids:
-                return context
-            self.execution.cancel_orders(
-                ts_us=context.timing.ts_us,
-                order_ids=context.cancel_order_ids,
-            )
-        else:
-            self.execution.submit_targets(
-                target=target,
-                cancel_order_ids=context.cancel_order_ids,
-                terms=context.order_terms,
-                market=context.market,
-            )
-        context.cancel_order_ids = ()
-        context.execution_target = None
-        context.requested_wakeup_ts_us.update(
-            pending.intent.expires_ts_us
-            for pending in context.state.pending_orders.values()
-        )
-        return context
-```
+候选实现：[组合、风险与提交 Step](../../src/trading/backtest/steps/backtest_layers.py)、[固定期限策略](../../src/trading/portfolio/constructors/fixed_holding.py)。
 
 策略目标的时刻取当前 timing.ts_us，不取输入行情 bar 的起点或收盘标签。例如今天使用
 昨天已经完成的日频特征时，今天产生的目标不能被记录为昨天。此处随 H03 的 Bar 时间
@@ -1115,49 +866,11 @@ submit_targets 仅接纳委托，后续 AdvanceExecutionStep 调用 advance 撮�
 最小评价 Context，将共用批次函数的结果写入 observations。三种交易链先由
 AdvanceExecutionStep 处理日切、刚可用观察及旧单成交/结算/到期，再由 AccountingStep
 更新权益及峰值，随后运行到期决策并提交新单。Step 没有到期动作时直接返回 Context；
-这是日程条件，不是在循环中按 mode 切换工作流。下列 Context/Step 均为拟议接口。
+这是日程条件，不是在循环中按 mode 切换工作流。这些 Context/Step 已在候选工作树接线。
 
-```python
-# filepath: src/workflows/backtest.py
+五种入口的显式 Step tuple 见 [workflow](../../src/workflows/backtest.py)。
 
-# signal_eval
-signal_eval_steps: tuple[PipelineStep[SignalEvaluationContext], ...] = (
-    SignalEvaluationStep(pm=path_manager),
-)
-
-# risk_eval
-risk_eval_steps: tuple[PipelineStep[RiskEvaluationContext], ...] = (
-    RiskEvaluationStep(risk=risk_manager),
-)
-
-# tradable_alpha_eval
-tradable_alpha_steps: tuple[PipelineStep[BacktestContext], ...] = (
-    AdvanceExecutionStep(execution=reference_execution, market=market),
-    AccountingStep(market=market),
-    SignalStep(signals=signals),
-    PortfolioStep(constructor=strategy, target_capacity=target_capacity),
-    SubmitTargetsStep(execution=reference_execution),
-)
-
-# execution_eval
-execution_eval_steps: tuple[PipelineStep[BacktestContext], ...] = (
-    AdvanceExecutionStep(execution=fake_execution, market=market),
-    AccountingStep(market=market),
-    RecordedOrdersStep(execution=fake_execution, orders=recorded_orders),
-)
-
-# full_backtest
-full_backtest_steps: tuple[PipelineStep[BacktestContext], ...] = (
-    AdvanceExecutionStep(execution=fake_execution, market=market),
-    AccountingStep(market=market),
-    SignalStep(signals=signals),
-    PortfolioStep(constructor=strategy, target_capacity=target_capacity),
-    RiskDecisionStep(risk=risk_manager),
-    SubmitTargetsStep(execution=fake_execution),
-)
-```
-
-reference_execution 与 fake_execution 都是 ExecutionOrchestrator 的本次运行实例，绑定
+reference_execution 与价格模型执行均使用 FakeExecution 的本次运行实例，绑定
 各场景明示的 Fake 参数、费用和独占账户。前者使用默认可成交的参考规则，后者在
 execution/full 中使用同一价格模型；它们不对应两套结算算法，也不是新包装类。
 RecordedOrdersStep 的输入包含按原顺序排列的委托及撤单命令，不能把撤单流省略后宣称
@@ -1166,19 +879,9 @@ RecordedOrdersStep 的输入包含按原顺序排列的委托及撤单命令，�
 两个单次评价 workflow 用现有 run_steps 执行各自 tuple 并管理 Instrumentation；
 三种交易模式传入同一个 BacktestPipeline。以 full 展示交易与事后标签评价的先后关系：
 
-```python
-# filepath: src/workflows/backtest.py
-pipeline = BacktestPipeline(
-    clock=clock,
-    per_timing_steps=full_backtest_steps,
-    final_steps=(),
-    instrumentation=instrumentation,
-)
-pipeline.run(state)
-observations = evaluate_prediction_records(prediction_refs, pm=path_manager)
-```
+完整回测先持久化交易事实，再读取标签和计算报告，见同一 [run_full_backtest](../../src/workflows/backtest.py)。
 
-随后还须持久化事实并生成报告才能结束 experiment。共用指标步骤消费 observations
+生成指标和报告后才能结束 experiment。共用指标步骤消费 observations
 及决策交易日关系，按[多频率口径](#评价采样与运行推进分开)写出，不直接调用训练日频
 save_evaluation。风险报告汇总已产生的观察，执行与组合报告消费同一账户路径。
 `prediction_refs` 是本次 SignalStep 实际记录的引用，不能另读与交易无关的一批预测。
@@ -1208,16 +911,16 @@ Step 基类、装饰器注册或依赖图。最终指标从已经保存的交易
 | `backtest/pipeline.py`、`context.py` | 三种交易模式共用时间和账户生命周期；两个单次评价 Context；交易 Context 传当前可见事实、execution_target 和撤单要求，State 延续账户、挂单及原始事实 | `SignalEvaluationResult` 对未来价格的交易 Context 依赖；运行中累积的五套评价 frame；单项评价的空账户 |
 | `backtest/steps/backtest_layers.py`、`backtest/components.py` | 共享信号、组合、风控、提交、推进、估值动作；日切由推进拥有，目标由策略记录；执行直接消费 TargetEvent，评价消费固定结果；`run` 本身就是 Step 边界 | RiskResult 前置依赖、NoOp、日切依赖信号及风险步骤代记目标的副作用；没有独立计算用途、仅被 `run` 转调的 `__call__` |
 | `src/training/evaluation.py` | 增加有序批次评价，复用已有记录读取及 Rank IC 公式 | 将训练日频汇总直接用于同日多次决策的调用 |
-| 拟新增 `risk/evaluation.py`，已有 `risk/engine.py`、`risk/base.py` | 固定案例与 full 共用风险链和动作计算；可空请求表示定时检查，输出明确目标、撤单及规则观察 | 用历史目标恢复过期意图；blocked 混指拒绝和清仓；报告中另跑一遍风险规则 |
+| `risk/evaluation.py`，已有 `risk/engine.py`、`risk/base.py` | 固定案例与 full 共用风险链和动作计算；可空请求表示定时检查，输出明确目标、撤单及规则观察 | 用历史目标恢复过期意图；blocked 混指拒绝和清仓；报告中另跑一遍风险规则 |
 | `portfolio/engine.py` | 完整目标的领域归一和估值；有效挂单、缺分数持仓与容量共同参与目标形成 | 下游再按缺键推断清仓、保持或新增仓位的逻辑 |
 | `portfolio/constructors` | 保留 Threshold / TopKHysteresis 的信号到目标计算；有状态构造器每次运行新建 | 无调用方的 `name()` 转发用途、仅为反射日志保留的类型结构；不凭目录大小做清理 |
-| `backtest/execution/engine.py` | 订单接纳、挂单生命周期和结算顺序；目标路径和冻结订单路径汇合到同一接纳方法 | 同次调用即撮合的 `execute_targets`；强制平仓时跳过 T+1 的开关 |
-| `backtest/execution/venue`、`backtest/execution/ideal.py` | 参考成交计算与报价/观察量计算共用订单和成交类型，venue 不记账；参考规则不调用报价模型 | IdealExecution 中另一份现金、持仓、费用与 ledger 路径；即时全量 fill 假设 |
+| `backtest/execution/fake.py` | 订单接纳、挂单生命周期和结算顺序；目标路径和冻结订单路径汇合到同一接纳方法 | 同次调用即撮合的 `execute_targets`；强制平仓时跳过 T+1 的开关 |
+| `backtest/execution/venue/fake.py` | 参考成交计算与报价/观察量计算共用订单和成交类型，venue 不记账；参考规则不调用报价模型 | IdealExecution 中另一份现金、持仓、费用与 ledger 路径；即时全量 fill 假设 |
 | `execution/policies` | 目标差量、报价和数量形成属于 constraints；外部具体订单合法性属于 validation | clipping 后对相同可信数量、价格、T+1 条件反复执行相同检查 |
 | `core/events.py`、`core/ledger.py` | 保存委托窗口、报价、状态与稳定成交身份；同时用于固定委托复演和 full，ledger 拥有结算身份索引 | 关键交易字段藏在 meta 中；只保存提交与即时全量成交的记录形状 |
 | `backtest/execution/settlement.py`、`portfolio/state.py` | settlement 唯一协调费用、账户和 ledger；portfolio 只应用已经认可的精确成交数量 | 以价格/数量拼接的 FillKey；卖出不足时偷偷 `min(qty, position)` 后仍将原数量写入账本 |
-| `backtest/kernel.py`、`backtest/session.py`、`backtest/clock.py`、`core/time.py` | 时间和可见性归 ReplayClock、行情准备与交易 Pipeline；按剩余独立调用方决定 Kernel/Session 是否仍必要 | 只为一条日线构造 Session → Kernel → BarContext 的多层往返；由 frequency 推断执行许可 |
-| `reporting`、`backtest/reporting`、`backtest/evaluation.py`、`backtest/steps/metrics_persist.py`、`report.py` | 固定事实上的纯评价、持久化与展示；tradable/full 共用组合评价，execution/full 共用成交评价；逐决策及按日 IC 分开、收益按日终采样、成交按订单及数量计算，输出实际覆盖 | 用两期价格诊断冒充策略收益；fill 条数当订单数；五类成功占位指标；把无定义值统一改成 0 或把非法值改成成功的 null |
+| `backtest/market/replay.py`、`backtest/clock.py`、`core/time.py` | 时间和可见性归 ReplayClock、行情准备与交易 Pipeline；按剩余独立调用方决定 Kernel/Session 是否仍必要 | 只为一条日线构造 Session → Kernel → BarContext 的多层往返；由 frequency 推断执行许可 |
+| `reporting`、`backtest/reporting`、`backtest/evaluation.py`、`backtest/steps/metrics_persist.py`、`backtest/reporting/bundle.py` | 固定事实上的纯评价、持久化与展示；tradable/full 共用组合评价，execution/full 共用成交评价；逐决策及按日 IC 分开、收益按日终采样、成交按订单及数量计算，输出实际覆盖 | 用两期价格诊断冒充策略收益；fill 条数当订单数；五类成功占位指标；把无定义值统一改成 0 或把非法值改成成功的 null |
 
 固定等权、固定期限策略不能伪装成现有 Threshold / TopKHysteresis 的一个参数组合。
 它需要保存本轮固定名单、仍有效的入场窗口和退出计划；数量按当时现金、延续持仓、
@@ -1255,7 +958,7 @@ Backtest 章节，唯一拥有验证任务、编排、状态与输出解释；
 | 报价可成交性与小资金假设 | execution/full 必须经过同一价格模型；tradable 固定按参考价成交合法数量；没有盘口数据时仅报告所声明模型的条件结果 |
 | 冻结命令复演 | 保存输入委托/撤单的原始顺序及全部条件；成交、拒单和到期作为输出比较 |
 | 模型或策略是否值得采用 | 另行固定比较基线、选择数据和最终验证数据；本轮工程验收不作盈利结论 |
-| 首轮风险规则的精确输入与动作 | 单证券/总敞口和回撤候选须给出完整目标、有效买卖单、所需价格及参数；缺少价格不能按零敞口通过，拒绝与显式减仓分别编码；非正权益及数量量化等未明确条件在正式化前确定，不继承旧实现的 pass 或 int 截断 |
+| 首轮风险规则的精确输入与动作 | 单证券/总敞口和回撤候选须给出完整目标、有效买卖单、所需价格及参数；缺少价格不能按零敞口通过，拒绝与显式减仓分别编码；非正权益拦新增买和按显式步长向下量化已由用户确认；阈值仍由具体任务提供，不继承旧实现的 pass 或 int 截断 |
 | 金额、报价与部分成交收费精度 | 根据任务费用和价格步长给出舍入及累计收费口径；不默认二进制浮点足以履行现金与报价不变量。工程夹具可使用精确、可人工核算的数值，不把其精度假设推为真实市场契约 |
 
 #### 候选验收
@@ -1278,10 +981,11 @@ Backtest 章节，唯一拥有验证任务、编排、状态与输出解释；
 
 测试布局按 PY-026 镜像源码：五种入口及跨模块链路归
 `tests/workflows/test_backtest.py`；请求边界归 `tests/jobs/test_requests.py` 与 CLI 测试；
-批次信号评价归 `tests/training/test_evaluation.py`；固定风险案例归拟新增的
+固定预测评价算法归 `tests/training/test_evaluation.py`，批次消费及跨模式复用由上述 workflow
+测试验证；固定风险案例归
 `tests/trading/risk/test_evaluation.py`；风险链追踪归 `tests/trading/risk/test_engine.py`；
 回放时序归 `tests/trading/backtest/test_pipeline.py`；撮合和结算分别归对应 execution 模块。
-这些是拟议改动位置，不是已创建文件。删除失效的“所有 mode 都使用空风控/输出全指标”
+这些位置已在本轮候选中落地。删除失效的“所有 mode 都使用空风控/输出全指标”
 断言时，必须先由新契约的可观察结果断言替代，不能通过减少覆盖取得通过。
 
 人类可读性验收同时检查：从一个 workflow 能直接读到完整阶段顺序；核心模块不知道
@@ -1290,6 +994,9 @@ mode 或 CLI；没有 `getattr`/反射发现组件、动态 Step registry、全�
 调用示例，注释只解释非显然边界；只在责任边界校验，失败保持可追踪。
 
 ### H02 验证记录
+
+2026-10-10 的实现和当前证据见[集成实施](#h02-集成实施2026-10-10)。下列历史记录不因
+本轮修复而被改写为通过；已删除实现的链接固定到实施前 f733a2b 的可恢复 Git 内容。
 
 以下是既有实现和文档设计的历史检查，未执行候选 Step、新挂单接口、报价撮合、动态
 调度或五模式闭环。源码状态以[重设计事实依据](#重设计的事实依据)给出的快照为准；
@@ -1362,6 +1069,81 @@ Python AST、非占位函数参数/返回注解、15 个公开定义的 Example 
 测试及正式 owner 未修改，未 push、merge、release、deploy 或写入外部状态。该历史
 提交范围不替代后续 H03 的实施记录。
 
+### H02 集成实施（2026-10-10）
+
+用户“执行”授权本地实施；风控细则另经用户明确“采用上述规则”。实施前冻结的验收条件
+为本节已有候选验收表，没有进行收益筛选或参数搜索。工作从干净的
+`feature/backtest-h03` / `f733a2bc87903de4f218dfc0e1fc34b2d83768be` 开始，创建
+`feature/backtest-h02-integration`。本地目标 dev/origin/dev 为
+`197f4bc3878bf4d6a495f3fce211e21b61ac6ba0`，没有查询远端最新状态。
+
+本轮同步拟议 Offline、CLI、Job API 与 Storage owner：五种类型化任务按实际能力取输入，
+CLI 用一个 input-json 承载其嵌套参数，risk Job scope 保存案例引用；两类独立评价不创建
+交易状态，三条交易链共用 H03 的 FakeExecution、SettlementEngine、ReplayClock 和账户。
+固定期限策略拥有下一正式日退出和失败后的日程重试；已移除无调用方的全量 Components、
+即时执行、IdealExecution、Kernel/Session 往返及旧风险协议实现。规范化 raw/shares JSON
+是当前本地场景边界，未接真实分钟源转换或生产写入。
+
+**可复跑的代码与输入。** 验收时 HEAD 为上述 f733a2b，证据绑定当时的候选工作树，
+而不是该 HEAD 的原始文件。用户随后授权本轮提交及本地合并，源码、测试与本节一并
+保存于候选提交；以下摘要用于核对该提交是否仍对应本次验收。将 `git ls-files` 与
+`git ls-files --others --exclude-standard` 的
+路径取并集，仅保留存在的 `src/`、`tests/` 文件及 `pyproject.toml`、`uv.lock`，按路径排序，
+每项编码为 `路径 + NUL + 文件内容 SHA-256 + 换行`，再对 UTF-8 清单取 SHA-256。
+本轮共 267 个文件，清单摘要为
+`a16c6511b1e5d502c6ba7aaaa66e64417225f73addb2e22ecd1d16fc069b75f5`。
+该范围包含配置和所有测试夹具，排除文档以避免证据自引用；删除文件由基线与现存清单的
+差异确定。`uv.lock` SHA-256 为
+`50369cbecdd928b4072eb1cf3f227f88a5b18d5e9909be3b6056ec0aca6bd035`。
+
+验证环境为 Python 3.13.13、pytest 9.0.3、Pydantic 2.12.5、NumPy 2.5.1、pandas 3.0.2、
+PyArrow 25.0.0、joblib 1.5.3、scikit-learn 1.8.0。工作流夹具用临时目录中的三个证券
+000001、000002、600000，2026-07-01 的合成训练数据和 random_state=7 生成实际模型
+制品；2026-07-03、07-06、07-07 的声明交易日、分钟/日观察、价格及标签均由测试明确
+构造。初始现金、历史峰值、数量步长、T+1、滑点及费用随场景显式给出。零费用与最低
+佣金 5 等数值是边界测试输入，不是本轮选择的市场假设或生产阈值。
+
+**已验证的公开行为。** 下表中的“通过”仅针对这些固定场景及上述代码状态。
+
+| 验收边界 | 可观察结果与复跑位置 |
+| --- | --- |
+| 五种入口与最小输入 | CLI、HTTP 和共享请求校验保留全部 mode；signal 不需要交易输入，risk 无日期范围并保存 case scope；full 拒绝缺失/空风险规则、缺失报价/滑点及非法数量字段。见 [请求测试](../../tests/jobs/test_requests.py)、[CLI 测试](../../tests/test_cli.py)、[API 测试](../../tests/jobs/test_api.py)、[运行时测试](../../tests/jobs/test_runtime.py) |
+| 完整闭环与到期 | 策略目标 1,000 股被单证券上限缩为 400，随后两分钟成交 300 和 60，余下 40 到期；最终 360 股、现金 16,400。后续定时风险检查不恢复旧买入。见 [workflow 测试](../../tests/workflows/test_backtest.py) |
+| 固定持有、失败退出与期末 | 07-03 入场后跨周末在 07-06 退出，无观察保持未成交；07-07 重试只卖出 100，期末保留 260 股及现金 17,400，不伪造成强制平仓。排序平分、未售持仓占位、挂单占款和候选不足留现金另见 [策略测试](../../tests/trading/portfolio/constructors/test_fixed_holding.py) |
+| 风险动作与数量 | 固定案例覆盖允许、缩减和拒绝，保持输入快照不变；非正权益撤买、未成交卖出不释放敞口预算、回撤恰好触边和非正权益后减仓均通过。见 [风险链测试](../../tests/trading/risk/test_engine.py)、[案例复演测试](../../tests/trading/risk/test_evaluation.py)；可卖、现金和费用约束继续由 [执行测试](../../tests/trading/backtest/execution/test_fake.py) 验证 |
+| 统计与策略价值 | 同日两次决策保持两条预测但交易日数为一；增加无变化唤醒不改变按日收益/Sharpe；改变数量和费用可改变组合结果而不改写固定预测及模型目标 IC。无样本/未运行/无定义分别记录。见 [评价测试](../../tests/trading/backtest/test_evaluation.py)及 workflow 测试 |
+| 组件复用 | full 的预测、风险前案例和委托/撤单流分别进入 signal、risk、execution 后，逐条评价、风险观察、成交和最终账户与原运行一致；tradable 的参考成交仍受账户约束，报告明确价格与风险验证未运行。见 workflow 测试 |
+| 可见性与输入顺序 | 改变未来标签/价格不改变此前信号、目标和委托；训练身份、数据集与标签成熟时间经过校验；全缺失预测保留原行及持仓；同一输入前缀的价格不因中间唤醒次数而变化。见 workflow 测试及 [市场回放测试](../../tests/trading/backtest/market/test_replay.py) |
+| FakeLive 与失败传播 | 本地驱动按可用时刻分批释放信号和完整市场观察，预测、目标、风险案例、命令、成交/权益文件与离线运行逐字节一致，最终指标与账户一致；规则/报告异常保持原对象，写入失败保留已有事实且禁止覆盖重跑。见 workflow 测试及 [Pipeline 测试](../../tests/trading/backtest/test_pipeline.py) |
+
+**失败记录与修正依据。** 集成中先固定回归场景，再修正以下影响结果的缺陷，相关断言
+已保留在上述测试中：旧 mark 在跳跃推进时覆盖更新的 Bar，两个价格可见性场景失败，
+改为按可用时间归并，等时以显式 mark 为准；浮点比较使恰好 10% 回撤不触发，且非正
+权益提前返回跳过减仓，三个压力场景失败，改为十进制阈值比较并继续执行可定义的规则；
+缺失评分与有效全量卖单同时存在时，零净目标被遗漏，完整目标回归失败，改为保留该
+证券的显式零目标。报告日志的静态前缀检查及测试类型注解误引造成的收集错误也已修正。
+这些开发失败不被最终通过数覆盖，也不构成市场参数选择实验。
+
+**验证命令与结果。** 实施前的 trading、backtest workflow、CLI、jobs 和 backtest config
+相关基线为 312 passed；它与最终全量范围不同，不能据差值推算新增测试数量。最终执行
+`.venv/bin/python -m pytest -q --tb=short`，结果为 **1135 passed、461 warnings，20.40s**。
+其中 459 条为 joblib 对 NumPy shape 的既有弃用警告，2 条为多线程进程中 fork 的既有
+弃用警告。Python 编译、改动文件的函数参数/返回注解、路径标识、文档本地引用和
+`git diff --check` 已核对；未配置独立静态类型检查器，不把注解扫描称为类型检查通过。
+Postman 的四个 backtest 示例替换集合变量后通过共享请求解析，没有发送 HTTP 请求。
+
+**证据限制。** 本轮没有真实历史收益实验、参数筛选或留出集评价；不证明历史上该模型
+实际存在，也不证明源端分钟数据的单位转换、复权/公司行动或价格覆盖正确。输入仍是
+有限、内存可容纳的规范化 raw/shares 场景。FakeLive 只验证本地同序分批交付，不覆盖
+网络中断、迟到修正、broker 恢复、盘口队列或未知市场冲击。真实回放须先建立相应输入
+依据，不能将这些未运行范围写成通过。
+
+2026-10-10 用户在验收后要求“合并到当前分支”，授权将本轮候选提交并合入实施前的
+`feature/backtest-h03`。验收摘要核对一致后采用本地快进集成，保留原有提交历史。
+这次 feature 分支集成未进入正式目标 dev，H02/H03 仍为 open；push、release、deploy
+以及生产数据、队列和 broker 写入均未执行。恢复时使用保留本节与对应源码的 Git 版本，
+不能仅凭摘要推定存在已发布版本。
+
 ## H03 后续行情驱动的模拟执行
 
 - Status: open。
@@ -1382,10 +1164,10 @@ Python AST、非占位函数参数/返回注解、15 个公开定义的 Example 
   数量制度、费用、价格或覆盖无法建立，停止对应市场实验。
 - Conclusion: 已实现独立订单生命周期、唯一结算、账户日切修复、动态时钟与期限计算，
   2026-10-09 的 94 项相关工程测试及其准确代码状态见[独立实施记录](#h03-独立实施与验收2026-10-09)。
-  真实数据及 H02 集成未运行，不能据此宣称完整回测完成。
-- Next: 按 H02 的请求、Context 和 Step 设计接入挂单能力，替换仍被正式入口调用的同步
-  组合，再补真实输入准备及完整策略/风控验收。正式采用前同步 Offline、受影响入口
-  owner 和研究状态，并取得对应采用及 Git 操作授权。
+  H02 在 2026-10-10 完成共享账户、固定指令与 FakeLive 集成验收，见其实施记录；真实历史
+  输入及收益实验仍未运行。
+- Next: 与 H02 一起审查依赖及采用范围；获得整体采用及对应 Git 授权后正式化。真实回放
+  前补齐源端单位、价格、费用和公司行动依据，不能将合成场景当作该市场输入已通过。
 
 **用户约束与决定。** 2026-10-08 用户确认复用策略、RiskManager.apply、执行器及同一
 账户，要求 bar 明确时间区间和交易日，并选定“持有三分钟”仅累计可交易时段、跳过午休
@@ -1946,7 +1728,7 @@ price_matches=False 只表示本次观察不成交，保持有效委托等待后
 | 类型及位置 | 具体字段或变更 | 所有权与约束 |
 | --- | --- | --- |
 | `OrderIntent`，`core/events.py` | 保留 `ts_us/symbol/side/qty/order_id`；增加 `active_ts_us: int`、`expires_ts_us: int`、`limit_price: Decimal \| None` | `ts_us` 是产生时刻，生效不早于产生，到期晚于生效；execution/full 的报价必填且合法，None 只表达 tradable 的参考委托，不是缺参后的兜底 |
-| `OrderTerms`，`core/events.py`，拟新增 | `active_ts_us: int`、`expires_ts_us: int` | 目标生成委托前所需的不可变执行窗口，按证券提供；只保留被目标提交与具体委托构造共同消费的时间，不是另一个订单状态或通用条款框架 |
+| `OrderTerms`，`core/events.py` | `active_ts_us: int`、`expires_ts_us: int` | 目标生成委托前所需的不可变执行窗口，按证券提供；只保留被目标提交与具体委托构造共同消费的时间，不是另一个订单状态或通用条款框架 |
 | `PendingOrder`，`core/events.py` | `intent: OrderIntent`、`remaining_qty: int`、`reserved_cash: Decimal`、`reserved_sell_qty: int`、`reservation_price: Decimal` | 不可变快照；执行器替换调用方拥有的挂单容器中的条目，终态删除。资金估计价用于部分成交后重算余量及累计费用，不能从含最低佣金的占用金额反推单价；H02 接入后容器由 BacktestState 持有 |
 | `OrderEvent`，`core/events.py` | `ts_us: int`、`order_id: int`、`status: OrderStatus`、`remaining_qty: int`、`reason: str`；撮合观察字段 `observation_id: str \| None`、`candidate_price: Decimal \| None` | 报价检查未满足时保持待成交/部分成交状态，记录观察与候选价及原因；提交、撤单、到期没有撮合观察时两字段为 None。合法订单等待不冒充拒单 |
 | `FillEvent`，`core/events.py` | 增加 `fill_id: str`、`observation_id: str` 和 `reference_price: Decimal`，保留订单、方向、数量，成交价格同样为 Decimal | `fill_id` 在运行内唯一且可确定复现；关联观察解释价格和量预算，参考价用于记录偏离，不用随后价格重算本次事实 |
@@ -1967,7 +1749,7 @@ workflow 将同一账户、ledger、挂单容器及 clipping、validation、sett
 编排只调用领域计算：数量/报价归 policies，费用归 cost model，成交公式归 venue。
 只有目标路径生成报价，冻结订单原样消费；参考或价格模型由 workflow 固定选择。
 
-| `ExecutionOrchestrator` 拟议方法，均为 keyword-only 参数 | 返回与副作用 |
+| `FakeExecution` 当前候选方法，均为 keyword-only 参数 | 返回与副作用 |
 | --- | --- |
 | `submit_targets(target: TargetEvent, cancel_order_ids: Sequence[int], terms: Mapping[str, OrderTerms], market: MarketDataView) -> tuple[OrderEvent, ...]` | 对账撤销前的持仓与有效委托，保留纯缩减替代单的原条件；确认所需撤单后，再根据已释放资源共用数量与报价规则形成 intent 并调用 submit_orders。只记录订单事实和占用，不产生 fill |
 | `submit_orders(orders: Sequence[OrderIntent], market: MarketDataView) -> tuple[OrderEvent, ...]` | 校验具体委托、记录接纳/拒绝、占用资源；固定委托回放保持输入数量，合法性失败明确拒绝，不暗中缩量后冒充原订单成交 |
@@ -2008,7 +1790,7 @@ venue 只产生 FillEvent，不写账户或账本。参考成交的价格时刻�
 
 ```text
 venue 产生 FillEvent
-  → ExecutionOrchestrator.advance
+  → FakeExecution.advance
   → SettlementEngine.settle_fill
   → PortfolioState.apply_fill + ExecutionLedger.record_fill
   → 更新挂单剩余量/占用，记录订单状态
@@ -2083,16 +1865,17 @@ advance 消费，仅在 True 时递减订单余量和重算占用，返回给 St
 | 14:33 | 定时风控不恢复过期买入意图，持仓仍为 360 |
 
 最终现金为 16,400；若估值价格仍为 10，权益为 20,000。原始策略目标 1,000、风险目标
-400、实际持仓 360 分别可查。这仍是候选集成期待值；本轮从明确的目标 400 开始，已通过
-新执行器验证成交 300＋60、到期余量 40、现金 16,400 及持仓 360。原目标 1,000 到风险
-目标 400 的计算和 14:33 定时风控属于 H02，未以该执行器测试宣称完整策略/风控路径通过。
+400、实际持仓 360 分别可查。2026-10-09 的独立验收从明确目标 400 开始，只证明
+新执行器的成交 300＋60、到期余量 40、现金 16,400 及持仓 360。2026-10-10 H02 集成
+进一步验证原始 1,000 经风险变为 400，14:33 定时检查不补回已过期 40；两轮证据各自
+保留准确范围。
 
 执行实施集中在 `src/trading/backtest/execution/fake.py`、同目录的 `venue`、`settlement.py`、`core/events.py`、
 `execution/policies/constraints.py`、`core/ledger.py`、`portfolio/state.py` 及回测日程/Context/Step；
 沿用本卷宗已确认的策略和风险计算边界，报价参数进入现有策略配置，价格公式归现有 venue。
-日程/Context/Step 与策略配置仍待 H02 接入。现有正式入口仍调用同步 `ExecutionOrchestrator`，
-因此本轮保留其调用路径并改用共用资金计算及结算；独立 `FakeExecution` 拥有挂单生命周期，
-不另建账户算法。H02 接入时删除被替代且没有独立用途的同步路径。
+H03 独立实施时，日程/Context/Step 与策略配置留待 H02，暂时保留同步入口并改用
+共用资金计算及结算。H02 集成现已接入 FakeExecution，并删除无独立用途的同步路径；
+没有增加第二套账户算法。
 
 时间设计的实施边界及本轮状态如下：
 
@@ -2243,12 +2026,12 @@ BarTime、TradingWindow 和交易期限的纯计算仍归 core/time.py，不随�
 当前调用环境命名。模拟费用参与可负担量计算的 affordable_quantity 与模拟结算归同一
 模块，execution/policies 不反向依赖模拟器。测试按源码新路径镜像，不留旧路径转发层。
 
-边界按职责判断，不能只看类名。例如 ExecutionOrchestrator 绑定 SimImmediateVenue，
+边界按职责判断，不能只看类名。原同步执行器绑定即时 venue；当前
 FakeExecution 根据后续观察产生成交，SettlementEngine 通过成本模型计算费用再入账，
 这些当前都是回测执行能力。共享事实上的收益、费用和行为计算仍可留在 reporting，
 但读取回测 experiment、组装 metrics 和发布 HTML 属于 backtest/reporting。
-原 sim 和 engines 中仍被当前入口调用的实现按上述职责归位；本次不借移动提前删除 H02
-尚未替换的调用链，也不创建通用运行引擎。
+结构维护时原 sim/engines 的实现按上述职责归位，不借移动提前删除当时未替换的
+调用链；随后 H02 的替换与清理归集成实施，不创建通用运行引擎。
 
 共享账务计算不代表共享账户权威或已经具备实盘协议。当前 FillEvent 要求
 observation_id/reference_price，OrderStatus 表达本轮 Fake 状态，PortfolioState 使用

@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Collection, Mapping
+from collections.abc import Collection, Mapping, Sequence
+
+
+from src.trading.core.events import PendingOrder, Side
 
 
 def make_executable_targets(
@@ -11,6 +14,7 @@ def make_executable_targets(
     positions: Mapping[str, int],
     current_raw_prices: Mapping[str, float],
     hold_symbols: Collection[str],
+    pending_orders: Sequence[PendingOrder] = (),
     max_positions: int | None = None,
 ) -> dict[str, int]:
     """Keep unavailable holdings and adapt the remaining executable targets.
@@ -32,6 +36,14 @@ def make_executable_targets(
         str(symbol): _require_nonnegative_quantity(qty, label="position")
         for symbol, qty in positions.items()
     }
+    for pending in pending_orders:
+        symbol = pending.intent.symbol
+        if symbol in hold_symbols:
+            delta = pending.remaining_qty if pending.intent.side == Side.BUY else -pending.remaining_qty
+            normalized_positions[symbol] = normalized_positions.get(symbol, 0) + delta
+            executable[symbol] = normalized_positions[symbol]
+        else:
+            executable.setdefault(symbol, 0)
     if max_positions is not None and max_positions < 0:
         raise ValueError("max_positions must be non-negative or None")
     priced_symbols = {str(symbol) for symbol in current_raw_prices}

@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-import json
+from collections.abc import Callable
 
 from collections.abc import Sequence
 from contextlib import nullcontext
@@ -21,8 +21,8 @@ from src.config.backtest_config import BacktestMode
 from src.config.secret_config import SecretConfig
 from src.jobs.api import create_app
 from src.jobs.requests import (
-    BacktestSubmission,
-    DataSubmission,
+    parse_job_request,
+    RiskEvalSubmission,
     JobSubmission,
     TrainingSubmission,
 )
@@ -32,6 +32,7 @@ from src.jobs.runtime import (
     JobSnapshot,
     JobStatus,
     RangeJobScope,
+    CaseJobScope,
 )
 
 def _training_request() -> dict[str, object]:
@@ -57,32 +58,16 @@ def test_train_post_creates_exactly_one_job() -> None:
 
 
 @pytest.mark.parametrize("mode", list(BacktestMode))
-@pytest.mark.parametrize("strategy", [
-    {"type": "threshold", "params": {"threshold": 0.5}},
-    {"type": "topk_hysteresis", "params": {
-        "max_positions": 10, "entry_threshold": 0.5, "exit_threshold": 0.2,
-    }},
-])
-def test_backtest_post_accepts_all_modes_without_model_use_metadata(
-    mode: BacktestMode, strategy: dict[str, object],
+def test_backtest_post_accepts_each_modes_actual_inputs(
+    mode: BacktestMode, backtest_payload: Callable[[BacktestMode], dict[str, object]],
 ) -> None:
     runtime = _StubRuntime()
-    response = create_app(cast(JobRuntime, runtime)).test_client().post(
-        "/jobs", json={
-            "kind": "backtest", "mode": mode.value,
-            "start": "2026-07-01", "end": "2026-07-20",
-            "model_ref": "/data/training/model.joblib", "strategy": strategy,
-        },
-    )
-
+    payload = backtest_payload(mode)
+    response = create_app(cast(JobRuntime, runtime)).test_client().post("/jobs", json=payload)
     assert response.status_code == 201
     assert len(response.get_json()["jobs"]) == len(runtime.submitted) == 1
-    submission = runtime.submitted[0]
-    assert isinstance(submission, BacktestSubmission)
-    assert submission.mode is mode
-    assert (submission.start, submission.end) == ("2026-07-01", "2026-07-20")
-    assert str(submission.model_ref) == "/data/training/model.joblib"
-    assert submission.strategy.type == strategy["type"]
+    assert runtime.submitted == parse_job_request(payload)
+    assert runtime.submitted[0].mode is mode
 
 
 @pytest.mark.parametrize(("field", "value"), [
@@ -97,10 +82,9 @@ def test_backtest_post_rejects_internal_fields_without_creating_a_job(
     runtime = _StubRuntime()
     response = create_app(cast(JobRuntime, runtime)).test_client().post(
         "/jobs", json={
-            "kind": "backtest", "mode": "full_backtest",
+            "kind": "backtest", "mode": "signal_eval",
             "start": "2026-07-01", "end": "2026-07-20",
-            "model_ref": "/data/training/model.joblib",
-            "strategy": {"type": "threshold", "params": {"threshold": 0.5}},
+            "signal": {"type": "model", "model_ref": "/data/training/model.joblib"},
             field: value,
         },
     )
@@ -118,8 +102,7 @@ def test_backtest_post_requires_an_explicit_supported_mode(
     response = create_app(cast(JobRuntime, runtime)).test_client().post(
         "/jobs", json={
             "kind": "backtest", "start": "2026-07-01", "end": "2026-07-20",
-            "model_ref": "/data/training/model.joblib",
-            "strategy": {"type": "threshold", "params": {"threshold": 0.5}},
+            "signal": {"type": "model", "model_ref": "/data/training/model.joblib"},
             **mode_fields,
         },
     )
@@ -133,10 +116,9 @@ def test_backtest_post_requires_an_explicit_supported_mode(
 def test_backtest_post_requires_both_dates(field: str) -> None:
     runtime = _StubRuntime()
     payload = {
-        "kind": "backtest", "mode": "full_backtest",
+        "kind": "backtest", "mode": "signal_eval",
         "start": "2026-07-01", "end": "2026-07-20",
-        "model_ref": "/data/training/model.joblib",
-        "strategy": {"type": "threshold", "params": {"threshold": 0.5}},
+        "signal": {"type": "model", "model_ref": "/data/training/model.joblib"},
     }
     del payload[field]
     response = create_app(cast(JobRuntime, runtime)).test_client().post(
@@ -157,16 +139,9 @@ class _StubRuntime:
         snapshots: list[JobSnapshot] = []
         for submission in submissions:
             job_id = f"00000000-0000-4000-8000-{len(self.jobs) + 1:012d}"
-            if isinstance(
-                submission,
-                (DataSubmission, TrainingSubmission, BacktestSubmission),
-            ):
-                scope = RangeJobScope(
-                    start=submission.start,
-                    end=submission.end,
-                )
-            else:
-                raise TypeError("unknown submission")
+            scope = (CaseJobScope(tuple(str(ref) for ref in submission.case_refs))
+                     if isinstance(submission, RiskEvalSubmission)
+                     else RangeJobScope(submission.start, submission.end))
             snapshot = JobSnapshot(
                 job_id=job_id,
                 kind=submission.kind,

@@ -8,6 +8,8 @@ from typing import Protocol
 
 import numpy as np
 
+from pydantic import ConfigDict
+
 from src.trading.core.time import BarTime
 
 
@@ -20,6 +22,8 @@ class ExecutionObservation:
     Example:
         observation = ExecutionObservation("minute-1", "600000", bar_time, Decimal("10"), 300)
     """
+
+    __pydantic_config__ = ConfigDict(extra="forbid")
 
     observation_id: str
     symbol: str
@@ -36,6 +40,22 @@ class ExecutionObservation:
         object.__setattr__(self, "price", price)
         if self.volume_qty is not None and (type(self.volume_qty) is not int or self.volume_qty < 0):
             raise ValueError("volume_qty must be a non-negative integer or None")
+
+
+class PriceView(Protocol):
+    """The current observable raw price required by order preparation.
+
+    Example:
+        price = view.get_price("600000")
+    """
+
+    def get_price(self, symbol: str) -> Decimal | float | None:
+        """Return a visible price or an ordinary missing observation.
+
+        Example:
+            price = view.get_price("600000")
+        """
+        ...
 
 
 class MarketDataView(Protocol):

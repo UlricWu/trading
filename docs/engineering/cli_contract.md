@@ -20,7 +20,7 @@ start/done 或原始 JSON，workflow 负责业务运行日志。Typer 负责参�
 `EXPERIMENT_ID` 必须匹配 `[A-Za-z0-9][A-Za-z0-9._-]{0,63}`。
 
 Submission 的日期与范围保证由 `src.jobs.requests` 中相应的 `create_*_submission` 函数
-建立。TrainingSubmission 使用验证模型；其他 submission 的 dataclass 构造函数不执行
+建立。TrainingSubmission 与五种 BacktestSubmission 使用验证模型；数据类 submission 的 dataclass 构造函数不执行
 校验，只允许可信内部调用者提供已经满足契约的值。CLI 和 HTTP 均使用共享构造函数，
 不另建业务校验。
 
@@ -197,45 +197,69 @@ HTTP 不接受客户端提供此字段。
 ## Backtest
 
 ```text
-python -m src.cli backtest \
-  --mode MODE \
-  --start YYYY-MM-DD \
-  --end YYYY-MM-DD \
-  --experiment-id EXPERIMENT_ID \
-  --model-ref ABSOLUTE_MODEL_PATH \
-  --strategy-json JSON
+python -m src.cli backtest --mode MODE --experiment-id EXPERIMENT_ID --input-json JSON
 ```
 
-`MODE` 必须是 `signal_eval`、`tradable_alpha_eval`、`execution_eval`、`risk_eval` 或
-`full_backtest`。`ABSOLUTE_MODEL_PATH` 必须是指向单份已发布模型的绝对文件路径，构造为 pathlib.Path；
-不通过实验名称猜测某一个模型。`JSON` 必须完整匹配以下
-任一对象，额外字段禁止：
+三个参数都必填。JSON 必须是 object，只包含所选任务的字段，不包含 kind、mode 或
+experiment_id；mode 只由 `--mode` 传入。CLI 在加载 AppConfig、创建 PathManager 或进入
+workflow 前调用 `create_backtest_submission` 校验。额外字段、缺少必需参数、非法数值
+或相对引用路径均拒绝，不保留旧 `--model-ref`/`--strategy-json` 或隐式字段兼容。
+
+| MODE / Submission | JSON 字段 |
+| --- | --- |
+| signal_eval / SignalEvalSubmission | start、end、signal |
+| risk_eval / RiskEvalSubmission | case_refs、risk；没有日期范围 |
+| execution_eval / ExecutionEvalSubmission | start、end、order_refs、initial_account、execution |
+| tradable_alpha_eval / TradableAlphaEvalSubmission | start、end、signal、strategy、initial_account、execution |
+| full_backtest / FullBacktestSubmission | start、end、signal、strategy、initial_account、risk、execution |
+
+有日期的请求使用规范 `YYYY-MM-DD` 且 start<=end。信号来源是二选一的 object：
+`{"type":"model","model_ref":"/absolute/model.joblib"}` 或
+`{"type":"recorded","prediction_refs":["/absolute/prediction.parquet"]}`。
+case_refs、order_refs 和 prediction_refs 是有序绝对路径数组；空事实可报告无样本。
+模型同目录训练记录、预测身份和首次实际决策的成熟时间核验由
+[Backtest workflow](../offline_workflow_contract.md#backtest-workflow) 拥有，不要求调用者
+提供 model_use、生效时间、binding_refs 或训练记录路径。
+
+交易配置的稳定字段如下；未标可选的字段均必填：
+
+| 对象 | 字段及构造约束 |
+| --- | --- |
+| initial_account | ts_us 整数、trade_date、非负有限 Decimal cash、positions 非负整数映射、sellable 同键映射且不超过持仓、average_cost 同键非负有限 Decimal 映射、非负有限 peak_equity；ts_us 必须早于模拟终点 |
+| execution | market_ref 绝对 JSON 路径、end_ts_us 整数、quantity_rules 证券映射、fees、正数有限 annual_factor；slippage_bp 和 risk_check_ts_us 按模式约束如下 |
+| quantity_rules 每证券值 | buy_min_qty、buy_step_qty、sell_min_qty、sell_step_qty、fill_step_qty 都是正整数，price_tick 是正数有限 Decimal，enforce_t1 是显式 bool；不可用 bool 代替数量 |
+| fees | commission_rate、stamp_tax_rate、transfer_rate、min_commission，均为非负有限 Decimal；不使用隐含费率或最低佣金 |
+| risk | rules 非空数组，按声明顺序选具名规则；每项为 type=max_single_name 和非负有限 max_ratio，或 type=max_gross_exposure 和非负有限 max_gross_ratio，或 type=max_drawdown 和 [0,1] max_drawdown |
+| strategy | type、params、order_window_minutes；full 另须 quote，tradable 不接受 quote。窗口分钟为正整数 |
+| quote | buy_offset_bp、sell_offset_bp，均为 [0,10000) 的有限 Decimal；不接受额外字段 |
+
+execution/full 必须提供 [0,10000) 的有限 slippage_bp；tradable 不提供它，明确使用参考
+成交。只有 full 可提供 risk_check_ts_us 整数数组，省略为空；其他两种交易模式不接受
+非空风险检查时间。规则配置缺失、空规则或价格模型缺失不能解释为自动关闭能力。
+
+strategy.params 只允许与 type 对应的结构：
 
 ```text
-{"type":"threshold","params":{"threshold":finite-number,"target_quantity":positive-int=100}}
-
-{"type":"topk_hysteresis","params":{
-  "max_positions":positive-int,
-  "entry_threshold":finite-number,
-  "exit_threshold":finite-number <= entry_threshold,
-  "rebalance_interval_minutes":positive-int=1,
-  "keep_winners":bool=false,
-  "target_quantity":positive-int=100
-}}
+threshold: {threshold: finite-number, target_quantity: positive-int=100}
+topk_hysteresis: {max_positions: positive-int, entry_threshold: finite-number,
+  exit_threshold: finite-number <= entry_threshold, rebalance_interval_minutes: positive-int=1,
+  keep_winners: bool=false, target_quantity: positive-int=100}
+fixed_holding: {max_positions: positive-int, decision_time: local-time, exit_time: local-time,
+  initial_exit_dates: {symbol: YYYY-MM-DD}}
 ```
 
-`--mode`、`--start`、`--end`、`--model-ref` 和 `--strategy-json` 均必须显式提供。
-起止日期不从模型训练范围推导，也不默认选择某种 mode。模型同目录的 `schedule.json`
-由 workflow 自动读取，用于模型关联及训练标签成熟时间核验；具体规则由
-[Backtest workflow](../offline_workflow_contract.md#backtest-workflow) 拥有。
-调用者不提供训练记录路径、生效时间或可用性证据；`--model-use-json` 不再是 CLI 参数。
-这样日期、模型与策略由用户选择，训练元数据由已交付模型的记录提供，避免用户重复构造
-或填造内部时序依据。缺失必填参数或非法 JSON 在装配 workflow 前失败。
+fixed_holding 的两个 time 不带 UTC offset，使用市场时区。三种策略的 order_window_minutes
+在交易请求必需；原两个构造器的股数默认值仍如上，新策略没有默认资金、名额或时点。
+完整选择/资金/退出和风险计算语义由 Offline owner 定义，本文件只拥有参数构造。
 
-CLI 不构造 config override。它加载一次只含静态执行设置的 `BacktestConfig`，并把该对象、
-完整 `BacktestSubmission`、`PathManager` 与 experiment ID 直接交给 workflow。Runtime
-mode、model ref 和 strategy 的唯一 owner 是 submission；`BacktestConfig` 只拥有
-`init_cash` 与 `min_listing_calendar_days`。CLI 不接受 group、run ID、model name 或可选
-策略。
-通过 HTTP 创建 backtest Job 时，Job API 使用同一个 Job UUID 作为该必填
-`EXPERIMENT_ID`；HTTP 不接受客户端提供此字段。
+仅评价已有预测的例子（文件必须实际存在）：
+
+```bash
+python -m src.cli backtest --mode signal_eval --experiment-id signal-1 \
+  --input-json '{"start":"2026-07-03","end":"2026-07-03","signal":{"type":"recorded","prediction_refs":["/data/prediction.parquet"]}}'
+```
+
+CLI 不构造 config override。加载一次 AppConfig 后，五种类型分别路由到五个具名入口，
+只有 signal/tradable/full 接收静态 BacktestConfig，其唯一字段是 min_listing_calendar_days。
+初始现金只来自 initial_account；risk/execution 不消费模型设置。HTTP 使用同一字段模型，
+build_cli_command 用一个 `--input-json` 参数保留嵌套 JSON，Job UUID 作为 experiment ID。

@@ -41,7 +41,6 @@ feature_groups:
     feature_version: v1
     feature_columns: [factor]
 backtest:
-  init_cash: 200000
   min_listing_calendar_days: 120
 """.lstrip(),
         encoding="utf-8",
@@ -72,15 +71,14 @@ def test_override_recursively_merges_any_formal_config_field(
     config = AppConfig.load(
         override={
             "models": {"sgd_regression": {"model_params": {"alpha": 0.001}}},
-            "backtest": {"init_cash": 123_456},
+            "backtest": {"min_listing_calendar_days": 90},
         }
     )
 
     assert config.models["sgd_regression"].model_params == {"alpha": 0.001}
     assert config.models["sgd_regression"].group == "sgd_regression"
     assert config.feature_groups["daily_basic_selected_v1"].feature_columns == ["factor"]
-    assert config.backtest.init_cash == 123_456
-    assert config.backtest.min_listing_calendar_days == 120
+    assert config.backtest.min_listing_calendar_days == 90
 
 
 def test_override_rejects_non_config_root_fields(

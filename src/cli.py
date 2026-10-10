@@ -26,7 +26,13 @@ from src.jobs.requests import (
 from src.utils.datetime_utils import DateTimeUtils
 from src.utils.logger import configure_cli_logging
 from src.utils.path import PathManager
-from src.workflows.backtest import run_daily_alpha_backtest
+from src.workflows.backtest import (
+    run_signal_evaluation, run_risk_evaluation, run_execution_evaluation,
+    run_tradable_alpha_evaluation, run_full_backtest,
+)
+from src.jobs.requests import (
+    SignalEvalSubmission, RiskEvalSubmission, ExecutionEvalSubmission, TradableAlphaEvalSubmission,
+)
 from src.workflows.offline_daily_data import (
     run_feature_backfill,
     run_level2_minute_backfill,
@@ -47,16 +53,6 @@ def _require_experiment_id(value: str) -> str:
         return PathManager.require_experiment_id(value)
     except (TypeError, ValueError) as exc:
         raise typer.BadParameter(str(exc), param_hint="--experiment-id") from None
-
-
-def _parse_strategy_json(value: str) -> object:
-    try:
-        return json.loads(value)
-    except json.JSONDecodeError:
-        raise typer.BadParameter(
-            "must be valid JSON",
-            param_hint="--strategy-json",
-        ) from None
 
 
 def _raise_bad_parameter(
@@ -383,52 +379,41 @@ def train(
 @app.command()
 def backtest(
     mode: str = typer.Option(..., "--mode"),
-    start_date: str = typer.Option(..., "--start"),
-    end_date: str = typer.Option(..., "--end"),
     experiment_id: str = typer.Option(..., "--experiment-id"),
-    model_ref: str = typer.Option(..., "--model-ref"),
-    strategy_json: str = typer.Option(..., "--strategy-json"),
+    input_json: str = typer.Option(..., "--input-json"),
 ) -> None:
-    """Run one offline daily-alpha backtest experiment.
+    """Run the selected evaluation using only its own validated input fields.
 
     Example:
-        backtest(
-            mode="full_backtest",
-            start_date="2026-07-01",
-            end_date="2026-07-20",
-            experiment_id="backtest-1",
-            model_ref="/data/models/training-1.joblib",
-            strategy_json='{"type":"threshold","params":{"threshold":0.5}}',
-        )
+        backtest(mode="signal_eval", experiment_id="signal-1",
+                 input_json='{"start":"2026-07-03","end":"2026-07-03","signal":{"type":"recorded","prediction_refs":[]}}')
     """
     experiment_id = _require_experiment_id(experiment_id)
     try:
-        submission = create_backtest_submission(
-            mode=mode,
-            start=start_date,
-            end=end_date,
-            model_ref=model_ref,
-            strategy=_parse_strategy_json(strategy_json),
-        )
+        fields = json.loads(input_json)
+    except json.JSONDecodeError as exc:
+        raise typer.BadParameter("must be valid JSON", param_hint="--input-json") from exc
+    if not isinstance(fields, dict) or "mode" in fields or "kind" in fields:
+        raise typer.BadParameter("must be a task input object without mode/kind", param_hint="--input-json")
+    try:
+        submission = create_backtest_submission(mode=mode, **fields)
     except InvalidJobRequest as exc:
-        _raise_bad_parameter(
-            exc,
-            {
-                "mode": "--mode",
-                "start": "--start",
-                "end": "--end",
-                "model_ref": "--model-ref",
-                "strategy": "--strategy-json",
-            },
-        )
-
+        raise typer.BadParameter(f"{exc.field}: {exc}", param_hint="--input-json") from exc
     app_config = AppConfig.load()
-    run_daily_alpha_backtest(
-        backtest_config=app_config.backtest,
-        path_manager=PathManager(app_config.storage_root),
-        submission=submission,
-        experiment_id=experiment_id,
-    )
+    pm = PathManager(app_config.storage_root)
+    if isinstance(submission, SignalEvalSubmission):
+        run_signal_evaluation(submission=submission, path_manager=pm,
+                              experiment_id=experiment_id, backtest_config=app_config.backtest)
+    elif isinstance(submission, RiskEvalSubmission):
+        run_risk_evaluation(submission=submission, path_manager=pm, experiment_id=experiment_id)
+    elif isinstance(submission, ExecutionEvalSubmission):
+        run_execution_evaluation(submission=submission, path_manager=pm, experiment_id=experiment_id)
+    elif isinstance(submission, TradableAlphaEvalSubmission):
+        run_tradable_alpha_evaluation(submission=submission, path_manager=pm,
+                                     experiment_id=experiment_id, backtest_config=app_config.backtest)
+    else:
+        run_full_backtest(submission=submission, path_manager=pm,
+                          experiment_id=experiment_id, backtest_config=app_config.backtest)
 
 
 if __name__ == "__main__":

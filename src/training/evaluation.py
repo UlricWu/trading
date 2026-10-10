@@ -228,3 +228,14 @@ def load_evaluation(ref: Path) -> ICEvaluation:
     if evaluation.summary != summarize_observations(evaluation.observations):
         raise ValueError("evaluation summary must match its observations")
     return evaluation
+
+
+def evaluate_prediction_records(
+    refs: Sequence[Path], *, pm: PathManager,
+) -> tuple[ICObservation, ...]:
+    """Evaluate fixed records in caller order, retaining one observation per decision.
+
+    Example:
+        observations = evaluate_prediction_records((morning_ref, afternoon_ref), pm=path_manager)
+    """
+    return tuple(evaluate_prediction_record(ref, pm=pm) for ref in refs)

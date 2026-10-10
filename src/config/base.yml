@@ -72,7 +72,6 @@ data:
 # - Minimum listing age is explicit; Access always excludes current ST and suspension.
 # ==================================================
 backtest:
-  init_cash: 200000
   min_listing_calendar_days: 120
 # ==================================================
 # Training presets and ordered feature selections

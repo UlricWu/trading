@@ -76,14 +76,15 @@ Collection Variables 中的 `testBaseUrl` 或 `trainingBaseUrl`。训练文件�
 其 Health 的 `environment` 为 `dev`；“训练”只表示客户端文件夹用途。这些客户端预设不改变上述正式部署端口、
 服务启动配置或服务端 `ENV`，目标地址必须已有服务监听或端口映射。
 
-Collection 覆盖全部 5 个路由，包含 Standard 数据、Level-2 数据、训练和两种策略的
-回测请求示例，每个环境 9 个请求，共 18 个请求。数据与回测日期范围、`backtestMode` 以及
+Collection 覆盖全部 5 个路由，包含 Standard 数据、Level-2 数据、训练、独立信号及固定风控
+回测请求示例，每个环境 9 个请求，共 18 个请求。数据与信号日期范围，以及
 训练的 `trainingStart`、`trainingEnd`、`trainingEvalRangeJson`、`trainingModel`、
 `trainingFeatureGroup`、`trainingLabelGroup` 在 Collection Variables 中设置；评价范围
 可填 JSON object 或 null，日期须落在目标环境实际可用的数据范围内。创建成功后，
 Job ID 自动写入 Collection 的 `testJobId` 或 `trainingJobId`，查询和取消读取对应环境的 ID。
 回测前从训练 schedule.json 及具体已发布模型文件取得绝对 ref，手动填写 `testModelRef`
-或 `trainingModelRef`。Job ID 只标识任务，不能推导模型引用；计划中的 ref 也不证明发布成功。
+或 `trainingModelRef`；固定风控填写对应环境的 RiskCaseRef 及 riskRulesJson，
+示例风险阈值只用于演示，发送前按任务确认。Job ID 只标识任务，不能推导模型引用；计划中的 ref 也不证明发布成功。
 服务重启后须重新填写或创建 Job ID。单独发送所需请求；批量运行整个 Collection
 会创建全部示例 Job，并执行取消请求。
 
@@ -149,12 +150,15 @@ CLI-only 的 `data-calendar`、`data-standard-bootstrap`、`data-level2-minute-b
   - 只创建一个 Job；公开 scope.start/end 是原始训练及评价闭区间的整体包络，
     不使用过滤后的交易日期重新计算。不接受 windows、逐日日期或技术时间参数。
 - `backtest`
-  - 必须且只允许提供 `mode`、`start`、`end`、`model_ref` 和 `strategy`。
-  - `mode` 显式选择 `signal_eval`、`tradable_alpha_eval`、`risk_eval`、`execution_eval`
-    或 `full_backtest`，无默认模式。回测起止日期 `start` 和 `end` 均为必填，不能由服务端
-    隐藏或从模型推导；使用规范日期 `YYYY-MM-DD` 且 `start <= end`。
-  - 字段业务语义与 CLI 同名参数一致；model_ref 必须是具体模型文件的绝对路径。
-  - 完整范围是一个 workflow 执行单位，因此只创建一个 Job。
+  - mode 显式选择 signal_eval、tradable_alpha_eval、risk_eval、execution_eval 或 full_backtest。
+  - body 为 kind、mode 加所选模式的字段，完整 schema 复用
+    [CLI Backtest](cli_contract.md#backtest) 的输入表；不把 CLI 的 input-json 字符串嵌入 HTTP。
+    不接受其他模式的额外字段。
+  - signal 使用 start/end/signal；risk 使用 case_refs/risk；execution 使用
+    start/end/order_refs/initial_account/execution；tradable 使用
+    start/end/signal/strategy/initial_account/execution；full 另须 risk。
+  - 有日期时使用规范 YYYY-MM-DD 且 start<=end；risk 按全部案例输入定义完整任务，不虚构日期。
+  - 每个请求只创建一个 Job；路径、数值和嵌套结构先由共享构造边界校验。
 
 一个 Job 对应一个完整 workflow 执行单位；每个有效请求只创建一个 Job。请求必须先完成
 字段和业务参数构造，再加入 FIFO；任一字段无效时不得创建任何 Job、ID、日志或子进程。
@@ -174,19 +178,26 @@ CLI-only 的 `data-calendar`、`data-standard-bootstrap`、`data-level2-minute-b
 }
 ```
 
-完整回测示例（模型路径与日期须替换为实际输入）：
+独立信号评价示例（预测路径与日期须替换为实际输入）：
 
 ```json
 {
   "kind": "backtest",
-  "mode": "full_backtest",
-  "start": "2026-07-01",
-  "end": "2026-07-20",
-  "model_ref": "/data/experiments/TRAINING_RUN/training/model.joblib",
-  "strategy": {
-    "type": "threshold",
-    "params": {"threshold": 0.5, "target_quantity": 100}
-  }
+  "mode": "signal_eval",
+  "start": "2026-07-03",
+  "end": "2026-07-03",
+  "signal": {"type": "recorded", "prediction_refs": ["/data/prediction.parquet"]}
+}
+```
+
+固定风控案例示例（0.2 是演示参数，实际任务明确选择）：
+
+```json
+{
+  "kind": "backtest",
+  "mode": "risk_eval",
+  "case_refs": ["/data/risk-cases.json"],
+  "risk": {"rules": [{"type": "max_single_name", "max_ratio": 0.2}]}
 }
 ```
 
@@ -208,8 +219,8 @@ Backtest 的训练记录由 workflow 从指定模型的同目录 `schedule.json`
 训练标签成熟时间约束由 [Backtest workflow](../offline_workflow_contract.md#backtest-workflow)
 拥有，失败为 FAILED。HTTP 不接收 `model_use`、`training_schedule_ref`、
 `effective_ts_us` 或 `availability_evidence_ref`，也不要求用户填写对应 Postman 变量。
-这些信息不能由调用者任意声明来绕过时序核验；用户只需选择模式、回测起止日期、模型和
-策略。build_cli_command 传递这些已校验业务参数及服务器生成的 experiment ID。
+这些信息不能由调用者任意声明来绕过时序核验。build_cli_command 将所选任务已校验的
+嵌套字段编码为单个 --input-json 参数，并传递 mode 及服务器生成的 experiment ID。
 
 Job 子进程必须使用当前服务的 Python 解释器执行 `-m src.cli`，不得调用 PATH 中的
 `python`。Data Job 的 UUID 只标识 Job；training 和 backtest 必须将同一个完整 Job UUID
@@ -223,11 +234,14 @@ Job JSON 必须且只包含：
 job_id, kind, scope, status, submitted_at, started_at, finished_at
 ```
 
-`scope` 只表达该 Job 的完整执行单位：
+`scope` 只表达该 Job 的完整执行单位。日期任务使用：
 
 ```json
 {"start": "YYYY-MM-DD", "end": "YYYY-MM-DD"}
 ```
+
+risk_eval 使用 `{"case_refs":["/absolute/risk-cases.json"]}`，不读取案例文件来伪造提交时
+的日期范围。两种 scope 均只包含各自的字段，不附加空 start/end。
 
 三个时间字段使用带 `Asia/Shanghai` UTC offset、包含微秒的 ISO 8601 字符串。
 `started_at` 和 `finished_at` 在尚未发生对应事件时为 `null`。不得公开 command、PID、

@@ -6,6 +6,10 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from enum import Enum
 from types import MappingProxyType
+from typing import Annotated
+
+
+from pydantic import ConfigDict, PlainSerializer
 
 
 class Side(str, Enum):
@@ -18,10 +22,13 @@ class SignalEvent:
     """
     SignalEvent (FACT)
     - model output only (no trading semantics)
+
+    Example:
+        signal = SignalEvent(ts_us=1, scores={"600000": 0.2})
     """
     ts_us: int
-    scores: Mapping[str, float]
-    meta: Mapping[str, object] = field(default_factory=dict)
+    scores: Annotated[Mapping[str, float], PlainSerializer(lambda value: dict(value), return_type=dict[str, float])]
+    meta: Annotated[Mapping[str, object], PlainSerializer(lambda value: dict(value), return_type=dict[str, object])] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "scores", MappingProxyType(dict(self.scores)))
@@ -33,10 +40,13 @@ class TargetEvent:
     """
     TargetEvent (FACT)
     - ideal target positions (portfolio-construction output)
+
+    Example:
+        target = TargetEvent(ts_us=1, targets={"600000": 100})
     """
     ts_us: int
-    targets: Mapping[str, int]
-    meta: Mapping[str, object] = field(default_factory=dict)
+    targets: Annotated[Mapping[str, int], PlainSerializer(lambda value: dict(value), return_type=dict[str, int])]
+    meta: Annotated[Mapping[str, object], PlainSerializer(lambda value: dict(value), return_type=dict[str, object])] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "targets", MappingProxyType(dict(self.targets)))
@@ -50,6 +60,8 @@ class OrderIntent:
     Example:
         order = OrderIntent(1, "600000", Side.BUY, 100, 1, 1, 3, Decimal("10"))
     """
+    __pydantic_config__ = ConfigDict(extra="forbid")
+
     ts_us: int
     symbol: str
     side: Side
@@ -58,7 +70,7 @@ class OrderIntent:
     active_ts_us: int
     expires_ts_us: int
     limit_price: Decimal | None
-    meta: Mapping[str, object] = field(default_factory=dict)
+    meta: Annotated[Mapping[str, object], PlainSerializer(lambda value: dict(value), return_type=dict[str, object])] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "meta", MappingProxyType(dict(self.meta)))
@@ -126,6 +138,8 @@ class PendingOrder:
         pending = PendingOrder(order, 100, Decimal("1000"), 0, Decimal("10"))
     """
 
+    __pydantic_config__ = ConfigDict(extra="forbid")
+
     intent: OrderIntent
     remaining_qty: int
     reserved_cash: Decimal
@@ -172,6 +186,8 @@ class CancelOrders:
     Example:
         command = CancelOrders(ts_us=3, order_ids=(1,))
     """
+
+    __pydantic_config__ = ConfigDict(extra="forbid")
 
     ts_us: int
     order_ids: tuple[int, ...]

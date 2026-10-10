@@ -16,7 +16,7 @@ from src.trading.execution.policies.constraints import (
 )
 from src.trading.backtest.execution.settlement import SettlementEngine, affordable_quantity
 from src.trading.backtest.execution.venue.fake import LimitPriceVenue, ReferenceVenue
-from src.trading.backtest.market.data_view import ExecutionObservation, MarketDataView
+from src.trading.backtest.market.data_view import ExecutionObservation, PriceView
 from src.trading.portfolio.state import PortfolioState
 
 
@@ -69,7 +69,7 @@ class FakeExecution:
                 raise ValueError("initial bought-today quantity must be within the position")
 
     def submit_orders(
-        self, *, orders: Sequence[OrderIntent], market: MarketDataView,
+        self, *, orders: Sequence[OrderIntent], market: PriceView,
     ) -> tuple[OrderEvent, ...]:
         """Accept or reject each frozen quantity; submission never produces fills.
 
@@ -138,7 +138,7 @@ class FakeExecution:
 
     def submit_targets(
         self, *, target: TargetEvent, cancel_order_ids: Sequence[int],
-        terms: Mapping[str, OrderTerms], market: MarketDataView,
+        terms: Mapping[str, OrderTerms], market: PriceView,
     ) -> tuple[OrderEvent, ...]:
         """Reconcile before cancelling, then create resource-constrained orders.
 

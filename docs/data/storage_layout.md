@@ -308,40 +308,37 @@ feature_sha256、trade_date、decision_ts_us。模型摘要对完整文件字节
 Metrics 与 HTML 在模型交付后分别原子写入，不组成多文件事务。它们缺失或失败不表示
 模型不可恢复；模型可加载也不表示评价、报告或整个 workflow 成功。
 
-当前 backtest experiment 保留：
+当前 backtest experiment 按实际能力保留：
 
 ```text
 experiments/<experiment_name>/
-├── predictions/
-│   ├── YYYY-MM-DD.parquet
-│   └── ...
-├── execution.parquet
-├── equity.parquet
+├── predictions/<YYYY-MM-DD>/<ts_us>.parquet  # 本次实际推理才创建
+├── orders.json                             # 三种交易任务：完整委托/撤单输入流
+├── targets.json                            # 三种交易任务：风控前策略目标
+├── risk-cases.json                         # full：不可变风控前案例
+├── execution.parquet                       # 三种交易任务：执行与结算事实
+├── equity.parquet                          # 三种交易任务：事件估值
 ├── metrics.json
 └── report.html
 ```
 
-本次实验已经由 `backtest_{start}_{end}_{experiment_id}` 标识类型；不再增加重复的 backtest
-子目录，也不为单个 HTML 增加 report 子目录。五种 mode 共用上述布局，mode 保存在运行
-参数中，不按 mode 再分目录。预测仍逐实际预测日保存，保留既有的日级输入身份及读取边界，
-不为合并文件改变预测 schema。HTML 是可由 metrics 重新生成的阅读视图，不拥有另一份结果。
+日期任务使用 `backtest_{start}_{end}_{experiment_id}`，risk_eval 使用
+`backtest_risk_{experiment_id}`，不再增加重复 backtest/report 子目录。五种 mode 共用
+以上根布局，仅生成实际能力的制品；signal/risk 不创建交易占位文件。mode 保存在 metrics
+及其 parameters 中，不按 mode 另分目录。固定预测输入保留外部引用，不无条件复制。
+同日多次推理按 UTC epoch 微秒 ts_us 区分，预测 schema 与训练相同，不写回 training。
 
-metrics.json 同时保存结果及 `parameters` 运行参数对象，不另写 binding.json。
-execution.parquet 保存实际执行账本中的事件、成交与费用；equity.parquet 保存实际估值
-时点的权益历史。两个明细的字段、来源、顺序、空值与发布时机，以及参数字段、模型关联
-及使用时序核验、启动日志和最终结果之间的关系由
-[Backtest workflow](../offline_workflow_contract.md#backtest-workflow) 拥有。
-每个 signal_date 拥有独立预测文件；不会写回 training 的 predictions 目录，也不会
-以最后一天覆盖前一天。预测文件与训练采用相同 schema；metrics.model_evaluation
-保存模型目标评价，原 signal_eval 保留 T+1 raw-close 诊断。
-Experiment 不另写 run_meta.json、输入副本或通用 replay metadata。训练记录仍由模型同目录
-schedule.json 保存，回测不再复制；运行参数与预测摘要不构成完整环境、输入归档或模型
-历史可用性证明。
+metrics 同时保存实际评价、输入摘要和运行参数；不另写 binding.json、run_meta.json、
+通用 replay metadata 或全部输入副本。orders.json、targets.json、risk-cases.json 是可复演
+业务事实，不是第二份运行元数据。各文件 schema、原始顺序、空值和发布时机归
+[Backtest workflow](../offline_workflow_contract.md#backtest-workflow)；本节唯一拥有布局和文件名。
+HTML 由 metrics 生成，不拥有另一份结果。模型目标评价保存在 metrics.signal_eval，
+不再使用旧 metrics.model_evaluation 加 T+1 raw-close 诊断形状。
 
-PathManager 为已定义的 experiment、模型、schedule、metrics 与 report 提供精确方法；
-另外为 backtest 的 execution/equity 明细提供固定路径；逐日预测文件名由本节固定。
-不接受任意 experiment 文件名，也不
-根据文件存在性判断 experiment 是否成功。
+训练记录仍在模型同目录 schedule.json；预测中的模型/特征摘要及指标中的输入/标签摘要
+不等于完整源码、环境、输入归档或模型历史可用性证明。PathManager 提供 experiment 根目录
+及既有固定路径方法；上述 JSON 事实与多时点预测由对应领域在该根目录按本节固定名称生成，
+不新增接受任意制品名称的公共路径 API，不根据文件存在性判断任务成功。
 
 新运行采用上述布局，历史结果保持原位，不自动移动或增加旧路径探测。旧 metrics 的
 model_evaluation observations 含绝对 prediction_ref，直接移动预测目录会破坏引用；
