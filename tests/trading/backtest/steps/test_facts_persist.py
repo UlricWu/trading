@@ -11,9 +11,9 @@ import pyarrow.parquet as pq
 import pytest
 
 from src.trading.portfolio.state import PortfolioState
-from src.trading.backtest.context import BacktestContext, BacktestState
+from src.trading.backtest.context import BacktestResultContext, BacktestState
+from src.trading.backtest.reporting.metrics import BacktestMetrics
 from src.trading.backtest.steps.facts_persist import FactsPersistStep
-from src.trading.backtest.timing import BacktestTiming
 from src.trading.core.events import FillEvent, OrderEvent, OrderStatus, Side
 from src.trading.backtest.execution.models.cost_a_share import AShareCostModel
 from src.trading.backtest.execution.settlement import SettlementEngine
@@ -21,15 +21,15 @@ from src.utils.path import PathManager
 
 
 @pytest.fixture
-def context() -> BacktestContext:
-    return BacktestContext(
-        timing=BacktestTiming(ts_us=1, trade_date="2026-07-03"),
+def context() -> BacktestResultContext:
+    return BacktestResultContext(
+        metrics=BacktestMetrics(mode='execution_eval', parameters={}, not_run={}),
         state=BacktestState(PortfolioState(20_000, 20_000)),
     )
 
 
 def test_execution_preserves_identities_exact_money_metadata_and_order_states(
-    tmp_path: Path, context: BacktestContext,
+    tmp_path: Path, context: BacktestResultContext,
 ) -> None:
     pm = PathManager(tmp_path)
     ledger = context.state.execution_ledger
@@ -97,7 +97,7 @@ def test_execution_preserves_identities_exact_money_metadata_and_order_states(
 
 
 def test_equity_keeps_actual_valuation_times_and_replaced_snapshot(
-    tmp_path: Path, context: BacktestContext,
+    tmp_path: Path, context: BacktestResultContext,
 ) -> None:
     pm = PathManager(tmp_path)
     curve = context.state.equity_curve
@@ -122,7 +122,7 @@ def test_equity_keeps_actual_valuation_times_and_replaced_snapshot(
 
 
 def test_empty_fact_collections_have_stable_typed_files(
-    tmp_path: Path, context: BacktestContext,
+    tmp_path: Path, context: BacktestResultContext,
 ) -> None:
     pm = PathManager(tmp_path)
     FactsPersistStep(pm=pm, experiment_name="empty").run(context)

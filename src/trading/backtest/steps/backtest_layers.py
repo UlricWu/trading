@@ -5,7 +5,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from src.trading.backtest.context import BacktestContext, RiskEvaluationContext, SignalEvaluationContext
+from src.trading.backtest.context import BacktestContext, SignalEvaluationContext
 from src.trading.backtest.execution.fake import FakeExecution
 from src.trading.backtest.market.replay import ReplayMarket
 from src.trading.backtest.market.signals import SignalBatch, produce_signal
@@ -16,48 +16,30 @@ from src.trading.portfolio.constructors.fixed_holding import FixedHoldingConstru
 from src.trading.portfolio.engine import make_executable_targets, mark_to_market
 from src.trading.risk.base import RiskContext
 from src.trading.risk.engine import RiskManager
-from src.trading.risk.evaluation import RiskCase, RiskObservation, evaluate_risk_cases
-from src.training.evaluation import evaluate_prediction_records
-from src.utils.path import PathManager
+from src.trading.risk.evaluation import RiskCase, RiskObservation
 
 
 @dataclass(frozen=True, slots=True)
-class SignalEvaluationStep:
-    """Evaluate the supplied fixed predictions with the shared model-target formula.
+class PredictionGenerationStep:
+    """Produce the selected fixed predictions for a single-pass signal evaluation.
 
     Example:
-        context = SignalEvaluationStep(pm).run(context)
+        context = PredictionGenerationStep(batches, prediction_dir).run(context)
     """
 
-    pm: PathManager
+    batches: Mapping[int, SignalBatch]
+    prediction_dir: Path
 
     def run(self, context: SignalEvaluationContext) -> SignalEvaluationContext:
-        """Retain observations in input order.
+        """Record actual prediction identities and their decision dates in input order.
 
         Example:
             context = step.run(context)
         """
-        context.observations = evaluate_prediction_records(context.prediction_refs, pm=self.pm)
-        return context
-
-
-@dataclass(frozen=True, slots=True)
-class RiskEvaluationStep:
-    """Evaluate frozen cases using the same manager as the full trading loop.
-
-    Example:
-        context = RiskEvaluationStep(risk).run(context)
-    """
-
-    risk: RiskManager
-
-    def run(self, context: RiskEvaluationContext) -> RiskEvaluationContext:
-        """Keep complete before/after and rule coverage facts.
-
-        Example:
-            context = step.run(context)
-        """
-        context.observations = evaluate_risk_cases(context.cases, risk=self.risk)
+        produced = tuple(produce_signal(batch, prediction_dir=self.prediction_dir)
+                         for batch in self.batches.values())
+        context.prediction_refs = tuple(batch.prediction_ref for batch in produced)
+        context.decision_dates = {batch.event.ts_us: batch.trade_date for batch in produced}
         return context
 
 

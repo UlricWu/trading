@@ -3,7 +3,9 @@
 
 import json
 import re
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
+from copy import deepcopy
+from dataclasses import replace
 from datetime import date, time
 from decimal import Decimal
 from pathlib import Path
@@ -17,12 +19,14 @@ import pytest
 
 from src import logs
 from src.access import Access, meta
-from src.config.backtest_config import BacktestConfig
+from src.config.backtest_config import BacktestConfig, BacktestMode
 from src.config.model_config import FeatureGroupConfig, MissingConfig, ModelPreset, PreprocessingConfig
 from src.jobs.requests import SignalInput, create_backtest_submission, create_training_submission
+from src.observability.instrumentation import Instrumentation
 from src.training.evaluation import evaluate_prediction_record
 from src.training.prediction import read_prediction_record, verify_prediction_record
 from src.utils.parquet_writer import write_parquet_atomic
+from src.utils.filesystem import FileSystem
 from src.utils.datetime_utils import DateTimeUtils
 from src.utils.path import PathManager
 from src.workflows.backtest import (run_signal_evaluation, run_risk_evaluation, run_execution_evaluation,
@@ -30,6 +34,8 @@ from src.workflows.backtest import (run_signal_evaluation, run_risk_evaluation, 
 from src.training.artifact import load
 from src.training.prediction import save_prediction_record
 from src.trading.backtest.market.replay import ReplayMarketInput
+from src.trading.backtest.context import SignalEvaluationContext
+from src.trading.backtest.steps.backtest_layers import PredictionGenerationStep
 from src.trading.backtest.market.data_view import ExecutionObservation
 from src.trading.core.time import US_PER_MINUTE
 from src.workflows.offline_training import run_offline_training
@@ -45,6 +51,7 @@ def backtest_log(tmp_path: Path) -> Iterator[Path]:
     sink = logs.add(
         path, format="{message}", level="INFO",
         filter=lambda record: record["name"] == "src.workflows.backtest"
+        or record["name"] == "src.observability.instrumentation"
         or record["name"].startswith("src.trading."),
     )
     try:
@@ -433,7 +440,10 @@ def test_fact_write_failure_keeps_prior_files_and_rejects_overwrite(scenario: tu
 
 
 @pytest.mark.parametrize('stage', ['risk', 'report'])
-def test_rule_and_report_errors_preserve_the_original_exception(scenario: tuple[PathManager, dict[str, object], Mock], monkeypatch: pytest.MonkeyPatch, stage: str) -> None:
+def test_rule_and_report_errors_preserve_the_original_exception(
+    scenario: tuple[PathManager, dict[str, object], Mock], monkeypatch: pytest.MonkeyPatch,
+    stage: str, backtest_log: Path,
+) -> None:
     pm, fields, _ = scenario
     error = RuntimeError(f'{stage} unavailable')
     if stage == 'risk':
@@ -447,6 +457,136 @@ def test_rule_and_report_errors_preserve_the_original_exception(scenario: tuple[
     name = f'backtest_2026-07-03_2026-07-03_{stage}'
     assert not pm.experiment_backtest_report(experiment_name=name).exists()
     assert pm.experiment_backtest_metrics(experiment_name=name).exists() == (stage == 'report')
+    expected_step = 'RiskDecisionStep' if stage == 'risk' else 'ReportStep'
+    assert f'Pipeline 执行; scope={name} step={expected_step}' in caught.value.__notes__
+    assert f'❌ 步骤耗时; scope={name}' in backtest_log.read_text()
+    assert f'✅ 步骤耗时; scope={name}' not in backtest_log.read_text()
+    assert '✅ 回测报告;' not in backtest_log.read_text()
+
+
+@pytest.mark.parametrize(('mode', 'per_tick', 'final'), [
+    ('signal_eval', (), ('PredictionGenerationStep', 'SignalEvaluationStep', 'MetricsPersistStep', 'ReportStep')),
+    ('risk_eval', (), ('RiskEvaluationStep', 'RiskMetricsStep', 'MetricsPersistStep', 'ReportStep')),
+    ('execution_eval', ('AdvanceExecutionStep', 'AccountingStep', 'RecordedOrdersStep'),
+     ('FactsPersistStep', 'ExecutionEvaluationStep', 'BacktestSummaryStep', 'MetricsPersistStep', 'ReportStep')),
+    ('tradable_alpha_eval', ('AdvanceExecutionStep', 'AccountingStep', 'SignalStep', 'PortfolioStep', 'SubmitTargetsStep'),
+     ('FactsPersistStep', 'PortfolioEvaluationStep', 'BacktestSummaryStep', 'MetricsPersistStep', 'ReportStep')),
+    ('full_backtest', ('AdvanceExecutionStep', 'AccountingStep', 'SignalStep', 'PortfolioStep',
+                       'RiskDecisionStep', 'SubmitTargetsStep'),
+     ('FactsPersistStep', 'SignalEvaluationStep', 'RiskMetricsStep', 'ExecutionEvaluationStep',
+      'PortfolioEvaluationStep', 'BacktestSummaryStep', 'MetricsPersistStep', 'ReportStep')),
+])
+def test_every_mode_measures_its_complete_chain_before_success(
+    scenario: tuple[PathManager, dict[str, object], Mock], monkeypatch: pytest.MonkeyPatch,
+    backtest_log: Path, mode: BacktestMode, per_tick: tuple[str, ...], final: tuple[str, ...],
+) -> None:
+    pm, fields, _ = scenario
+    config = BacktestConfig(min_listing_calendar_days=120)
+    run_full_backtest(submission=create_backtest_submission(mode='full_backtest', **fields),
+                      path_manager=pm, experiment_id='source', backtest_config=config)
+    source = pm.experiment_dir(experiment_name='backtest_2026-07-03_2026-07-03_source')
+    name = 'backtest_risk_chain' if mode == 'risk_eval' else 'backtest_2026-07-03_2026-07-03_chain'
+    measured: list[str] = []
+    original_measure = Instrumentation.measure
+
+    def measure[T](instrumentation: Instrumentation, operation_name: str,
+                   operation: Callable[..., T], *args: object, **kwargs: object) -> T:
+        measured.append(operation_name)
+        if mode == 'full_backtest' and operation_name == 'SignalEvaluationStep':
+            assert pm.experiment_backtest_execution(experiment_name=name).is_file()
+            assert pm.experiment_backtest_equity(experiment_name=name).is_file()
+        if operation_name == 'ReportStep':
+            assert pm.experiment_backtest_metrics(experiment_name=name).is_file()
+        return original_measure(instrumentation, operation_name, operation, *args, **kwargs)
+
+    monkeypatch.setattr(Instrumentation, 'measure', measure)
+    if mode == 'signal_eval':
+        run_signal_evaluation(submission=create_backtest_submission(mode=mode,
+            start=fields['start'], end=fields['end'], signal=fields['signal']),
+            path_manager=pm, experiment_id='chain', backtest_config=config)
+    elif mode == 'risk_eval':
+        run_risk_evaluation(submission=create_backtest_submission(mode=mode,
+            case_refs=[str(source / 'risk-cases.json')], risk=fields['risk']),
+            path_manager=pm, experiment_id='chain')
+    elif mode == 'execution_eval':
+        execution = {**fields['execution'], 'risk_check_ts_us': []}
+        run_execution_evaluation(submission=create_backtest_submission(mode=mode,
+            start=fields['start'], end=fields['end'], order_refs=[str(source / 'orders.json')],
+            initial_account=fields['initial_account'], execution=execution),
+            path_manager=pm, experiment_id='chain')
+    elif mode == 'tradable_alpha_eval':
+        reference = deepcopy(fields)
+        reference.pop('risk')
+        reference['strategy'].pop('quote')
+        reference['execution'].pop('slippage_bp')
+        reference['execution'].pop('risk_check_ts_us')
+        run_tradable_alpha_evaluation(submission=create_backtest_submission(mode=mode, **reference),
+            path_manager=pm, experiment_id='chain', backtest_config=config)
+    else:
+        run_full_backtest(submission=create_backtest_submission(mode=mode, **fields),
+            path_manager=pm, experiment_id='chain', backtest_config=config)
+
+    tick_count = pq.read_table(pm.experiment_backtest_equity(experiment_name=name)).num_rows if per_tick else 0
+    assert measured == list(per_tick) * tick_count + list(final)
+    assert pm.experiment_backtest_report(experiment_name=name).is_file()
+    log = backtest_log.read_text()
+    assert log.count(f'✅ 步骤耗时; scope={name}') == 1
+    assert log.rindex('✅ 回测报告;') < log.index(f'✅ 步骤耗时; scope={name}')
+
+
+@pytest.mark.parametrize(('failure', 'step_name'), [
+    ('prediction', 'PredictionGenerationStep'), ('metrics', 'MetricsPersistStep'),
+])
+def test_signal_production_and_publication_failures_stop_the_measured_chain(
+    delivery: tuple[PathManager, Path, Mock], monkeypatch: pytest.MonkeyPatch,
+    backtest_log: Path, failure: str, step_name: str,
+) -> None:
+    pm, model_ref, _ = delivery
+    name = f'backtest_2026-07-03_2026-07-03_{failure}'
+    error = OSError(f'{failure} unavailable')
+    if failure == 'prediction':
+        monkeypatch.setattr('src.training.inference_model.InferenceModel.predict', Mock(side_effect=error))
+    else:
+        original_write = FileSystem.write_bytes_atomic
+
+        def write(path: str | Path, data: bytes) -> None:
+            if Path(path) == pm.experiment_backtest_metrics(experiment_name=name):
+                raise error
+            original_write(path, data)
+
+        monkeypatch.setattr(FileSystem, 'write_bytes_atomic', write)
+    with pytest.raises(OSError) as caught:
+        run_signal_evaluation(submission=create_backtest_submission(mode='signal_eval',
+            start='2026-07-03', end='2026-07-03', signal={'type': 'model', 'model_ref': str(model_ref)}),
+            path_manager=pm, experiment_id=failure, backtest_config=BacktestConfig(min_listing_calendar_days=120))
+    assert caught.value is error
+    assert error.__notes__ == [f'Pipeline 执行; scope={name} step={step_name}']
+    assert not pm.experiment_backtest_metrics(experiment_name=name).exists()
+    assert not pm.experiment_backtest_report(experiment_name=name).exists()
+    predictions = list(pm.experiment_dir(experiment_name=name).glob('predictions/**/*.parquet'))
+    assert len(predictions) == (1 if failure == 'metrics' else 0)
+    assert f'❌ 步骤耗时; scope={name}' in backtest_log.read_text()
+    assert f'✅ 步骤耗时; scope={name}' not in backtest_log.read_text()
+
+
+def test_signal_workflow_publishes_the_returned_context_instead_of_initial_metrics(
+    scenario: tuple[PathManager, dict[str, object], Mock], monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pm, fields, _ = scenario
+    original_run = PredictionGenerationStep.run
+
+    def produce(step: PredictionGenerationStep, context: SignalEvaluationContext) -> SignalEvaluationContext:
+        context = original_run(step, context)
+        return replace(context, metrics=context.metrics.model_copy(update={'not_run': {'risk': 'returned_context'}}))
+
+    monkeypatch.setattr(PredictionGenerationStep, 'run', produce)
+    run_signal_evaluation(submission=create_backtest_submission(mode='signal_eval',
+        start=fields['start'], end=fields['end'], signal=fields['signal']), path_manager=pm,
+        experiment_id='returned', backtest_config=BacktestConfig(min_listing_calendar_days=120))
+    metrics = _metrics(pm, 'backtest_2026-07-03_2026-07-03_returned')
+    assert metrics['not_run'] == {'risk': 'returned_context'}
+    assert metrics['signal_eval']['decision_count'] == 1
+    assert metrics['prediction_refs'] == fields['signal']['prediction_refs']
 
 
 def test_future_labels_and_prices_cannot_change_prior_signal_target_or_order(scenario: tuple[PathManager, dict[str, object], Mock]) -> None:

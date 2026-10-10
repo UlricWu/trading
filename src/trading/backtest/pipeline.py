@@ -9,8 +9,9 @@ from src import logs
 from src.observability.instrumentation import Instrumentation
 from src.pipeline import PipelineStep, run_steps
 from src.trading.backtest.clock import ReplayClock
-from src.trading.backtest.context import BacktestContext, BacktestState
+from src.trading.backtest.context import BacktestContext, BacktestResultContext, BacktestState
 from src.trading.backtest.market.replay import ReplaySession
+from src.trading.backtest.reporting.metrics import BacktestMetrics
 from src.trading.backtest.timing import BacktestTiming
 
 
@@ -20,12 +21,12 @@ class BacktestPipeline:
     Example:
         pipeline = BacktestPipeline(clock=clock, session_at=market.session_at,
             per_timing_steps=steps, final_steps=(), instrumentation=instrumentation)
-        pipeline.run(state)
+        pipeline.run(state, metrics=metrics)
     """
 
     def __init__(self, *, clock: ReplayClock, session_at: Callable[[int], ReplaySession],
                  per_timing_steps: Sequence[PipelineStep[BacktestContext]],
-                 final_steps: Sequence[PipelineStep[BacktestContext]],
+                 final_steps: Sequence[PipelineStep[BacktestResultContext]],
                  instrumentation: Instrumentation, progress_clock: Callable[[], float] = monotonic) -> None:
         """Bind the dynamic schedule without consuming or freezing it.
 
@@ -40,11 +41,11 @@ class BacktestPipeline:
         self._instrumentation = instrumentation
         self._progress_clock = progress_clock
 
-    def run(self, state: BacktestState) -> None:
+    def run(self, state: BacktestState, *, metrics: BacktestMetrics) -> None:
         """Preserve stage order, fresh Contexts and deadlines discovered during replay.
 
         Example:
-            pipeline.run(state)
+            pipeline.run(state, metrics=metrics)
         """
         context: BacktestContext | None = None
         last_progress = self._progress_clock()
@@ -67,4 +68,5 @@ class BacktestPipeline:
                     last_progress = now
             if context is None:
                 raise ValueError("backtest requires at least one clock tick")
-            run_steps(context=context, steps=self._final_steps, instrumentation=self._instrumentation)
+            run_steps(context=BacktestResultContext(state=state, metrics=metrics),
+                      steps=self._final_steps, instrumentation=self._instrumentation)

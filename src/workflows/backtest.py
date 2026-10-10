@@ -25,7 +25,6 @@ from src.trading.backtest.components import prepare_market, create_state, build_
 from src.trading.backtest.context import (
     BacktestContext, BacktestState, SignalEvaluationContext, RiskEvaluationContext,
 )
-from src.trading.backtest.evaluation import evaluate_signals, evaluate_risk, evaluate_execution, evaluate_portfolio
 from src.trading.backtest.execution.fake import FakeExecution
 from src.trading.backtest.execution.models.cost_a_share import AShareCostModel
 from src.trading.backtest.execution.models.slippage_fixed_bp import FixedBPSlippageModel
@@ -34,22 +33,26 @@ from src.trading.backtest.execution.venue.fake import ReferenceVenue, LimitPrice
 from src.trading.backtest.market.replay import ReplayMarket
 from src.trading.portfolio.constructors.fixed_holding import FixedHoldingConstructor
 from src.utils.datetime_utils import DateTimeUtils
-from src.trading.backtest.market.signals import prepare_signals, produce_signal, validate_recorded_model_uses
+from src.trading.backtest.market.signals import prepare_signals, validate_recorded_model_uses
 from src.trading.backtest.pipeline import BacktestPipeline
 from src.trading.backtest.reporting.bundle import ReportingBundle
-from src.trading.backtest.reporting.metrics import AccountResult, BacktestMetrics
+from src.trading.backtest.reporting.metrics import BacktestMetrics
 from src.trading.backtest.steps.backtest_layers import (
-    SignalEvaluationStep, RiskEvaluationStep, AdvanceExecutionStep, AccountingStep,
+    PredictionGenerationStep, AdvanceExecutionStep, AccountingStep,
     SignalStep, PortfolioStep, FixedHoldingStep, RiskDecisionStep, SubmitTargetsStep, RecordedOrdersStep,
 )
+from src.trading.backtest.steps.evaluation import (
+    SignalEvaluationStep, RiskEvaluationStep, RiskMetricsStep, ExecutionEvaluationStep,
+    PortfolioEvaluationStep, BacktestSummaryStep,
+)
 from src.trading.backtest.steps.facts_persist import FactsPersistStep
-from src.trading.backtest.steps.metrics_persist import persist_backtest_metrics
+from src.trading.backtest.steps.metrics_persist import MetricsPersistStep
+from src.trading.backtest.steps.report import ReportStep
 from src.trading.core.events import OrderIntent, CancelOrders
 from src.trading.execution.policies.constraints import QuoteRule
 from src.trading.portfolio.constructors.factory import build_portfolio_constructor
 from src.trading.portfolio.constructors.topk_hysteresis import TopKHysteresisConstructor
 from src.trading.risk.evaluation import read_risk_cases
-from src.training.evaluation import evaluate_prediction_records
 from src.utils.path import PathManager
 from src.workflows import PROCESSED_VERSION, require_new_experiment
 
@@ -65,20 +68,19 @@ def run_signal_evaluation(
                               experiment_id="signal-1", backtest_config=config)
     """
     name, metrics = _start(submission, path_manager, experiment_id, backtest_config)
+    metrics.not_run = {"strategy": "signal_only", "risk": "signal_only", "execution": "signal_only"}
     batches = prepare_signals(submission.signal, start=submission.start, end=submission.end,
         access=Access(pm=path_manager, processed_version=PROCESSED_VERSION), pm=path_manager,
         min_listing_calendar_days=backtest_config.min_listing_calendar_days)
     path_manager.experiment_dir(experiment_name=name).mkdir(parents=True, exist_ok=False)
-    produced = tuple(produce_signal(batch, prediction_dir=path_manager.experiment_dir(experiment_name=name) / "predictions")
-                     for batch in batches.values())
-    context = SignalEvaluationContext(tuple(batch.prediction_ref for batch in produced),
-                                     {batch.event.ts_us: batch.trade_date for batch in produced})
+    steps: tuple[PipelineStep[SignalEvaluationContext], ...] = (
+        PredictionGenerationStep(batches, path_manager.experiment_dir(experiment_name=name) / "predictions"),
+        SignalEvaluationStep(path_manager),
+        MetricsPersistStep(path_manager, name),
+        ReportStep(ReportingBundle(path_manager), name),
+    )
     with Instrumentation(name) as instrumentation:
-        run_steps(context=context, steps=(SignalEvaluationStep(path_manager),), instrumentation=instrumentation)
-    metrics.signal_eval = evaluate_signals(context.observations, decision_dates=context.decision_dates)
-    metrics.prediction_refs = tuple(str(ref) for ref in context.prediction_refs)
-    metrics.not_run = {"strategy": "signal_only", "risk": "signal_only", "execution": "signal_only"}
-    _publish(metrics, path_manager, name)
+        run_steps(context=SignalEvaluationContext(metrics=metrics), steps=steps, instrumentation=instrumentation)
 
 
 def run_risk_evaluation(
@@ -90,16 +92,18 @@ def run_risk_evaluation(
         run_risk_evaluation(submission=submission, path_manager=pm, experiment_id="risk-1")
     """
     name, metrics = _start(submission, path_manager, experiment_id)
-    cases = read_risk_cases(submission.case_refs)
-    path_manager.experiment_dir(experiment_name=name).mkdir(parents=True, exist_ok=False)
-    context = RiskEvaluationContext(cases)
-    with Instrumentation(name) as instrumentation:
-        run_steps(context=context, steps=(RiskEvaluationStep(build_risk(submission.risk)),),
-                  instrumentation=instrumentation)
-    metrics.risk_eval = evaluate_risk(context.observations,
-                                     configured_rules=tuple(rule.type for rule in submission.risk.rules))
     metrics.not_run = {"signal": "fixed_risk_cases", "strategy": "fixed_risk_cases", "execution": "fixed_risk_cases"}
-    _publish(metrics, path_manager, name)
+    cases = read_risk_cases(submission.case_refs)
+    steps: tuple[PipelineStep[RiskEvaluationContext], ...] = (
+        RiskEvaluationStep(build_risk(submission.risk)),
+        RiskMetricsStep(configured_rules=tuple(rule.type for rule in submission.risk.rules)),
+        MetricsPersistStep(path_manager, name),
+        ReportStep(ReportingBundle(path_manager), name),
+    )
+    path_manager.experiment_dir(experiment_name=name).mkdir(parents=True, exist_ok=False)
+    with Instrumentation(name) as instrumentation:
+        run_steps(context=RiskEvaluationContext(cases=cases, metrics=metrics), steps=steps,
+                  instrumentation=instrumentation)
 
 
 def run_execution_evaluation(
@@ -111,6 +115,7 @@ def run_execution_evaluation(
         run_execution_evaluation(submission=submission, path_manager=pm, experiment_id="execution-1")
     """
     name, metrics = _start(submission, path_manager, experiment_id)
+    metrics.not_run = {"signal": "frozen_commands", "strategy": "frozen_commands", "risk": "frozen_commands"}
     config = submission.execution
     market = prepare_market(config=config, initial=submission.initial_account,
                             access=Access(pm=path_manager, processed_version=PROCESSED_VERSION))
@@ -137,12 +142,11 @@ def run_execution_evaluation(
     )
     path_manager.experiment_dir(experiment_name=name).mkdir(parents=True, exist_ok=False)
     BacktestPipeline(clock=clock, session_at=market.session_at, per_timing_steps=per_timing_steps,
-        final_steps=(FactsPersistStep(pm=path_manager, experiment_name=name),),
-        instrumentation=Instrumentation(name)).run(state)
-    metrics.execution_eval = evaluate_execution(state.execution_ledger)
-    metrics.final_account = _account_result(state)
-    metrics.not_run = {"signal": "frozen_commands", "strategy": "frozen_commands", "risk": "frozen_commands"}
-    _publish(metrics, path_manager, name)
+        final_steps=(
+            FactsPersistStep(pm=path_manager, experiment_name=name),
+            ExecutionEvaluationStep(), BacktestSummaryStep(),
+            MetricsPersistStep(path_manager, name), ReportStep(ReportingBundle(path_manager), name),
+        ), instrumentation=Instrumentation(name)).run(state, metrics=metrics)
 
 
 def run_tradable_alpha_evaluation(
@@ -156,6 +160,8 @@ def run_tradable_alpha_evaluation(
                                      experiment_id="strategy-1", backtest_config=config)
     """
     name, metrics = _start(submission, path_manager, experiment_id, backtest_config)
+    metrics.not_run = {"signal_evaluation": "strategy_return_only", "risk": "reference_strategy",
+                       "price_feasibility": "reference_fills"}
     config = submission.execution
     access = Access(pm=path_manager, processed_version=PROCESSED_VERSION)
     market = prepare_market(config=config, initial=submission.initial_account, access=access)
@@ -179,15 +185,11 @@ def run_tradable_alpha_evaluation(
     )
     path_manager.experiment_dir(experiment_name=name).mkdir(parents=True, exist_ok=False)
     BacktestPipeline(clock=clock, session_at=market.session_at, per_timing_steps=per_timing_steps,
-        final_steps=(FactsPersistStep(pm=path_manager, experiment_name=name),),
-        instrumentation=Instrumentation(name)).run(state)
-    metrics.portfolio = evaluate_portfolio(state.equity_curve, daily_equity=state.daily_equity,
-        ledger=state.execution_ledger, annual_factor=config.annual_factor)
-    metrics.final_account = _account_result(state)
-    metrics.prediction_refs = tuple(str(ref) for ref in state.prediction_refs)
-    metrics.not_run = {"signal_evaluation": "strategy_return_only", "risk": "reference_strategy",
-                       "price_feasibility": "reference_fills"}
-    _publish(metrics, path_manager, name)
+        final_steps=(
+            FactsPersistStep(pm=path_manager, experiment_name=name),
+            PortfolioEvaluationStep(annual_factor=config.annual_factor), BacktestSummaryStep(),
+            MetricsPersistStep(path_manager, name), ReportStep(ReportingBundle(path_manager), name),
+        ), instrumentation=Instrumentation(name)).run(state, metrics=metrics)
 
 
 def run_full_backtest(
@@ -227,18 +229,13 @@ def run_full_backtest(
     )
     path_manager.experiment_dir(experiment_name=name).mkdir(parents=True, exist_ok=False)
     BacktestPipeline(clock=clock, session_at=market.session_at, per_timing_steps=per_timing_steps,
-        final_steps=(FactsPersistStep(pm=path_manager, experiment_name=name),),
-        instrumentation=Instrumentation(name)).run(state)
-    metrics.signal_eval = evaluate_signals(
-        evaluate_prediction_records(state.prediction_refs, pm=path_manager), decision_dates=state.decision_dates)
-    metrics.risk_eval = evaluate_risk(state.risk_observations,
-                                    configured_rules=tuple(rule.type for rule in submission.risk.rules))
-    metrics.execution_eval = evaluate_execution(state.execution_ledger)
-    metrics.portfolio = evaluate_portfolio(state.equity_curve, daily_equity=state.daily_equity,
-        ledger=state.execution_ledger, annual_factor=config.annual_factor)
-    metrics.final_account = _account_result(state)
-    metrics.prediction_refs = tuple(str(ref) for ref in state.prediction_refs)
-    _publish(metrics, path_manager, name)
+        final_steps=(
+            FactsPersistStep(pm=path_manager, experiment_name=name), SignalEvaluationStep(path_manager),
+            RiskMetricsStep(configured_rules=tuple(rule.type for rule in submission.risk.rules)),
+            ExecutionEvaluationStep(), PortfolioEvaluationStep(annual_factor=config.annual_factor),
+            BacktestSummaryStep(), MetricsPersistStep(path_manager, name),
+            ReportStep(ReportingBundle(path_manager), name),
+        ), instrumentation=Instrumentation(name)).run(state, metrics=metrics)
 
 
 def _start(submission: BacktestSubmission, pm: PathManager, experiment_id: str,
@@ -276,19 +273,6 @@ def _execution(state: BacktestState, config: FakeExecutionConfig,
 def _validate_signal_times(times: Iterable[int], start_us: int, end_us: int) -> None:
     if any(not start_us <= ts < end_us for ts in times):
         raise ValueError("selected signal decisions must be within the simulation interval and precede its end")
-
-
-def _account_result(state: BacktestState) -> AccountResult:
-    account = state.portfolio_state
-    return AccountResult(cash=account.cash, positions=account.positions,
-        sellable={symbol: account.t1_sellable(symbol) for symbol in account.positions},
-        average_cost=account.avg_cost, trade_date=cast(str, account.current_day),
-        equity=state.equity_curve.points[-1].equity, pending_order_ids=tuple(state.pending_orders))
-
-
-def _publish(metrics: BacktestMetrics, pm: PathManager, name: str) -> None:
-    persist_backtest_metrics(metrics=metrics, pm=pm, experiment_name=name)
-    ReportingBundle(pm).run(experiment_name=name)
 
 
 def _portfolio_step(strategy: StrategyConfig, market: ReplayMarket,

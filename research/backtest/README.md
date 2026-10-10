@@ -227,6 +227,7 @@ live〔最后处理〕：交易目标 → 单一 broker 执行〔具体 API 待�
   市场实验或执行 Git 发布。缺少单位、费用、公司行动或可用性依据时停止相应真实实验。
 - Conclusion: 五个入口、独立信号/风控、H03 共享账户闭环、固定期限策略、真实风险接线和
   报告已在隔离候选工作树实现，证据及限制见[H02 集成实施](#h02-集成实施2026-10-10)。
+  2026-10-11 按用户认可的边界补齐完整 Step 链，见[编排细化验收](#h02-编排细化与验收2026-10-11)。
   工程测试不构成盈利结论，也不构成目标分支已采用。
 - Next: 审查本轮候选与所依赖的 H03/训练交付边界；在用户决定整体采用及授权对应 Git 操作后，
   同步 owner、实现、测试进入目标分支。真实历史实验另需确定输入口径、费用来源、
@@ -423,6 +424,64 @@ NoOp，主要按 mode 切换 IdealExecution 与 ExecutionOrchestrator。它保�
 前置依赖。完整 Components 包及 `NoOpRiskManager` 不再作为五种模式的公共前置条件。
 在本次调用链替换完毕、确认没有独立调用方后删除失效实现，不为保持外形一致而建立
 五份 Components、空风控类或充满可选字段的组件包。
+
+#### CLI 路由与 workflow 边界的第一性原理论证（2026-10-11）
+
+用户在检查 `0402f5e` 的五个入口后提出：CLI 的 `isinstance(submission, ...)` 分流，
+以及 workflow 在 `run_steps` 之外计算指标、写报告，是否偏离原来的 workflow → Steps。
+这里必须区分三件事：用户通过几个命令提交任务、谁选择任务的步骤组合、谁执行业务阶段。
+一个 CLI 命令不意味着内部必须只有一个工作流；多个具名工作流也不意味着存在多套交易引擎。
+判断依据是输入、可观察结果及其依赖，而不是入口函数或 `if` 的数量。
+
+从结果反推，signal 需要固定预测及其标签评价，risk 需要固定风控案例及规则观察；
+execution 需要固定委托的账户路径，tradable 需要策略在参考成交下的收益，full 需要同一
+交易路径上的信号、策略、风控与执行事实。这五种任务不是同一完整任务的五个显示选项。
+例如删除 signal 的账户和撮合器仍可完成评价，删除 execution 的时钟和结算就无法复现
+挂单到期、成交和现金。因此真正必要的共同能力是业务公式、相关 Step 和执行不变量，
+共同的完整组件包或唯一业务入口并不是前提。
+
+| 方案 | 输入与职责如何落地 | 删除测试与判断 |
+| --- | --- | --- |
+| 单个 `run_backtest` 内按 mode 拼装全部分支 | 分支进入大函数；它同时理解固定案例、模型信号、账户、策略与五种输出 | 合并函数不能消除五种业务差异，还扩大单函数依赖范围；当前没有必须由它拥有的统一业务状态 |
+| CLI → `run_backtest` → 五个具名 workflow | 新入口只把已经确定的 submission 再分派一次 | 删除该转发层，输入校验、身份检查、组装和运行均仍成立，因此不增加 |
+| CLI → 五个具名 workflow → 共享 Steps / 执行器 | CLI 选择用例；各 workflow 显式列出完整步骤；领域计算和时间推进复用 | 保留任务边界和共享不变量，能够直接检查每种模式运行及省略的能力，采用此方案 |
+
+CLI 的合理职责是将外部请求解析成对应的有类型 submission，并调用具名 workflow。
+它不创建策略或 venue、不组装 Step、不计算指标；workflow 也不重新解释 mode。
+这条路由有明确的适配边界，不是业务算法分支。Python 调用方可直接调用具名入口，
+不会依赖 CLI 才能使用业务能力。只有将来出现已明确、确实需要公共调用边界的另一种
+调用契约，才重新判断是否需要统一入口；当前不为潜在调用者预设 dispatcher 或 registry。
+
+原实现真正偏离设计的是执行链不完整。signal 的预测生成在 `run_steps` 前，指标汇总、
+指标持久化和报告在其后；三种交易模式的 `final_steps` 只有原始事实持久化。这使
+workflow 同时承担组装与执行，Instrumentation 的作用域甚至在报告之前结束。
+虽然交易算法仍共享、输出能够正确，但 Step 时间线无法定位这些阶段的失败，结束日志
+也不能说明报告已完成。将 CLI 的分支移到别处不会修复这个问题。
+
+修正时保留两个生命周期：signal/risk 在一个 Instrumentation 作用域内执行一次完整的
+`run_steps`；三种交易模式共用一个 `BacktestPipeline`，在时点循环结束后继续执行完整
+`final_steps`。预测生产、规则应用、指标汇总、事实/指标持久化与报告各有实际阶段职责。
+原始交易事实必须先保存，full 才读取未来成熟标签做事后评价；失败原样传播、停止后续
+Step，已完成的原子文件保留。报告成功后才能结束本次执行作用域。
+
+这不要求把每次赋值或构造函数都包装成 Step。实验身份及不可覆盖检查、请求参数摘要、
+日程解析和依赖构造仍由 workflow 拥有；例如读取市场日程来构造 ReplayClock 是组装的
+前提。解析信号来源可准备决策时间和可见输入，但模型预测生产必须在相应 Step 中执行；
+交易模式只在对应决策时点生产，不能为了统一 signal 的批量形式而提前运行所有预测。
+`mode`、参数快照和 `not_run` 是 workflow 已确定的输出范围描述，不控制共享 Step 的行为。
+
+Context 同样按必要性切分。单次评价只携带本任务的输入事实和待发布结果；逐时点
+`BacktestContext` 继续只包含当前可见事实与动作，`BacktestState` 只延续交易状态。
+交易结束后建立独立的结果 Context，引用已完成的 State 并传递指标；它向共用评价 Step
+提供实际预测引用、决策日期及风险观察，不复制账户或再运行风控。这样 signal 与 full
+复用信号评价，risk 与 full 复用观察汇总，三个交易 workflow 复用账户摘要，五种模式
+复用指标持久化和报告。已有的 `PipelineStep[ContextT]` 足以保持各链的类型与返回值，
+不需要新增 Step 基类、通用 Workflow、DAG、动态注册表或用于补齐槽位的 NoOp。
+
+用户已明确同意该建议并要求记录论证、编码。本次按 H02 已隔离候选的编排细化执行，
+保持五种 submission、交易/风控公式、制品 schema 和数值口径不变；不能据此宣布 H02/H03
+已合入 `dev`。完成证据要同时验证五种输出、阶段顺序与一次测量、最终状态传递、失败
+中断与原异常传播，并保留原有未来数据隔离和回放一致性验收。
 
 `BacktestKernel` 的名称并不决定是否需要保留。所需的时钟推进与行情可见性能力继续复用；
 H03 的交易回放统一由 BacktestPipeline 拥有时点、账户和挂单生命周期，不再让另一个
@@ -710,8 +769,9 @@ Manager、五个引擎或只有转发职责的 `BacktestService`。
 
 `BacktestPipeline` 只负责需要推进时间和账户的三种模式：`tradable_alpha_eval`、
 `execution_eval`、`full_backtest`。Workflow 绑定具体策略/风控/执行实现并给出不可变 Step
-顺序，Pipeline 推进日程、建立逐时 Context、调用 `run_steps`，拥有 Instrumentation 的
-作用域；它不读取 mode，不排序或发现 Step，不计算策略或成交公式。三种模式使用同一个
+顺序，Pipeline 推进日程、建立逐时 Context、调用 `run_steps`，随后建立结果 Context
+执行完整 `final_steps`，拥有直到报告结束的 Instrumentation 作用域；它不读取 mode，
+不排序或发现 Step，不计算策略或成交公式。三种模式使用同一个
 `BacktestPipeline` 类、同一套共用 Step 实现，仅传入的组件组合与 venue 不同。
 
 固定预测评价和固定风控输入检验都是单次事实评价，不创建交易用 `BacktestState`。
@@ -724,10 +784,11 @@ Manager、五个引擎或只有转发职责的 `BacktestService`。
 
 | 对象 | 生命周期与允许保存的值 |
 | --- | --- |
-| 信号评价 Context | 本次评价的预测引用、已有 `ICObservation` 序列；不含现金、策略和执行依赖 |
-| 风控评价 Context | 本次固定案例及评价观察；原始 `RiskContext` 是输入快照，不成为可变交易账户 |
+| 信号评价 Context | 本次实际预测引用、决策交易日关系和待发布指标；ICObservation 由信号评价 Step 局部产生并汇总，不含现金、策略和执行依赖 |
+| 风控评价 Context | 本次固定案例、评价观察和待发布指标；原始 `RiskContext` 是输入快照，不成为可变交易账户 |
 | `BacktestState` | 跨时点账户、`pending_orders`、ledger、signal/target tape、权益曲线；有效订单各自保存剩余量和占用，不另存第二份全局占用总额；不存本时点特征或未来标签 |
 | `BacktestContext` | 当前时点、可见输入及相邻 Step 的命名结果；每次推进新建，不承担依赖发现或结果注册 |
+| `BacktestResultContext` | 循环结束后才创建，引用最后返回的 State，向共享评价 Step 投射实际预测引用、决策日期和风险观察，并向持久化/报告传递指标；不回流到交易决策，也不复制账户 |
 | 策略自身状态 | 当前有效的入场/退出计划及必要策略记忆；历史 target tape 不拥有持续下单权限，不再建立第二份持仓账本 |
 | 模型、策略、风控、执行器、Access、PathManager | 在具体 workflow 构造并绑定给需要的 Step；不塞进 Context 或全局单例 |
 
@@ -862,13 +923,18 @@ submit_targets 仅接纳委托，后续 AdvanceExecutionStep 调用 advance 撮�
 
 #### 关键代码：五种模式只改变组装
 
-以下五段分别属于各自 workflow，依赖由相应 submission 准备。两个评价 Step 使用
-最小评价 Context，将共用批次函数的结果写入 observations。三种交易链先由
+五种组合分别属于各自 workflow，依赖由相应 submission 准备。signal 的完整链是
+`PredictionGenerationStep → SignalEvaluationStep → MetricsPersistStep → ReportStep`；
+risk 是 `RiskEvaluationStep → RiskMetricsStep → MetricsPersistStep → ReportStep`。
+信号评价将共用批次函数的观察直接汇总到指标；风控案例先产生观察，再复用 RiskMetricsStep。
+三种交易链先由
 AdvanceExecutionStep 处理日切、刚可用观察及旧单成交/结算/到期，再由 AccountingStep
 更新权益及峰值，随后运行到期决策并提交新单。Step 没有到期动作时直接返回 Context；
 这是日程条件，不是在循环中按 mode 切换工作流。这些 Context/Step 已在候选工作树接线。
 
 五种入口的显式 Step tuple 见 [workflow](../../src/workflows/backtest.py)。
+预测生产不在 workflow 执行；单项 signal 批量生产，交易链的 SignalStep 只消费当前
+时点批次，两者共同调用 `produce_signal`，不引入两个推理实现。
 
 reference_execution 与价格模型执行均使用 FakeExecution 的本次运行实例，绑定
 各场景明示的 Fake 参数、费用和独占账户。前者使用默认可成交的参考规则，后者在
@@ -876,17 +942,27 @@ execution/full 中使用同一价格模型；它们不对应两套结算算法�
 RecordedOrdersStep 的输入包含按原顺序排列的委托及撤单命令，不能把撤单流省略后宣称
 重放一致。成交、拒单、到期属于待复现输出，不能与输入命令混喂再次执行。
 
-两个单次评价 workflow 用现有 run_steps 执行各自 tuple 并管理 Instrumentation；
-三种交易模式传入同一个 BacktestPipeline。以 full 展示交易与事后标签评价的先后关系：
+两个单次评价 workflow 用现有 run_steps 执行各自完整 tuple 并管理 Instrumentation；
+三种交易模式传入同一个 BacktestPipeline，结束后依次运行以下最终链：
 
-完整回测先持久化交易事实，再读取标签和计算报告，见同一 [run_full_backtest](../../src/workflows/backtest.py)。
+| 模式 | 完整 final_steps |
+| --- | --- |
+| execution | FactsPersistStep → ExecutionEvaluationStep → BacktestSummaryStep → MetricsPersistStep → ReportStep |
+| tradable | FactsPersistStep → PortfolioEvaluationStep → BacktestSummaryStep → MetricsPersistStep → ReportStep |
+| full | FactsPersistStep → SignalEvaluationStep → RiskMetricsStep → ExecutionEvaluationStep → PortfolioEvaluationStep → BacktestSummaryStep → MetricsPersistStep → ReportStep |
+
+因此 full 先持久化交易事实，再读取标签做事后评价；它复用独立 signal 的评价 Step、
+risk 的观察汇总 Step 和另外两种交易模式的执行/组合评价，不在报告期间再运行规则或撮合。
 
 生成指标和报告后才能结束 experiment。共用指标步骤消费 observations
 及决策交易日关系，按[多频率口径](#评价采样与运行推进分开)写出，不直接调用训练日频
 save_evaluation。风险报告汇总已产生的观察，执行与组合报告消费同一账户路径。
 `prediction_refs` 是本次 SignalStep 实际记录的引用，不能另读与交易无关的一批预测。
-传入 `BacktestPipeline` 的依然是现有 `PipelineStep[BacktestContext]` 契约，不新增另一套
-Step 基类、装饰器注册或依赖图。最终指标从已经保存的交易事实计算，缺少委托也可以报告
+逐时点链使用 `PipelineStep[BacktestContext]`，最终链使用
+`PipelineStep[BacktestResultContext]`；这只是现有协议的两个领域 Context 参数，不新增
+Step 基类、装饰器注册或依赖图。结果 Context 对 State 的只读属性直接投射同一批事实，
+共用 Step 的 Context 联合类型仅限制静态输入范围，不据此进行运行时 mode 分派。
+最终指标从已完成并保存的同一批内存交易事实计算，不重新从磁盘装配账户；缺少委托也可以报告
 无样本；不能因此补发虚构订单。
 
 #### 五种输出与失败语义
@@ -908,8 +984,9 @@ Step 基类、装饰器注册或依赖图。最终指标从已经保存的交易
 | --- | --- | --- |
 | `src/jobs/requests.py`、`src/config/backtest_config.py`、`src/cli.py` | 保留五种 mode；解析为各自有类型 submission，仅在适配边界路由，参数按实际能力提供 | 模型、策略、资金对所有模式一律必填的假设；核心中的 mode 分支 |
 | `src/workflows/backtest.py` | 五个具名入口；各自直接列出 Step tuple，复用现有 experiment 身份、Access 与 Instrumentation；模型绑定准备由信号来源消费方共同调用 | `run_daily_alpha_backtest` 的全模式八层组装；已无调用方的全量 Components |
-| `backtest/pipeline.py`、`context.py` | 三种交易模式共用时间和账户生命周期；两个单次评价 Context；交易 Context 传当前可见事实、execution_target 和撤单要求，State 延续账户、挂单及原始事实 | `SignalEvaluationResult` 对未来价格的交易 Context 依赖；运行中累积的五套评价 frame；单项评价的空账户 |
+| `backtest/pipeline.py`、`context.py` | 三种交易模式共用时间和账户生命周期；两个单次评价 Context；交易 Context 传当前可见事实、execution_target 和撤单要求，State 延续账户、挂单及原始事实；结束后独立结果 Context 传给最终链 | `SignalEvaluationResult` 对未来价格的交易 Context 依赖；运行中累积的五套评价 frame；单项评价的空账户 |
 | `backtest/steps/backtest_layers.py`、`backtest/components.py` | 共享信号、组合、风控、提交、推进、估值动作；日切由推进拥有，目标由策略记录；执行直接消费 TargetEvent，评价消费固定结果；`run` 本身就是 Step 边界 | RiskResult 前置依赖、NoOp、日切依赖信号及风险步骤代记目标的副作用；没有独立计算用途、仅被 `run` 转调的 `__call__` |
+| `backtest/steps/evaluation.py`、`metrics_persist.py`、`report.py` | 共用事后信号/风险/执行/组合评价、账户摘要、指标发布和报告边界，调用已有领域公式及 ReportingBundle | workflow 直接计算指标的代码、链外 `_account_result` 和 `_publish` |
 | `src/training/evaluation.py` | 增加有序批次评价，复用已有记录读取及 Rank IC 公式 | 将训练日频汇总直接用于同日多次决策的调用 |
 | `risk/evaluation.py`，已有 `risk/engine.py`、`risk/base.py` | 固定案例与 full 共用风险链和动作计算；可空请求表示定时检查，输出明确目标、撤单及规则观察 | 用历史目标恢复过期意图；blocked 混指拒绝和清仓；报告中另跑一遍风险规则 |
 | `portfolio/engine.py` | 完整目标的领域归一和估值；有效挂单、缺分数持仓与容量共同参与目标形成 | 下游再按缺键推断清仓、保持或新增仓位的逻辑 |
@@ -1143,6 +1220,59 @@ Postman 的四个 backtest 示例替换集合变量后通过共享请求解析�
 这次 feature 分支集成未进入正式目标 dev，H02/H03 仍为 open；push、release、deploy
 以及生产数据、队列和 broker 写入均未执行。恢复时使用保留本节与对应源码的 Git 版本，
 不能仅凭摘要推定存在已发布版本。
+
+### H02 编排细化与验收（2026-10-11）
+
+用户已同意[CLI 路由与 workflow 边界的论证](#cli-路由与-workflow-边界的第一性原理论证2026-10-11)，
+要求先记录详细理由，再编码。本轮沿用已隔离的 `feature/backtest-h03`，从干净的
+`0402f5ef8eea74d4a3ae623efef5de4aec70f978` 开始；该提交已移除 `input_sha256`，
+本轮没有恢复该字段。修改仅细化 H02 编排：保留一个 CLI 命令和五个具名 workflow，
+补齐预测、评价、摘要、指标持久化及报告 Step，并使交易的完整最终链与逐时点链处于
+同一 Instrumentation 作用域。CLI/Submission、风控与成交公式、数值口径和制品 schema
+均保持原有候选定义；拟议 Offline owner 同步明确完整链和结果 Context。
+
+**回归场景与修正。** 先运行原有 workflow 与报告测试，28 项通过；这不能证明报告处在
+Step 链内。随后在现有规则/报告故障场景补充 Step 异常 note 断言：修正测试变量笔误后，
+旧实现得到 1 passed、1 failed，报告异常没有 `__notes__`，且报告调用前已输出成功时间线。
+移入 ReportStep 后，原异常对象、已有 metrics 和缺失 HTML 的原有断言继续成立，并新增
+报告阶段 note 与失败时间线；没有用删除原断言或放宽结果要求获得通过。
+
+**本轮完成边界。** [workflow 测试](../../tests/workflows/test_backtest.py)验证五种模式的
+完整顺序、每个时点各 Step 一次测量、最终 Step 各一次测量；full 的标签评价发生在原始
+交易文件之后，ReportStep 开始前 metrics 已存在，成功时间线发生在报告成功之后。
+单项 signal 的模型预测故障与指标原子写入故障分别保留原异常、准确阶段和已写预测，
+阻止指标/报告后续成功；返回替换 Context 时，持久化使用其新指标而不是入口旧对象。
+[Pipeline 测试](../../tests/trading/backtest/test_pipeline.py)另验证循环最终返回的 State
+进入独立结果 Context、最终链继续传递替换 Context，以及最终阶段失败停止后续步骤。
+原有 fixed-holding、风险边界、未来数据隔离、固定事实独立复演和 FakeLive 一致性场景
+全部保留并通过，不以组装测试替代交易行为验证。
+
+**准确代码与输入。** 验收时证据绑定上述 HEAD 加当时工作树，不声称裸 HEAD 已具有
+本轮行为。按前节相同的源码/测试/依赖清单算法，当前 269 个文件的摘要为
+`2c0bacb7453310403c23d37030401445bebfe663e4e8bec280946e32dae31554`；
+`uv.lock` 仍为 `50369cbecdd928b4072eb1cf3f227f88a5b18d5e9909be3b6056ec0aca6bd035`。
+Python 3.13.13、pytest 9.0.3、Pydantic 2.12.5、NumPy 2.5.1、pandas 3.0.2、PyArrow 25.0.0、
+joblib 1.5.3、scikit-learn 1.8.0；工作流使用前节相同的三个证券、显式日期和
+random_state=7 合成模型夹具，新增故障及 Context 替换输入均保存在对应测试中。
+这些摘要仅用于卷宗证据定位，不是运行时输入身份或新的 backtest 制品字段。
+
+| 验证命令 / 范围 | 结果 |
+| --- | --- |
+| `.venv/bin/python -m pytest -q tests/workflows/test_backtest.py tests/trading/backtest --tb=short --show-capture=no` | 102 passed；234 条 joblib/NumPy 既有弃用警告 |
+| `.venv/bin/python -m pytest -m 'not contract' -q --disable-warnings --maxfail=1` | 1143 passed、2 deselected、527 warnings，20.97s |
+| `.venv/bin/python -m pytest -m contract -q --tb=short --show-capture=no` | 2 passed、1143 deselected，0.92s；本地 7zz 契约场景，无生产依赖写入 |
+| 改动 Python AST/编译、参数/返回注解、文件路径标识及 public Example | 11 个 Python 文件通过；未配置独立静态类型检查器，不声称类型检查通过 |
+| 两份改动文档的本地路径、锚点、围栏与 `git diff --check` | 通过 |
+
+普通与 contract 两组选中集合互斥，合计 **1145 项测试通过**；不把两次 deselected
+相加成漏测数。验证仍限于明确的工程场景，未进行真实历史收益实验、源端数据转换验证、
+参数筛选或实盘运行；前节证据限制继续适用。
+
+本轮设计决定已获用户认可；用户在验收后明确授权 commit，本节与对应实现、测试一并
+提交到 `feature/backtest-h03`。源码/测试清单与验收摘要核对一致，提交准备仅更新本节
+Git 状态记录，不重复运行未变化的代码测试。未执行 push、merge、release 或 deploy，
+也未修改生产数据、队列、broker 或其他权威外部状态。H02/H03 仍为 open，目标 `dev`
+的正式采用及其 Git 操作不由测试通过自动完成。
 
 ## H03 后续行情驱动的模拟执行
 

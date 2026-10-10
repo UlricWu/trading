@@ -1,10 +1,12 @@
 # filepath: src/trading/backtest/context.py
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from src.trading.backtest.market.signals import RecordedSignalBatch
+from src.trading.backtest.reporting.metrics import BacktestMetrics
 from src.trading.backtest.timing import BacktestTiming
 from src.trading.core.equity import EquityCurve, EquityPoint
 from src.trading.core.events import PendingOrder, TargetEvent
@@ -12,7 +14,6 @@ from src.trading.core.ledger import ExecutionLedger
 from src.trading.core.tape import SignalTape, TargetTape
 from src.trading.portfolio.state import PortfolioState
 from src.trading.risk.evaluation import RiskCase, RiskObservation
-from src.training.evaluation import ICObservation
 
 
 @dataclass(slots=True)
@@ -20,12 +21,12 @@ class SignalEvaluationContext:
     """Single-pass evaluation facts with no trading state.
 
     Example:
-        context = SignalEvaluationContext((prediction_ref,), {decision_us: "2026-07-03"})
+        context = SignalEvaluationContext(metrics=metrics)
     """
 
-    prediction_refs: tuple[Path, ...]
-    decision_dates: dict[int, str]
-    observations: tuple[ICObservation, ...] = ()
+    metrics: BacktestMetrics
+    prediction_refs: tuple[Path, ...] = ()
+    decision_dates: dict[int, str] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -33,11 +34,12 @@ class RiskEvaluationContext:
     """Fixed risk inputs and actual rule observations, never a mutable account.
 
     Example:
-        context = RiskEvaluationContext(cases=(case,))
+        context = RiskEvaluationContext(cases=(case,), metrics=metrics)
     """
 
     cases: tuple[RiskCase, ...]
-    observations: tuple[RiskObservation, ...] = ()
+    metrics: BacktestMetrics
+    risk_observations: tuple[RiskObservation, ...] = ()
 
 
 @dataclass(slots=True)
@@ -75,3 +77,42 @@ class BacktestContext:
     execution_target: TargetEvent | None = None
     cancel_order_ids: tuple[int, ...] = ()
     requested_wakeup_ts_us: set[int] = field(default_factory=set)
+
+
+@dataclass(slots=True)
+class BacktestResultContext:
+    """Completed trading facts and derived results, outside the decision loop.
+
+    Example:
+        context = BacktestResultContext(state=completed_state, metrics=metrics)
+    """
+
+    state: BacktestState
+    metrics: BacktestMetrics
+
+    @property
+    def prediction_refs(self) -> Sequence[Path]:
+        """Expose only predictions actually used in this trading path.
+
+        Example:
+            observations = evaluate_prediction_records(context.prediction_refs, pm=pm)
+        """
+        return self.state.prediction_refs
+
+    @property
+    def decision_dates(self) -> Mapping[int, str]:
+        """Expose the trading dates recorded with actual decisions.
+
+        Example:
+            trade_date = context.decision_dates[decision_ts_us]
+        """
+        return self.state.decision_dates
+
+    @property
+    def risk_observations(self) -> Sequence[RiskObservation]:
+        """Expose rule observations without applying rules again.
+
+        Example:
+            result = evaluate_risk(context.risk_observations, configured_rules=rules)
+        """
+        return self.state.risk_observations

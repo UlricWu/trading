@@ -13,7 +13,7 @@ from src.trading.core.events import OrderIntent, CancelOrders, TargetEvent
 from src.trading.risk.evaluation import RiskCase
 from src.utils.filesystem import FileSystem
 
-from src.trading.backtest.context import BacktestContext
+from src.trading.backtest.context import BacktestResultContext
 from src.utils.parquet_writer import write_parquet_atomic
 from src.utils.path import PathManager
 
@@ -72,7 +72,7 @@ class FactsPersistStep:
         self._pm = pm
         self._experiment_name = experiment_name
 
-    def run(self, context: BacktestContext) -> BacktestContext:
+    def run(self, context: BacktestResultContext) -> BacktestResultContext:
         """Serialize existing facts without changing the runtime state.
 
         Example:
