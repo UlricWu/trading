@@ -5,9 +5,9 @@ import json
 from dataclasses import dataclass
 from html import escape
 from pathlib import Path
+from typing import cast
 
 from src import logs
-from src.observability.log_format import format_log_json
 from src.utils.filesystem import FileSystem
 from src.utils.path import PathManager
 
@@ -51,10 +51,15 @@ class ReportingBundle:
             metrics=metrics,
         )
         FileSystem.write_bytes_atomic(report_path, html.encode("utf-8"))
-        metric_values = {key: value for key, value in metrics.items() if key != "parameters"}
         logs.info(
-            f"✅ backtest report publish; path={report_path}\n"
-            f"{format_log_json('backtest_metrics', metric_values)}"
+            f"✅ 回测报告; experiment={experiment_name}\n"
+            f"{_render_metrics_log(metrics)}\n"
+            f"制品目录：{report_path.parent}\n"
+            f"  predictions/       每日预测明细\n"
+            f"  execution.parquet  执行与成交明细\n"
+            f"  equity.parquet     权益与回撤明细\n"
+            f"  metrics.json       完整指标与运行参数\n"
+            f"  report.html        HTML 报告"
         )
         return report_path
 
@@ -71,6 +76,42 @@ def _load_metrics(metrics_path: Path) -> dict[str, object]:
     if not isinstance(data, dict):
         raise ValueError("backtest metrics must be a JSON object")
     return {str(key): value for key, value in data.items()}
+
+
+def _format_metric(value: object, spec: str) -> str:
+    return "无值" if value is None else format(value, spec)
+
+
+def _render_metrics_log(metrics: dict[str, object]) -> str:
+    model_evaluation = cast(dict[str, object], metrics["model_evaluation"])
+    model_summary = cast(dict[str, object], model_evaluation["summary"])
+    signal = cast(dict[str, object], metrics["signal_eval"])
+    tradable = cast(dict[str, object], metrics["tradable_alpha_eval"])
+    risk = cast(dict[str, object], metrics["risk_eval"])
+    positions = cast(dict[str, int], metrics["final_positions"])
+    no_orders = "（本次未提交订单）" if metrics["order_submits"] == 0 else ""
+    return "\n".join((
+        f"决策日期：{metrics['start_date']} ~ {metrics['end_date']}（{metrics['trade_days']:,} 个交易日）",
+        "日期口径：请求区间最后一个交易日用于次日评价，不作为决策日。",
+        f"账户：期末权益 {_format_metric(metrics['final_equity'], ',.2f')} 元；"
+        f"现金 {_format_metric(metrics['final_cash'], ',.2f')} 元；持仓 {len(positions):,} 只",
+        f"表现：区间收益 {_format_metric(metrics['total_return'], '+.4%')}；"
+        f"最大回撤 {_format_metric(metrics['max_drawdown'], '.4%')}；夏普 {_format_metric(metrics['sharpe'], '.4f')}",
+        f"订单：提交 {metrics['order_submits']:,.0f} 笔；完全成交 {metrics['completed_orders']:,.0f} 笔；"
+        f"拒绝 {metrics['order_rejects']:,.0f} 笔{no_orders}",
+        f"成交数量：{metrics['filled_qty']:,.0f} / {metrics['requested_qty']:,.0f} 股"
+        f"（{_format_metric(metrics['qty_fill_rate'], '.2%')}）",
+        f"费用合计：{_format_metric(metrics['cost_total'], ',.2f')} 元"
+        f"（佣金 {_format_metric(metrics['cost_commission'], ',.2f')}；"
+        f"税费 {_format_metric(metrics['cost_tax'], ',.2f')}；滑点 {_format_metric(metrics['cost_slippage'], ',.2f')}）",
+        f"模型目标 Rank IC：{_format_metric(model_summary['mean_ic'], '.6f')}"
+        f"（有效 {model_summary['defined_date_count']:,} / {model_summary['date_count']:,} 日）",
+        f"次日原始收盘收益 Rank IC：{_format_metric(signal['mean_rank_ic'], '.6f')}"
+        f"（有效 {signal['rank_ic_defined_date_count']:,} / {signal['frames']:,} 日）；有效评分 {signal['score_count']:,} 行",
+        f"可交易样本：{tradable['tradable_count']:,} / {tradable['sample_count']:,} 行"
+        f"（{_format_metric(tradable['tradable_coverage'], '.2%')}）",
+        f"风控影响：调整 {risk['changed_targets']:,} 个目标；阻断 {risk['blocked_count']:,} 日；缩放 {risk['scaled_count']:,} 日",
+    ))
 
 
 def _render_metrics_html(

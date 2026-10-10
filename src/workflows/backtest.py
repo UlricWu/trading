@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 from datetime import date, time
+from time import monotonic
 
 from src import logs
 from src.access import Access
@@ -67,7 +68,15 @@ def run_daily_alpha_backtest(
         "strategy": submission.strategy.model_dump(mode="json"),
         "backtest_config": backtest_config.model_dump(mode="json"),
     }, ensure_ascii=False, allow_nan=False)
-    logs.info(f"▶️ backtest; experiment={experiment_name} parameters={parameters_json}")
+    parameter_labels = {
+        "mode": "模式", "start": "开始日期", "end": "结束日期",
+        "model_ref": "模型", "strategy": "策略", "backtest_config": "运行配置",
+    }
+    parameter_lines = "\n".join(
+        f"{parameter_labels[key]} {key}={json.dumps(value, ensure_ascii=False, allow_nan=False)}"
+        for key, value in json.loads(parameters_json).items()
+    )
+    logs.info(f"▶️ 回测任务; experiment={experiment_name}\n{parameter_lines}")
     access = Access(pm=path_manager, processed_version=PROCESSED_VERSION)
     open_dates = access.trade_dates(
         start_date=submission.start,
@@ -111,8 +120,8 @@ def run_daily_alpha_backtest(
         raise ValueError("daily-close backtest cannot execute a 14:30 decision model")
     run_dir = path_manager.experiment_dir(experiment_name=experiment_name)
     logs.info(
-        f"✅ model load; experiment={experiment_name} model_ref={submission.model_ref} "
-        f"first_decision_ts_us={first_decision}"
+        f"✅ 模型加载; first_decision={timings[0].signal_date}T15:00:00+08:00 "
+        f"decision_days={len(timings)}"
     )
     per_timing_steps: tuple[PipelineStep[BacktestContext], ...] = (
         SignalStep(
@@ -154,6 +163,19 @@ def run_daily_alpha_backtest(
         timings=timings,
         per_timing_steps=per_timing_steps,
         final_steps=final_steps,
-        instrumentation=Instrumentation(experiment_name),
+        instrumentation=Instrumentation(experiment_name, descriptions={
+            "SignalStep": "信号生成与预测保存",
+            "PortfolioStep": "目标持仓构造",
+            "RiskEvalStep": "风控评价",
+            "ExecutionEvalStep": "执行与成交评价",
+            "AccountingStep": "账户估值",
+            "SignalEvalStep": "信号与模型目标评价",
+            "TradableAlphaEvalStep": "可交易信号评价",
+            "FullBacktestStep": "回测状态汇总",
+            "FactsPersistStep": "执行与权益明细保存",
+            "MetricsPersistStep": "指标保存",
+            "ReportStep": "报告输出",
+        }),
+        clock=monotonic,
     )
     pipeline.run(state)

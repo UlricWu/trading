@@ -238,7 +238,7 @@ class SignalStep:
             feature_names=self._feature_names,
             predictions=np.array([score_map.get(symbol, np.nan) for symbol in signal_symbols], dtype=np.float64),
         )
-        logs.info(
+        logs.debug(
             f"✅ backtest prediction; model_ref={self._model_ref} "
             f"decision_ts_us={bar.ts_us} path={prediction_ref} rows={len(signal_symbols)}"
         )
@@ -692,7 +692,7 @@ class FullBacktestStep:
             "trade_date": signal.bar.trade_date,
             "ts_us": int(signal.bar.ts_us),
         }
-        logs.info(
+        logs.debug(
             f"✅ full backtest; trade_date={signal.bar.trade_date} "
             f"symbols={len(signal.bar.symbols)} bars={signal.bars_count} "
             f"positions={len(state.portfolio_state.positions)} "

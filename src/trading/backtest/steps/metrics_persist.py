@@ -80,7 +80,7 @@ def persist_backtest_metrics(
             allow_nan=False,
         ).encode("utf-8"),
     )
-    logs.info(
+    logs.debug(
         f"✅ backtest metrics publish; path={metrics_path} "
         f"dates={len(state.trade_dates)} bars={state.bar_count} "
         f"signals={state.signal_count}"

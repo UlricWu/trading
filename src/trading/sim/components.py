@@ -97,7 +97,7 @@ def build_components(
             settlement=SettlementEngine(cost_model=cost_model),
         )
 
-    logs.info(
+    logs.debug(
         f"✅ components; mode={mode.value} "
         f"signal={type(signal).__name__} "
         f"feature_set={inference_model.feature_set} "

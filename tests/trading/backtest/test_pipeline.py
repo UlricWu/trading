@@ -3,8 +3,13 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Self, cast
+from unittest.mock import Mock
 
+import pytest
+
+from src import logs
 from src.observability.instrumentation import Instrumentation
 from src.trading.backtest.context import BacktestContext, BacktestState
 from src.trading.backtest.pipeline import BacktestPipeline
@@ -83,6 +88,7 @@ def test_backtest_pipeline_uses_fresh_timing_contexts_and_shared_state() -> None
         ),
         final_steps=(_FinalStep(events, final_states),),
         instrumentation=cast("Instrumentation", _Instrumentation()),
+        clock=lambda: 0.0,
     )
 
     pipeline.run(state)
@@ -97,3 +103,54 @@ def test_backtest_pipeline_uses_fresh_timing_contexts_and_shared_state() -> None
     assert len(set(context_ids)) == 2
     assert state.bar_count == 2
     assert final_states == [state]
+
+
+@pytest.mark.parametrize(
+    ("times", "progress_dates"),
+    [
+        ([0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6], []),
+        ([0.0, 1.0, 4.99, 5.0, 9.99, 10.0, 15.0], ["2026-07-03", "2026-07-05"]),
+    ],
+)
+def test_progress_is_throttled_and_omits_final_date(
+    tmp_path: Path, times: list[float], progress_dates: list[str],
+) -> None:
+    output = tmp_path / "progress.log"
+    sink = logs.add(output, format="{message}", level="INFO", filter="src.trading.backtest.pipeline")
+    pipeline = BacktestPipeline(
+        timings=tuple(
+            BacktestTiming(signal_date=f"2026-07-{day:02d}", forward_date=f"2026-07-{day + 1:02d}")
+            for day in range(1, 7)
+        ),
+        per_timing_steps=(_FirstStep([], []),), final_steps=(),
+        instrumentation=cast("Instrumentation", _Instrumentation()), clock=Mock(side_effect=times),
+    )
+    try:
+        pipeline.run(BacktestState.initial(initial_cash=200_000))
+    finally:
+        logs.remove(sink)
+
+    messages = output.read_text().splitlines()
+    assert len(messages) == len(progress_dates)
+    for message, day in zip(messages, progress_dates, strict=True):
+        assert message.startswith(f"⏳ 回测推进; trade_date={day} ")
+        assert f"progress={int(day[-2:])}/6" in message
+
+
+def test_failed_timing_keeps_original_error_and_adds_dates() -> None:
+    error = RuntimeError("source unavailable")
+    step = Mock()
+    step.run.side_effect = error
+    final = Mock()
+    pipeline = BacktestPipeline(
+        timings=(BacktestTiming(signal_date="2026-07-03", forward_date="2026-07-06"),),
+        per_timing_steps=(step,), final_steps=(final,),
+        instrumentation=cast("Instrumentation", _Instrumentation()), clock=lambda: 0.0,
+    )
+
+    with pytest.raises(RuntimeError, match="source unavailable") as raised:
+        pipeline.run(BacktestState.initial(initial_cash=200_000))
+
+    assert raised.value is error
+    assert error.__notes__ == ["回测日期; signal_date=2026-07-03 forward_date=2026-07-06"]
+    final.run.assert_not_called()

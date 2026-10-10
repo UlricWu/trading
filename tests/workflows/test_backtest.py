@@ -40,9 +40,8 @@ def backtest_log(tmp_path: Path) -> Iterator[Path]:
     path = tmp_path / "job.log"
     sink = logs.add(
         path, format="{message}", level="INFO",
-        filter=lambda record: record["name"] in {
-            "src.workflows.backtest", "src.trading.reporting.bundle",
-        },
+        filter=lambda record: record["name"] == "src.workflows.backtest"
+        or record["name"].startswith("src.trading."),
     )
     try:
         yield path
@@ -52,10 +51,13 @@ def backtest_log(tmp_path: Path) -> Iterator[Path]:
 
 def _logged_parameters(log_path: Path, *, experiment_name: str) -> dict[str, object]:
     lines = log_path.read_text().splitlines()
-    prefix = f"▶️ backtest; experiment={experiment_name} parameters="
-    assert lines[0].startswith(prefix)
-    assert sum(line.startswith("▶️ backtest;") for line in lines) == 1
-    return json.loads(lines[0].removeprefix(prefix))
+    assert lines[0] == f"▶️ 回测任务; experiment={experiment_name}"
+    assert sum(line.startswith("▶️ 回测任务;") for line in lines) == 1
+    parameters = {}
+    for line in lines[1:7]:
+        key, value = line.split(" ", 1)[1].split("=", 1)
+        parameters[key] = json.loads(value)
+    return parameters
 
 
 @pytest.fixture
@@ -75,6 +77,7 @@ def delivery(
     })
     monkeypatch.setattr("src.workflows.offline_training.Access", Mock(return_value=access))
     monkeypatch.setattr("src.workflows.backtest.Access", Mock(return_value=access))
+    monkeypatch.setattr("src.workflows.backtest.monotonic", lambda: 0.0)
     for day in ("2026-07-01", "2026-07-03", "2026-07-06"):
         keys = {"symbol": ["000001", "000002", "600000"], "trade_date": [day] * 3}
         feature_ref = pm.feature_object(
@@ -179,9 +182,22 @@ def test_fixed_model_closes_parameters_prediction_evaluation_and_replay(
     assert "parameters" in report
     assert mode.value in report
     assert "-1.123456789" in report
-    report_metrics = json.loads(backtest_log.read_text().split("\nbacktest_metrics=", 1)[1])
-    assert "parameters" not in report_metrics
-    assert report_metrics["trade_days"] == 2
+    output = backtest_log.read_text()
+    assert "✅ 回测报告;" in output
+    assert "决策日期：2026-07-03 ~ 2026-07-06（2 个交易日）" in output
+    assert "模型目标 Rank IC：" in output
+    assert "次日原始收盘收益 Rank IC：" in output
+    assert "完全成交 2 笔" in output
+    assert "有效评分 4 行" in output
+    assert "backtest_metrics=" not in output
+    assert "observations" not in output
+    assert "decision_ts_us" not in output
+    assert "feature diagnostics" not in output
+    assert "score diagnostics" not in output
+    assert "backtest prediction" not in output
+    assert "full backtest;" not in output
+    assert "⏳ 回测推进;" not in output
+    assert len(output.splitlines()) < 40
 
 
 def test_topk_parameters_include_resolved_defaults(
@@ -321,7 +337,7 @@ def test_missing_training_record_logs_parameters_without_publishing_results(
     assert parameters["mode"] == submission.mode.value
     assert parameters["strategy"] == submission.strategy.model_dump(mode="json")
     assert parameters["backtest_config"] == {"init_cash": 200_000, "min_listing_calendar_days": 120}
-    assert "✅ model" not in backtest_log.read_text()
+    assert "✅ 模型加载;" not in backtest_log.read_text()
 
 
 def test_model_load_failure_cannot_publish_results(
@@ -337,7 +353,7 @@ def test_model_load_failure_cannot_publish_results(
     name = "backtest_2026-07-03_2026-07-07_missing"
     assert not pm.experiment_dir(experiment_name=name).exists()
     assert _logged_parameters(backtest_log, experiment_name=name)["model_ref"] == str(submission.model_ref)
-    assert "✅ model" not in backtest_log.read_text()
+    assert "✅ 模型加载;" not in backtest_log.read_text()
 
 
 @pytest.mark.parametrize("failure", ["calendar", "prices"])
