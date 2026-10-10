@@ -17,6 +17,7 @@ import tushare as ts
 
 import src.jobs.api as api_module
 from src.config.app_config import AppConfig
+from src.config.backtest_config import BacktestMode
 from src.config.secret_config import SecretConfig
 from src.jobs.api import create_app
 from src.jobs.requests import (
@@ -53,6 +54,98 @@ def test_train_post_creates_exactly_one_job() -> None:
         "eval_gap_sessions": 1})
     assert response.status_code == 201
     assert len(response.get_json()["jobs"]) == len(runtime.submitted) == 1
+
+
+@pytest.mark.parametrize("mode", list(BacktestMode))
+@pytest.mark.parametrize("strategy", [
+    {"type": "threshold", "params": {"threshold": 0.5}},
+    {"type": "topk_hysteresis", "params": {
+        "max_positions": 10, "entry_threshold": 0.5, "exit_threshold": 0.2,
+    }},
+])
+def test_backtest_post_accepts_all_modes_without_model_use_metadata(
+    mode: BacktestMode, strategy: dict[str, object],
+) -> None:
+    runtime = _StubRuntime()
+    response = create_app(cast(JobRuntime, runtime)).test_client().post(
+        "/jobs", json={
+            "kind": "backtest", "mode": mode.value,
+            "start": "2026-07-01", "end": "2026-07-20",
+            "model_ref": "/data/training/model.joblib", "strategy": strategy,
+        },
+    )
+
+    assert response.status_code == 201
+    assert len(response.get_json()["jobs"]) == len(runtime.submitted) == 1
+    submission = runtime.submitted[0]
+    assert isinstance(submission, BacktestSubmission)
+    assert submission.mode is mode
+    assert (submission.start, submission.end) == ("2026-07-01", "2026-07-20")
+    assert str(submission.model_ref) == "/data/training/model.joblib"
+    assert submission.strategy.type == strategy["type"]
+
+
+@pytest.mark.parametrize(("field", "value"), [
+    ("model_use", {}),
+    ("effective_ts_us", 1782860400000000),
+    ("training_schedule_ref", "/data/training/schedule.json"),
+    ("availability_evidence_ref", "caller-provided-evidence"),
+])
+def test_backtest_post_rejects_internal_fields_without_creating_a_job(
+    field: str, value: object,
+) -> None:
+    runtime = _StubRuntime()
+    response = create_app(cast(JobRuntime, runtime)).test_client().post(
+        "/jobs", json={
+            "kind": "backtest", "mode": "full_backtest",
+            "start": "2026-07-01", "end": "2026-07-20",
+            "model_ref": "/data/training/model.joblib",
+            "strategy": {"type": "threshold", "params": {"threshold": 0.5}},
+            field: value,
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.get_json()["error"]["field"] == field
+    assert runtime.jobs == {} and runtime.submitted == []
+
+
+@pytest.mark.parametrize("mode_fields", [{}, {"mode": None}, {"mode": "unknown"}])
+def test_backtest_post_requires_an_explicit_supported_mode(
+    mode_fields: dict[str, object],
+) -> None:
+    runtime = _StubRuntime()
+    response = create_app(cast(JobRuntime, runtime)).test_client().post(
+        "/jobs", json={
+            "kind": "backtest", "start": "2026-07-01", "end": "2026-07-20",
+            "model_ref": "/data/training/model.joblib",
+            "strategy": {"type": "threshold", "params": {"threshold": 0.5}},
+            **mode_fields,
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.get_json()["error"]["field"] == "mode"
+    assert runtime.jobs == {} and runtime.submitted == []
+
+
+@pytest.mark.parametrize("field", ["start", "end"])
+def test_backtest_post_requires_both_dates(field: str) -> None:
+    runtime = _StubRuntime()
+    payload = {
+        "kind": "backtest", "mode": "full_backtest",
+        "start": "2026-07-01", "end": "2026-07-20",
+        "model_ref": "/data/training/model.joblib",
+        "strategy": {"type": "threshold", "params": {"threshold": 0.5}},
+    }
+    del payload[field]
+    response = create_app(cast(JobRuntime, runtime)).test_client().post(
+        "/jobs", json=payload,
+    )
+
+    assert response.status_code == 400
+    assert response.get_json()["error"]["field"] == field
+    assert runtime.jobs == {} and runtime.submitted == []
 
 
 class _StubRuntime:
@@ -469,7 +562,6 @@ def test_invalid_training_choice_has_no_job_identity(
             "start": "2026-07-01",
             "end": "2026-07-20",
             "model_ref": "/data/models/training-1.joblib",
-            "model_use": {'training_schedule_ref': '/data/training/schedule.json', 'effective_ts_us': 1782860400000000, 'availability_evidence_ref': 'synthetic/model-use'},
             "strategy": {
                 "type": "threshold",
                 "params": {"threshold": 0.5, "secret": "do-not-echo"},

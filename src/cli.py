@@ -387,7 +387,6 @@ def backtest(
     end_date: str = typer.Option(..., "--end"),
     experiment_id: str = typer.Option(..., "--experiment-id"),
     model_ref: str = typer.Option(..., "--model-ref"),
-    model_use_json: str = typer.Option(..., "--model-use-json"),
     strategy_json: str = typer.Option(..., "--strategy-json"),
 ) -> None:
     """Run one offline daily-alpha backtest experiment.
@@ -399,22 +398,16 @@ def backtest(
             end_date="2026-07-20",
             experiment_id="backtest-1",
             model_ref="/data/models/training-1.joblib",
-            model_use_json=model_use_json,
             strategy_json='{"type":"threshold","params":{"threshold":0.5}}',
         )
     """
     experiment_id = _require_experiment_id(experiment_id)
-    try:
-        model_use = json.loads(model_use_json)
-    except json.JSONDecodeError as exc:
-        raise typer.BadParameter("must be valid JSON", param_hint="--model-use-json") from exc
     try:
         submission = create_backtest_submission(
             mode=mode,
             start=start_date,
             end=end_date,
             model_ref=model_ref,
-            model_use=model_use,
             strategy=_parse_strategy_json(strategy_json),
         )
     except InvalidJobRequest as exc:
@@ -425,7 +418,6 @@ def backtest(
                 "start": "--start",
                 "end": "--end",
                 "model_ref": "--model-ref",
-                "model_use": "--model-use-json",
                 "strategy": "--strategy-json",
             },
         )

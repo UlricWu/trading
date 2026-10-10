@@ -95,11 +95,6 @@ def test_mode_selects_fixed_execution_and_noop_risk(
         start="2026-07-01",
         end="2026-07-02",
         model_ref="/data/models/training-runtime.joblib",
-        model_use={
-            "training_schedule_ref": "/data/training/schedule.json",
-            "effective_ts_us": 1782860400000000,
-            "availability_evidence_ref": "synthetic/model-use",
-        },
         strategy={"type": "threshold", "params": {"threshold": 0.5}},
     )
 

@@ -69,17 +69,17 @@ def run_daily_alpha_backtest(
     if not timings:
         raise ValueError("[BacktestWorkflow] backtest timings are required")
 
-    use = submission.model_use
+    training_schedule_ref = submission.model_ref.with_name("schedule.json")
     record = TrainingRunRecord.model_validate_json(
-        use.training_schedule_ref.read_text(encoding="utf-8")
+        training_schedule_ref.read_text(encoding="utf-8")
     )
     if record.model_ref != submission.model_ref:
         raise ValueError("model use requires the model_ref from the training record")
     first_decision = DateTimeUtils.local_time_to_utc_epoch_us(
         time(15, 0), date.fromisoformat(timings[0].signal_date),
     )
-    if not record.label_maturity_ts_us <= use.effective_ts_us <= first_decision:
-        raise ValueError("model use requires label maturity <= effective time <= first decision")
+    if record.label_maturity_ts_us > first_decision:
+        raise ValueError("model use requires training label maturity <= first backtest decision")
 
     components = sim_components.build_components(
         mode=submission.mode,
@@ -110,7 +110,7 @@ def run_daily_alpha_backtest(
             "event": "model_loaded_and_bound",
             "model_ref": str(submission.model_ref),
             "model_sha256": model_digest,
-            "model_use": use.model_dump(mode="json"),
+            "training_schedule_ref": str(training_schedule_ref),
             "training_record": record.model_dump(mode="json"),
             "first_decision_ts_us": first_decision,
             "mode": submission.mode.value,
@@ -120,7 +120,7 @@ def run_daily_alpha_backtest(
     )
     logs.info(
         f"✅ model binding; model_ref={submission.model_ref} model_sha256={model_digest} "
-        f"effective_ts_us={use.effective_ts_us} first_decision_ts_us={first_decision}"
+        f"first_decision_ts_us={first_decision}"
     )
     per_timing_steps: tuple[PipelineStep[BacktestContext], ...] = (
         SignalStep(

@@ -791,7 +791,7 @@ metrics。制品按“模型”“IC 指标 JSON”“完整诊断 HTML 报告�
 
 ## Backtest workflow
 
-Runtime mode、model ref、model_use、strategy、start 和 end 只来自 `BacktestSubmission`。
+Runtime mode、model ref、strategy、start 和 end 只来自 `BacktestSubmission`。
 `BacktestConfig` 只拥有静态 `init_cash` 与 `min_listing_calendar_days`；不得再声明 name、
 dates、mode、model 或 strategy。
 
@@ -799,16 +799,22 @@ Workflow 通过 Access 读取正式交易日，并把相邻日期映射为
 `BacktestTiming(signal_date, forward_date)`；signal date 同时是 feature date。无 timing 时
 在 component 构造和 Instrumentation 前抛 `ValueError`。
 
-首轮固定模型由 model_use 指定 training_schedule_ref、effective_ts_us 和非空
-availability_evidence_ref。入口直接读取所引用 schedule 的 TrainingRunRecord，要求其中
-model_ref 与所用模型相同，检查 label_maturity_ts_us <= effective_ts_us <= 首次 15:00
-决策；加载后核对模型的 train_dates、Feature/Label 身份、列顺序及标签列与记录一致，
-再保存 binding.json 并记录加载绑定事件。归档 request 不作为反序列化入口。
-记录格式、模型关联或时序不合规均失败；加载失败不得写成功绑定记录。
+起止日期与 mode 必须显式选择，不由训练日期推导，也不默认运行完整回测。首轮固定模型
+由 model_ref 指定；入口读取该文件同目录 `schedule.json` 的 TrainingRunRecord，要求其中
+model_ref 与所用模型相同。首个决策时刻由请求范围内首个正式交易日的 15:00 计算，要求
+label_maturity_ts_us <= 首个决策时刻。范围起点是休市日时采用范围内首个交易日，而不是
+起点午夜；不因标签尚未成熟而自动把起点推迟到后续交易日。
+
+加载后核对模型的 train_dates、Feature/Label 身份、列顺序及标签列与记录一致，再保存
+binding.json 并记录加载绑定事件。归档 request 不作为反序列化入口。训练记录缺失、
+格式错误、模型关联或时序不合规均失败；加载失败不得写成功绑定记录。训练记录和回测
+时钟由服务端解析，调用者不提供 model_use，也不手填生效时间或证据引用。
+
 label_maturity_ts_us 只是理论必要下界，不是实际训练完成时间或历史模型可用证明。
-availability_evidence_ref 的历史真实性由任务负责；合成依据只支持条件研究，今天的
-成功加载和日志实际时间不能证明过去已经拥有模型。本入口仍只有一个固定模型，
-不增加周期换模管理器。14:30 决策模型不得被该 15:00 日频交易入口静默使用。
+这一路径验证给定模型在训练标签成熟约束下的条件回测；今天的成功加载和日志实际时间
+不能证明过去已经拥有模型，服务端也不由模型文件时间或记录路径伪造历史可用性证据。
+本入口仍只有一个固定模型，不增加周期换模管理器。14:30 决策模型不得被该 15:00 日频
+交易入口静默使用。
 
 Component builder 直接接收 submission 的 mode、绝对 Path model_ref、strategy，以及静态
 config。五种 mode 都构造同一套其余 capability、执行完整八层图并持久化

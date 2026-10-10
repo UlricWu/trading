@@ -326,8 +326,11 @@ experiments/<experiment_name>/
 ```
 
 binding.json 仅在指定模型加载并通过使用时序核验后写入，保存具体 ref、模型内容摘要、
-model_use、training_record、首个决策时点、本次 mode、strategy 和静态 backtest_config。
-实际事件时间沿用运行日志，effective_ts_us 只表示该任务的生效决策边界，不是发布时间。
+training_schedule_ref、training_record、首个决策时点、本次 mode、strategy 和静态
+backtest_config。training_schedule_ref 是指定模型同目录 `schedule.json` 的绝对路径，
+由服务端解析；首个决策时点由请求的回测区间和正式日历确定，业务核验由
+[Backtest workflow](../offline_workflow_contract.md#backtest-workflow) 拥有。
+实际事件时间沿用运行日志；上述记录不表示模型历史发布时间或历史可用性证明。
 每个 signal_date 拥有独立预测文件；不会写回 training 的 predictions 目录，也不会
 以最后一天覆盖前一天。预测文件与训练采用相同 schema；metrics.model_evaluation
 保存模型目标评价，原 signal_eval 保留 T+1 raw-close 诊断。

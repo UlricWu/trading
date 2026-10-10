@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from src.config.backtest_config import BacktestMode
 from src.jobs.requests import (
     BacktestSubmission,
     DataSubmission,
@@ -157,15 +158,17 @@ def test_fusion_backfill_rejects_invalid_ranges(
     assert caught.value.field == field
 
 
-def test_backtest_command_uses_job_id_as_experiment_id() -> None:
+@pytest.mark.parametrize("mode", list(BacktestMode))
+def test_backtest_command_preserves_mode_and_uses_job_id_as_experiment_id(
+    mode: BacktestMode,
+) -> None:
     submission = parse_job_request(
         {
             "kind": "backtest",
-            "mode": "full_backtest",
+            "mode": mode.value,
             "start": "2026-07-01",
             "end": "2026-07-20",
             "model_ref": "/data/models/training-1.joblib",
-            "model_use": {'training_schedule_ref': '/data/training/schedule.json', 'effective_ts_us': 1782860400000000, 'availability_evidence_ref': 'synthetic/model-use'},
             "strategy": {
                 "type": "threshold",
                 "params": {"threshold": 0.5},
@@ -173,6 +176,7 @@ def test_backtest_command_uses_job_id_as_experiment_id() -> None:
         }
     )[0]
     assert isinstance(submission, BacktestSubmission)
+    assert submission.mode is mode
 
     command = build_cli_command(
         submission,
@@ -188,27 +192,13 @@ def test_backtest_command_uses_job_id_as_experiment_id() -> None:
         "src.cli",
         "backtest",
     )
-    model_use_index = command.index("--model-use-json")
-    assert json.loads(command[model_use_index + 1]) == submission.model_use.model_dump(mode="json")
-
-
-@pytest.mark.parametrize("invalid_use", [
-    None,
-    {},
-    {"training_schedule_ref": "relative.json", "effective_ts_us": 1, "availability_evidence_ref": "record"},
-    {"training_schedule_ref": "/data/schedule.json", "effective_ts_us": True, "availability_evidence_ref": "record"},
-    {"training_schedule_ref": "/data/schedule.json", "effective_ts_us": 1, "availability_evidence_ref": " "},
-    {"training_schedule_ref": "/data/schedule.json", "effective_ts_us": 1, "availability_evidence_ref": "record", "extra": 1},
-])
-def test_backtest_requires_an_unambiguous_model_use_before_submission(invalid_use: object) -> None:
-    with pytest.raises(InvalidJobRequest) as caught:
-        parse_job_request({
-            "kind": "backtest", "mode": "signal_eval",
-            "start": "2026-07-03", "end": "2026-07-06",
-            "model_ref": "/data/model.joblib", "model_use": invalid_use,
-            "strategy": {"type": "threshold", "params": {"threshold": 0.5}},
-        })
-    assert caught.value.field == "model_use"
+    assert command[command.index("--mode") + 1] == mode.value
+    assert command[command.index("--start") + 1] == "2026-07-01"
+    assert command[command.index("--end") + 1] == "2026-07-20"
+    assert "--model-use-json" not in command
+    assert json.loads(command[command.index("--strategy-json") + 1]) == (
+        submission.strategy.model_dump(mode="json")
+    )
 
 
 @pytest.mark.parametrize(
@@ -232,7 +222,6 @@ def test_backtest_requires_an_unambiguous_model_use_before_submission(invalid_us
             "start": "2026-07-01",
             "end": "2026-07-20",
             "model_ref": "/data/models/training-1.joblib",
-            "model_use": {'training_schedule_ref': '/data/training/schedule.json', 'effective_ts_us': 1782860400000000, 'availability_evidence_ref': 'synthetic/model-use'},
             "strategy": {
                 "type": "threshold",
                 "params": {"threshold": 0.5},
@@ -307,7 +296,10 @@ def test_omitted_and_null_evaluation_both_mean_pure_training() -> None:
 def test_backtest_requires_a_concrete_absolute_model_reference(ref: object) -> None:
     from src.jobs.requests import create_backtest_submission
     with pytest.raises(InvalidJobRequest) as caught:
-        create_backtest_submission(mode="signal_eval", start="2026-07-01", end="2026-07-02", model_ref=ref, model_use={'training_schedule_ref': '/data/training/schedule.json', 'effective_ts_us': 1782860400000000, 'availability_evidence_ref': 'synthetic/model-use'}, strategy={"type": "threshold", "params": {"threshold": 0.5}})
+        create_backtest_submission(
+            mode="signal_eval", start="2026-07-01", end="2026-07-02", model_ref=ref,
+            strategy={"type": "threshold", "params": {"threshold": 0.5}},
+        )
     assert caught.value.field == "model_ref"
 
 

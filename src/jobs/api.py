@@ -47,9 +47,9 @@ def create_app(job_runtime: JobRuntime) -> Flask:
       - Backtest:
         ``{"kind": "backtest", "mode": MODE, "start": "YYYY-MM-DD",
         "end": "YYYY-MM-DD", "model_ref": ABSOLUTE_PATH,
-        "model_use": MODEL_USE, "strategy": STRATEGY}``.
-        ``MODEL_USE`` declares an absolute training schedule ref, an effective
-        UTC microsecond timestamp and the task's model availability evidence ref.
+        "strategy": STRATEGY}``.
+        The workflow reads the model's sibling ``schedule.json`` and checks
+        training label maturity against the first selected decision time.
 
       ``MODE`` is ``signal_eval``, ``tradable_alpha_eval``,
       ``execution_eval``, ``risk_eval``, or ``full_backtest``. ``STRATEGY``

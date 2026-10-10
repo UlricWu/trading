@@ -33,7 +33,7 @@ _JOB_KINDS = _DATA_KINDS | {"train", "backtest"}
 _DATA_FIELDS = frozenset({"kind", "start", "end"})
 _TRAINING_FIELDS = frozenset({"kind", "train_range", "eval_range", "eval_gap_sessions", "validation_sessions", "model", "dataset"})
 _BACKTEST_FIELDS = frozenset(
-    {"kind", "mode", "start", "end", "model_ref", "model_use", "strategy"}
+    {"kind", "mode", "start", "end", "model_ref", "strategy"}
 )
 
 
@@ -242,32 +242,6 @@ class TrainingSubmission(BaseModel):
         return max(self.train_range.end, self.eval_range.end) if self.eval_range is not None else self.train_range.end
 
 
-class ModelUse(BaseModel):
-    """Declare the training record and historical basis for a fixed model use.
-
-    Example:
-        use = ModelUse(
-            training_schedule_ref=Path("/data/training/schedule.json"),
-            effective_ts_us=1783047600000000,
-            availability_evidence_ref="research/conditional-model-availability",
-        )
-    """
-
-    model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
-    training_schedule_ref: Path = Field(strict=False)
-    effective_ts_us: int
-    availability_evidence_ref: str = Field(min_length=1)
-
-    @model_validator(mode="after")
-    def _validate_use(self) -> Self:
-        if not self.training_schedule_ref.is_absolute():
-            raise ValueError("training_schedule_ref must be absolute")
-        if not self.availability_evidence_ref.strip():
-            raise ValueError("availability_evidence_ref must not be blank")
-        DateTimeUtils.from_utc_epoch_us(self.effective_ts_us)
-        return self
-
-
 @dataclass(frozen=True, slots=True)
 class BacktestSubmission:
     """Describe one validated full-range backtest workflow execution.
@@ -278,7 +252,6 @@ class BacktestSubmission:
             start="2026-07-01",
             end="2026-07-20",
             model_ref=Path("/data/models/training-1.joblib"),
-            model_use=use,
             strategy=threshold_strategy,
         )
     """
@@ -287,7 +260,6 @@ class BacktestSubmission:
     start: str
     end: str
     model_ref: Path
-    model_use: ModelUse
     strategy: StrategyConfig
     kind: Literal["backtest"] = "backtest"
 
@@ -459,7 +431,6 @@ def create_backtest_submission(
     start: object,
     end: object,
     model_ref: object,
-    model_use: object,
     strategy: object,
 ) -> BacktestSubmission:
     """Construct one usable full-range backtest submission.
@@ -470,7 +441,6 @@ def create_backtest_submission(
             start="2026-07-01",
             end="2026-07-20",
             model_ref="/data/models/training-1.joblib",
-            model_use=use,
             strategy={"type": "threshold", "params": {"threshold": 0.5}},
         )
     """
@@ -488,11 +458,6 @@ def create_backtest_submission(
         raise InvalidJobRequest("must be an absolute file path", field="model_ref")
 
     try:
-        normalized_use = ModelUse.model_validate(model_use)
-    except ValidationError as exc:
-        raise InvalidJobRequest("must declare a valid model use", field="model_use") from exc
-
-    try:
         normalized_strategy = TypeAdapter(StrategyConfig).validate_python(strategy)
     except ValidationError as exc:
         raise InvalidJobRequest(
@@ -505,7 +470,6 @@ def create_backtest_submission(
         start=normalized_start,
         end=normalized_end,
         model_ref=normalized_model_ref,
-        model_use=normalized_use,
         strategy=normalized_strategy,
     )
 
@@ -560,7 +524,6 @@ def parse_job_request(payload: object) -> list[JobSubmission]:
             start=request_payload.get("start"),
             end=request_payload.get("end"),
             model_ref=request_payload.get("model_ref"),
-            model_use=request_payload.get("model_use"),
             strategy=request_payload.get("strategy"),
         )
     ]
@@ -633,8 +596,6 @@ def build_cli_command(
                 job_id,
                 "--model-ref",
                 str(submission.model_ref),
-                "--model-use-json",
-                submission.model_use.model_dump_json(),
                 "--strategy-json",
                 json.dumps(
                     submission.strategy.model_dump(mode="json"),

@@ -149,7 +149,10 @@ CLI-only 的 `data-calendar`、`data-standard-bootstrap`、`data-level2-minute-b
   - 只创建一个 Job；公开 scope.start/end 是原始训练及评价闭区间的整体包络，
     不使用过滤后的交易日期重新计算。不接受 windows、逐日日期或技术时间参数。
 - `backtest`
-  - 必须且只允许提供 `mode`、`start`、`end`、`model_ref`、`model_use` 和 `strategy`。
+  - 必须且只允许提供 `mode`、`start`、`end`、`model_ref` 和 `strategy`。
+  - `mode` 显式选择 `signal_eval`、`tradable_alpha_eval`、`risk_eval`、`execution_eval`
+    或 `full_backtest`，无默认模式。回测起止日期 `start` 和 `end` 均为必填，不能由服务端
+    隐藏或从模型推导；使用规范日期 `YYYY-MM-DD` 且 `start <= end`。
   - 字段业务语义与 CLI 同名参数一致；model_ref 必须是具体模型文件的绝对路径。
   - 完整范围是一个 workflow 执行单位，因此只创建一个 Job。
 
@@ -171,6 +174,22 @@ CLI-only 的 `data-calendar`、`data-standard-bootstrap`、`data-level2-minute-b
 }
 ```
 
+完整回测示例（模型路径与日期须替换为实际输入）：
+
+```json
+{
+  "kind": "backtest",
+  "mode": "full_backtest",
+  "start": "2026-07-01",
+  "end": "2026-07-20",
+  "model_ref": "/data/experiments/TRAINING_RUN/training/model.joblib",
+  "strategy": {
+    "type": "threshold",
+    "params": {"threshold": 0.5, "target_quantity": 100}
+  }
+}
+```
+
 成功固定返回：
 
 ```json
@@ -185,12 +204,12 @@ HTTP 和 CLI 必须共同使用 `src.jobs.requests` 构造完整、可直接消�
 或 backtest submission；HTTP 层只拥有 JSON object 形状、`kind` allowlist 和每种 kind
 的字段 allowlist，不得复制日期、mode、model ref 或 strategy 的业务校验。
 
-Backtest 请求另须包含 model_use 对象，字段与 CLI 的 MODEL_USE_JSON 完全相同：
-training_schedule_ref、effective_ts_us、availability_evidence_ref。缺失或形状非法时
-不得创建 Job；schedule 读取、模型关联及时间约束在 workflow 内执行，失败为 FAILED。
-build_cli_command 通过 --model-use-json 原样传递已校验值。Postman 对应变量为
-testTrainingScheduleRef、trainingScheduleRef、modelEffectiveTsUs 和
-modelAvailabilityEvidenceRef；后两项及模型/schedule 路径必须替换为实际任务依据。
+Backtest 的训练记录由 workflow 从指定模型的同目录 `schedule.json` 读取，模型关联和
+训练标签成熟时间约束由 [Backtest workflow](../offline_workflow_contract.md#backtest-workflow)
+拥有，失败为 FAILED。HTTP 不接收 `model_use`、`training_schedule_ref`、
+`effective_ts_us` 或 `availability_evidence_ref`，也不要求用户填写对应 Postman 变量。
+这些信息不能由调用者任意声明来绕过时序核验；用户只需选择模式、回测起止日期、模型和
+策略。build_cli_command 传递这些已校验业务参数及服务器生成的 experiment ID。
 
 Job 子进程必须使用当前服务的 Python 解释器执行 `-m src.cli`，不得调用 PATH 中的
 `python`。Data Job 的 UUID 只标识 Job；training 和 backtest 必须将同一个完整 Job UUID

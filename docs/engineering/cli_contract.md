@@ -203,7 +203,6 @@ python -m src.cli backtest \
   --end YYYY-MM-DD \
   --experiment-id EXPERIMENT_ID \
   --model-ref ABSOLUTE_MODEL_PATH \
-  --model-use-json MODEL_USE_JSON \
   --strategy-json JSON
 ```
 
@@ -225,25 +224,17 @@ python -m src.cli backtest \
 }}
 ```
 
-`MODEL_USE_JSON` 是必填对象，字段精确为：
-
-```json
-{
-  "training_schedule_ref": "/data/experiments/TRAINING_RUN/training/schedule.json",
-  "effective_ts_us": 1783062000000000,
-  "availability_evidence_ref": "TASK_MODEL_AVAILABILITY_EVIDENCE"
-}
-```
-
-schedule 引用必须是绝对路径，时间必须为整数 UTC microseconds，证据引用不得为空白。
-示例不是历史可用性证明；实际调用须使用任务材料。CLI/HTTP 共同校验形状，workflow
-读取 schedule 和模型后检查关联、标签理论成熟下界及首个决策边界；该下界不证明历史
-模型可用性。缺失字段或非法 JSON 在
-装配 workflow 前失败；不自动补造依据，也不兼容省略 model_use 的旧请求。
+`--mode`、`--start`、`--end`、`--model-ref` 和 `--strategy-json` 均必须显式提供。
+起止日期不从模型训练范围推导，也不默认选择某种 mode。模型同目录的 `schedule.json`
+由 workflow 自动读取，用于模型关联及训练标签成熟时间核验；具体规则由
+[Backtest workflow](../offline_workflow_contract.md#backtest-workflow) 拥有。
+调用者不提供训练记录路径、生效时间或可用性证据；`--model-use-json` 不再是 CLI 参数。
+这样日期、模型与策略由用户选择，训练元数据由已交付模型的记录提供，避免用户重复构造
+或填造内部时序依据。缺失必填参数或非法 JSON 在装配 workflow 前失败。
 
 CLI 不构造 config override。它加载一次只含静态执行设置的 `BacktestConfig`，并把该对象、
 完整 `BacktestSubmission`、`PathManager` 与 experiment ID 直接交给 workflow。Runtime
-mode、model ref、model_use 和 strategy 的唯一 owner 是 submission；`BacktestConfig` 只拥有
+mode、model ref 和 strategy 的唯一 owner 是 submission；`BacktestConfig` 只拥有
 `init_cash` 与 `min_listing_calendar_days`。CLI 不接受 group、run ID、model name 或可选
 策略。
 通过 HTTP 创建 backtest Job 时，Job API 使用同一个 Job UUID 作为该必填

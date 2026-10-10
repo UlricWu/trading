@@ -85,11 +85,6 @@ def delivery(
     submission = create_backtest_submission(
         mode="signal_eval", start="2026-07-03", end="2026-07-07",
         model_ref=pm.experiment_training_model(experiment_name=training_name),
-        model_use={
-            "training_schedule_ref": pm.experiment_training_schedule(experiment_name=training_name),
-            "effective_ts_us": _decision("2026-07-03"),
-            "availability_evidence_ref": "synthetic/conditional-model-availability",
-        },
         strategy={"type": "threshold", "params": {"threshold": -1.0}},
     )
     return pm, submission, access
@@ -108,7 +103,9 @@ def test_fixed_model_closes_binding_prediction_evaluation_and_replay(
     run_dir = pm.experiment_backtest_dir(experiment_name=name)
     binding = json.loads((run_dir / "binding.json").read_text())
     assert binding["model_ref"] == str(submission.model_ref)
-    assert binding["model_use"]["effective_ts_us"] == binding["first_decision_ts_us"]
+    assert binding["training_schedule_ref"] == str(submission.model_ref.with_name("schedule.json"))
+    assert binding["first_decision_ts_us"] == _decision("2026-07-03")
+    assert "model_use" not in binding
     metrics = json.loads(pm.experiment_backtest_metrics(experiment_name=name).read_text())
     evaluation = metrics["model_evaluation"]
     assert evaluation["summary"]["date_count"] == 2
@@ -151,12 +148,15 @@ def test_all_skipped_day_keeps_prediction_rows_and_existing_positions(
     assert metrics["full_backtest"]["final_positions"] == 2
 
 
-@pytest.mark.parametrize("effective", [_decision("2026-07-02") - 1, _decision("2026-07-03") + 1])
-def test_invalid_model_use_stops_before_predictions(
-    delivery: tuple[PathManager, BacktestSubmission, Mock], effective: int,
+@pytest.mark.parametrize("maturity", [_decision("2026-07-03") + 1, _decision("2026-07-06")])
+def test_unmatured_training_labels_stop_before_predictions(
+    delivery: tuple[PathManager, BacktestSubmission, Mock], maturity: int,
 ) -> None:
     pm, submission, _ = delivery
-    submission = replace(submission, model_use=submission.model_use.model_copy(update={"effective_ts_us": effective}))
+    schedule = submission.model_ref.with_name("schedule.json")
+    record = json.loads(schedule.read_text())
+    record["label_maturity_ts_us"] = maturity
+    schedule.write_text(json.dumps(record))
     with pytest.raises(ValueError, match="label maturity"):
         run_daily_alpha_backtest(
             backtest_config=BacktestConfig(init_cash=200_000, min_listing_calendar_days=120), path_manager=pm,
@@ -164,6 +164,58 @@ def test_invalid_model_use_stops_before_predictions(
         )
     run_dir = pm.experiment_backtest_dir(experiment_name="backtest_2026-07-03_2026-07-07_invalid")
     assert not run_dir.exists()
+
+
+@pytest.mark.parametrize("maturity", [_decision("2026-07-03") - 1, _decision("2026-07-03")])
+def test_training_labels_mature_by_first_decision_can_be_used(
+    delivery: tuple[PathManager, BacktestSubmission, Mock], maturity: int,
+) -> None:
+    pm, submission, _ = delivery
+    schedule = submission.model_ref.with_name("schedule.json")
+    record = json.loads(schedule.read_text())
+    record["label_maturity_ts_us"] = maturity
+    schedule.write_text(json.dumps(record))
+    run_daily_alpha_backtest(
+        backtest_config=BacktestConfig(init_cash=200_000, min_listing_calendar_days=120),
+        path_manager=pm, submission=submission, experiment_id="mature",
+    )
+
+    name = "backtest_2026-07-03_2026-07-07_mature"
+    binding = json.loads((pm.experiment_backtest_dir(experiment_name=name) / "binding.json").read_text())
+    assert binding["training_record"]["label_maturity_ts_us"] == maturity
+    assert binding["first_decision_ts_us"] == _decision("2026-07-03")
+    assert pm.experiment_backtest_metrics(experiment_name=name).is_file()
+
+
+def test_start_on_closed_day_uses_first_selected_trading_day(
+    delivery: tuple[PathManager, BacktestSubmission, Mock],
+) -> None:
+    pm, submission, _ = delivery
+    submission = replace(submission, start="2026-07-04")
+    run_daily_alpha_backtest(
+        backtest_config=BacktestConfig(init_cash=200_000, min_listing_calendar_days=120),
+        path_manager=pm, submission=submission, experiment_id="closed-start",
+    )
+
+    name = "backtest_2026-07-04_2026-07-07_closed-start"
+    binding = json.loads((pm.experiment_backtest_dir(experiment_name=name) / "binding.json").read_text())
+    assert binding["first_decision_ts_us"] == _decision("2026-07-06")
+    assert pm.experiment_backtest_metrics(experiment_name=name).is_file()
+
+
+def test_missing_training_record_cannot_publish_a_binding(
+    delivery: tuple[PathManager, BacktestSubmission, Mock],
+) -> None:
+    pm, submission, _ = delivery
+    submission.model_ref.with_name("schedule.json").unlink()
+    with pytest.raises(FileNotFoundError, match="schedule.json"):
+        run_daily_alpha_backtest(
+            backtest_config=BacktestConfig(init_cash=200_000, min_listing_calendar_days=120),
+            path_manager=pm, submission=submission, experiment_id="missing-record",
+        )
+
+    name = "backtest_2026-07-03_2026-07-07_missing-record"
+    assert not pm.experiment_backtest_dir(experiment_name=name).exists()
 
 
 def test_model_load_failure_cannot_publish_a_binding(
@@ -191,7 +243,7 @@ def test_invalid_training_record_cannot_publish_a_binding(
     delivery: tuple[PathManager, BacktestSubmission, Mock], change: str, message: str,
 ) -> None:
     pm, submission, _ = delivery
-    schedule = submission.model_use.training_schedule_ref
+    schedule = submission.model_ref.with_name("schedule.json")
     record = json.loads(schedule.read_text())
     if change == "model_ref":
         record["model_ref"] = str(submission.model_ref.with_name("another.joblib"))
@@ -217,7 +269,7 @@ def test_backtest_consumes_resolved_record_without_parsing_archived_request(
     delivery: tuple[PathManager, BacktestSubmission, Mock],
 ) -> None:
     pm, submission, _ = delivery
-    schedule = submission.model_use.training_schedule_ref
+    schedule = submission.model_ref.with_name("schedule.json")
     record = json.loads(schedule.read_text())
     record["request"] = {"archived_intent": "not a current submission"}
     schedule.write_text(json.dumps(record))

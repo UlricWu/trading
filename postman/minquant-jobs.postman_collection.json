@@ -226,7 +226,7 @@
                 ],
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"kind\": \"backtest\",\n  \"mode\": \"{{backtestMode}}\",\n  \"start\": \"{{backtestStart}}\",\n  \"end\": \"{{backtestEnd}}\",\n  \"model_ref\": \"{{testModelRef}}\",\n  \"strategy\": {\n    \"type\": \"threshold\",\n    \"params\": {\n      \"threshold\": 0.5,\n      \"target_quantity\": 100\n    }\n  },\n  \"model_use\": {\n    \"training_schedule_ref\": \"{{testTrainingScheduleRef}}\",\n    \"effective_ts_us\": {{modelEffectiveTsUs}},\n    \"availability_evidence_ref\": \"{{modelAvailabilityEvidenceRef}}\"\n  }\n}",
+                  "raw": "{\n  \"kind\": \"backtest\",\n  \"mode\": \"{{backtestMode}}\",\n  \"start\": \"{{backtestStart}}\",\n  \"end\": \"{{backtestEnd}}\",\n  \"model_ref\": \"{{testModelRef}}\",\n  \"strategy\": {\n    \"type\": \"threshold\",\n    \"params\": {\n      \"threshold\": 0.5,\n      \"target_quantity\": 100\n    }\n  }\n}",
                   "options": {
                     "raw": {
                       "language": "json"
@@ -275,7 +275,7 @@
                 ],
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"kind\": \"backtest\",\n  \"mode\": \"{{backtestMode}}\",\n  \"start\": \"{{backtestStart}}\",\n  \"end\": \"{{backtestEnd}}\",\n  \"model_ref\": \"{{testModelRef}}\",\n  \"strategy\": {\n    \"type\": \"topk_hysteresis\",\n    \"params\": {\n      \"max_positions\": 10,\n      \"entry_threshold\": 0.5,\n      \"exit_threshold\": 0.2,\n      \"rebalance_interval_minutes\": 1,\n      \"keep_winners\": false,\n      \"target_quantity\": 100\n    }\n  },\n  \"model_use\": {\n    \"training_schedule_ref\": \"{{testTrainingScheduleRef}}\",\n    \"effective_ts_us\": {{modelEffectiveTsUs}},\n    \"availability_evidence_ref\": \"{{modelAvailabilityEvidenceRef}}\"\n  }\n}",
+                  "raw": "{\n  \"kind\": \"backtest\",\n  \"mode\": \"{{backtestMode}}\",\n  \"start\": \"{{backtestStart}}\",\n  \"end\": \"{{backtestEnd}}\",\n  \"model_ref\": \"{{testModelRef}}\",\n  \"strategy\": {\n    \"type\": \"topk_hysteresis\",\n    \"params\": {\n      \"max_positions\": 10,\n      \"entry_threshold\": 0.5,\n      \"exit_threshold\": 0.2,\n      \"rebalance_interval_minutes\": 1,\n      \"keep_winners\": false,\n      \"target_quantity\": 100\n    }\n  }\n}",
                   "options": {
                     "raw": {
                       "language": "json"
@@ -558,7 +558,7 @@
                 ],
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"kind\": \"backtest\",\n  \"mode\": \"{{backtestMode}}\",\n  \"start\": \"{{backtestStart}}\",\n  \"end\": \"{{backtestEnd}}\",\n  \"model_ref\": \"{{trainingModelRef}}\",\n  \"strategy\": {\n    \"type\": \"threshold\",\n    \"params\": {\n      \"threshold\": 0.5,\n      \"target_quantity\": 100\n    }\n  },\n  \"model_use\": {\n    \"training_schedule_ref\": \"{{trainingScheduleRef}}\",\n    \"effective_ts_us\": {{modelEffectiveTsUs}},\n    \"availability_evidence_ref\": \"{{modelAvailabilityEvidenceRef}}\"\n  }\n}",
+                  "raw": "{\n  \"kind\": \"backtest\",\n  \"mode\": \"{{backtestMode}}\",\n  \"start\": \"{{backtestStart}}\",\n  \"end\": \"{{backtestEnd}}\",\n  \"model_ref\": \"{{trainingModelRef}}\",\n  \"strategy\": {\n    \"type\": \"threshold\",\n    \"params\": {\n      \"threshold\": 0.5,\n      \"target_quantity\": 100\n    }\n  }\n}",
                   "options": {
                     "raw": {
                       "language": "json"
@@ -607,7 +607,7 @@
                 ],
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"kind\": \"backtest\",\n  \"mode\": \"{{backtestMode}}\",\n  \"start\": \"{{backtestStart}}\",\n  \"end\": \"{{backtestEnd}}\",\n  \"model_ref\": \"{{trainingModelRef}}\",\n  \"strategy\": {\n    \"type\": \"topk_hysteresis\",\n    \"params\": {\n      \"max_positions\": 10,\n      \"entry_threshold\": 0.5,\n      \"exit_threshold\": 0.2,\n      \"rebalance_interval_minutes\": 1,\n      \"keep_winners\": false,\n      \"target_quantity\": 100\n    }\n  },\n  \"model_use\": {\n    \"training_schedule_ref\": \"{{trainingScheduleRef}}\",\n    \"effective_ts_us\": {{modelEffectiveTsUs}},\n    \"availability_evidence_ref\": \"{{modelAvailabilityEvidenceRef}}\"\n  }\n}",
+                  "raw": "{\n  \"kind\": \"backtest\",\n  \"mode\": \"{{backtestMode}}\",\n  \"start\": \"{{backtestStart}}\",\n  \"end\": \"{{backtestEnd}}\",\n  \"model_ref\": \"{{trainingModelRef}}\",\n  \"strategy\": {\n    \"type\": \"topk_hysteresis\",\n    \"params\": {\n      \"max_positions\": 10,\n      \"entry_threshold\": 0.5,\n      \"exit_threshold\": 0.2,\n      \"rebalance_interval_minutes\": 1,\n      \"keep_winners\": false,\n      \"target_quantity\": 100\n    }\n  }\n}",
                   "options": {
                     "raw": {
                       "language": "json"
@@ -755,26 +755,6 @@
     {
       "key": "trainingLabelGroup",
       "value": "daily_close_return_rank_d1/v1",
-      "type": "string"
-    },
-    {
-      "key": "testTrainingScheduleRef",
-      "value": "/data/training/schedule.json",
-      "type": "string"
-    },
-    {
-      "key": "trainingScheduleRef",
-      "value": "/data/training/schedule.json",
-      "type": "string"
-    },
-    {
-      "key": "modelEffectiveTsUs",
-      "value": "1782860400000000",
-      "type": "string"
-    },
-    {
-      "key": "modelAvailabilityEvidenceRef",
-      "value": "REPLACE_WITH_TASK_EVIDENCE",
       "type": "string"
     }
   ]
