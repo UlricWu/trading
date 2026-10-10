@@ -31,8 +31,9 @@ experiments/
 
 调用方提供的 broker、source、dataset、feature set、label set、version、experiment 和
 payload filename 必须是非空、无首尾空格的单一 basename，不得是 `.` 或 `..`，不得
-包含 `/`、`\` 或 NUL。除此之外通用 basename 校验不限制字符集。CLI 和 Job API 使用的
-experiment ID 另须匹配 `[A-Za-z0-9][A-Za-z0-9._-]{0,63}`。
+包含 `/`、`\` 或 NUL。除此之外通用 basename 校验不限制字符集。Experiment ID 的输入格式
+由 [CLI 契约](../engineering/cli_contract.md#通用边界)拥有，并在 CLI 参数解析时校验；
+PathManager 接收完整的 experiment name，不提供 ID 格式校验。
 
 交易日期必须是合法且规范化的 `YYYY-MM-DD`，分区名固定为：
 
@@ -322,10 +323,12 @@ experiments/<experiment_name>/
 └── report.html
 ```
 
-日期任务使用 `backtest_{start}_{end}_{experiment_id}`，risk_rule_eval 使用
-`backtest_risk_{experiment_id}`，不再增加重复 backtest/report 子目录。五种 mode 共用
-以上根布局，仅生成实际能力的制品；signal/risk 不创建交易占位文件。mode 保存在 metrics
-及其 parameters 中，不按 mode 另分目录。固定预测输入保留外部引用，不无条件复制。
+五种回测统一使用 `backtest_{today}_{experiment_id}`，today 为 CLI 完成请求解析和配置加载后的
+Asia/Shanghai 当天日期，格式为 `YYYY-MM-DD`；日期采样与唯一 ID 责任由
+[Offline 工作流](../offline_workflow_contract.md#共同边界)定义。目录不包含回测日期范围或
+模式前缀，也不增加重复 backtest/report 子目录。五种 mode 共用以上根布局，仅生成实际
+能力的制品；signal/risk 不创建交易占位文件。mode、日期范围或案例引用保存在 metrics
+的 parameters 中，不按 mode 另分目录。固定预测输入保留外部引用，不无条件复制。
 同日多次推理按 UTC epoch 微秒 ts_us 区分，预测 schema 与训练相同，不写回 training。
 
 metrics 同时保存实际评价、预测引用和运行参数；不另写 binding.json、run_meta.json、
@@ -346,4 +349,5 @@ model_evaluation observations 含绝对 prediction_ref，直接移动预测目�
 
 Training 或 backtest 在 artifact persist、facts persist、metrics persist 或 report 阶段失败时，已经创建的
 experiment 目录和制品保留为失败现场，不自动删除、回滚、续跑或恢复。残留目录不表示
-experiment 成功，但会继续触发同名 experiment 的禁止覆盖规则。
+experiment 成功。Training 继续拒绝同名实验；Backtest 按日期加 UUID/唯一 ID 不重名的
+前提运行，不检测同名目录，重新发起运行使用新的 experiment_id。

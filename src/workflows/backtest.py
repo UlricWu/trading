@@ -2,7 +2,6 @@
 """Compose independent evaluations and three shared-account replay workflows."""
 from __future__ import annotations
 
-import json
 from collections import defaultdict
 from collections.abc import Iterable
 from pathlib import Path
@@ -11,11 +10,10 @@ from typing import cast
 
 from pydantic import TypeAdapter
 
-from src import logs
 from src.access import Access
 from src.config.backtest_config import BacktestConfig, FakeExecutionConfig, FixedHoldingStrategyConfig, StrategyConfig, InitialAccount
 from src.jobs.requests import (
-    BacktestSubmission, SignalEvalSubmission, RiskRuleEvalSubmission, ExecutionEvalSubmission,
+    SignalEvalSubmission, RiskRuleEvalSubmission, ExecutionEvalSubmission,
     StrategyEvalSubmission, FullBacktestSubmission,
 )
 from src.observability.instrumentation import Instrumentation
@@ -54,67 +52,75 @@ from src.trading.portfolio.constructors.factory import build_portfolio_construct
 from src.trading.portfolio.constructors.topk_hysteresis import TopKHysteresisConstructor
 from src.trading.risk.evaluation import read_risk_cases
 from src.utils.path import PathManager
-from src.workflows import PROCESSED_VERSION, require_new_experiment
+from src.workflows import PROCESSED_VERSION
 
 
 def run_signal_evaluation(
     *, submission: SignalEvalSubmission, path_manager: PathManager,
-    experiment_id: str, backtest_config: BacktestConfig,
+    experiment_name: str, metrics: BacktestMetrics, backtest_config: BacktestConfig,
 ) -> None:
     """Evaluate fixed signals without preparing any trading account or strategy.
 
+    The caller supplies the experiment name and initial metrics for this submission.
+
     Example:
+        metrics = BacktestMetrics(mode=submission.mode, parameters=parameters, not_run={})
         run_signal_evaluation(submission=submission, path_manager=pm,
-                              experiment_id="signal-1", backtest_config=config)
+            experiment_name="backtest_2026-10-11_signal-1", metrics=metrics, backtest_config=config)
     """
-    name, metrics = _start(submission, path_manager, experiment_id, backtest_config)
     metrics.not_run = {"strategy": "signal_only", "risk": "signal_only", "execution": "signal_only"}
     batches = prepare_signals(submission.signal, start=submission.start, end=submission.end,
         access=Access(pm=path_manager, processed_version=PROCESSED_VERSION), pm=path_manager,
         min_listing_calendar_days=backtest_config.min_listing_calendar_days)
-    path_manager.experiment_dir(experiment_name=name).mkdir(parents=True, exist_ok=False)
     steps: tuple[PipelineStep[SignalEvaluationContext], ...] = (
-        PredictionGenerationStep(batches, path_manager.experiment_dir(experiment_name=name) / "predictions"),
+        PredictionGenerationStep(batches, path_manager.experiment_dir(experiment_name=experiment_name) / "predictions"),
         SignalEvaluationStep(path_manager),
-        MetricsPersistStep(path_manager, name),
-        ReportStep(ReportingBundle(path_manager), name),
+        MetricsPersistStep(path_manager, experiment_name),
+        ReportStep(ReportingBundle(path_manager), experiment_name),
     )
-    with Instrumentation(name) as instrumentation:
+    with Instrumentation(experiment_name) as instrumentation:
         run_steps(context=SignalEvaluationContext(metrics=metrics), steps=steps, instrumentation=instrumentation)
 
 
 def run_risk_rule_evaluation(
-    *, submission: RiskRuleEvalSubmission, path_manager: PathManager, experiment_id: str,
+    *, submission: RiskRuleEvalSubmission, path_manager: PathManager,
+    experiment_name: str, metrics: BacktestMetrics,
 ) -> None:
     """Evaluate fixed pre-risk cases with the actual selected rule implementation.
 
+    The caller supplies the experiment name and initial metrics for this submission.
+
     Example:
-        run_risk_rule_evaluation(submission=submission, path_manager=pm, experiment_id="risk-1")
+        metrics = BacktestMetrics(mode=submission.mode, parameters=parameters, not_run={})
+        run_risk_rule_evaluation(submission=submission, path_manager=pm,
+            experiment_name="backtest_2026-10-11_risk-1", metrics=metrics)
     """
-    name, metrics = _start(submission, path_manager, experiment_id)
     metrics.not_run = {"signal": "fixed_risk_cases", "strategy": "fixed_risk_cases", "execution": "fixed_risk_cases"}
     cases = read_risk_cases(submission.case_refs)
     steps: tuple[PipelineStep[RiskEvaluationContext], ...] = (
         RiskEvaluationStep(build_risk(submission.risk)),
         RiskMetricsStep(configured_rules=tuple(rule.type for rule in submission.risk.rules)),
-        MetricsPersistStep(path_manager, name),
-        ReportStep(ReportingBundle(path_manager), name),
+        MetricsPersistStep(path_manager, experiment_name),
+        ReportStep(ReportingBundle(path_manager), experiment_name),
     )
-    path_manager.experiment_dir(experiment_name=name).mkdir(parents=True, exist_ok=False)
-    with Instrumentation(name) as instrumentation:
+    with Instrumentation(experiment_name) as instrumentation:
         run_steps(context=RiskEvaluationContext(cases=cases, metrics=metrics), steps=steps,
                   instrumentation=instrumentation)
 
 
 def run_execution_evaluation(
-    *, submission: ExecutionEvalSubmission, path_manager: PathManager, experiment_id: str,
+    *, submission: ExecutionEvalSubmission, path_manager: PathManager,
+    experiment_name: str, metrics: BacktestMetrics,
 ) -> None:
     """Replay frozen commands through the shared price-model execution path.
 
+    The caller supplies the experiment name and initial metrics for this submission.
+
     Example:
-        run_execution_evaluation(submission=submission, path_manager=pm, experiment_id="execution-1")
+        metrics = BacktestMetrics(mode=submission.mode, parameters=parameters, not_run={})
+        run_execution_evaluation(submission=submission, path_manager=pm,
+            experiment_name="backtest_2026-10-11_execution-1", metrics=metrics)
     """
-    name, metrics = _start(submission, path_manager, experiment_id)
     metrics.not_run = {"signal": "frozen_commands", "strategy": "frozen_commands", "risk": "frozen_commands"}
     config = submission.execution
     market = prepare_market(config=config, initial=submission.initial_account,
@@ -140,26 +146,27 @@ def run_execution_evaluation(
         AdvanceExecutionStep(execution, market), AccountingStep(market),
         RecordedOrdersStep(execution, market, {ts: tuple(items) for ts, items in by_time.items()}),
     )
-    path_manager.experiment_dir(experiment_name=name).mkdir(parents=True, exist_ok=False)
     BacktestPipeline(clock=clock, session_at=market.session_at, per_timing_steps=per_timing_steps,
         final_steps=(
-            FactsPersistStep(pm=path_manager, experiment_name=name),
+            FactsPersistStep(pm=path_manager, experiment_name=experiment_name),
             ExecutionEvaluationStep(), BacktestSummaryStep(),
-            MetricsPersistStep(path_manager, name), ReportStep(ReportingBundle(path_manager), name),
-        ), instrumentation=Instrumentation(name)).run(state, metrics=metrics)
+            MetricsPersistStep(path_manager, experiment_name), ReportStep(ReportingBundle(path_manager), experiment_name),
+        ), instrumentation=Instrumentation(experiment_name)).run(state, metrics=metrics)
 
 
 def run_strategy_evaluation(
     *, submission: StrategyEvalSubmission, path_manager: PathManager,
-    experiment_id: str, backtest_config: BacktestConfig,
+    experiment_name: str, metrics: BacktestMetrics, backtest_config: BacktestConfig,
 ) -> None:
     """Evaluate a declared strategy using reference fills and a run-owned account.
 
+    The caller supplies the experiment name and initial metrics for this submission.
+
     Example:
+        metrics = BacktestMetrics(mode=submission.mode, parameters=parameters, not_run={})
         run_strategy_evaluation(submission=submission, path_manager=pm,
-                                experiment_id="strategy-1", backtest_config=config)
+            experiment_name="backtest_2026-10-11_strategy-1", metrics=metrics, backtest_config=config)
     """
-    name, metrics = _start(submission, path_manager, experiment_id, backtest_config)
     metrics.not_run = {"signal_evaluation": "strategy_return_only", "risk": "reference_strategy",
                        "price_feasibility": "reference_fills"}
     config = submission.execution
@@ -179,30 +186,31 @@ def run_strategy_evaluation(
         start_us=submission.initial_account.ts_us, end_us=config.end_ts_us)
     per_timing_steps: tuple[PipelineStep[BacktestContext], ...] = (
         AdvanceExecutionStep(execution, market), AccountingStep(market),
-        SignalStep(batches, path_manager.experiment_dir(experiment_name=name) / "predictions"),
+        SignalStep(batches, path_manager.experiment_dir(experiment_name=experiment_name) / "predictions"),
         portfolio_step,
         SubmitTargetsStep(execution, market, windows, cast(int, submission.strategy.order_window_minutes)),
     )
-    path_manager.experiment_dir(experiment_name=name).mkdir(parents=True, exist_ok=False)
     BacktestPipeline(clock=clock, session_at=market.session_at, per_timing_steps=per_timing_steps,
         final_steps=(
-            FactsPersistStep(pm=path_manager, experiment_name=name),
+            FactsPersistStep(pm=path_manager, experiment_name=experiment_name),
             PortfolioEvaluationStep(annual_factor=config.annual_factor), BacktestSummaryStep(),
-            MetricsPersistStep(path_manager, name), ReportStep(ReportingBundle(path_manager), name),
-        ), instrumentation=Instrumentation(name)).run(state, metrics=metrics)
+            MetricsPersistStep(path_manager, experiment_name), ReportStep(ReportingBundle(path_manager), experiment_name),
+        ), instrumentation=Instrumentation(experiment_name)).run(state, metrics=metrics)
 
 
 def run_full_backtest(
     *, submission: FullBacktestSubmission, path_manager: PathManager,
-    experiment_id: str, backtest_config: BacktestConfig,
+    experiment_name: str, metrics: BacktestMetrics, backtest_config: BacktestConfig,
 ) -> None:
     """Compose one signal/strategy/risk/execution loop and evaluate its saved facts.
 
+    The caller supplies the experiment name and initial metrics for this submission.
+
     Example:
+        metrics = BacktestMetrics(mode=submission.mode, parameters=parameters, not_run={})
         run_full_backtest(submission=submission, path_manager=pm,
-                          experiment_id="full-1", backtest_config=config)
+            experiment_name="backtest_2026-10-11_full-1", metrics=metrics, backtest_config=config)
     """
-    name, metrics = _start(submission, path_manager, experiment_id, backtest_config)
     config = submission.execution
     access = Access(pm=path_manager, processed_version=PROCESSED_VERSION)
     market = prepare_market(config=config, initial=submission.initial_account, access=access)
@@ -222,43 +230,19 @@ def run_full_backtest(
         start_us=submission.initial_account.ts_us, end_us=config.end_ts_us)
     per_timing_steps: tuple[PipelineStep[BacktestContext], ...] = (
         AdvanceExecutionStep(execution, market), AccountingStep(market),
-        SignalStep(batches, path_manager.experiment_dir(experiment_name=name) / "predictions"),
+        SignalStep(batches, path_manager.experiment_dir(experiment_name=experiment_name) / "predictions"),
         portfolio_step,
         RiskDecisionStep(risk, market, {symbol: rule.buy_step_qty for symbol, rule in config.quantity_rules.items()}),
         SubmitTargetsStep(execution, market, windows, cast(int, submission.strategy.order_window_minutes)),
     )
-    path_manager.experiment_dir(experiment_name=name).mkdir(parents=True, exist_ok=False)
     BacktestPipeline(clock=clock, session_at=market.session_at, per_timing_steps=per_timing_steps,
         final_steps=(
-            FactsPersistStep(pm=path_manager, experiment_name=name), SignalEvaluationStep(path_manager),
+            FactsPersistStep(pm=path_manager, experiment_name=experiment_name), SignalEvaluationStep(path_manager),
             RiskMetricsStep(configured_rules=tuple(rule.type for rule in submission.risk.rules)),
             ExecutionEvaluationStep(), PortfolioEvaluationStep(annual_factor=config.annual_factor),
-            BacktestSummaryStep(), MetricsPersistStep(path_manager, name),
-            ReportStep(ReportingBundle(path_manager), name),
-        ), instrumentation=Instrumentation(name)).run(state, metrics=metrics)
-
-
-def _start(submission: BacktestSubmission, pm: PathManager, experiment_id: str,
-           backtest_config: BacktestConfig | None = None) -> tuple[str, BacktestMetrics]:
-    PathManager.require_experiment_id(experiment_id)
-    if isinstance(submission, RiskRuleEvalSubmission):
-        name = f"backtest_risk_{experiment_id}"
-    else:
-        name = require_new_experiment(path_manager=pm, kind="backtest", start_date=submission.start,
-                                      end_date=submission.end, experiment_id=experiment_id)
-    if pm.experiment_dir(experiment_name=name).exists():
-        raise FileExistsError(f"experiment already exists: {name}")
-    parameters = submission.model_dump(mode="json")
-    if backtest_config is not None:
-        parameters["backtest_config"] = backtest_config.model_dump(mode="json")
-    labels = (("mode", "模式"), ("start", "开始日期"), ("end", "结束日期"),
-              ("signal", "信号输入"), ("case_refs", "风控案例"), ("order_refs", "委托输入"),
-              ("strategy", "策略"), ("initial_account", "初始账户"), ("risk", "风控"),
-              ("execution", "执行"), ("kind", "任务"), ("backtest_config", "运行配置"))
-    summary = "\n".join(f"{label} {key}={json.dumps(parameters[key], ensure_ascii=False)}"
-                        for key, label in labels if key in parameters)
-    logs.info(f"▶️ 回测任务; experiment={name}\n{summary}")
-    return name, BacktestMetrics(mode=submission.mode, parameters=parameters, not_run={})
+            BacktestSummaryStep(), MetricsPersistStep(path_manager, experiment_name),
+            ReportStep(ReportingBundle(path_manager), experiment_name),
+        ), instrumentation=Instrumentation(experiment_name)).run(state, metrics=metrics)
 
 
 def _execution(state: BacktestState, config: FakeExecutionConfig,

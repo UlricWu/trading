@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
@@ -51,9 +50,6 @@ class PathManager:
         "features",
         "labels",
         "experiments",
-    )
-    _EXPERIMENT_ID: Final[re.Pattern[str]] = re.compile(
-        r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}"
     )
 
     def __init__(self, storage_root: Path) -> None:
@@ -361,7 +357,7 @@ class PathManager:
 
         Example:
             path = pm.experiment_backtest_metrics(
-                experiment_name="backtest_2026-07-01_2026-07-20_run-1",
+                experiment_name="backtest_2026-10-11_9c5a9280-922e-4d1a-af01-ce896eb9668c",
             )
         """
         return self.experiment_dir(experiment_name=experiment_name) / "metrics.json"
@@ -371,7 +367,7 @@ class PathManager:
 
         Example:
             path = pm.experiment_backtest_execution(
-                experiment_name="backtest_2026-07-01_2026-07-20_run-1",
+                experiment_name="backtest_2026-10-11_9c5a9280-922e-4d1a-af01-ce896eb9668c",
             )
         """
         return self.experiment_dir(experiment_name=experiment_name) / "execution.parquet"
@@ -381,7 +377,7 @@ class PathManager:
 
         Example:
             path = pm.experiment_backtest_equity(
-                experiment_name="backtest_2026-07-01_2026-07-20_run-1",
+                experiment_name="backtest_2026-10-11_9c5a9280-922e-4d1a-af01-ce896eb9668c",
             )
         """
         return self.experiment_dir(experiment_name=experiment_name) / "equity.parquet"
@@ -398,7 +394,7 @@ class PathManager:
 
         Example:
             path = pm.experiment_backtest_report(
-                experiment_name="backtest_2026-07-01_2026-07-20_run-1",
+                experiment_name="backtest_2026-10-11_9c5a9280-922e-4d1a-af01-ce896eb9668c",
             )
         """
         return self.experiment_dir(experiment_name=experiment_name) / "report.html"
@@ -496,17 +492,6 @@ class PathManager:
             raise ValueError(f"{field_name} must be a non-empty unpadded basename")
         if value in {".", ".."} or "/" in value or "\\" in value or "\x00" in value:
             raise ValueError(f"{field_name} must be a safe basename")
-        return value
-
-    @classmethod
-    def require_experiment_id(cls, value: str) -> str:
-        """Return an experiment identifier matching the public CLI contract."""
-        if not isinstance(value, str):
-            raise TypeError("experiment_id must be a str")
-        if cls._EXPERIMENT_ID.fullmatch(value) is None:
-            raise ValueError(
-                "experiment_id must match [A-Za-z0-9][A-Za-z0-9._-]{0,63}"
-            )
         return value
 
     @staticmethod

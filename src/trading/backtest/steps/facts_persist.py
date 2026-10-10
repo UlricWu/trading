@@ -56,7 +56,7 @@ class FactsPersistStep:
 
     Example:
         step = FactsPersistStep(
-            pm=path_manager, experiment_name="backtest_2026-07-01_2026-07-20_run-1",
+            pm=path_manager, experiment_name="backtest_2026-10-11_9c5a9280-922e-4d1a-af01-ce896eb9668c",
         )
         persisted_context = step.run(completed_context)
     """
@@ -66,7 +66,7 @@ class FactsPersistStep:
 
         Example:
             step = FactsPersistStep(
-                pm=path_manager, experiment_name="backtest_2026-07-01_2026-07-20_run-1",
+                pm=path_manager, experiment_name="backtest_2026-10-11_9c5a9280-922e-4d1a-af01-ce896eb9668c",
             )
         """
         self._pm = pm

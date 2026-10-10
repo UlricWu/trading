@@ -7,17 +7,21 @@
 
 ## 通用边界
 
-CLI 只把不可信文本解析为 `src.jobs.requests` 已构造的 data、fact bootstrap、Feature
+CLI 把不可信文本解析为 `src.jobs.requests` 已构造的 data、fact bootstrap、Feature
 backfill、Level-2 minute backfill、H03 14:30 backfill、H04 fusion backfill、training 或 backtest submission，
 加载一次 `AppConfig`，
 创建 `PathManager` 并调用一次工作流。HTTP Job API
 也必须复用同一构造边界，不得各自实现日期、mode、model ref 或 strategy 校验。
-CLI 在命令分派前按日志技术 owner 配置一次公共 logger 的 stderr sink；它不记录
-start/done 或原始 JSON，workflow 负责业务运行日志。Typer 负责参数错误并以 `2` 退出，
+CLI 在命令分派前按日志技术 owner 配置一次公共 logger 的 stderr sink，不记录原始 JSON。
+Backtest 命令统一准备运行身份及参数快照并记录开始日志；其余业务运行日志由 workflow
+及其 Step 负责。Typer 负责参数错误并以 `2` 退出，
 未处理的配置或运行错误以 `1` 退出。
 
 日期必须是规范 `YYYY-MM-DD`。范围必须满足 `start <= end`。Training 和 backtest 的
-`EXPERIMENT_ID` 必须匹配 `[A-Za-z0-9][A-Za-z0-9._-]{0,63}`。
+`EXPERIMENT_ID` 必须匹配 `[A-Za-z0-9][A-Za-z0-9._-]{0,63}`。两个命令的
+`--experiment-id` 声明绑定同一个 Typer 参数校验回调，在进入命令函数前建立该契约；
+非法值以参数错误退出 `2`，不构造 submission、不加载配置或调用 workflow。
+命令函数与 workflow 使用已校验的 ID，不再手动检查；PathManager 不拥有 CLI ID 格式规则。
 
 Submission 的日期与范围保证由 `src.jobs.requests` 中相应的 `create_*_submission` 函数
 建立。TrainingSubmission 与五种 BacktestSubmission 使用验证模型；数据类 submission 的 dataclass 构造函数不执行
@@ -205,6 +209,9 @@ experiment_id；mode 只由 `--mode` 传入。CLI 在加载 AppConfig、创建 P
 workflow 前调用 `create_backtest_submission` 校验。额外字段、缺少必需参数、非法数值
 或相对引用路径均拒绝，不保留旧 `--model-ref`/`--strategy-json` 或隐式字段兼容。
 mode 只接受下表五个值；旧任务名称 `tradable_alpha_eval`、`risk_eval` 不作为别名接受。
+调用方为每次回测提供新的唯一 experiment_id，HTTP 沿用 Job UUID；CLI 保持上述 ID 格式
+校验，不检查实验目录重名。运行当天日期及目录命名由
+[Backtest workflow](../offline_workflow_contract.md#共同边界)定义。
 
 | MODE / Submission | JSON 字段 |
 | --- | --- |
@@ -260,7 +267,11 @@ python -m src.cli backtest --mode signal_eval --experiment-id signal-1 \
   --input-json '{"start":"2026-07-03","end":"2026-07-03","signal":{"type":"recorded","prediction_refs":["/data/prediction.parquet"]}}'
 ```
 
-CLI 不构造 config override。加载一次 AppConfig 后，五种类型分别路由到五个具名入口，
-只有 signal/strategy_eval/full 接收静态 BacktestConfig，其唯一字段是 min_listing_calendar_days。
-初始现金只来自 initial_account；risk/execution 不消费模型设置。HTTP 使用同一字段模型，
-build_cli_command 用一个 `--input-json` 参数保留嵌套 JSON，Job UUID 作为 experiment ID。
+CLI 不构造 config override。加载一次 AppConfig 后，统一生成实验名称，将已解析 submission
+序列化为参数快照并初始化 `BacktestMetrics`，使用该快照记录开始日志，再把 `experiment_name`
+和 `metrics` 随 submission 传给对应的具名 workflow。快照、日志及最终制品的内容由
+[Backtest 结果契约](../offline_workflow_contract.md#backtest-workflow)定义；CLI 此时只构造内存记录，
+不写参数或 metrics 文件。只有 signal/strategy_eval/full 接收并记录静态 BacktestConfig，
+其唯一字段是 min_listing_calendar_days；risk/execution 不消费或记录模型设置。
+初始现金只来自 initial_account。HTTP 使用同一字段模型，build_cli_command 用一个
+`--input-json` 参数保留嵌套 JSON，Job UUID 作为 experiment ID。

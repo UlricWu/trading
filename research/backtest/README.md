@@ -472,11 +472,12 @@ workflow 同时承担组装与执行，Instrumentation 的作用域甚至在报�
 原始交易事实必须先保存，full 才读取未来成熟标签做事后评价；失败原样传播、停止后续
 Step，已完成的原子文件保留。报告成功后才能结束本次执行作用域。
 
-这不要求把每次赋值或构造函数都包装成 Step。实验身份及不可覆盖检查、请求参数摘要、
-日程解析和依赖构造仍由 workflow 拥有；例如读取市场日程来构造 ReplayClock 是组装的
+这不要求把每次赋值或构造函数都包装成 Step。CLI 统一准备实验名称、参数快照、初始 metrics
+和开始日志；日程解析和依赖构造仍由 workflow 拥有，例如读取市场日程来构造 ReplayClock 是组装的
 前提。解析信号来源可准备决策时间和可见输入，但模型预测生产必须在相应 Step 中执行；
 交易模式只在对应决策时点生产，不能为了统一 signal 的批量形式而提前运行所有预测。
-`mode`、参数快照和 `not_run` 是 workflow 已确定的输出范围描述，不控制共享 Step 的行为。
+CLI 准备的 `mode`、参数快照和 workflow 补充的 `not_run` 只描述本次运行及输出范围，
+不控制共享 Step 的行为。
 
 Context 同样按必要性切分。单次评价只携带本任务的输入事实和待发布结果；逐时点
 `BacktestContext` 继续只包含当前可见事实与动作，`BacktestState` 只延续交易状态。
@@ -704,8 +705,9 @@ CLI 仍保留 `backtest --mode ...`。在已有 CLI/请求构造边界一次完�
 | `execution_eval` / `run_execution_evaluation` | `ExecutionEvalSubmission`：`start: str`、`end: str`、`order_refs: tuple[Path, ...]`、`initial_account: InitialAccount`、`execution: FakeExecutionConfig`；记录含委托与撤单时间序列 |
 | `full_backtest` / `run_full_backtest` | `FullBacktestSubmission`：`start: str`、`end: str`、`signal: SignalInput`、`strategy: StrategyConfig`、`initial_account: InitialAccount`、`risk: RiskConfig`、`execution: FakeExecutionConfig` |
 
-submission 只保留任务实际需要的日期范围；`experiment_id` 和 `PathManager` 继续由
-composition root 显式传入。记录输入的 `start/end` 选择决策时点或委托产生时点，撮合数据
+submission 只保留任务实际需要的日期范围；CLI 将 experiment_id 转为实验名称，并将
+`experiment_name`、初始 `BacktestMetrics` 和 `PathManager` 显式传给 workflow。
+记录输入的 `start/end` 选择决策时点或委托产生时点，撮合数据
 另需覆盖已选订单的有效窗口，评价数据另需覆盖标签成熟范围；不能统一截到 `end` 而截掉
 最后一笔交易或标签。执行配置另明确模拟终点，停止产生新入场意图后，已有订单与退出
 计划仍按日程处理到该终点；不能为了补全最后一笔交易而无限延长回放。期末估值所需的
@@ -713,6 +715,28 @@ composition root 显式传入。记录输入的 `start/end` 选择决策时点�
 `BacktestSubmission` 改为这五种类型的联合别名，不增加
 带大量 `None` 字段的公共基类。五种类型之间允许重复少量 `start/end` 字段，不为此引入
 继承、字段混入或反射构造。拒绝该模式不接受的字段，避免传入的风险参数被默默忽略。
+
+2026-10-11 用户进一步确定五种回测统一命名为 `backtest_{today}_{experiment_id}`，
+today 在 CLI 完成请求解析和配置加载后按 Asia/Shanghai 读取一次。日期范围与案例引用属于任务参数，
+不再决定实验目录名称；HTTP 已使用 Job UUID，CLI 调用方为每次运行提供新的唯一 ID。
+按用户明确选择，日期加 UUID/唯一 ID 重名视为不可能，不保留目录存在性预检、重名拒绝或
+排他创建。文件写入失败仍原样传播、停止后续步骤并保留已写文件；此决定只调整回测身份，
+Training 保留原有命名及冲突规则。
+
+同日用户明确要求将共同运行准备移到 `@app.command()` 的 backtest 入口并删除 `_start`。
+CLI 已是人工命令与 HTTP Job 子进程的共同入口；在分派前构造一次参数快照、初始 metrics
+并记录开始日志，可让五个 workflow 直接接收同一份运行记录，无需保留额外的准备 helper。
+训练与回测的 experiment ID 格式契约在 `--experiment-id` 参数声明绑定的 Typer 回调中
+统一建立，非法 ID 在进入命令函数前拒绝；命令体不再手动调用包装层，PathManager 不再
+提供 CLI 专用的 ID 校验。该调整保留原字符集与长度限制，并将规则及错误转换收口到实际
+输入边界，避免路径工具承担 CLI 字段契约。
+Workflow 的 `experiment_id` 入参改为 `experiment_name` 和 `metrics`，仍负责自己的
+`not_run`、依赖与 Step 编排；最终 `MetricsPersistStep` 保存参数和结果。用户同日确认删除
+五个 workflow 中的运行目录预建：预测、事实与指标的写入均已通过 `FileSystem.atomic_path`
+创建所需父目录，重复 `mkdir` 没有独立职责。目录随首次制品写入创建，输入准备或执行在
+首次写入前失败不留下空运行目录；写入过程中失败则保留已经创建的目录和制品。
+此处是用户已确定的直接采用设计，拟议 owner 与实现同步，不新增研究候选，也不表示
+H02/H03 整体已采用。
 
 请求中的稳定结构按以下边界表达；类型名只对应当前确有两种来源或业务事实的差异：
 
@@ -750,12 +774,12 @@ model_ref，不能为了旧设计重新发明绑定平台。本轮对模型输�
 起点，不能裁剪掉区间前的订单却沿用更早账户；第一轮调度也不能清空快照中的当日买入
 或可卖限制。首轮初始挂单为空；接续已有挂单须提供原始提交和占用事实，本轮不靠
 默认值假装支持恢复运行。
-上述 union 在请求解析边界路由；现有 experiment 命名若需要日期，风险任务从已校验案例
-取得覆盖范围，不能生成虚假的模型日期。任务适配变化同时列入 CLI/Job API 验收。
+上述 union 在 CLI 完成共同运行准备后路由；风险任务的事实覆盖来自已校验案例，
+实验名称使用运行日期，不能生成虚假的模型日期。任务适配变化同时列入 CLI/Job API 验收。
 
 五个 workflow 都是显式编排并返回 `None`，结果写入本次 experiment。它们的共同调用形状
-以 full 为例；其余入口仅换用表中对应的函数名和 submission 类型。省略号表示尚未
-实施的函数体，不作为 public API 的使用示例：
+以 full 为例；其余入口换用表中对应的函数名和 submission 类型，risk/execution 不接收
+`backtest_config`。省略号仅省略函数体，不作为 public API 的使用示例：
 
 ```python
 # filepath: src/workflows/backtest.py
@@ -763,7 +787,9 @@ def run_full_backtest(
     *,
     submission: FullBacktestSubmission,
     path_manager: PathManager,
-    experiment_id: str,
+    experiment_name: str,
+    metrics: BacktestMetrics,
+    backtest_config: BacktestConfig,
 ) -> None: ...
 ```
 
@@ -1305,6 +1331,86 @@ PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -B -m pytest -q -p no:cacheprovider \
 本节与对应实现、测试一并提交到该分支，无需跨分支 merge。提交准备仅更新本节 Git 状态，
 不重复运行未变化的代码测试。未 push、合入 `dev`、release 或 deploy，H02/H03 的整体
 正式化状态仍为 open。
+
+### 回测运行准备验收（2026-10-11）
+
+按[入口与请求类型](#入口与请求类型)中的日期加唯一 ID 及 CLI 共同准备决定，在
+`feature/backtest-h03` 的 `f26ae27ba52a3b64c63f14a8a2004bd8278d98ea` 加本轮工作树上同步
+实现、拟议 owner、路径示例及测试。命名调整的首轮验收中，上海午夜前后的两个新增场景
+在旧实现上均因新目录不存在而失败；修改后五种模式共用运行日命名，以下命令取得
+**140 passed**，240 条既有 joblib/NumPy 弃用警告：
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -B -m pytest -q -p no:cacheprovider \
+  tests/workflows/test_backtest.py tests/trading/backtest tests/utils/test_path.py \
+  --tb=short --show-capture=no
+```
+
+首轮还验证原始写入故障向上传播并保留先前文件；移除已被新契约取消的同名拒绝断言，
+改为验证使用新 ID 再次运行成功且不改变原失败文件。该结果只对应命名调整时的代码状态。
+
+随后将运行准备移到 CLI，删除 `_start`，五个 workflow 改为显式接收实验名称和初始
+metrics。上海跨日与开始日志断言迁到 `tests/test_cli.py`；workflow 测试显式构造运行记录，
+继续覆盖交易结果、输入失败、制品顺序、异常传播及收到的参数快照原样持久化。既有合成
+交易输入仍为 2026-07 的行情，运行名称固定为 2026-10-11；CLI 的无日期风险案例另用
+UTC 2026-10-10 15:59 和 16:00 验证上海跨日。迁移后的重新验证命令为：
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -B -m pytest -q -p no:cacheprovider \
+  tests/test_cli.py tests/workflows/test_backtest.py --tb=short --show-capture=no
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -B -m pytest -q -p no:cacheprovider \
+  tests/config/test_backtest_config.py tests/jobs tests/trading/backtest tests/utils/test_path.py \
+  --tb=short --show-capture=no
+```
+
+Python 3.13.13、pytest 9.0.3 下分别为 **71 passed**（240 条既有 joblib/NumPy 弃用警告）与
+**282 passed**，合计 353 项，为 CLI 运行准备迁移完成时的结果。覆盖五种 CLI 路由只准备一次日期、参数包含实际默认值、只记录
+所用配置、日志与传入 metrics 的参数一致，以及真实风险评价输出复用开始日志中的快照。
+失败场景保留参数日志、原异常与先前制品，不生成成功报告。
+
+后续将 experiment ID 校验移到参数声明时，把 PathManager 原有 4 个合法值与 5 个非法值
+场景迁到 CLI，并分别覆盖 train/backtest。修改前这 18 个场景有 5 项训练入口失败：空值、
+非法首字符、首部空格、路径分隔符和 65 字符 ID 都会先构造 submission，再被拒绝。
+修改后使用同一输入集验证合法 ID 原样传入运行身份，非法 ID 在请求构造、配置加载和
+workflow 调用前以退出码 2 拒绝，错误指出 `--experiment-id`。本次受影响范围的验证为：
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -B -m pytest -q -p no:cacheprovider \
+  tests/test_cli.py tests/utils/test_path.py --tb=short --show-capture=no
+```
+
+结果为 **83 passed**；两个命令的 help 与缺少必填 ID 行为另通过 CLI 调用检查。
+该轮未重复运行未受参数边界调整影响的交易计算测试。
+
+移除目录预建时，在既有五模式完整流程、预测失败及风控失败测试中增加目录存在时机
+断言；输入仍为上述临时目录中的固定模型、2026-07 合成行情与预测记录，运行名称固定为
+2026-10-11。修改前运行以下回归子集得到 **7 failed、2 passed、24 deselected**：五种模式
+首次制品写入前，以及预测失败和风控失败后，都发现已提前创建的运行目录；两个已有制品
+的失败场景通过。该失败结果对应上述 HEAD 加此前运行准备修改和本轮断言、尚未删除
+五处 `mkdir` 的工作树。
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -B -m pytest -q -p no:cacheprovider \
+  tests/workflows/test_backtest.py \
+  -k 'every_mode_measures or rule_and_report_errors or signal_production_and_publication_failures' \
+  --tb=short --show-capture=no
+```
+
+删除五处预建后，以同一夹具重新验证 workflow 及其 CLI 调用方：
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -B -m pytest -q -p no:cacheprovider \
+  tests/test_cli.py tests/workflows/test_backtest.py --tb=short --show-capture=no
+```
+
+结果为 **89 passed**，240 条既有 joblib/NumPy 弃用警告。五种模式在首次写入前均无运行目录，
+随后正常生成报告；预测或风控在首次写入前失败不创建目录，指标、事实或报告失败仍保留
+先前制品及原异常。未运行全仓测试或真实市场实验，验证范围限于本次目录创建副作用及
+受影响调用链。
+这些直接采用设计均已由用户明确指定，本地实现已验证。用户随后明确要求将上述改动
+commit；实现、拟议 owner、测试与本节一并提交到 `feature/backtest-h03`。提交准备仅更新
+本节 Git 状态并检查差异，不重复运行未变化的代码测试。未 push、merge、release 或 deploy，
+H02/H03 仍为 open。
 
 ## H03 后续行情驱动的模拟执行
 

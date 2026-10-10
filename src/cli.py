@@ -4,12 +4,14 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Mapping
 from typing import Annotated, NoReturn
 
 import typer
 from pydantic import ValidationError
 
+from src import logs
 from src.config.app_config import AppConfig
 from src.jobs.requests import (
     InvalidJobRequest,
@@ -23,6 +25,7 @@ from src.jobs.requests import (
     create_stock_1430_fusion_backfill_submission,
     create_training_submission,
 )
+from src.trading.backtest.reporting.metrics import BacktestMetrics
 from src.utils.datetime_utils import DateTimeUtils
 from src.utils.logger import configure_cli_logging
 from src.utils.path import PathManager
@@ -32,6 +35,7 @@ from src.workflows.backtest import (
 )
 from src.jobs.requests import (
     SignalEvalSubmission, RiskRuleEvalSubmission, ExecutionEvalSubmission, StrategyEvalSubmission,
+    FullBacktestSubmission,
 )
 from src.workflows.offline_daily_data import (
     run_feature_backfill,
@@ -48,11 +52,10 @@ from src.workflows.trade_calendar import run_trade_calendar_bootstrap
 app = typer.Typer(help="MinQuant CLI")
 
 
-def _require_experiment_id(value: str) -> str:
-    try:
-        return PathManager.require_experiment_id(value)
-    except (TypeError, ValueError) as exc:
-        raise typer.BadParameter(str(exc), param_hint="--experiment-id") from None
+def _validate_experiment_id(value: str) -> str:
+    if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", value) is None:
+        raise typer.BadParameter("must match [A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+    return value
 
 
 def _raise_bad_parameter(
@@ -328,7 +331,7 @@ def train(
     model: str = typer.Option(..., "--model"),
     feature_group: str = typer.Option(..., "--feature-group"),
     label_group: str = typer.Option(..., "--label-group"),
-    experiment_id: str = typer.Option(..., "--experiment-id"),
+    experiment_id: str = typer.Option(..., "--experiment-id", callback=_validate_experiment_id),
     eval_start: str | None = typer.Option(None, "--eval-start"),
     eval_end: str | None = typer.Option(None, "--eval-end"),
     eval_gap_sessions: Annotated[int, typer.Option("--eval-gap-sessions")] = 0,
@@ -366,7 +369,6 @@ def train(
             "model": "--model", "dataset": "--feature-group/--label-group",
             "dataset.feature_group": "--feature-group", "dataset.label_group": "--label-group",
         })
-    experiment_id = _require_experiment_id(experiment_id)
     app_config = AppConfig.load()
     run_offline_training(
         models=app_config.models,
@@ -379,7 +381,7 @@ def train(
 @app.command()
 def backtest(
     mode: str = typer.Option(..., "--mode"),
-    experiment_id: str = typer.Option(..., "--experiment-id"),
+    experiment_id: str = typer.Option(..., "--experiment-id", callback=_validate_experiment_id),
     input_json: str = typer.Option(..., "--input-json"),
 ) -> None:
     """Run the selected evaluation using only its own validated input fields.
@@ -388,7 +390,6 @@ def backtest(
         backtest(mode="signal_eval", experiment_id="signal-1",
                  input_json='{"start":"2026-07-03","end":"2026-07-03","signal":{"type":"recorded","prediction_refs":[]}}')
     """
-    experiment_id = _require_experiment_id(experiment_id)
     try:
         fields = json.loads(input_json)
     except json.JSONDecodeError as exc:
@@ -401,19 +402,32 @@ def backtest(
         raise typer.BadParameter(f"{exc.field}: {exc}", param_hint="--input-json") from exc
     app_config = AppConfig.load()
     pm = PathManager(app_config.storage_root)
+    today = DateTimeUtils.today()
+    name = f"backtest_{today}_{experiment_id}"
+    parameters = submission.model_dump(mode="json")
+    if isinstance(submission, (SignalEvalSubmission, StrategyEvalSubmission, FullBacktestSubmission)):
+        parameters["backtest_config"] = app_config.backtest.model_dump(mode="json")
+    metrics = BacktestMetrics(mode=submission.mode, parameters=parameters, not_run={})
+    labels = (("mode", "模式"), ("start", "开始日期"), ("end", "结束日期"),
+              ("signal", "信号输入"), ("case_refs", "风控案例"), ("order_refs", "委托输入"),
+              ("strategy", "策略"), ("initial_account", "初始账户"), ("risk", "风控"),
+              ("execution", "执行"), ("kind", "任务"), ("backtest_config", "运行配置"))
+    summary = "\n".join(f"{label} {key}={json.dumps(metrics.parameters[key], ensure_ascii=False)}"
+                        for key, label in labels if key in metrics.parameters)
+    logs.info(f"▶️ 回测任务; experiment={name}\n{summary}")
     if isinstance(submission, SignalEvalSubmission):
         run_signal_evaluation(submission=submission, path_manager=pm,
-                              experiment_id=experiment_id, backtest_config=app_config.backtest)
+                              experiment_name=name, metrics=metrics, backtest_config=app_config.backtest)
     elif isinstance(submission, RiskRuleEvalSubmission):
-        run_risk_rule_evaluation(submission=submission, path_manager=pm, experiment_id=experiment_id)
+        run_risk_rule_evaluation(submission=submission, path_manager=pm, experiment_name=name, metrics=metrics)
     elif isinstance(submission, ExecutionEvalSubmission):
-        run_execution_evaluation(submission=submission, path_manager=pm, experiment_id=experiment_id)
+        run_execution_evaluation(submission=submission, path_manager=pm, experiment_name=name, metrics=metrics)
     elif isinstance(submission, StrategyEvalSubmission):
         run_strategy_evaluation(submission=submission, path_manager=pm,
-                                experiment_id=experiment_id, backtest_config=app_config.backtest)
+                                experiment_name=name, metrics=metrics, backtest_config=app_config.backtest)
     else:
         run_full_backtest(submission=submission, path_manager=pm,
-                          experiment_id=experiment_id, backtest_config=app_config.backtest)
+                          experiment_name=name, metrics=metrics, backtest_config=app_config.backtest)
 
 
 if __name__ == "__main__":

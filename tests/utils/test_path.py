@@ -259,32 +259,13 @@ def test_training_paths_are_exact_and_experiment_scoped(tmp_path: Path) -> None:
 
 def test_backtest_artifacts_share_the_experiment_root(tmp_path: Path) -> None:
     pm = PathManager(tmp_path)
-    name = "backtest_2026-05-01_2026-05-31_run-1"
+    name = "backtest_2026-10-11_9c5a9280-922e-4d1a-af01-ce896eb9668c"
     run_dir = tmp_path / "experiments" / name
     assert pm.experiment_backtest_metrics(experiment_name=name) == run_dir / "metrics.json"
     assert pm.experiment_backtest_report(experiment_name=name) == run_dir / "report.html"
     assert pm.experiment_backtest_execution(experiment_name=name) == run_dir / "execution.parquet"
     assert pm.experiment_backtest_equity(experiment_name=name) == run_dir / "equity.parquet"
     assert not run_dir.exists()
-
-
-@pytest.mark.parametrize(
-    "experiment_id",
-    ["run-1", "A", "model.v2_3", "a" * 64],
-)
-def test_experiment_id_accepts_the_public_contract(experiment_id: str) -> None:
-    assert PathManager.require_experiment_id(experiment_id) == experiment_id
-
-
-@pytest.mark.parametrize(
-    "experiment_id",
-    ["", "-run", " run", "run/1", "a" * 65],
-)
-def test_experiment_id_rejects_values_outside_the_public_contract(
-    experiment_id: str,
-) -> None:
-    with pytest.raises(ValueError, match="experiment_id must match"):
-        PathManager.require_experiment_id(experiment_id)
 
 
 def test_path_segments_allow_unicode_internal_spaces_and_asterisks(

@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+import re
+from collections.abc import Callable, Iterator
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -12,9 +14,33 @@ from unittest.mock import Mock
 import pytest
 from typer.testing import CliRunner
 
-from src import cli
+from src import cli, logs
+from src.config.backtest_config import BacktestConfig
 from src.jobs.requests import build_cli_command, create_training_submission
 from src.utils.path import PathManager
+
+
+@pytest.fixture
+def backtest_log(tmp_path: Path) -> Iterator[Path]:
+    path = tmp_path / "backtest.log"
+    sink = logs.add(path, format="{message}", level="INFO")
+    try:
+        yield path
+    finally:
+        logs.remove(sink)
+
+
+def _logged_parameters(log_path: Path, *, experiment_name: str) -> dict[str, object]:
+    lines = log_path.read_text().splitlines()
+    assert lines[0] == f"▶️ 回测任务; experiment={experiment_name}"
+    assert sum(line.startswith("▶️ 回测任务;") for line in lines) == 1
+    parameters = {}
+    for line in lines[1:]:
+        match = re.fullmatch(r"[^ ]+ ([a-z_]+)=(.+)", line)
+        if match is None:
+            break
+        parameters[match[1]] = json.loads(match[2])
+    return parameters
 
 
 def _training_args() -> list[str]:
@@ -23,6 +49,61 @@ def _training_args() -> list[str]:
         "--model", "sgd_regression", "--feature-group", "daily_basic_selected_v1",
         "--label-group", "daily_close_return_rank_d1/v1",
     ]
+
+
+@pytest.mark.parametrize("command", ["train", "backtest"])
+@pytest.mark.parametrize("experiment_id", ["run-1", "A", "model.v2_3", "a" * 64])
+def test_experiment_id_option_preserves_valid_values(
+    command: str, experiment_id: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = SimpleNamespace(storage_root=tmp_path, models={}, feature_groups={},
+                             backtest=BacktestConfig(min_listing_calendar_days=120))
+    workflow_name = "run_offline_training" if command == "train" else "run_signal_evaluation"
+    workflow = Mock()
+    monkeypatch.setattr(cli.AppConfig, "load", Mock(return_value=config))
+    monkeypatch.setattr(cli.DateTimeUtils, "today", Mock(return_value="2026-10-11"))
+    monkeypatch.setattr(cli, workflow_name, workflow)
+    arguments = _training_args() if command == "train" else [
+        "--mode", "signal_eval", "--input-json",
+        '{"start":"2026-07-01","end":"2026-07-02","signal":{"type":"recorded","prediction_refs":[]}}',
+    ]
+
+    result = CliRunner().invoke(cli.app, [command, *arguments, f"--experiment-id={experiment_id}"])
+
+    assert result.exit_code == 0, result.output
+    workflow.assert_called_once()
+    if command == "train":
+        assert workflow.call_args.kwargs["experiment_id"] == experiment_id
+    else:
+        assert workflow.call_args.kwargs["experiment_name"] == f"backtest_2026-10-11_{experiment_id}"
+
+
+@pytest.mark.parametrize("command", ["train", "backtest"])
+@pytest.mark.parametrize("experiment_id", ["", "-run", " run", "run/1", "a" * 65])
+def test_experiment_id_option_rejects_invalid_values_before_command_execution(
+    command: str, experiment_id: str, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    create_submission = Mock()
+    load_config = Mock()
+    workflow = Mock()
+    create_name = "create_training_submission" if command == "train" else "create_backtest_submission"
+    workflow_name = "run_offline_training" if command == "train" else "run_signal_evaluation"
+    monkeypatch.setattr(cli, create_name, create_submission)
+    monkeypatch.setattr(cli.AppConfig, "load", load_config)
+    monkeypatch.setattr(cli, workflow_name, workflow)
+    arguments = _training_args() if command == "train" else [
+        "--mode", "signal_eval", "--input-json",
+        '{"start":"2026-07-01","end":"2026-07-02","signal":{"type":"recorded","prediction_refs":[]}}',
+    ]
+
+    result = CliRunner().invoke(cli.app, [command, *arguments, f"--experiment-id={experiment_id}"])
+
+    assert result.exit_code == 2, result.output
+    assert "--experiment-id" in result.output
+    assert "must match" in result.output
+    create_submission.assert_not_called()
+    load_config.assert_not_called()
+    workflow.assert_not_called()
 
 
 def test_data_calendar_bootstraps_through_the_current_market_year(
@@ -295,11 +376,14 @@ def test_train_command_round_trip_preserves_named_choices_and_ranges(
 def test_backtest_routes_validated_input_to_its_workflow(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     backtest_payload: Callable[[str], dict[str, object]], mode: str, workflow: str,
+    backtest_log: Path,
 ) -> None:
-    config = object()
+    config = BacktestConfig(min_listing_calendar_days=120)
     load_config = Mock(return_value=SimpleNamespace(storage_root=tmp_path, backtest=config))
+    today = Mock(return_value="2026-10-11")
     run = Mock()
     monkeypatch.setattr(cli.AppConfig, "load", load_config)
+    monkeypatch.setattr(cli.DateTimeUtils, "today", today)
     monkeypatch.setattr(cli, workflow, run)
     fields = backtest_payload(mode)
     del fields["kind"], fields["mode"]
@@ -307,14 +391,50 @@ def test_backtest_routes_validated_input_to_its_workflow(
         "--experiment-id", "run-1", "--input-json", json.dumps(fields)])
     assert result.exit_code == 0, result.output
     load_config.assert_called_once_with()
+    today.assert_called_once_with()
+    run.assert_called_once()
     args = run.call_args.kwargs
     assert args["submission"].mode.value == mode
-    assert args["experiment_id"] == "run-1"
+    assert args["experiment_name"] == "backtest_2026-10-11_run-1"
+    assert "experiment_id" not in args
     assert isinstance(args["path_manager"], PathManager)
+    metrics = args["metrics"]
+    expected = args["submission"].model_dump(mode="json")
+    assert metrics.mode.value == mode
+    assert metrics.not_run == {}
     if mode in ("signal_eval", "strategy_eval", "full_backtest"):
         assert args["backtest_config"] is config
+        expected["backtest_config"] = {"min_listing_calendar_days": 120}
     else:
         assert "backtest_config" not in args
+    assert metrics.parameters == expected
+    assert _logged_parameters(backtest_log, experiment_name=args["experiment_name"]) == expected
+    assert "observations" not in backtest_log.read_text()
+    assert not args["path_manager"].experiment_dir(experiment_name=args["experiment_name"]).exists()
+
+
+@pytest.mark.parametrize(("current_time", "run_date"), [
+    (datetime(2026, 10, 10, 15, 59, tzinfo=UTC), "2026-10-10"),
+    (datetime(2026, 10, 10, 16, 0, tzinfo=UTC), "2026-10-11"),
+])
+def test_backtest_preserves_start_parameters_in_the_persisted_result(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, backtest_log: Path,
+    current_time: datetime, run_date: str,
+) -> None:
+    monkeypatch.setattr(cli.DateTimeUtils, "now_utc", lambda: current_time)
+    monkeypatch.setattr(cli.AppConfig, "load", Mock(return_value=SimpleNamespace(storage_root=tmp_path)))
+    experiment_id = "9c5a9280-922e-4d1a-af01-ce896eb9668c"
+    fields = {"case_refs": [], "risk": {"rules": [{"type": "max_single_name", "max_ratio": 0.2}]}}
+    result = CliRunner().invoke(cli.app, ["backtest", "--mode", "risk_rule_eval",
+        "--experiment-id", experiment_id, "--input-json", json.dumps(fields)])
+    assert result.exit_code == 0, result.output
+    pm = PathManager(tmp_path)
+    name = f"backtest_{run_date}_{experiment_id}"
+    metrics = json.loads(pm.experiment_backtest_metrics(experiment_name=name).read_text())
+    assert metrics["risk_eval"]["case_count"] == 0
+    assert metrics["parameters"] == _logged_parameters(backtest_log, experiment_name=name)
+    assert "backtest_config" not in metrics["parameters"]
+    assert pm.experiment_backtest_report(experiment_name=name).is_file()
 
 
 @pytest.mark.parametrize(("old_mode", "mode"), [
@@ -360,7 +480,9 @@ def test_empty_runtime_schedule_propagates_as_exit_code_1(
     workflow_name: str,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    backtest_log: Path,
 ) -> None:
+    monkeypatch.setattr(cli.DateTimeUtils, "today", Mock(return_value="2026-10-11"))
     monkeypatch.setattr(
         cli.AppConfig,
         "load",
@@ -368,19 +490,28 @@ def test_empty_runtime_schedule_propagates_as_exit_code_1(
             return_value=SimpleNamespace(
                 storage_root=tmp_path,
                 models=object(), feature_groups=object(),
-                backtest=object(),
+                backtest=BacktestConfig(min_listing_calendar_days=120),
             )
         ),
     )
+    error = ValueError("empty schedule")
     monkeypatch.setattr(
         cli,
         workflow_name,
-        Mock(side_effect=ValueError("empty schedule")),
+        Mock(side_effect=error),
     )
 
     result = CliRunner().invoke(cli.app, arguments)
 
     assert result.exit_code == 1
+    assert result.exception is error
+    if arguments[0] == "backtest":
+        name = "backtest_2026-10-11_run-1"
+        parameters = _logged_parameters(backtest_log, experiment_name=name)
+        assert parameters["signal"] == {"type": "recorded", "prediction_refs": []}
+        assert parameters["backtest_config"] == {"min_listing_calendar_days": 120}
+        assert "✅ 回测报告" not in backtest_log.read_text()
+        assert not PathManager(tmp_path).experiment_dir(experiment_name=name).exists()
 
 
 @pytest.mark.parametrize(

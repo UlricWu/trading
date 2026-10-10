@@ -52,18 +52,21 @@ run_offline_training(
 ) -> None
 
 run_signal_evaluation(*, submission: SignalEvalSubmission, path_manager: PathManager,
-                      experiment_id: str, backtest_config: BacktestConfig) -> None
+                      experiment_name: str, metrics: BacktestMetrics,
+                      backtest_config: BacktestConfig) -> None
 run_risk_rule_evaluation(*, submission: RiskRuleEvalSubmission, path_manager: PathManager,
-                        experiment_id: str) -> None
+                        experiment_name: str, metrics: BacktestMetrics) -> None
 run_execution_evaluation(*, submission: ExecutionEvalSubmission, path_manager: PathManager,
-                         experiment_id: str) -> None
+                         experiment_name: str, metrics: BacktestMetrics) -> None
 run_strategy_evaluation(*, submission: StrategyEvalSubmission, path_manager: PathManager,
-                        experiment_id: str, backtest_config: BacktestConfig) -> None
+                        experiment_name: str, metrics: BacktestMetrics,
+                        backtest_config: BacktestConfig) -> None
 run_full_backtest(*, submission: FullBacktestSubmission, path_manager: PathManager,
-                  experiment_id: str, backtest_config: BacktestConfig) -> None
+                  experiment_name: str, metrics: BacktestMetrics,
+                  backtest_config: BacktestConfig) -> None
 ```
 
-`src/workflows` 只负责自身拥有的入口前置条件、实验身份、日程解析和依赖组装，并通过不可变 tuple 显式
+`src/workflows` 只负责自身拥有的入口前置条件、运行元数据、日程解析和依赖组装，并通过不可变 tuple 显式
 声明具体 step 及其顺序。Data 只使用一个 `DataPipeline`，Training 使用 `TrainingPipeline`；
 三种交易任务使用 `BacktestPipeline`，signal/risk 单次评价直接使用 `run_steps`。`DataPipeline` 只拥有 workflow 传入的单一 `steps`
 tuple 和 Instrumentation 作用域，不知道 data kind、日期 schedule、source、step 分类或具体
@@ -72,10 +75,12 @@ step 类型；它必须严格按传入顺序把同一个 Context 交给每个 st
 BacktestPipeline 拥有 timing schedule，并在回放结束后执行 workflow 明示的最终 Step 链。
 所有 Pipeline 都不得创建、发现、排序或按类型重排 step。
 
-Backtest 的一个 CLI 命令按有类型 submission 路由到五个具名 workflow；CLI 不组装
-Step，workflow 不再分派 mode，也不在 Step 链之外生产预测、汇总评价或生成报告。
-实验身份、输出范围元数据、日程解析和依赖构造仍在 workflow；不增加只转派这五个
-入口的统一 dispatcher。入口数量不决定执行器数量，交易循环及共同业务阶段继续复用。
+Backtest 的一个 CLI 命令统一准备实验名称和初始 `BacktestMetrics`，按有类型 submission
+路由到五个具名 workflow；CLI 不组装 Step。Workflow 接收调用方准备的 `experiment_name`
+和 `metrics`，使用其中的参数快照，并补充本任务的 `not_run`；日程解析和依赖构造仍在
+workflow。Workflow 不重新命名、构造参数快照或记录任务开始日志，不再分派 mode，也不在
+Step 链之外生产预测、汇总评价或生成报告；不增加只转派这五个入口的统一 dispatcher。
+入口数量不决定执行器数量，交易循环及共同业务阶段继续复用。
 
 公共编排抽象只允许结构化 `PipelineStep[ContextT]` 协议和 `run_steps(...)` 保序执行器。
 `run_steps(...)` 自动以具体 step 类名调用 `Instrumentation.measure(...)`；该公共调用形式
@@ -170,13 +175,19 @@ Training 与 backtest 的 experiment name 分别固定为：
 
 ```text
 training_{start}_{end}_{experiment_id}
-backtest_{start}_{end}_{experiment_id}
-backtest_risk_{experiment_id}  # 无日期范围的 risk_rule_eval
+backtest_{today}_{experiment_id}
 ```
 
-有日期范围的任务共用命名检查；risk 使用案例任务前缀，沿用相同 ID 与冲突规则。最终 experiment 目录已存在时，在日历读取和执行前
-以 `FileExistsError` 失败；该检查不创建、预留、锁定、清理或恢复目录。回测输入准备通过后，以 exist_ok=False
-创建运行目录，避免并发同名任务覆盖；后续失败保留现场。
+Training 沿用日期范围命名，最终 experiment 目录已存在时，在日历读取和执行前以
+`FileExistsError` 失败；该检查不创建、预留、锁定、清理或恢复目录。
+
+五种 Backtest 共用同一名称格式。`today` 是 CLI 完成请求解析和配置加载后通过 `DateTimeUtils.today()`
+读取一次的 Asia/Shanghai 当天日期，格式为 `YYYY-MM-DD`；它不取自回测 start/end、市场
+交易日或风控案例。调用方为每次运行提供新的唯一 experiment_id，HTTP 使用 Job UUID。
+日期加 UUID/唯一 ID 视为不会重名，不执行目录存在性预检、重名拒绝或排他创建。CLI 与
+workflow 不预建运行目录；首次制品写入时由持久化工具创建所需父目录，输入准备或执行
+在首次写入前失败不创建运行目录。写入过程中失败可能留下目录或先前已写制品，按
+[失败现场](#失败现场)保留。日期范围、mode 与案例引用保存在参数中，目录不再编码这些内容。
 
 Instrumentation 衡量 workflow 显式组装的 step，返回 `step.run(context)` 的原始结果，以
 `finally` 累计耗时和次数；异常只附加 scope 与 step 名称的 note，保留原异常对象及类型，
@@ -1006,7 +1017,7 @@ price_tick，卖价下界向上取 price_tick；execution 消费订单原报价�
 交易完成后先由 FactsPersistStep 保存原始 execution/equity、orders.json、targets.json，
 full 另保存 risk-cases.json；随后评价、写 metrics.json、生成 report.html。单项 signal/risk
 只保存自己的评价与报告，不写交易占位文件。每个文件原子写入，但整体不是多文件事务；
-失败保留已写制品且阻止后续步骤，同名 experiment 不覆盖。
+失败保留已写制品且阻止后续步骤。
 这些阶段全部由显式 Step 拥有，并处于同一次 Instrumentation 作用域内；完整链包括
 ReportStep 成功后才能正常结束作用域。准备阶段的身份或输入失败仍不创建成功制品。
 
@@ -1060,11 +1071,14 @@ metrics.json 的稳定顶层结构是 mode、parameters、not_run、prediction_r
   权益的算术平均。事件权益继续用于回撤，因此增加不改变账户/价格的唤醒不会改变日报告。
   组合结果不自动包含未声明的比较基线，不能据此给出模型/策略盈利采用结论。
 
-运行参数来自同一份已解析 submission 快照，记录全部实际值及默认值；使用模型的入口
-另保存 min_listing_calendar_days。原始请求日期不被筛选后的日期替换。开始日志在读输入前
-按模式、日期、信号/案例/委托、策略、账户、风控、执行和静态设置逐项显示 JSON；
-最终 metrics/HTML 复用该快照，不另生成参数制品。这样既能解释已保存结果，也能在
-输入失败、尚无 metrics 时定位请求；开始日志不是成功证据。
+CLI 在分派前从已解析 submission 构造一次参数快照，记录全部实际值及默认值；
+signal/strategy/full 另保存实际使用的 BacktestConfig，其中只有 min_listing_calendar_days，
+risk/execution 不保存未使用的模型配置。原始请求日期不被筛选后的日期替换。CLI 用该快照
+初始化 `BacktestMetrics(mode=submission.mode, parameters=parameters, not_run={})`，并在
+workflow 读取输入前，按模式、日期、信号/案例/委托、策略、账户、风控、执行和静态设置
+逐项记录 JSON 开始日志。Workflow 接收并填充初始 metrics，`MetricsPersistStep` 在评价完成后
+写入参数及结果，最终 HTML 复用已保存快照，不另生成参数制品。这样既能解释已保存结果，
+也能在输入失败、尚无 metrics 文件时定位请求；开始日志不是成功证据。
 
 Pipeline 使用注入的单调时钟，处理后距上次进度至少 5 秒且仍有后续唤醒时输出当前交易日、
 时点及累计处理数；短任务没有逐时进度。所有 Step 异常保留原对象，并附加 scope 和
@@ -1078,4 +1092,4 @@ Instrumentation 测量预测、评价、持久化及报告等明确 Step；合�
 ## 失败现场
 
 制品持久化或 report 失败时原异常传播，已经创建的 experiment 目录和制品保留为失败
-现场；它们不表示成功，也不被本次 workflow 自动清理。后续同名运行仍因目录存在而失败。
+现场；它们不表示成功，也不被本次 workflow 自动清理。重新发起回测使用新的 experiment_id。
