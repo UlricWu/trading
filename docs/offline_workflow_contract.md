@@ -1002,10 +1002,10 @@ equity.parquet 按 `EquityCurve.points` 的原有顺序保存六列：`ts_us` �
 
 orders.json 按原顺序保存完整 OrderIntent/CancelOrders，可直接用于 execution_eval；
 targets.json 保存风控前目标。risk-cases.json 保存账户与挂单快照，可直接用于 risk_eval。
-预测引用及内容摘要、市场/命令/案例输入 SHA-256、模型身份及标签摘要随指标/预测记录保存；
+预测引用、模型身份及模型/特征/标签摘要随指标/预测记录保存；
 行情原文件和运行环境没有自动复制归档，完整复演还需保留这些输入及准确源码版本。
 
-metrics.json 的稳定顶层结构是 mode、parameters、not_run、input_sha256、prediction_refs，
+metrics.json 的稳定顶层结构是 mode、parameters、not_run、prediction_refs，
 以及实际执行的 signal_eval、risk_eval、execution_eval、portfolio、final_account。
 未运行字段不写入；无样本保留零条目计数；数学无定义保存 null+reason；非法数值与 I/O
 错误不能被改成成功 null。具体解释：

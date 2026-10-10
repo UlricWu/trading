@@ -328,14 +328,14 @@ experiments/<experiment_name>/
 及其 parameters 中，不按 mode 另分目录。固定预测输入保留外部引用，不无条件复制。
 同日多次推理按 UTC epoch 微秒 ts_us 区分，预测 schema 与训练相同，不写回 training。
 
-metrics 同时保存实际评价、输入摘要和运行参数；不另写 binding.json、run_meta.json、
+metrics 同时保存实际评价、预测引用和运行参数；不另写 binding.json、run_meta.json、
 通用 replay metadata 或全部输入副本。orders.json、targets.json、risk-cases.json 是可复演
 业务事实，不是第二份运行元数据。各文件 schema、原始顺序、空值和发布时机归
 [Backtest workflow](../offline_workflow_contract.md#backtest-workflow)；本节唯一拥有布局和文件名。
 HTML 由 metrics 生成，不拥有另一份结果。模型目标评价保存在 metrics.signal_eval，
 不再使用旧 metrics.model_evaluation 加 T+1 raw-close 诊断形状。
 
-训练记录仍在模型同目录 schedule.json；预测中的模型/特征摘要及指标中的输入/标签摘要
+训练记录仍在模型同目录 schedule.json；预测中的模型/特征摘要及指标中的标签摘要
 不等于完整源码、环境、输入归档或模型历史可用性证明。PathManager 提供 experiment 根目录
 及既有固定路径方法；上述 JSON 事实与多时点预测由对应领域在该根目录按本节固定名称生成，
 不新增接受任意制品名称的公共路径 API，不根据文件存在性判断任务成功。

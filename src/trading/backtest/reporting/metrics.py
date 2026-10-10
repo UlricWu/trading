@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 
 from src.config.backtest_config import BacktestMode
 from src.trading.backtest.evaluation import (
@@ -41,7 +41,6 @@ class BacktestMetrics(BaseModel):
     mode: BacktestMode
     parameters: dict[str, object]
     not_run: dict[str, str]
-    input_sha256: dict[str, str] = Field(default_factory=dict)
     prediction_refs: tuple[str, ...] = ()
     signal_eval: SignalEvaluation | None = None
     risk_eval: RiskEvaluation | None = None

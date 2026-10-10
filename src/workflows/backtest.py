@@ -2,10 +2,9 @@
 """Compose independent evaluations and three shared-account replay workflows."""
 from __future__ import annotations
 
-import hashlib
 import json
 from collections import defaultdict
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable
 from pathlib import Path
 from datetime import date
 from typing import cast
@@ -77,7 +76,6 @@ def run_signal_evaluation(
     with Instrumentation(name) as instrumentation:
         run_steps(context=context, steps=(SignalEvaluationStep(path_manager),), instrumentation=instrumentation)
     metrics.signal_eval = evaluate_signals(context.observations, decision_dates=context.decision_dates)
-    metrics.input_sha256 = _input_hashes(context.prediction_refs)
     metrics.prediction_refs = tuple(str(ref) for ref in context.prediction_refs)
     metrics.not_run = {"strategy": "signal_only", "risk": "signal_only", "execution": "signal_only"}
     _publish(metrics, path_manager, name)
@@ -100,7 +98,6 @@ def run_risk_evaluation(
                   instrumentation=instrumentation)
     metrics.risk_eval = evaluate_risk(context.observations,
                                      configured_rules=tuple(rule.type for rule in submission.risk.rules))
-    metrics.input_sha256 = _input_hashes(submission.case_refs)
     metrics.not_run = {"signal": "fixed_risk_cases", "strategy": "fixed_risk_cases", "execution": "fixed_risk_cases"}
     _publish(metrics, path_manager, name)
 
@@ -144,7 +141,6 @@ def run_execution_evaluation(
         instrumentation=Instrumentation(name)).run(state)
     metrics.execution_eval = evaluate_execution(state.execution_ledger)
     metrics.final_account = _account_result(state)
-    metrics.input_sha256 = _input_hashes((config.market_ref, *submission.order_refs))
     metrics.not_run = {"signal": "frozen_commands", "strategy": "frozen_commands", "risk": "frozen_commands"}
     _publish(metrics, path_manager, name)
 
@@ -189,7 +185,6 @@ def run_tradable_alpha_evaluation(
         ledger=state.execution_ledger, annual_factor=config.annual_factor)
     metrics.final_account = _account_result(state)
     metrics.prediction_refs = tuple(str(ref) for ref in state.prediction_refs)
-    metrics.input_sha256 = _input_hashes((config.market_ref, *state.prediction_refs))
     metrics.not_run = {"signal_evaluation": "strategy_return_only", "risk": "reference_strategy",
                        "price_feasibility": "reference_fills"}
     _publish(metrics, path_manager, name)
@@ -243,7 +238,6 @@ def run_full_backtest(
         ledger=state.execution_ledger, annual_factor=config.annual_factor)
     metrics.final_account = _account_result(state)
     metrics.prediction_refs = tuple(str(ref) for ref in state.prediction_refs)
-    metrics.input_sha256 = _input_hashes((config.market_ref, *state.prediction_refs))
     _publish(metrics, path_manager, name)
 
 
@@ -290,14 +284,6 @@ def _account_result(state: BacktestState) -> AccountResult:
         sellable={symbol: account.t1_sellable(symbol) for symbol in account.positions},
         average_cost=account.avg_cost, trade_date=cast(str, account.current_day),
         equity=state.equity_curve.points[-1].equity, pending_order_ids=tuple(state.pending_orders))
-
-
-def _input_hashes(refs: Sequence[Path]) -> dict[str, str]:
-    digests = {}
-    for ref in dict.fromkeys(refs):
-        with ref.open("rb") as source:
-            digests[str(ref)] = hashlib.file_digest(source, "sha256").hexdigest()
-    return digests
 
 
 def _publish(metrics: BacktestMetrics, pm: PathManager, name: str) -> None:
