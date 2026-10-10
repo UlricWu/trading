@@ -340,8 +340,11 @@ HTML 由 metrics 生成，不拥有另一份结果。模型目标评价保存在
 
 训练记录仍在模型同目录 schedule.json；预测中的模型/特征摘要及指标中的标签摘要
 不等于完整源码、环境、输入归档或模型历史可用性证明。PathManager 提供 experiment 根目录
-及既有固定路径方法；上述 JSON 事实与多时点预测由对应领域在该根目录按本节固定名称生成，
-不新增接受任意制品名称的公共路径 API，不根据文件存在性判断任务成功。
+及固定路径方法；`experiment_backtest_predictions_dir(experiment_name=...)` 统一返回本次
+运行的 predictions 目录，workflow 通过该方法向预测 Step 传入目录。预测生产边界在该目录
+按交易日期与决策时间生成文件；上述 JSON 事实仍由对应领域在 experiment 根目录按本节
+固定名称生成。路径方法只返回路径，所需父目录由实际写入工具创建。不新增接受任意制品
+名称的公共路径 API，不根据文件存在性判断任务成功。
 
 新运行采用上述布局，历史结果保持原位，不自动移动或增加旧路径探测。旧 metrics 的
 model_evaluation observations 含绝对 prediction_ref，直接移动预测目录会破坏引用；

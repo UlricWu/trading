@@ -735,6 +735,9 @@ Workflow 的 `experiment_id` 入参改为 `experiment_name` 和 `metrics`，仍�
 五个 workflow 中的运行目录预建：预测、事实与指标的写入均已通过 `FileSystem.atomic_path`
 创建所需父目录，重复 `mkdir` 没有独立职责。目录随首次制品写入创建，输入准备或执行在
 首次写入前失败不留下空运行目录；写入过程中失败则保留已经创建的目录和制品。
+预测目录由 `PathManager.experiment_backtest_predictions_dir()` 统一返回，signal、strategy、
+full 三个 workflow 通过该方法向 Step 传入路径，避免各自重复表达 predictions 目录布局。
+该方法封装固定路径决策；预测生产边界继续生成日期与决策时间文件名，目录创建仍归写入工具。
 此处是用户已确定的直接采用设计，拟议 owner 与实现同步，不新增研究候选，也不表示
 H02/H03 整体已采用。
 
@@ -1407,10 +1410,27 @@ PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -B -m pytest -q -p no:cacheprovider \
 随后正常生成报告；预测或风控在首次写入前失败不创建目录，指标、事实或报告失败仍保留
 先前制品及原异常。未运行全仓测试或真实市场实验，验证范围限于本次目录创建副作用及
 受影响调用链。
-这些直接采用设计均已由用户明确指定，本地实现已验证。用户随后明确要求将上述改动
-commit；实现、拟议 owner、测试与本节一并提交到 `feature/backtest-h03`。提交准备仅更新
-本节 Git 状态并检查差异，不重复运行未变化的代码测试。未 push、merge、release 或 deploy，
+上述统一命名、CLI 运行准备与 ID 校验、移除目录预建的设计均已由用户明确指定并通过
+本地验证。用户随后明确要求 commit；实现、拟议 owner、测试与记录已提交到
+`feature/backtest-h03` 的 `91ebc974092116b187cc7e27d10bc8a20f5ac674`。提交准备仅更新
+Git 状态并检查差异，不重复运行未变化的代码测试。未 push、merge、release 或 deploy，
 H02/H03 仍为 open。
+
+随后按用户确认，将三个 workflow 重复的预测目录规则收口到
+`PathManager.experiment_backtest_predictions_dir()`，文件布局及实际写入时机不变。
+在上述提交加本轮工作树上，使用既有临时目录、固定实验名称、2026-07 合成行情与模型夹具，
+扩充路径测试以验证 predictions 目录的准确位置和路径查询无目录创建副作用，并运行：
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -B -m pytest -q -p no:cacheprovider \
+  tests/utils/test_path.py tests/workflows/test_backtest.py --tb=short --show-capture=no
+```
+
+结果为 **60 passed**，240 条既有 joblib/NumPy 弃用警告；受影响 workflow 的推理、制品与
+失败现场测试通过。未运行全仓测试或真实市场实验。用户随后明确要求 commit，本次路径
+收口的实现、拟议 owner、测试与记录一并提交到 `feature/backtest-h03`。提交准备仅更新
+Git 状态并检查差异，不重复运行未变化的代码测试。未 push、merge、release 或 deploy，
+不改变 H02/H03 的整体采用状态。
 
 ## H03 后续行情驱动的模拟执行
 

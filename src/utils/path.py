@@ -352,6 +352,16 @@ class PathManager:
         """
         return self.experiment_training_dir(experiment_name=experiment_name) / "schedule.json"
 
+    def experiment_backtest_predictions_dir(self, *, experiment_name: str) -> Path:
+        """Return the backtest prediction directory without creating it.
+
+        Example:
+            path = pm.experiment_backtest_predictions_dir(
+                experiment_name="backtest_2026-10-11_signal-1",
+            )
+        """
+        return self.experiment_dir(experiment_name=experiment_name) / "predictions"
+
     def experiment_backtest_metrics(self, *, experiment_name: str) -> Path:
         """Return the parameters and metrics file in the backtest experiment root.
 

@@ -73,7 +73,10 @@ def run_signal_evaluation(
         access=Access(pm=path_manager, processed_version=PROCESSED_VERSION), pm=path_manager,
         min_listing_calendar_days=backtest_config.min_listing_calendar_days)
     steps: tuple[PipelineStep[SignalEvaluationContext], ...] = (
-        PredictionGenerationStep(batches, path_manager.experiment_dir(experiment_name=experiment_name) / "predictions"),
+        PredictionGenerationStep(
+            batches=batches,
+            prediction_dir=path_manager.experiment_backtest_predictions_dir(experiment_name=experiment_name),
+        ),
         SignalEvaluationStep(path_manager),
         MetricsPersistStep(path_manager, experiment_name),
         ReportStep(ReportingBundle(path_manager), experiment_name),
@@ -186,7 +189,10 @@ def run_strategy_evaluation(
         start_us=submission.initial_account.ts_us, end_us=config.end_ts_us)
     per_timing_steps: tuple[PipelineStep[BacktestContext], ...] = (
         AdvanceExecutionStep(execution, market), AccountingStep(market),
-        SignalStep(batches, path_manager.experiment_dir(experiment_name=experiment_name) / "predictions"),
+        SignalStep(
+            batches=batches,
+            prediction_dir=path_manager.experiment_backtest_predictions_dir(experiment_name=experiment_name),
+        ),
         portfolio_step,
         SubmitTargetsStep(execution, market, windows, cast(int, submission.strategy.order_window_minutes)),
     )
@@ -230,7 +236,10 @@ def run_full_backtest(
         start_us=submission.initial_account.ts_us, end_us=config.end_ts_us)
     per_timing_steps: tuple[PipelineStep[BacktestContext], ...] = (
         AdvanceExecutionStep(execution, market), AccountingStep(market),
-        SignalStep(batches, path_manager.experiment_dir(experiment_name=experiment_name) / "predictions"),
+        SignalStep(
+            batches=batches,
+            prediction_dir=path_manager.experiment_backtest_predictions_dir(experiment_name=experiment_name),
+        ),
         portfolio_step,
         RiskDecisionStep(risk, market, {symbol: rule.buy_step_qty for symbol, rule in config.quantity_rules.items()}),
         SubmitTargetsStep(execution, market, windows, cast(int, submission.strategy.order_window_minutes)),

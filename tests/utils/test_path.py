@@ -261,6 +261,7 @@ def test_backtest_artifacts_share_the_experiment_root(tmp_path: Path) -> None:
     pm = PathManager(tmp_path)
     name = "backtest_2026-10-11_9c5a9280-922e-4d1a-af01-ce896eb9668c"
     run_dir = tmp_path / "experiments" / name
+    assert pm.experiment_backtest_predictions_dir(experiment_name=name) == run_dir / "predictions"
     assert pm.experiment_backtest_metrics(experiment_name=name) == run_dir / "metrics.json"
     assert pm.experiment_backtest_report(experiment_name=name) == run_dir / "report.html"
     assert pm.experiment_backtest_execution(experiment_name=name) == run_dir / "execution.parquet"
