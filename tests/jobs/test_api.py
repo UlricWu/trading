@@ -22,7 +22,7 @@ from src.config.secret_config import SecretConfig
 from src.jobs.api import create_app
 from src.jobs.requests import (
     parse_job_request,
-    RiskEvalSubmission,
+    RiskRuleEvalSubmission,
     JobSubmission,
     TrainingSubmission,
 )
@@ -94,7 +94,10 @@ def test_backtest_post_rejects_internal_fields_without_creating_a_job(
     assert runtime.jobs == {} and runtime.submitted == []
 
 
-@pytest.mark.parametrize("mode_fields", [{}, {"mode": None}, {"mode": "unknown"}])
+@pytest.mark.parametrize("mode_fields", [
+    {}, {"mode": None}, {"mode": "unknown"},
+    {"mode": "tradable_alpha_eval"}, {"mode": "risk_eval"},
+])
 def test_backtest_post_requires_an_explicit_supported_mode(
     mode_fields: dict[str, object],
 ) -> None:
@@ -140,7 +143,7 @@ class _StubRuntime:
         for submission in submissions:
             job_id = f"00000000-0000-4000-8000-{len(self.jobs) + 1:012d}"
             scope = (CaseJobScope(tuple(str(ref) for ref in submission.case_refs))
-                     if isinstance(submission, RiskEvalSubmission)
+                     if isinstance(submission, RiskRuleEvalSubmission)
                      else RangeJobScope(submission.start, submission.end))
             snapshot = JobSnapshot(
                 job_id=job_id,

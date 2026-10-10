@@ -29,8 +29,8 @@ from src.utils.parquet_writer import write_parquet_atomic
 from src.utils.filesystem import FileSystem
 from src.utils.datetime_utils import DateTimeUtils
 from src.utils.path import PathManager
-from src.workflows.backtest import (run_signal_evaluation, run_risk_evaluation, run_execution_evaluation,
-    run_tradable_alpha_evaluation, run_full_backtest)
+from src.workflows.backtest import (run_signal_evaluation, run_risk_rule_evaluation, run_execution_evaluation,
+    run_strategy_evaluation, run_full_backtest)
 from src.training.artifact import load
 from src.training.prediction import save_prediction_record
 from src.trading.backtest.market.replay import ReplayMarketInput
@@ -224,9 +224,11 @@ def test_full_facts_reproduce_independent_signal_risk_and_execution(
     assert signal["signal_eval"] == original["signal_eval"]
     assert "final_account" not in signal and "execution_eval" not in signal
     assert not pm.experiment_backtest_execution(experiment_name="backtest_2026-07-03_2026-07-03_signal").exists()
-    run_risk_evaluation(submission=create_backtest_submission(mode="risk_eval",
+    run_risk_rule_evaluation(submission=create_backtest_submission(mode="risk_rule_eval",
         case_refs=[str(run_dir / "risk-cases.json")], risk=fields["risk"]), path_manager=pm, experiment_id="risk")
-    assert _metrics(pm, "backtest_risk_risk")["risk_eval"] == original["risk_eval"]
+    risk = _metrics(pm, "backtest_risk_risk")
+    assert risk["mode"] == risk["parameters"]["mode"] == "risk_rule_eval"
+    assert risk["risk_eval"] == original["risk_eval"]
     execution = dict(fields["execution"])
     execution["risk_check_ts_us"] = []
     run_execution_evaluation(submission=create_backtest_submission(mode="execution_eval",
@@ -248,9 +250,10 @@ def test_reference_fills_are_account_constrained_and_ignore_quote_and_market_vol
     fields["execution"].pop("risk_check_ts_us")
     fields["initial_account"]["cash"] = "5000"
     fields["initial_account"]["peak_equity"] = 5000
-    run_tradable_alpha_evaluation(submission=create_backtest_submission(mode="tradable_alpha_eval", **fields),
+    run_strategy_evaluation(submission=create_backtest_submission(mode="strategy_eval", **fields),
         path_manager=pm, experiment_id="reference", backtest_config=BacktestConfig(min_listing_calendar_days=120))
     metrics = _metrics(pm, "backtest_2026-07-03_2026-07-03_reference")
+    assert metrics["mode"] == metrics["parameters"]["mode"] == "strategy_eval"
     assert metrics["final_account"]["positions"] == {"600000": 500}
     assert metrics["final_account"]["cash"] == "0"
     assert "execution_eval" not in metrics and "risk_eval" not in metrics
@@ -466,10 +469,10 @@ def test_rule_and_report_errors_preserve_the_original_exception(
 
 @pytest.mark.parametrize(('mode', 'per_tick', 'final'), [
     ('signal_eval', (), ('PredictionGenerationStep', 'SignalEvaluationStep', 'MetricsPersistStep', 'ReportStep')),
-    ('risk_eval', (), ('RiskEvaluationStep', 'RiskMetricsStep', 'MetricsPersistStep', 'ReportStep')),
+    ('risk_rule_eval', (), ('RiskEvaluationStep', 'RiskMetricsStep', 'MetricsPersistStep', 'ReportStep')),
     ('execution_eval', ('AdvanceExecutionStep', 'AccountingStep', 'RecordedOrdersStep'),
      ('FactsPersistStep', 'ExecutionEvaluationStep', 'BacktestSummaryStep', 'MetricsPersistStep', 'ReportStep')),
-    ('tradable_alpha_eval', ('AdvanceExecutionStep', 'AccountingStep', 'SignalStep', 'PortfolioStep', 'SubmitTargetsStep'),
+    ('strategy_eval', ('AdvanceExecutionStep', 'AccountingStep', 'SignalStep', 'PortfolioStep', 'SubmitTargetsStep'),
      ('FactsPersistStep', 'PortfolioEvaluationStep', 'BacktestSummaryStep', 'MetricsPersistStep', 'ReportStep')),
     ('full_backtest', ('AdvanceExecutionStep', 'AccountingStep', 'SignalStep', 'PortfolioStep',
                        'RiskDecisionStep', 'SubmitTargetsStep'),
@@ -485,7 +488,7 @@ def test_every_mode_measures_its_complete_chain_before_success(
     run_full_backtest(submission=create_backtest_submission(mode='full_backtest', **fields),
                       path_manager=pm, experiment_id='source', backtest_config=config)
     source = pm.experiment_dir(experiment_name='backtest_2026-07-03_2026-07-03_source')
-    name = 'backtest_risk_chain' if mode == 'risk_eval' else 'backtest_2026-07-03_2026-07-03_chain'
+    name = 'backtest_risk_chain' if mode == 'risk_rule_eval' else 'backtest_2026-07-03_2026-07-03_chain'
     measured: list[str] = []
     original_measure = Instrumentation.measure
 
@@ -504,8 +507,8 @@ def test_every_mode_measures_its_complete_chain_before_success(
         run_signal_evaluation(submission=create_backtest_submission(mode=mode,
             start=fields['start'], end=fields['end'], signal=fields['signal']),
             path_manager=pm, experiment_id='chain', backtest_config=config)
-    elif mode == 'risk_eval':
-        run_risk_evaluation(submission=create_backtest_submission(mode=mode,
+    elif mode == 'risk_rule_eval':
+        run_risk_rule_evaluation(submission=create_backtest_submission(mode=mode,
             case_refs=[str(source / 'risk-cases.json')], risk=fields['risk']),
             path_manager=pm, experiment_id='chain')
     elif mode == 'execution_eval':
@@ -514,13 +517,13 @@ def test_every_mode_measures_its_complete_chain_before_success(
             start=fields['start'], end=fields['end'], order_refs=[str(source / 'orders.json')],
             initial_account=fields['initial_account'], execution=execution),
             path_manager=pm, experiment_id='chain')
-    elif mode == 'tradable_alpha_eval':
+    elif mode == 'strategy_eval':
         reference = deepcopy(fields)
         reference.pop('risk')
         reference['strategy'].pop('quote')
         reference['execution'].pop('slippage_bp')
         reference['execution'].pop('risk_check_ts_us')
-        run_tradable_alpha_evaluation(submission=create_backtest_submission(mode=mode, **reference),
+        run_strategy_evaluation(submission=create_backtest_submission(mode=mode, **reference),
             path_manager=pm, experiment_id='chain', backtest_config=config)
     else:
         run_full_backtest(submission=create_backtest_submission(mode=mode, **fields),
@@ -659,7 +662,7 @@ def test_strategy_and_cost_changes_affect_returns_without_changing_fixed_predict
         fields['execution'].pop('slippage_bp')
         fields['execution'].pop('risk_check_ts_us')
         fields['execution']['fees']['min_commission'] = fee
-        run_tradable_alpha_evaluation(submission=create_backtest_submission(mode='tradable_alpha_eval', **fields),
+        run_strategy_evaluation(submission=create_backtest_submission(mode='strategy_eval', **fields),
             path_manager=pm, experiment_id=name, backtest_config=BacktestConfig(min_listing_calendar_days=120))
         results.append(_metrics(pm, f'backtest_2026-07-03_2026-07-03_{name}'))
     assert [r['final_account']['positions']['600000'] for r in results] == [100, 200, 200]

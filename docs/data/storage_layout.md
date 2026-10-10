@@ -322,7 +322,7 @@ experiments/<experiment_name>/
 └── report.html
 ```
 
-日期任务使用 `backtest_{start}_{end}_{experiment_id}`，risk_eval 使用
+日期任务使用 `backtest_{start}_{end}_{experiment_id}`，risk_rule_eval 使用
 `backtest_risk_{experiment_id}`，不再增加重复 backtest/report 子目录。五种 mode 共用
 以上根布局，仅生成实际能力的制品；signal/risk 不创建交易占位文件。mode 保存在 metrics
 及其 parameters 中，不按 mode 另分目录。固定预测输入保留外部引用，不无条件复制。

@@ -53,12 +53,12 @@ run_offline_training(
 
 run_signal_evaluation(*, submission: SignalEvalSubmission, path_manager: PathManager,
                       experiment_id: str, backtest_config: BacktestConfig) -> None
-run_risk_evaluation(*, submission: RiskEvalSubmission, path_manager: PathManager,
-                    experiment_id: str) -> None
+run_risk_rule_evaluation(*, submission: RiskRuleEvalSubmission, path_manager: PathManager,
+                        experiment_id: str) -> None
 run_execution_evaluation(*, submission: ExecutionEvalSubmission, path_manager: PathManager,
                          experiment_id: str) -> None
-run_tradable_alpha_evaluation(*, submission: TradableAlphaEvalSubmission, path_manager: PathManager,
-                              experiment_id: str, backtest_config: BacktestConfig) -> None
+run_strategy_evaluation(*, submission: StrategyEvalSubmission, path_manager: PathManager,
+                        experiment_id: str, backtest_config: BacktestConfig) -> None
 run_full_backtest(*, submission: FullBacktestSubmission, path_manager: PathManager,
                   experiment_id: str, backtest_config: BacktestConfig) -> None
 ```
@@ -171,7 +171,7 @@ Training 与 backtest 的 experiment name 分别固定为：
 ```text
 training_{start}_{end}_{experiment_id}
 backtest_{start}_{end}_{experiment_id}
-backtest_risk_{experiment_id}  # 无日期范围的 risk_eval
+backtest_risk_{experiment_id}  # 无日期范围的 risk_rule_eval
 ```
 
 有日期范围的任务共用命名检查；risk 使用案例任务前缀，沿用相同 ID 与冲突规则。最终 experiment 目录已存在时，在日历读取和执行前
@@ -824,9 +824,9 @@ metrics。制品按“模型”“IC 指标 JSON”“完整诊断 HTML 报告�
 | mode / workflow | 计算及输入边界 | 结果及解释 |
 | --- | --- | --- |
 | `signal_eval` / `run_signal_evaluation` | 已保存预测，或给定模型产生的预测；复用训练的固定预测评价 | 模型目标 Rank IC、逐决策覆盖、缺失与无定义原因；不要求策略、资金或市场，不创建交易账户 |
-| `risk_eval` / `run_risk_evaluation` | 固定的风控前目标或定时检查案例及明确规则 | 原始案例、决定及逐条规则观察；不加载模型，不撮合，不从后来的账户反推输入 |
+| `risk_rule_eval` / `run_risk_rule_evaluation` | 固定的风控前目标或定时检查案例及明确规则 | 原始案例、决定及逐条规则观察；不加载模型，不撮合，不从后来的账户反推输入 |
 | `execution_eval` / `run_execution_evaluation` | 固定委托/撤单、初始账户、市场和价格模型 | 订单接纳、报价判断、部分成交、费用、未完成原因和最终账户；不运行策略或业务风控 |
-| `tradable_alpha_eval` / `run_tradable_alpha_evaluation` | 信号、策略、账户和参考成交 | 原始目标、参考成交、费用、权益和策略收益；保留资金/可卖约束，不证明报价或市场量下可成交 |
+| `strategy_eval` / `run_strategy_evaluation` | 参考成交假设下的策略评价，输入为信号、策略和账户 | 原始目标、参考成交、费用、权益和策略收益；保留资金/可卖约束，不证明报价或市场量下可成交 |
 | `full_backtest` / `run_full_backtest` | 信号、策略、非空真实风控、账户、价格模型 | 在一条共享反馈路径内保存并评价信号、风控、成交和组合事实 |
 
 五个入口的公共返回值均为 `None`。CLI 根据 submission 类型选择入口，各 workflow
@@ -835,14 +835,14 @@ metrics。制品按“模型”“IC 指标 JSON”“完整诊断 HTML 报告�
 
 ```text
 signal_eval: PredictionGenerationStep → SignalEvaluationStep → MetricsPersistStep → ReportStep
-risk_eval: RiskEvaluationStep → RiskMetricsStep → MetricsPersistStep → ReportStep
+risk_rule_eval: RiskEvaluationStep → RiskMetricsStep → MetricsPersistStep → ReportStep
 ```
 
 三种交易模式的逐时点链为：
 
 ```text
 execution_eval: AdvanceExecutionStep → AccountingStep → RecordedOrdersStep
-tradable_alpha_eval: AdvanceExecutionStep → AccountingStep → SignalStep → PortfolioStep → SubmitTargetsStep
+strategy_eval: AdvanceExecutionStep → AccountingStep → SignalStep → PortfolioStep → SubmitTargetsStep
 full_backtest: AdvanceExecutionStep → AccountingStep → SignalStep → PortfolioStep → RiskDecisionStep → SubmitTargetsStep
 ```
 
@@ -855,7 +855,7 @@ full_backtest: AdvanceExecutionStep → AccountingStep → SignalStep → Portfo
 
 ```text
 execution_eval: FactsPersistStep → ExecutionEvaluationStep → BacktestSummaryStep → MetricsPersistStep → ReportStep
-tradable_alpha_eval: FactsPersistStep → PortfolioEvaluationStep → BacktestSummaryStep → MetricsPersistStep → ReportStep
+strategy_eval: FactsPersistStep → PortfolioEvaluationStep → BacktestSummaryStep → MetricsPersistStep → ReportStep
 full_backtest: FactsPersistStep → SignalEvaluationStep → RiskMetricsStep → ExecutionEvaluationStep → PortfolioEvaluationStep → BacktestSummaryStep → MetricsPersistStep → ReportStep
 ```
 
@@ -882,7 +882,7 @@ Pipeline 的最终链接收循环中最后返回的 State；不把最后一个�
 同日多个决策不会覆盖。同一时刻只允许一个批次，每批 symbol 唯一。
 
 `RecordedSignalInput` 直接消费预测文件及其已有模型身份，不重新推理。纯事后 signal
-评价无需交易使用核验；tradable/full 对每个模型的首次使用应用同一训练记录及成熟下界。
+评价无需交易使用核验；strategy_eval/full 对每个模型的首次使用应用同一训练记录及成熟下界。
 预测缺失是合法无信号，非法数值或身份错误不是无信号。Threshold/TopK 对缺分数的已有
 持仓和有效委托保留承诺并占用容量；不因缺少评分自动平仓。
 
@@ -985,7 +985,7 @@ OrderIntent 显式保存 ts_us、symbol、side、qty、order_id、active_ts_us�
 limit_price。full 的报价来自提交时可见价格及显式买卖 offset_bp：买价上界向下取
 price_tick，卖价下界向上取 price_tick；execution 消费订单原报价。价格模型将观察
 价格先加/减显式滑点，再检查买价不高于上限、卖价不低于下限，不能把不匹配价格夹回
-限价。tradable 不要求报价或滑点，不调用报价判断，使用随后完整观察的参考价。
+限价。strategy_eval 不要求报价或滑点，不调用报价判断，使用随后完整观察的参考价。
 
 只有 `active <= observation.start < observation.end <= expires` 的完整后续区间可成交。
 提交时不成交；最后可执行区间先撮合后到期撤余。价格模型的数量预算同时受余量、
@@ -1037,12 +1037,13 @@ equity.parquet 按 `EquityCurve.points` 的原有顺序保存六列：`ts_us` �
 同一时点已由 EquityCurve 替换的值只保存最终快照；该文件不是账户状态变更日志。
 
 orders.json 按原顺序保存完整 OrderIntent/CancelOrders，可直接用于 execution_eval；
-targets.json 保存风控前目标。risk-cases.json 保存账户与挂单快照，可直接用于 risk_eval。
+targets.json 保存风控前目标。risk-cases.json 保存账户与挂单快照，可直接用于 risk_rule_eval。
 预测引用、模型身份及模型/特征/标签摘要随指标/预测记录保存；
 行情原文件和运行环境没有自动复制归档，完整复演还需保留这些输入及准确源码版本。
 
 metrics.json 的稳定顶层结构是 mode、parameters、not_run、prediction_refs，
 以及实际执行的 signal_eval、risk_eval、execution_eval、portfolio、final_account。
+其中 risk_eval 是共享风险结果字段，由 risk_rule_eval 或 full_backtest 产生。
 未运行字段不写入；无样本保留零条目计数；数学无定义保存 null+reason；非法数值与 I/O
 错误不能被改成成功 null。具体解释：
 

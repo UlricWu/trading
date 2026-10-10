@@ -288,8 +288,8 @@ def test_train_command_round_trip_preserves_named_choices_and_ranges(
 
 
 @pytest.mark.parametrize(("mode", "workflow"), [
-    ("signal_eval", "run_signal_evaluation"), ("risk_eval", "run_risk_evaluation"),
-    ("execution_eval", "run_execution_evaluation"), ("tradable_alpha_eval", "run_tradable_alpha_evaluation"),
+    ("signal_eval", "run_signal_evaluation"), ("risk_rule_eval", "run_risk_rule_evaluation"),
+    ("execution_eval", "run_execution_evaluation"), ("strategy_eval", "run_strategy_evaluation"),
     ("full_backtest", "run_full_backtest"),
 ])
 def test_backtest_routes_validated_input_to_its_workflow(
@@ -311,10 +311,28 @@ def test_backtest_routes_validated_input_to_its_workflow(
     assert args["submission"].mode.value == mode
     assert args["experiment_id"] == "run-1"
     assert isinstance(args["path_manager"], PathManager)
-    if mode in ("signal_eval", "tradable_alpha_eval", "full_backtest"):
+    if mode in ("signal_eval", "strategy_eval", "full_backtest"):
         assert args["backtest_config"] is config
     else:
         assert "backtest_config" not in args
+
+
+@pytest.mark.parametrize(("old_mode", "mode"), [
+    ("tradable_alpha_eval", "strategy_eval"), ("risk_eval", "risk_rule_eval"),
+])
+def test_backtest_rejects_retired_modes_before_loading_config(
+    monkeypatch: pytest.MonkeyPatch, backtest_payload: Callable[[str], dict[str, object]],
+    old_mode: str, mode: str,
+) -> None:
+    load_config = Mock()
+    monkeypatch.setattr(cli.AppConfig, "load", load_config)
+    fields = backtest_payload(mode)
+    del fields["kind"], fields["mode"]
+    result = CliRunner().invoke(cli.app, ["backtest", "--mode", old_mode,
+        "--experiment-id", "run-1", "--input-json", json.dumps(fields)])
+    assert result.exit_code == 2
+    assert "mode" in result.output
+    load_config.assert_not_called()
 
 
 @pytest.mark.parametrize(

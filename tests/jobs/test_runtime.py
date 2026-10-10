@@ -403,7 +403,7 @@ def test_risk_job_exposes_case_scope_and_runs_without_range_fields(
     monkeypatch.setattr(runtime_module.subprocess, 'Popen', factory)
     runtime = JobRuntime(tmp_path, clock=lambda: _FIXED_NOW)
     try:
-        job = runtime.submit(parse_job_request(backtest_payload('risk_eval')))[0]
+        job = runtime.submit(parse_job_request(backtest_payload('risk_rule_eval')))[0]
         assert job.scope == CaseJobScope(('/data/cases.json',))
         factory.processes[0].finish(0)
         _wait_for_status(runtime, job.job_id, JobStatus.SUCCESS)

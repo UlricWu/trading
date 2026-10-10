@@ -150,12 +150,12 @@ CLI-only 的 `data-calendar`、`data-standard-bootstrap`、`data-level2-minute-b
   - 只创建一个 Job；公开 scope.start/end 是原始训练及评价闭区间的整体包络，
     不使用过滤后的交易日期重新计算。不接受 windows、逐日日期或技术时间参数。
 - `backtest`
-  - mode 显式选择 signal_eval、tradable_alpha_eval、risk_eval、execution_eval 或 full_backtest。
+  - mode 显式选择 signal_eval、strategy_eval、risk_rule_eval、execution_eval 或 full_backtest。
   - body 为 kind、mode 加所选模式的字段，完整 schema 复用
     [CLI Backtest](cli_contract.md#backtest) 的输入表；不把 CLI 的 input-json 字符串嵌入 HTTP。
     不接受其他模式的额外字段。
   - signal 使用 start/end/signal；risk 使用 case_refs/risk；execution 使用
-    start/end/order_refs/initial_account/execution；tradable 使用
+    start/end/order_refs/initial_account/execution；strategy_eval 使用
     start/end/signal/strategy/initial_account/execution；full 另须 risk。
   - 有日期时使用规范 YYYY-MM-DD 且 start<=end；risk 按全部案例输入定义完整任务，不虚构日期。
   - 每个请求只创建一个 Job；路径、数值和嵌套结构先由共享构造边界校验。
@@ -195,7 +195,7 @@ CLI-only 的 `data-calendar`、`data-standard-bootstrap`、`data-level2-minute-b
 ```json
 {
   "kind": "backtest",
-  "mode": "risk_eval",
+  "mode": "risk_rule_eval",
   "case_refs": ["/data/risk-cases.json"],
   "risk": {"rules": [{"type": "max_single_name", "max_ratio": 0.2}]}
 }
@@ -240,7 +240,7 @@ job_id, kind, scope, status, submitted_at, started_at, finished_at
 {"start": "YYYY-MM-DD", "end": "YYYY-MM-DD"}
 ```
 
-risk_eval 使用 `{"case_refs":["/absolute/risk-cases.json"]}`，不读取案例文件来伪造提交时
+risk_rule_eval 使用 `{"case_refs":["/absolute/risk-cases.json"]}`，不读取案例文件来伪造提交时
 的日期范围。两种 scope 均只包含各自的字段，不附加空 start/end。
 
 三个时间字段使用带 `Asia/Shanghai` UTC offset、包含微秒的 ISO 8601 字符串。

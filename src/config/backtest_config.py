@@ -25,9 +25,9 @@ class BacktestMode(str, Enum):
     """
 
     SIGNAL_EVAL = "signal_eval"
-    TRADABLE_ALPHA_EVAL = "tradable_alpha_eval"
+    STRATEGY_EVAL = "strategy_eval"
     EXECUTION_EVAL = "execution_eval"
-    RISK_EVAL = "risk_eval"
+    RISK_RULE_EVAL = "risk_rule_eval"
     FULL_BACKTEST = "full_backtest"
 
 

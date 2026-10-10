@@ -302,15 +302,15 @@ class SignalEvalSubmission(BaseModel):
         return self
 
 
-class RiskEvalSubmission(BaseModel):
+class RiskRuleEvalSubmission(BaseModel):
     """Evaluate all selected frozen risk cases without a model or account loop.
 
     Example:
-        submission = RiskEvalSubmission(mode="risk_eval", case_refs=("/data/cases.json",), risk=risk)
+        submission = RiskRuleEvalSubmission(mode="risk_rule_eval", case_refs=("/data/cases.json",), risk=risk)
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
-    mode: Literal[BacktestMode.RISK_EVAL]
+    mode: Literal[BacktestMode.RISK_RULE_EVAL]
     case_refs: tuple[Path, ...]
     risk: RiskConfig
     kind: Literal["backtest"] = "backtest"
@@ -353,16 +353,16 @@ class ExecutionEvalSubmission(BaseModel):
         return self
 
 
-class TradableAlphaEvalSubmission(BaseModel):
+class StrategyEvalSubmission(BaseModel):
     """Run a strategy using reference fills and real account constraints.
 
     Example:
-        submission = TradableAlphaEvalSubmission(mode="tradable_alpha_eval", start="2026-07-03",
+        submission = StrategyEvalSubmission(mode="strategy_eval", start="2026-07-03",
             end="2026-07-03", signal=signal, strategy=strategy, initial_account=account, execution=execution)
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
-    mode: Literal[BacktestMode.TRADABLE_ALPHA_EVAL]
+    mode: Literal[BacktestMode.STRATEGY_EVAL]
     start: str
     end: str
     signal: SignalInput
@@ -375,9 +375,9 @@ class TradableAlphaEvalSubmission(BaseModel):
     def _validate_reference(self) -> Self:
         _require_range(self.start, self.end)
         if self.execution.slippage_bp is not None or self.strategy.quote is not None:
-            raise ValueError("tradable_alpha_eval does not accept price-model or quote parameters")
+            raise ValueError("strategy_eval does not accept price-model or quote parameters")
         if self.execution.risk_check_ts_us:
-            raise ValueError("tradable_alpha_eval does not run risk checks")
+            raise ValueError("strategy_eval does not run risk checks")
         if self.strategy.order_window_minutes is None:
             raise ValueError("strategy requires order_window_minutes")
         if self.initial_account.ts_us >= self.execution.end_ts_us:
@@ -418,8 +418,8 @@ class FullBacktestSubmission(BaseModel):
 
 
 BacktestSubmission: TypeAlias = Annotated[
-    SignalEvalSubmission | RiskEvalSubmission | ExecutionEvalSubmission
-    | TradableAlphaEvalSubmission | FullBacktestSubmission,
+    SignalEvalSubmission | RiskRuleEvalSubmission | ExecutionEvalSubmission
+    | StrategyEvalSubmission | FullBacktestSubmission,
     Field(discriminator="mode"),
 ]
 

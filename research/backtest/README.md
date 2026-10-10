@@ -247,15 +247,23 @@ execution/full 必须使用价格模型，其余模式按小资金前提默认�
 
 ### 五种模式对应三个验证问题
 
-保留一个面向用户的 `backtest --mode ...` 命令。signal 与 tradable 分别检验信号本身和
+保留一个面向用户的 `backtest --mode ...` 命令。signal 与 strategy_eval 分别检验信号本身和
 信号形成的策略收益，共同回答信号价值问题；risk、execution 对应风控与成交问题，full
 组合全部验证。共用回放是内部能力，不增加 `replay` 模式或任意开关组合。
+
+2026-10-11 用户审阅命名建议后要求“执行”，确定将 `tradable_alpha_eval` 改为
+`strategy_eval`、`risk_eval` 改为 `risk_rule_eval`，请求类型与 workflow 同步命名，不保留
+旧任务名称别名。前者评价参考成交假设下的策略：资金、可卖数量和费用仍参与计算，但不
+验证报价与市场量下的可成交性；其结果受选股、仓位和持有规则共同影响，因此不以
+`tradable_alpha` 概括。后者评价固定案例中风控规则的决策与覆盖，规则对后续账户路径的
+影响另由完整回测验证。历史源码核查与既有验收记录保留当时名称；本次命名决定不改变
+五种任务的运行边界，也不表示 H02/H03 已合入目标分支。
 
 | 模式 | 运行边界 | 结果与可支持的结论 |
 | --- | --- | --- |
 | `signal_eval` | 评价固定预测与成熟标签；需要新预测时才加载模型和特征，不创建策略或交易状态 | `ICObservation` / `ICEvaluation`、模型目标 IC/Rank IC、样本键及预测/标签版本、缺失覆盖、无定义原因和分期表现 |
-| `tradable_alpha_eval` | 固定信号按明确组合/持仓规则交易，合法委托默认按参考价成交，保留账户与成本约束 | 原始目标、参考成交、费用、账户与权益；毛/净收益、换手和相对基线表现，不能证明实际成交可行性 |
-| `risk_eval` | 固定风控前目标或定时检查案例、账户/估值/挂单及规则参数直接进入真实风险实现，无需模型或撮合 | 原始案例、`RiskObservation` 和逐条规则观察；允许/缩减/拒绝数量、目标变化与规则覆盖 |
+| `strategy_eval` | 固定信号按明确组合/持仓规则交易，合法委托默认按参考价成交，保留账户与成本约束 | 原始目标、参考成交、费用、账户与权益；毛/净收益、换手和相对基线表现，不能证明实际成交可行性 |
+| `risk_rule_eval` | 固定风控前目标或定时检查案例、账户/估值/挂单及规则参数直接进入真实风险实现，无需模型或撮合 | 原始案例、`RiskObservation` 和逐条规则观察；允许/缩减/拒绝数量、目标变化与规则覆盖 |
 | `execution_eval` | 固定具体委托/撤单、初始账户、后续市场和执行假设，必须使用价格模型；不重跑模型、策略或业务风控 | 提交、拒绝、撤销、成交、剩余量、费用和账户；接纳率、成交数量比例、订单完成率、等待及未完成原因 |
 | `full_backtest` | 同一闭环内运行信号、策略、所选真实风控、价格模型、执行与结算，完成后评价同批事实 | 信号、风险与成交三类证据，以及整体收益、回撤、最终账户、未平仓与未完成情况 |
 
@@ -265,7 +273,7 @@ risk 的案例可来自人工边界场景或历史回放，必须保留风控前
 过风控。共用策略也可生成这些固定输入，但须记录产生过程和参考执行假设，不能把固定
 输入检验与动态闭环的结论混用。
 
-tradable 在首个符合日程的参考价上成交已接纳的合法剩余量，不因报价或市场量不足而等待。
+strategy_eval 在首个符合日程的参考价上成交已接纳的合法剩余量，不因报价或市场量不足而等待。
 参考价到时才可用于结算，缺价按输入契约处理；现金、数量及可卖约束仍有效，不能靠无限
 现金制造收益。零成本仅表示毛收益场景。signal/risk 没有成交动作，不因“默认买得到”
 创建执行器、虚假 fill 或改写风险案例中的账户和挂单。
@@ -434,7 +442,7 @@ NoOp，主要按 mode 切换 IdealExecution 与 ExecutionOrchestrator。它保�
 判断依据是输入、可观察结果及其依赖，而不是入口函数或 `if` 的数量。
 
 从结果反推，signal 需要固定预测及其标签评价，risk 需要固定风控案例及规则观察；
-execution 需要固定委托的账户路径，tradable 需要策略在参考成交下的收益，full 需要同一
+execution 需要固定委托的账户路径，strategy_eval 需要策略在参考成交下的收益，full 需要同一
 交易路径上的信号、策略、风控与执行事实。这五种任务不是同一完整任务的五个显示选项。
 例如删除 signal 的账户和撮合器仍可完成评价，删除 execution 的时钟和结算就无法复现
 挂单到期、成交和现金。因此真正必要的共同能力是业务公式、相关 Step 和执行不变量，
@@ -517,7 +525,7 @@ Kernel 同时推进同一交易账户。输入侧仅有的 bar 遍历可以保�
 - 实际策略的目标有多少被允许、缩减、拒绝，哪些规则导致差异；拒绝后还剩多少可执行
   交易机会，风险动作最终是否落实到持仓。
 
-固定输入检验由 risk_eval 完成；风控对未来账户路径的影响由完整回放及配对实验验证。
+固定输入检验由 risk_rule_eval 完成；风控对未来账户路径的影响由完整回放及配对实验验证。
 复验策略时须保存其风控前目标和上下文，不能用已调整目标替代原始请求。
 
 风险上下文含已成交持仓及有效委托的占用。禁止新增风险的规则必须阻止相关新委托，并
@@ -561,7 +569,7 @@ submit_targets。若入场原目标为 400、只成交 360、剩余 40 已经到
 
 修正为 RiskCase.target 可以为 None，唯一表示“没有新策略请求，检查当前持仓与有效挂单”。
 RiskManager.apply 同样接收可空目标，在同一个计算入口内完成规则判断与动作生成。
-风险输入从当时账户和挂单构造，不读取历史 target tape。独立 risk_eval 保存并复用相同
+风险输入从当时账户和挂单构造，不读取历史 target tape。独立 risk_rule_eval 保存并复用相同
 案例形状，因此与 full 的定时检查也能得到一致决策，不在两个入口复制转换算法。
 
 检查风险上界时不扣除未成交卖单；生成减风险动作时，保留原有买卖承诺的净目标。
@@ -610,14 +618,14 @@ adjusted = None if reviewed == committed else reviewed
 
 以下配对只改变表中变量，其余信号、市场输入、配置和初始账户保持一致，复用同一回放
 而不新增对照引擎。参考成交与市场观察驱动的 Fake 使用同一估值、账户制度及明确成本
-口径，执行参数的变化须列明。特别是 tradable 与 full 同时改变价格模型和风控：
+口径，执行参数的变化须列明。特别是 strategy_eval 与 full 同时改变价格模型和风控：
 
 | 比较 | 变化项 | 解释 |
 | --- | --- | --- |
 | 策略 A 与策略 B | 信号组合或交易规则 | 固定模型及执行条件后的策略差异 |
 | full 内风控方案 A 与 B | 所选规则或参数，价格模型固定 | 比较两套明确风险规则对闭环路径的影响；单项判断可另用相同 RiskCase 验证 |
 | execution 内相同冻结委托、不同价格模型参数 | 成交假设或滑点参数 | 比较价格未满足、成交数量、等待和成本；不重新生成报价或订单 |
-| tradable 与 full | 价格可成交性与风控共同变化 | 参考策略到完整回放的总体差异，不能全归因于风控或滑点 |
+| strategy_eval 与 full | 价格可成交性与风控共同变化 | 参考策略到完整回放的总体差异，不能全归因于风控或滑点 |
 
 每个闭环独立推进账户。改变成交后，后续持仓、风控输入和策略订单可能改变，因此两条净值
 之差是路径比较，不能自动当作可加总的精确损失归因。固定同一份风控输入或同一份委托
@@ -672,12 +680,12 @@ mode 只在请求路由和 workflow 组装边界出现，核心计算不接收�
 
 | 共享实现 | 使用方 |
 | --- | --- |
-| 固定预测读取/推理及 `SignalEvent` | signal、tradable、full；risk/execution 已有固定边界输入 |
-| 同一策略及 `PortfolioStep` | tradable、full |
+| 固定预测读取/推理及 `SignalEvent` | signal、strategy_eval、full；risk/execution 已有固定边界输入 |
+| 同一策略及 `PortfolioStep` | strategy_eval、full |
 | `RiskManager.apply` 与规则观察汇总 | risk、full |
-| 委托接纳、挂单推进、撤单、`SettlementEngine`、`PortfolioState`、估值与账本 | tradable、execution、full；价格处理按模式契约固定组装 |
+| 委托接纳、挂单推进、撤单、`SettlementEngine`、`PortfolioState`、估值与账本 | strategy_eval、execution、full；价格处理按模式契约固定组装 |
 | `evaluate_prediction_records` | signal、full |
-| 组合收益/费用/换手、委托/成交评价 | 分别由 tradable/full、execution/full 复用，消费各自实际产生的账户与交易事实 |
+| 组合收益/费用/换手、委托/成交评价 | 分别由 strategy_eval/full、execution/full 复用，消费各自实际产生的账户与交易事实 |
 
 指标分别归已有预测评价、风险评价和 `src/trading/backtest/evaluation.py` 的相应职责，
 不按 mode 复制公式。信号和风险单项评价不构造 NoOp 价格模型。
@@ -691,8 +699,8 @@ CLI 仍保留 `backtest --mode ...`。在已有 CLI/请求构造边界一次完�
 | mode / `src/workflows/backtest.py` 入口 | Submission 及必需字段（均无业务默认值） |
 | --- | --- |
 | `signal_eval` / `run_signal_evaluation` | `SignalEvalSubmission`：`start: str`、`end: str`、`signal: SignalInput`；评价目标来自信号关联模型 |
-| `tradable_alpha_eval` / `run_tradable_alpha_evaluation` | `TradableAlphaEvalSubmission`：`start: str`、`end: str`、`signal: SignalInput`、`strategy: StrategyConfig`、`initial_account: InitialAccount`、`execution: FakeExecutionConfig` |
-| `risk_eval` / `run_risk_evaluation` | `RiskEvalSubmission`：`case_refs: tuple[Path, ...]`、`risk: RiskConfig`；评价全部所选案例，时间覆盖取自案例事实 |
+| `strategy_eval` / `run_strategy_evaluation` | `StrategyEvalSubmission`：`start: str`、`end: str`、`signal: SignalInput`、`strategy: StrategyConfig`、`initial_account: InitialAccount`、`execution: FakeExecutionConfig` |
+| `risk_rule_eval` / `run_risk_rule_evaluation` | `RiskRuleEvalSubmission`：`case_refs: tuple[Path, ...]`、`risk: RiskConfig`；评价全部所选案例，时间覆盖取自案例事实 |
 | `execution_eval` / `run_execution_evaluation` | `ExecutionEvalSubmission`：`start: str`、`end: str`、`order_refs: tuple[Path, ...]`、`initial_account: InitialAccount`、`execution: FakeExecutionConfig`；记录含委托与撤单时间序列 |
 | `full_backtest` / `run_full_backtest` | `FullBacktestSubmission`：`start: str`、`end: str`、`signal: SignalInput`、`strategy: StrategyConfig`、`initial_account: InitialAccount`、`risk: RiskConfig`、`execution: FakeExecutionConfig` |
 
@@ -711,12 +719,12 @@ composition root 显式传入。记录输入的 `start/end` 选择决策时点�
 | 类型/事实 | 必要内容与所有权 |
 | --- | --- |
 | `ModelSignalInput` | 具体 model_ref；自动读取同目录 TrainingRunRecord，核对模型身份、训练数据定义和首次决策前的理论标签成熟下界，不隐式训练 |
-| `RecordedSignalInput` | prediction_refs 有序定位固定预测；事后 signal 复用已有模型身份校验，tradable/full 对每个模型首个实际决策增加与模型输入相同的训练记录核验 |
+| `RecordedSignalInput` | prediction_refs 有序定位固定预测；事后 signal 复用已有模型身份校验，strategy_eval/full 对每个模型首个实际决策增加与模型输入相同的训练记录核验 |
 | `SignalInput` | 上述两种类型的联合；由来源准备边界分别处理，交易计算只看到同一 `SignalEvent`，不识别来源类型 |
 | 初始账户 | 快照时刻与账户交易日、现金、持仓数量、可卖数量、持仓成本和计算所需的既有权益状态；全现金起步明确给空持仓，不能把已有仓位假装为零成本；运行时构造本次独占的 `PortfolioState` |
 | 风控输入记录 | `case_id`、风控前目标或表示定时检查的 None、当时 `RiskContext`；必要的历史峰值、估值和挂单占用属于输入，不能在离线复验时用后来账户补齐 |
-| Fake 成交配置 | 交易日程、模拟终点、执行观察与价格来源、资金/数量约束、明确费用及滑点；tradable 固定为参考成交，execution/full 必须声明 H03 的价格模型及适用数量假设，不能缺失后回退参考成交；小资金假设不推导未知冲击或排队模型 |
-| 报价规则或固定报价 | full 在原有策略配置中声明买卖报价来源与参数，由现有目标转委托计算根据最终方向生成 limit_price；execution 直接读取订单上的报价；tradable 无报价可成交性要求，不要求提供无用参数 |
+| Fake 成交配置 | 交易日程、模拟终点、执行观察与价格来源、资金/数量约束、明确费用及滑点；strategy_eval 固定为参考成交，execution/full 必须声明 H03 的价格模型及适用数量假设，不能缺失后回退参考成交；小资金假设不推导未知冲击或排队模型 |
+| 报价规则或固定报价 | full 在原有策略配置中声明买卖报价来源与参数，由现有目标转委托计算根据最终方向生成 limit_price；execution 直接读取订单上的报价；strategy_eval 无报价可成交性要求，不要求提供无用参数 |
 | 风控配置 | 有序的具名规则和对应有类型参数；解析为现有 `RiskManager` 使用的规则实例，不在核心传递 `dict[str, object]` 或另建动态插件 registry |
 
 初始账户、费用、风控及执行配置应使用明确模型。业务数值仍由具体任务和已确定规则给出，
@@ -767,7 +775,7 @@ Manager、五个引擎或只有转发职责的 `BacktestService`。
 
 #### 编排与状态：两个生命周期
 
-`BacktestPipeline` 只负责需要推进时间和账户的三种模式：`tradable_alpha_eval`、
+`BacktestPipeline` 只负责需要推进时间和账户的三种模式：`strategy_eval`、
 `execution_eval`、`full_backtest`。Workflow 绑定具体策略/风控/执行实现并给出不可变 Step
 顺序，Pipeline 推进日程、建立逐时 Context、调用 `run_steps`，随后建立结果 Context
 执行完整 `final_steps`，拥有直到报告结束的 Instrumentation 作用域；它不读取 mode，
@@ -843,8 +851,8 @@ TargetEvent 表示完整的总持仓目标，覆盖本次受控的持仓、挂�
 输出的股数由风险边界负责。数量按用户已确认的显式证券步长向下量化后形成 TargetEvent；内部执行不重复验证同一可信目标。执行边界原有
 资金、可卖和委托合法性职责仍然保留，独立于是否启用业务风控。
 
-省略某个能力只能发生在明确允许的 workflow 组合中：`signal_eval`、`tradable_alpha_eval`
-不组装风险 Step；`risk_eval`、`full_backtest` 必须提供真实、非空的所选规则。
+省略某个能力只能发生在明确允许的 workflow 组合中：`signal_eval`、`strategy_eval`
+不组装风险 Step；`risk_rule_eval`、`full_backtest` 必须提供真实、非空的所选规则。
 完整入口不能把配置缺失、规则构造失败或空规则集解释为“无需风控”。由入口的固定组合、
 请求校验和行为测试保证这一点，不给 Pipeline 增加 mode 判断、运行时反射或通用依赖图。
 
@@ -948,7 +956,7 @@ RecordedOrdersStep 的输入包含按原顺序排列的委托及撤单命令，�
 | 模式 | 完整 final_steps |
 | --- | --- |
 | execution | FactsPersistStep → ExecutionEvaluationStep → BacktestSummaryStep → MetricsPersistStep → ReportStep |
-| tradable | FactsPersistStep → PortfolioEvaluationStep → BacktestSummaryStep → MetricsPersistStep → ReportStep |
+| strategy_eval | FactsPersistStep → PortfolioEvaluationStep → BacktestSummaryStep → MetricsPersistStep → ReportStep |
 | full | FactsPersistStep → SignalEvaluationStep → RiskMetricsStep → ExecutionEvaluationStep → PortfolioEvaluationStep → BacktestSummaryStep → MetricsPersistStep → ReportStep |
 
 因此 full 先持久化交易事实，再读取标签做事后评价；它复用独立 signal 的评价 Step、
@@ -997,7 +1005,7 @@ Step 基类、装饰器注册或依赖图。结果 Context 对 State 的只读�
 | `core/events.py`、`core/ledger.py` | 保存委托窗口、报价、状态与稳定成交身份；同时用于固定委托复演和 full，ledger 拥有结算身份索引 | 关键交易字段藏在 meta 中；只保存提交与即时全量成交的记录形状 |
 | `backtest/execution/settlement.py`、`portfolio/state.py` | settlement 唯一协调费用、账户和 ledger；portfolio 只应用已经认可的精确成交数量 | 以价格/数量拼接的 FillKey；卖出不足时偷偷 `min(qty, position)` 后仍将原数量写入账本 |
 | `backtest/market/replay.py`、`backtest/clock.py`、`core/time.py` | 时间和可见性归 ReplayClock、行情准备与交易 Pipeline；按剩余独立调用方决定 Kernel/Session 是否仍必要 | 只为一条日线构造 Session → Kernel → BarContext 的多层往返；由 frequency 推断执行许可 |
-| `reporting`、`backtest/reporting`、`backtest/evaluation.py`、`backtest/steps/metrics_persist.py`、`backtest/reporting/bundle.py` | 固定事实上的纯评价、持久化与展示；tradable/full 共用组合评价，execution/full 共用成交评价；逐决策及按日 IC 分开、收益按日终采样、成交按订单及数量计算，输出实际覆盖 | 用两期价格诊断冒充策略收益；fill 条数当订单数；五类成功占位指标；把无定义值统一改成 0 或把非法值改成成功的 null |
+| `reporting`、`backtest/reporting`、`backtest/evaluation.py`、`backtest/steps/metrics_persist.py`、`backtest/reporting/bundle.py` | 固定事实上的纯评价、持久化与展示；strategy_eval/full 共用组合评价，execution/full 共用成交评价；逐决策及按日 IC 分开、收益按日终采样、成交按订单及数量计算，输出实际覆盖 | 用两期价格诊断冒充策略收益；fill 条数当订单数；五类成功占位指标；把无定义值统一改成 0 或把非法值改成成功的 null |
 
 固定等权、固定期限策略不能伪装成现有 Threshold / TopKHysteresis 的一个参数组合。
 它需要保存本轮固定名单、仍有效的入场窗口和退出计划；数量按当时现金、延续持仓、
@@ -1032,7 +1040,7 @@ Backtest 章节，唯一拥有验证任务、编排、状态与输出解释；
 | 公司行动期间的持仓 | 使用明确现金/股数事件；缺少契约时不能把机械除权当策略损失，也不能事后删除证券来改善结果 |
 | 分钟规模下的读取和权益更新 | 按日或必要窗口读取，权益统计增量维护；不为此建立分布式平台 |
 | 最后一批信号的成交和标签覆盖 | 决策结束、模拟终点、标签成熟范围分别明确；期末保留未完成事实 |
-| 报价可成交性与小资金假设 | execution/full 必须经过同一价格模型；tradable 固定按参考价成交合法数量；没有盘口数据时仅报告所声明模型的条件结果 |
+| 报价可成交性与小资金假设 | execution/full 必须经过同一价格模型；strategy_eval 固定按参考价成交合法数量；没有盘口数据时仅报告所声明模型的条件结果 |
 | 冻结命令复演 | 保存输入委托/撤单的原始顺序及全部条件；成交、拒单和到期作为输出比较 |
 | 模型或策略是否值得采用 | 另行固定比较基线、选择数据和最终验证数据；本轮工程验收不作盈利结论 |
 | 首轮风险规则的精确输入与动作 | 单证券/总敞口和回撤候选须给出完整目标、有效买卖单、所需价格及参数；缺少价格不能按零敞口通过，拒绝与显式减仓分别编码；非正权益拦新增买和按显式步长向下量化已由用户确认；阈值仍由具体任务提供，不继承旧实现的 pass 或 int 截断 |
@@ -1044,13 +1052,13 @@ Backtest 章节，唯一拥有验证任务、编排、状态与输出解释；
 
 | 验证对象 | 必须观察到的结果 |
 | --- | --- |
-| 模式与最小输入 | 保留五种名称，不以 replay 替换或新增模式；signal 无策略/资金仍能评价且不创建交易事实；risk 无模型可覆盖允许/缩减/拒绝；execution 不回调策略 |
-| 策略价值与独立状态 | tradable 实际消费声明的组合规则和成本，改变它们可影响组合收益而不改写固定预测或模型目标 IC；同一信号的两个策略拥有独立状态 |
+| 模式与最小输入 | 保留五种任务，名称按本节已确认的模式契约，不以 replay 替换或新增模式；signal 无策略/资金仍能评价且不创建交易事实；risk 无模型可覆盖允许/缩减/拒绝；execution 不回调策略 |
+| 策略价值与独立状态 | strategy_eval 实际消费声明的组合规则和成本，改变它们可影响组合收益而不改写固定预测或模型目标 IC；同一信号的两个策略拥有独立状态 |
 | 省略或启用风控 | 无风险组合直接消费策略目标且完整记录 target tape；full 缩量改变提交数量，拒绝和异常不恢复原目标；full 缺少规则或规则集为空在入口失败；省略报告未运行，无决策报告无样本，无触发不冒充覆盖 |
-| 价格组装 | execution/full 对相同订单与观察得到相同报价判断，缺模型或报价准备失败；tradable 不调用报价模型、不要求报价参数，仍受现金/可卖约束；signal/risk 不因默认可成交生成订单或 fill；NoOp 与参考成交不产生相应验证通过结论 |
+| 价格组装 | execution/full 对相同订单与观察得到相同报价判断，缺模型或报价准备失败；strategy_eval 不调用报价模型、不要求报价参数，仍受现金/可卖约束；signal/risk 不因默认可成交生成订单或 fill；NoOp 与参考成交不产生相应验证通过结论 |
 | 因果与日程 | 改变标签或决策后的行情不改变此前信号、目标和委托；入场余单到期后定时风控不恢复买入；无新信号或行情仍处理风险、退出和到期；未完成卖单不提前释放风险预算或现金 |
 | 评价采样 | 同日多次预测不冲突、不误报交易日数；增加无变化唤醒不改变按日报告 |
-| 组件复用 | full 预测记录交给 signal 后逐条评价一致；full 风控前案例交给 risk 后在相同规则下决策及规则观察一致；完整委托/撤单流、初始账户、市场、日程和费用固定后，execution 复演与 full 的成交/账户一致；相同 ledger、权益和成本的组合评价不因来自 tradable 或 full 而变化 |
+| 组件复用 | full 预测记录交给 signal 后逐条评价一致；full 风控前案例交给 risk 后在相同规则下决策及规则观察一致；完整委托/撤单流、初始账户、市场、日程和费用固定后，execution 复演与 full 的成交/账户一致；相同 ledger、权益和成本的组合评价不因来自 strategy_eval 或 full 而变化 |
 | FakeLive 与失败传播 | 相同时刻、顺序的逐批输入和离线输入得到相同事实；入口、规则和报告异常保留原始错误，不转为空成功 |
 
 复用验收比较公开结果，不只检查类名或对象身份；业务计算的修正须自然作用于所有使用
@@ -1273,6 +1281,30 @@ random_state=7 合成模型夹具，新增故障及 Context 替换输入均保�
 Git 状态记录，不重复运行未变化的代码测试。未执行 push、merge、release 或 deploy，
 也未修改生产数据、队列、broker 或其他权威外部状态。H02/H03 仍为 open，目标 `dev`
 的正式采用及其 Git 操作不由测试通过自动完成。
+
+### 模式命名同步与验收（2026-10-11）
+
+按[模式契约中的命名决定](#五种模式对应三个验证问题)，在 `feature/backtest-h03` 的
+`284d7437b43b16802b8dfebbad50d49c2eaa7f6a` 加验收时工作树上，同步枚举值、
+Submission、workflow、CLI/HTTP 调用链、Postman 示例及拟议 owner。共享风险结果字段
+`metrics.risk_eval` 仍用于独立风控规则评价与 full；它不属于任务 mode 别名。
+
+使用 Python 3.13.13、pytest 9.0.3 和仓库既有合成夹具执行：
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -B -m pytest -q -p no:cacheprovider \
+  tests/config/test_backtest_config.py tests/jobs tests/test_cli.py \
+  tests/workflows/test_backtest.py tests/trading/backtest --tb=short --show-capture=no
+```
+
+结果为 **315 passed**，234 条既有 joblib/NumPy 弃用警告。覆盖新名称请求、Job 到 CLI 的
+名称传递、五种 workflow 路由，以及旧名称在请求边界被拒绝且不创建 Job 或加载运行配置；
+现有参考成交、固定案例复演、共享闭环和报告场景通过，新模式值写入 metrics 及 parameters。
+本轮仅修改命名及相关契约，未运行全仓测试或真实市场实验；命名决定已确认、本地修改已
+验证。用户在验收后明确要求合并到当前分支并 commit；改动本已位于 `feature/backtest-h03`，
+本节与对应实现、测试一并提交到该分支，无需跨分支 merge。提交准备仅更新本节 Git 状态，
+不重复运行未变化的代码测试。未 push、合入 `dev`、release 或 deploy，H02/H03 的整体
+正式化状态仍为 open。
 
 ## H03 后续行情驱动的模拟执行
 
@@ -1752,7 +1784,7 @@ P × (1 - sell_offset_bp / 10000)，再按本次证券的价格步长向不突�
 来源、偏移参数和适用价格步长必须由任务明确；零偏移可用于合成例子，不成为隐藏默认。
 数量和报价都在最终风险目标确定后，按实际买卖方向生成，不能把风控减仓产生的卖单套用
 策略原本买单的报价。execution_eval 直接消费冻结报价，不调用此规则重新出价。
-tradable 不要求这些报价参数，内部参考委托的 limit_price 明确为 None。
+strategy_eval 不要求这些报价参数，内部参考委托的 limit_price 明确为 None。
 
 首轮建议沿用已讨论的 VWAP/日线参考场景，增加明确的报价筛选：买单候选成交价不高于
 limit_price、卖单不低于 limit_price 时才允许该次模拟成交。相等时本轮假设允许，不能
@@ -1781,7 +1813,7 @@ fill_price = candidate_price if price_matches else None
 价格允许后，数量计算仍复用现有资源与数量规则：成交量取剩余委托量、当次可分配观察量、
 实际成交价及费用下可负担量或可卖量的共同上限，并服从适用数量制度。小资金场景可以
 省去本轮未建模的盘口排队与冲击，但不让每个订单重新使用一整份观察量预算。
-tradable 固定忽略市场量预算，按参考价成交合法可执行余量。
+strategy_eval 固定忽略市场量预算，按参考价成交合法可执行余量。
 price_matches=False 只表示本次观察不成交，保持有效委托等待后续观察；它不是拒单，
 也不会释放占用。到期才按既有规则撤余。因资金/可卖约束无可成交量，与价格不匹配分别
 记录，不用一条“失败”吞掉原因。
@@ -1800,7 +1832,7 @@ price_matches=False 只表示本次观察不成交，保持有效委托等待后
 | VWAP 10.00，10bp 买入滑点 | 候选价 10.01，超过上限 | 不成交，不能夹回 10.00 |
 | 到期前一直没有允许价格 | 没有 fill | 撤销剩余数量，持仓与现金不因撤单而发生交易变化 |
 
-同样一条参考价格为 10.05 的观察，在 tradable 中可以按其参考成交假设结算合法数量；
+同样一条参考价格为 10.05 的观察，在 strategy_eval 中可以按其参考成交假设结算合法数量；
 这是用户明确选择的“默认买得到”对照，报告必须标明没有检验报价可成交性。
 卖出规则对称：下限 10.00、候选价 9.98 时不成交，候选价 10.02 时才进入数量判断。
 
@@ -1857,7 +1889,7 @@ price_matches=False 只表示本次观察不成交，保持有效委托等待后
 
 | 类型及位置 | 具体字段或变更 | 所有权与约束 |
 | --- | --- | --- |
-| `OrderIntent`，`core/events.py` | 保留 `ts_us/symbol/side/qty/order_id`；增加 `active_ts_us: int`、`expires_ts_us: int`、`limit_price: Decimal \| None` | `ts_us` 是产生时刻，生效不早于产生，到期晚于生效；execution/full 的报价必填且合法，None 只表达 tradable 的参考委托，不是缺参后的兜底 |
+| `OrderIntent`，`core/events.py` | 保留 `ts_us/symbol/side/qty/order_id`；增加 `active_ts_us: int`、`expires_ts_us: int`、`limit_price: Decimal \| None` | `ts_us` 是产生时刻，生效不早于产生，到期晚于生效；execution/full 的报价必填且合法，None 只表达 strategy_eval 的参考委托，不是缺参后的兜底 |
 | `OrderTerms`，`core/events.py` | `active_ts_us: int`、`expires_ts_us: int` | 目标生成委托前所需的不可变执行窗口，按证券提供；只保留被目标提交与具体委托构造共同消费的时间，不是另一个订单状态或通用条款框架 |
 | `PendingOrder`，`core/events.py` | `intent: OrderIntent`、`remaining_qty: int`、`reserved_cash: Decimal`、`reserved_sell_qty: int`、`reservation_price: Decimal` | 不可变快照；执行器替换调用方拥有的挂单容器中的条目，终态删除。资金估计价用于部分成交后重算余量及累计费用，不能从含最低佣金的占用金额反推单价；H02 接入后容器由 BacktestState 持有 |
 | `OrderEvent`，`core/events.py` | `ts_us: int`、`order_id: int`、`status: OrderStatus`、`remaining_qty: int`、`reason: str`；撮合观察字段 `observation_id: str \| None`、`candidate_price: Decimal \| None` | 报价检查未满足时保持待成交/部分成交状态，记录观察与候选价及原因；提交、撤单、到期没有撮合观察时两字段为 None。合法订单等待不冒充拒单 |
@@ -1961,7 +1993,7 @@ advance 消费，仅在 True 时递减订单余量和重算占用，返回给 St
 | --- | --- |
 | 买入上限 10，候选成交价 10.05；卖出下限 10，候选价 9.98 | execution/full 均不成交，订单继续有效；不能夹回报价、改价或记成拒单 |
 | 候选价恰好等于报价；滑点后越过报价 | 前者按本轮假设进入数量判断，后者等待；两种模式使用相同规则 |
-| tradable 的参考价为 10.05，账户及时间条件满足 | 按参考价成交合法数量，不调用报价筛选；signal/risk 不生成 fill |
+| strategy_eval 的参考价为 10.05，账户及时间条件满足 | 按参考价成交合法数量，不调用报价筛选；signal/risk 不生成 fill |
 | full 风控将原买入目标降到当前持仓以下 | 新减仓单使用卖出报价规则；纯缩量的旧单保留原报价及到期时间 |
 | 持仓 600、旧买单余量 400/报价 10/到期 14:32，14:31 目标降为 800，当前价 10.20 | 撤销旧单后只重发 200，报价仍为 10、到期仍为 14:32；撤销前保留的条件可查，冻结命令包含按序的撤单与替代单 |
 | 任意后续行情改变；冻结委托交给 execution 复演 | 不改写已提交报价；同输入下与 full 的价格判断、成交及未完成原因一致 |

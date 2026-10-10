@@ -27,11 +27,11 @@ from src.utils.datetime_utils import DateTimeUtils
 from src.utils.logger import configure_cli_logging
 from src.utils.path import PathManager
 from src.workflows.backtest import (
-    run_signal_evaluation, run_risk_evaluation, run_execution_evaluation,
-    run_tradable_alpha_evaluation, run_full_backtest,
+    run_signal_evaluation, run_risk_rule_evaluation, run_execution_evaluation,
+    run_strategy_evaluation, run_full_backtest,
 )
 from src.jobs.requests import (
-    SignalEvalSubmission, RiskEvalSubmission, ExecutionEvalSubmission, TradableAlphaEvalSubmission,
+    SignalEvalSubmission, RiskRuleEvalSubmission, ExecutionEvalSubmission, StrategyEvalSubmission,
 )
 from src.workflows.offline_daily_data import (
     run_feature_backfill,
@@ -404,13 +404,13 @@ def backtest(
     if isinstance(submission, SignalEvalSubmission):
         run_signal_evaluation(submission=submission, path_manager=pm,
                               experiment_id=experiment_id, backtest_config=app_config.backtest)
-    elif isinstance(submission, RiskEvalSubmission):
-        run_risk_evaluation(submission=submission, path_manager=pm, experiment_id=experiment_id)
+    elif isinstance(submission, RiskRuleEvalSubmission):
+        run_risk_rule_evaluation(submission=submission, path_manager=pm, experiment_id=experiment_id)
     elif isinstance(submission, ExecutionEvalSubmission):
         run_execution_evaluation(submission=submission, path_manager=pm, experiment_id=experiment_id)
-    elif isinstance(submission, TradableAlphaEvalSubmission):
-        run_tradable_alpha_evaluation(submission=submission, path_manager=pm,
-                                     experiment_id=experiment_id, backtest_config=app_config.backtest)
+    elif isinstance(submission, StrategyEvalSubmission):
+        run_strategy_evaluation(submission=submission, path_manager=pm,
+                                experiment_id=experiment_id, backtest_config=app_config.backtest)
     else:
         run_full_backtest(submission=submission, path_manager=pm,
                           experiment_id=experiment_id, backtest_config=app_config.backtest)

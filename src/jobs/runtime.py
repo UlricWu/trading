@@ -21,7 +21,7 @@ from src.jobs.requests import (
     JOB_EXIT_CODE_SKIPPED,
     JobKind,
     JobSubmission,
-    RiskEvalSubmission,
+    RiskRuleEvalSubmission,
     build_cli_command,
 )
 from src.utils.datetime_utils import DateTimeUtils
@@ -618,7 +618,7 @@ class JobRuntime:
             job_id=job.job_id,
             kind=submission.kind,
             scope=(CaseJobScope(tuple(str(ref) for ref in submission.case_refs))
-                   if isinstance(submission, RiskEvalSubmission)
+                   if isinstance(submission, RiskRuleEvalSubmission)
                    else RangeJobScope(start=submission.start, end=submission.end)),
             status=job.status,
             submitted_at=job.submitted_at,

@@ -15,8 +15,8 @@ from src import logs
 from src.access import Access
 from src.config.backtest_config import BacktestConfig, FakeExecutionConfig, FixedHoldingStrategyConfig, StrategyConfig, InitialAccount
 from src.jobs.requests import (
-    BacktestSubmission, SignalEvalSubmission, RiskEvalSubmission, ExecutionEvalSubmission,
-    TradableAlphaEvalSubmission, FullBacktestSubmission,
+    BacktestSubmission, SignalEvalSubmission, RiskRuleEvalSubmission, ExecutionEvalSubmission,
+    StrategyEvalSubmission, FullBacktestSubmission,
 )
 from src.observability.instrumentation import Instrumentation
 from src.pipeline import PipelineStep, run_steps
@@ -83,13 +83,13 @@ def run_signal_evaluation(
         run_steps(context=SignalEvaluationContext(metrics=metrics), steps=steps, instrumentation=instrumentation)
 
 
-def run_risk_evaluation(
-    *, submission: RiskEvalSubmission, path_manager: PathManager, experiment_id: str,
+def run_risk_rule_evaluation(
+    *, submission: RiskRuleEvalSubmission, path_manager: PathManager, experiment_id: str,
 ) -> None:
     """Evaluate fixed pre-risk cases with the actual selected rule implementation.
 
     Example:
-        run_risk_evaluation(submission=submission, path_manager=pm, experiment_id="risk-1")
+        run_risk_rule_evaluation(submission=submission, path_manager=pm, experiment_id="risk-1")
     """
     name, metrics = _start(submission, path_manager, experiment_id)
     metrics.not_run = {"signal": "fixed_risk_cases", "strategy": "fixed_risk_cases", "execution": "fixed_risk_cases"}
@@ -149,15 +149,15 @@ def run_execution_evaluation(
         ), instrumentation=Instrumentation(name)).run(state, metrics=metrics)
 
 
-def run_tradable_alpha_evaluation(
-    *, submission: TradableAlphaEvalSubmission, path_manager: PathManager,
+def run_strategy_evaluation(
+    *, submission: StrategyEvalSubmission, path_manager: PathManager,
     experiment_id: str, backtest_config: BacktestConfig,
 ) -> None:
     """Evaluate a declared strategy using reference fills and a run-owned account.
 
     Example:
-        run_tradable_alpha_evaluation(submission=submission, path_manager=pm,
-                                     experiment_id="strategy-1", backtest_config=config)
+        run_strategy_evaluation(submission=submission, path_manager=pm,
+                                experiment_id="strategy-1", backtest_config=config)
     """
     name, metrics = _start(submission, path_manager, experiment_id, backtest_config)
     metrics.not_run = {"signal_evaluation": "strategy_return_only", "risk": "reference_strategy",
@@ -241,7 +241,7 @@ def run_full_backtest(
 def _start(submission: BacktestSubmission, pm: PathManager, experiment_id: str,
            backtest_config: BacktestConfig | None = None) -> tuple[str, BacktestMetrics]:
     PathManager.require_experiment_id(experiment_id)
-    if isinstance(submission, RiskEvalSubmission):
+    if isinstance(submission, RiskRuleEvalSubmission):
         name = f"backtest_risk_{experiment_id}"
     else:
         name = require_new_experiment(path_manager=pm, kind="backtest", start_date=submission.start,

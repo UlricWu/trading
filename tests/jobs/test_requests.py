@@ -170,10 +170,23 @@ def test_backtest_command_preserves_mode_and_uses_job_id_as_experiment_id(
     assert command[command.index("--mode") + 1] == mode.value
     fields = json.loads(command[command.index("--input-json") + 1])
     assert parse_job_request({"kind": "backtest", "mode": mode.value, **fields}) == [submission]
-    if mode == BacktestMode.RISK_EVAL:
+    if mode == BacktestMode.RISK_RULE_EVAL:
         assert "start" not in fields and "signal" not in fields
     if mode == BacktestMode.SIGNAL_EVAL:
         assert "strategy" not in fields and "initial_account" not in fields
+
+
+@pytest.mark.parametrize(("old_mode", "mode"), [
+    ("tradable_alpha_eval", "strategy_eval"), ("risk_eval", "risk_rule_eval"),
+])
+def test_backtest_rejects_retired_mode_names(
+    old_mode: str, mode: str, backtest_payload: Callable[[str], dict[str, object]],
+) -> None:
+    payload = backtest_payload(mode)
+    payload["mode"] = old_mode
+    with pytest.raises(InvalidJobRequest) as caught:
+        parse_job_request(payload)
+    assert caught.value.field == "mode"
 
 
 @pytest.mark.parametrize(

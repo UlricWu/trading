@@ -204,13 +204,14 @@ python -m src.cli backtest --mode MODE --experiment-id EXPERIMENT_ID --input-jso
 experiment_id；mode 只由 `--mode` 传入。CLI 在加载 AppConfig、创建 PathManager 或进入
 workflow 前调用 `create_backtest_submission` 校验。额外字段、缺少必需参数、非法数值
 或相对引用路径均拒绝，不保留旧 `--model-ref`/`--strategy-json` 或隐式字段兼容。
+mode 只接受下表五个值；旧任务名称 `tradable_alpha_eval`、`risk_eval` 不作为别名接受。
 
 | MODE / Submission | JSON 字段 |
 | --- | --- |
 | signal_eval / SignalEvalSubmission | start、end、signal |
-| risk_eval / RiskEvalSubmission | case_refs、risk；没有日期范围 |
+| risk_rule_eval / RiskRuleEvalSubmission | case_refs、risk；没有日期范围 |
 | execution_eval / ExecutionEvalSubmission | start、end、order_refs、initial_account、execution |
-| tradable_alpha_eval / TradableAlphaEvalSubmission | start、end、signal、strategy、initial_account、execution |
+| strategy_eval / StrategyEvalSubmission | start、end、signal、strategy、initial_account、execution |
 | full_backtest / FullBacktestSubmission | start、end、signal、strategy、initial_account、risk、execution |
 
 有日期的请求使用规范 `YYYY-MM-DD` 且 start<=end。信号来源是二选一的 object：
@@ -230,10 +231,10 @@ case_refs、order_refs 和 prediction_refs 是有序绝对路径数组；空事�
 | quantity_rules 每证券值 | buy_min_qty、buy_step_qty、sell_min_qty、sell_step_qty、fill_step_qty 都是正整数，price_tick 是正数有限 Decimal，enforce_t1 是显式 bool；不可用 bool 代替数量 |
 | fees | commission_rate、stamp_tax_rate、transfer_rate、min_commission，均为非负有限 Decimal；不使用隐含费率或最低佣金 |
 | risk | rules 非空数组，按声明顺序选具名规则；每项为 type=max_single_name 和非负有限 max_ratio，或 type=max_gross_exposure 和非负有限 max_gross_ratio，或 type=max_drawdown 和 [0,1] max_drawdown |
-| strategy | type、params、order_window_minutes；full 另须 quote，tradable 不接受 quote。窗口分钟为正整数 |
+| strategy | type、params、order_window_minutes；full 另须 quote，strategy_eval 不接受 quote。窗口分钟为正整数 |
 | quote | buy_offset_bp、sell_offset_bp，均为 [0,10000) 的有限 Decimal；不接受额外字段 |
 
-execution/full 必须提供 [0,10000) 的有限 slippage_bp；tradable 不提供它，明确使用参考
+execution/full 必须提供 [0,10000) 的有限 slippage_bp；strategy_eval 不提供它，明确使用参考
 成交。只有 full 可提供 risk_check_ts_us 整数数组，省略为空；其他两种交易模式不接受
 非空风险检查时间。规则配置缺失、空规则或价格模型缺失不能解释为自动关闭能力。
 
@@ -260,6 +261,6 @@ python -m src.cli backtest --mode signal_eval --experiment-id signal-1 \
 ```
 
 CLI 不构造 config override。加载一次 AppConfig 后，五种类型分别路由到五个具名入口，
-只有 signal/tradable/full 接收静态 BacktestConfig，其唯一字段是 min_listing_calendar_days。
+只有 signal/strategy_eval/full 接收静态 BacktestConfig，其唯一字段是 min_listing_calendar_days。
 初始现金只来自 initial_account；risk/execution 不消费模型设置。HTTP 使用同一字段模型，
 build_cli_command 用一个 `--input-json` 参数保留嵌套 JSON，Job UUID 作为 experiment ID。

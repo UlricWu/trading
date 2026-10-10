@@ -275,7 +275,7 @@
                 ],
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"kind\": \"backtest\",\n  \"mode\": \"risk_eval\",\n  \"case_refs\": [\n    \"{{testRiskCaseRef}}\"\n  ],\n  \"risk\": {\n    \"rules\": {{riskRulesJson}}\n  }\n}",
+                  "raw": "{\n  \"kind\": \"backtest\",\n  \"mode\": \"risk_rule_eval\",\n  \"case_refs\": [\n    \"{{testRiskCaseRef}}\"\n  ],\n  \"risk\": {\n    \"rules\": {{riskRulesJson}}\n  }\n}",
                   "options": {
                     "raw": {
                       "language": "json"
@@ -607,7 +607,7 @@
                 ],
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"kind\": \"backtest\",\n  \"mode\": \"risk_eval\",\n  \"case_refs\": [\n    \"{{trainingRiskCaseRef}}\"\n  ],\n  \"risk\": {\n    \"rules\": {{riskRulesJson}}\n  }\n}",
+                  "raw": "{\n  \"kind\": \"backtest\",\n  \"mode\": \"risk_rule_eval\",\n  \"case_refs\": [\n    \"{{trainingRiskCaseRef}}\"\n  ],\n  \"risk\": {\n    \"rules\": {{riskRulesJson}}\n  }\n}",
                   "options": {
                     "raw": {
                       "language": "json"
