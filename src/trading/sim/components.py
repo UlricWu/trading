@@ -93,7 +93,6 @@ def build_components(
         execution = ExecutionOrchestrator(
             clip_policy=AShareTargetClippingPolicy(),
             validator=AShareOrderValidation(),
-            cost_model=cost_model,
             venue=SimImmediateVenue(slippage_model=FixedBPSlippageModel(bp=5.0)),
             settlement=SettlementEngine(cost_model=cost_model),
         )

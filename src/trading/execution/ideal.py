@@ -6,12 +6,19 @@ from collections.abc import Mapping
 
 from src.trading.core.events import FillEvent, Side
 from src.trading.core.ledger import ExecutionLedger
+from src.trading.execution.settlement import SettlementEngine
 from src.trading.market.data_view import MarketDataView
 from src.trading.portfolio.state import PortfolioState
 
 
 class IdealExecution:
-    """Immediate zero-cost execution for model evaluation replay."""
+    """Immediate zero-cost execution for the existing daily workflow.
+
+    Example:
+        execution = IdealExecution()
+        fills = execution.execute_targets(ts_us=1, targets={"600000": 100},
+            data_view=view, state=account, ledger=ledger)
+    """
 
     def execute_targets(
         self,
@@ -24,6 +31,12 @@ class IdealExecution:
         forced_close: bool = False,
         ignore_t1_forced_close: bool = True,
     ) -> list[FillEvent]:
+        """Settle the existing daily workflow's reference fills through settlement.
+
+        Example:
+            fills = execution.execute_targets(ts_us=1, targets={"600000": 100},
+                data_view=view, state=account, ledger=ledger)
+        """
         fills: list[FillEvent] = []
         for symbol, target_qty in targets.items():
             sym = str(symbol)
@@ -70,26 +83,10 @@ class IdealExecution:
                 price=float(price),
                 order_id=order_id,
                 forced_close=bool(forced_close),
+                fill_id=f"ideal:{order_id}",
+                observation_id=f"ideal:{ts_us}:{sym}",
+                reference_price=price,
             )
-            meta_out: dict[str, object] = {}
-            state.apply_fill(fill, cost=None, meta_out=meta_out)
-            ledger.record_fill(
-                ts_us=int(ts_us),
-                symbol=sym,
-                side=side.value,
-                qty=qty,
-                price=float(price),
-                order_id=order_id,
-                meta={
-                    "cost": {
-                        "commission": 0.0,
-                        "stamp_tax": 0.0,
-                        "transfer_fee": 0.0,
-                        "total": 0.0,
-                    },
-                    "slippage_cost": 0.0,
-                    **meta_out,
-                },
-            )
+            SettlementEngine(cost_model=None).settle_fill(fill=fill, portfolio=state, ledger=ledger)
             fills.append(fill)
         return fills

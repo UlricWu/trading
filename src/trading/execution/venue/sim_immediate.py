@@ -17,6 +17,10 @@ class SimImmediateVenue:
     Semantics:
     - immediate fills at observable market price + slippage model
     - no partial fills, no queue, no impact
+
+    Example:
+        venue = SimImmediateVenue(FixedBPSlippageModel(bp=5))
+        fills = venue.execute(ts_us=1, intents=orders, data_view=view, forced_close=False)
     """
     slippage_model: FixedBPSlippageModel
 
@@ -28,6 +32,11 @@ class SimImmediateVenue:
         data_view: MarketDataView,
         forced_close: bool,
     ) -> list[FillEvent]:
+        """Produce identified fills for the existing synchronous daily caller.
+
+        Example:
+            fills = venue.execute(ts_us=1, intents=orders, data_view=view, forced_close=False)
+        """
         fills: list[FillEvent] = []
 
         for it in intents:
@@ -44,6 +53,9 @@ class SimImmediateVenue:
                     qty=int(it.qty),
                     price=float(exec_px),
                     order_id=int(it.order_id),
+                    fill_id=f"immediate:{it.order_id}",
+                    observation_id=f"immediate:{ts_us}:{it.symbol}",
+                    reference_price=px,
                     forced_close=bool(forced_close),
                 )
             )

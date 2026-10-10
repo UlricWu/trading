@@ -338,7 +338,12 @@ def execution_quality_frame(
     fills: Sequence[FillEvent],
     ledger_records: Sequence[Mapping[str, object]],
 ) -> ExecutionQualityFrame:
-    """Measure execution quality from targets, fills and new ledger facts."""
+    """Measure synchronous daily execution from targets, fills and ledger facts.
+
+    Example:
+        frame = execution_quality_frame(targets={"600000": 100}, positions_before={},
+            prices={"600000": 10.0}, fills=fills, ledger_records=ledger.records)
+    """
     target_map = _require_targets(targets, "targets")
     position_map = _require_targets(positions_before, "positions_before")
 
@@ -370,7 +375,7 @@ def execution_quality_frame(
     sell_fill_qty = 0
     for fill in fills:
         qty = int(fill.qty)
-        price = _require_positive(fill.price, "fill.price")
+        price = float(fill.price)
         if qty <= 0:
             raise RuntimeError("[execution_quality] fill qty must be positive")
         fill_qty += qty

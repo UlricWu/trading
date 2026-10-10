@@ -3,12 +3,12 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from decimal import Decimal
 
 from src.trading.core.events import OrderIntent, Side, FillEvent
 from src.trading.core.ledger import ExecutionLedger
-from src.trading.execution.models.cost_a_share import AShareCostModel
-from src.trading.execution.policies.constraints import AShareTargetClippingPolicy
+from src.trading.execution.policies.constraints import AShareTargetClippingPolicy, affordable_quantity
 from src.trading.execution.policies.validation import AShareOrderValidation
 from src.trading.execution.settlement import SettlementEngine
 from src.trading.execution.venue.sim_immediate import SimImmediateVenue
@@ -33,14 +33,6 @@ def _optional_limits(
     return limits
 
 
-def _round_down_lot(qty: int, lot_size: int) -> int:
-    lot = max(1, int(lot_size))
-    qty = int(qty)
-    if qty <= 0:
-        return 0
-    return (qty // lot) * lot
-
-
 @dataclass(frozen=True, slots=True)
 class ExecutionOrchestrator:
     """Orchestrate validation, clipping, venue execution, and settlement.
@@ -56,7 +48,6 @@ class ExecutionOrchestrator:
         orchestrator = ExecutionOrchestrator(
             clip_policy=clip_policy,
             validator=validator,
-            cost_model=cost_model,
             venue=venue,
             settlement=settlement,
         )
@@ -70,7 +61,6 @@ class ExecutionOrchestrator:
     """
     clip_policy: AShareTargetClippingPolicy
     validator: AShareOrderValidation
-    cost_model: AShareCostModel
     venue: SimImmediateVenue
     settlement: SettlementEngine
 
@@ -175,6 +165,9 @@ class ExecutionOrchestrator:
                 qty=int(cr.clipped_qty),
                 order_id=order_id,
                 meta={"clip_reason": cr.reason} if cr.reason else {},
+                active_ts_us=ts_us,
+                expires_ts_us=ts_us + 1,
+                limit_price=None,
             )
 
             # validate
@@ -198,11 +191,11 @@ class ExecutionOrchestrator:
                 continue
 
             if side == Side.BUY:
-                budgeted_qty = self._budgeted_buy_qty(
-                    symbol=sym,
-                    requested_qty=int(intent.qty),
-                    market_price=float(px),
-                    available_cash=available_cash,
+                estimated_price = self.venue.slippage_model.apply(side=side.value, price=px)
+                budgeted_qty = affordable_quantity(
+                    order=intent, price=estimated_price, maximum=intent.qty,
+                    step=self.validator.lot_size, cash=Decimal(str(available_cash)),
+                    settlement=self.settlement, ledger=ledger,
                 )
                 if budgeted_qty <= 0:
                     ledger.record_order_reject(
@@ -218,39 +211,14 @@ class ExecutionOrchestrator:
                 if budgeted_qty < int(intent.qty):
                     meta = dict(intent.meta)
                     meta["clip_reason"] = "INSUFFICIENT_CASH"
-                    intent = OrderIntent(
-                        ts_us=ts_us,
-                        symbol=sym,
-                        side=side,
-                        qty=budgeted_qty,
-                        order_id=order_id,
-                        meta=meta,
-                    )
-                    vr = self.validator.validate(
-                        intent=intent,
-                        price=float(px),
-                        cash=available_cash,
-                        current_position=cur_pos,
-                        t1_sellable=effective_t1,
-                    )
-                    if not vr.ok:
-                        ledger.record_order_reject(
-                            ts_us=ts_us,
-                            symbol=sym,
-                            side=side.value,
-                            qty=int(intent.qty),
-                            order_id=order_id,
-                            reason=vr.reason,
-                            meta={"detail": vr.detail} if vr.detail else None,
-                        )
-                        continue
+                    intent = replace(intent, qty=budgeted_qty, meta=meta)
 
-                required_cash = self._estimated_buy_cash_required(
-                    symbol=sym,
-                    qty=int(intent.qty),
-                    market_price=float(px),
+                turnover = estimated_price * intent.qty
+                cost = self.settlement.incremental_cost(
+                    order_id=intent.order_id, side=side, symbol=sym,
+                    turnover=turnover, ledger=ledger,
                 )
-                available_cash = max(0.0, available_cash - required_cash)
+                available_cash = float(Decimal(str(available_cash)) - turnover - cost.total)
 
             intents.append(intent)
 
@@ -267,11 +235,8 @@ class ExecutionOrchestrator:
         )
 
         for f in venue_fills:
-            mp = data_view.get_price(str(f.symbol))
-
             self.settlement.settle_fill(
                 fill=f,
-                market_price=float(mp) if mp is not None else float(f.price),
                 portfolio=state,
                 ledger=ledger,
             )
@@ -279,66 +244,3 @@ class ExecutionOrchestrator:
             fills.append(f)
 
         return fills
-
-    def _estimated_buy_cash_required(
-        self,
-        *,
-        symbol: str,
-        qty: int,
-        market_price: float,
-    ) -> float:
-        qty = int(qty)
-        if qty <= 0:
-            return 0.0
-        exec_price = self.venue.slippage_model.apply(
-            side=Side.BUY.value,
-            price=float(market_price),
-        )
-        cost = self.cost_model.compute(
-            side=Side.BUY.value,
-            price=float(exec_price),
-            qty=qty,
-            symbol=str(symbol),
-        )
-        return float(exec_price) * qty + float(cost.total)
-
-    def _budgeted_buy_qty(
-        self,
-        *,
-        symbol: str,
-        requested_qty: int,
-        market_price: float,
-        available_cash: float,
-    ) -> int:
-        requested_qty = int(requested_qty)
-        if requested_qty <= 0 or float(available_cash) <= 0.0:
-            return 0
-        if (
-            self._estimated_buy_cash_required(
-                symbol=symbol,
-                qty=requested_qty,
-                market_price=market_price,
-            )
-            <= float(available_cash)
-        ):
-            return requested_qty
-
-        lot_size = int(getattr(self.validator, "lot_size", 1))
-        high_lots = requested_qty // max(1, lot_size)
-        low = 0
-        high = high_lots
-        best = 0
-        while low <= high:
-            mid = (low + high) // 2
-            qty = _round_down_lot(mid * lot_size, lot_size)
-            required = self._estimated_buy_cash_required(
-                symbol=symbol,
-                qty=qty,
-                market_price=market_price,
-            )
-            if required <= float(available_cash):
-                best = qty
-                low = mid + 1
-            else:
-                high = mid - 1
-        return best

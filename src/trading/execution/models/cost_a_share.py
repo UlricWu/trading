@@ -2,34 +2,44 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal
 
 from src.trading.portfolio.state import FillCost
 
 
 @dataclass(frozen=True, slots=True)
 class AShareCostModel:
-    """
-    Compute A-share execution costs.
+    """Scenario fees on cumulative order notional, without currency rounding.
 
-    Simplified production-usable cost model:
-    - commission with minimum
-    - stamp tax on SELL
-    - transfer fee on SH (symbol hint)
+    H03 callers explicitly supply all rates; the existing defaults belong to
+    the existing daily workflow. Actual market fee rounding is not inferred.
+
+    Example:
+        costs = AShareCostModel(0.0003, 0, 0, 5)
+        fee = costs.compute(side="BUY", price=Decimal("10"), qty=200, symbol="600000")
     """
+
     commission_rate: float = 0.0003
     stamp_tax_rate: float = 0.001
     transfer_rate: float = 0.00001
     min_commission: float = 5.0
 
-    def compute(self, *, side: str, price: float, qty: int, symbol: str) -> FillCost:
-        turnover = float(price) * int(qty)
+    def __post_init__(self) -> None:
+        for value in (self.commission_rate, self.stamp_tax_rate, self.transfer_rate, self.min_commission):
+            number = Decimal(str(value))
+            if not number.is_finite() or number < 0:
+                raise ValueError("fee parameters must be finite and non-negative")
 
-        commission = max(turnover * float(self.commission_rate), float(self.min_commission))
-        stamp_tax = (turnover * float(self.stamp_tax_rate)) if side == "SELL" else 0.0
-        transfer_fee = (turnover * float(self.transfer_rate)) if (symbol.endswith(".SH") or symbol.startswith("6")) else 0.0
+    def compute(self, *, side: str, price: Decimal | float, qty: int, symbol: str) -> FillCost:
+        """Compute charges for the supplied total executed notional.
 
-        return FillCost(
-            commission=float(commission),
-            stamp_tax=float(stamp_tax),
-            transfer_fee=float(transfer_fee),
-        )
+        Example:
+            fee = costs.compute(side="BUY", price=Decimal("10"), qty=200, symbol="600000")
+        """
+        turnover = Decimal(str(price)) * qty
+        if turnover == 0:
+            return FillCost(Decimal("0"), Decimal("0"), Decimal("0"))
+        commission = max(turnover * Decimal(str(self.commission_rate)), Decimal(str(self.min_commission)))
+        stamp = turnover * Decimal(str(self.stamp_tax_rate)) if side == "SELL" else Decimal("0")
+        transfer = turnover * Decimal(str(self.transfer_rate)) if symbol.endswith(".SH") or symbol.startswith("6") else Decimal("0")
+        return FillCost(commission, stamp, transfer)

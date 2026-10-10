@@ -2,9 +2,40 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
+from decimal import Decimal
 from typing import Protocol
 
 import numpy as np
+
+from src.trading.core.time import BarTime
+
+
+@dataclass(frozen=True, slots=True)
+class ExecutionObservation:
+    """A complete, unit-normalized execution observation.
+
+    None volume explicitly means no volume cap for reference execution only.
+
+    Example:
+        observation = ExecutionObservation("minute-1", "600000", bar_time, Decimal("10"), 300)
+    """
+
+    observation_id: str
+    symbol: str
+    time: BarTime
+    price: Decimal
+    volume_qty: int | None
+
+    def __post_init__(self) -> None:
+        if not self.observation_id or not self.symbol:
+            raise ValueError("observation_id and symbol must be nonempty")
+        price = Decimal(str(self.price))
+        if not price.is_finite() or price <= 0:
+            raise ValueError("observation price must be finite and positive")
+        object.__setattr__(self, "price", price)
+        if self.volume_qty is not None and (type(self.volume_qty) is not int or self.volume_qty < 0):
+            raise ValueError("volume_qty must be a non-negative integer or None")
 
 
 class MarketDataView(Protocol):

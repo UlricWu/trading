@@ -42,6 +42,10 @@ class EquityCurve:
         - same ts_us -> replace
         - O(1) peak tracking
         - O(1) drawdown tracking
+
+    Example:
+        curve = EquityCurve()
+        curve.append(ts_us=1, cash=20_000.0, market_value=0.0)
     """
 
     points: list[EquityPoint] = field(default_factory=list)
@@ -49,12 +53,25 @@ class EquityCurve:
     # internal rolling state (NOT exposed)
     _peak_equity: float = 0.0
     _max_drawdown: float = 0.0
+    _drawdown_minima: list[float] = field(default_factory=list, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        self.points = list(self.points)
+        for point in self.points:
+            self._max_drawdown = min(self._max_drawdown, point.drawdown)
+            self._drawdown_minima.append(self._max_drawdown)
+            self._peak_equity = point.peak_equity
 
     # ---------------------------------------------------------
     # Write Interface
     # ---------------------------------------------------------
 
     def append(self, *, ts_us: int, cash: float, market_value: float) -> None:
+        """Append or replace a valuation with constant-time rolling statistics.
+
+        Example:
+            curve.append(ts_us=1, cash=20_000.0, market_value=0.0)
+        """
         ts_us = int(ts_us)
         cash = float(cash)
         market_value = float(market_value)
@@ -71,11 +88,13 @@ class EquityCurve:
                 )
 
         replacing = bool(self.points and self.points[-1].ts_us == ts_us)
-        historical_points = self.points[:-1] if replacing else self.points
-        if not historical_points:
+        previous_index = len(self.points) - (2 if replacing else 1)
+        if previous_index < 0:
             peak = equity
+            historical_max_drawdown = 0.0
         else:
-            peak = max(historical_points[-1].peak_equity, equity)
+            peak = max(self.points[previous_index].peak_equity, equity)
+            historical_max_drawdown = self._drawdown_minima[previous_index]
 
         if peak == 0:
             drawdown = 0.0
@@ -99,14 +118,12 @@ class EquityCurve:
 
         if replacing:
             self.points[-1] = p
+            self._drawdown_minima[-1] = min(historical_max_drawdown, drawdown)
         else:
             self.points.append(p)
+            self._drawdown_minima.append(min(historical_max_drawdown, drawdown))
 
         self._peak_equity = peak
-        historical_max_drawdown = min(
-            (point.drawdown for point in historical_points),
-            default=0.0,
-        )
         self._max_drawdown = min(historical_max_drawdown, drawdown)
 
     # ---------------------------------------------------------

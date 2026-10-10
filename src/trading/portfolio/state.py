@@ -3,166 +3,120 @@ from __future__ import annotations
 
 from collections.abc import MutableMapping
 from dataclasses import dataclass, field
+from decimal import Decimal
 
-from src.trading.core.events import FillEvent
-
-FillKey = tuple[int, int, int, int, str, str]
-# (order_id, ts_us, qty, price_i, side, symbol)
+from src.trading.core.events import FillEvent, Side
 
 
 @dataclass(frozen=True, slots=True)
 class FillCost:
-    commission: float
-    stamp_tax: float
-    transfer_fee: float
+    """Exact incremental charges.
+
+    Example:
+        cost = FillCost(Decimal("5"), Decimal("0"), Decimal("0"))
+        charge = cost.total
+    """
+
+    commission: Decimal
+    stamp_tax: Decimal
+    transfer_fee: Decimal
 
     @property
-    def total(self) -> float:
-        return float(self.commission) + float(self.stamp_tax) + float(self.transfer_fee)
+    def total(self) -> Decimal:
+        """Return total charges.
+
+        Example:
+            charge = cost.total
+        """
+        return self.commission + self.stamp_tax + self.transfer_fee
 
 
 @dataclass(slots=True)
 class PortfolioState:
+    """One run's account, mutated only by settlement and explicit day changes.
+
+    Example:
+        account = PortfolioState(Decimal("20000"), Decimal("20000"),
+                                 current_day="2026-07-03")
+        account.on_trading_day_start("2026-07-03")
     """
-    Mutable portfolio state owned by one simulation session.
 
-    Contract:
-    - fact-only state driven ONLY by FillEvent (via settlement)
-    - carries T+1 bookkeeping as FACTS (sellability), but does NOT enforce it
-
-    Notes:
-    - realized_pnl here is an explicit settlement fact (NET of costs)
-    - reporting MUST NOT derive pnl from state; it reads ledger/tapes/equity only
-    """
-    initial_cash: float
-    cash: float
-
+    initial_cash: Decimal
+    cash: Decimal
     positions: dict[str, int] = field(default_factory=dict)
-    avg_cost: dict[str, float] = field(default_factory=dict)
-
-    realized_pnl: float = 0.0
+    avg_cost: dict[str, Decimal] = field(default_factory=dict)
+    realized_pnl: Decimal = Decimal("0")
     buy_qty_today: dict[str, int] = field(default_factory=dict)
+    current_day: str | None = None
 
-    _applied_fills: set[FillKey] = field(default_factory=set, init=False)
-
-    current_day: str | None = field(default=None, init=False)
-
-    def on_run_start(self) -> None:
-        self.current_day = None
-        self.buy_qty_today.clear()
-        self._applied_fills.clear()
+    def __post_init__(self) -> None:
+        self.initial_cash = Decimal(str(self.initial_cash))
+        self.cash = Decimal(str(self.cash))
+        self.realized_pnl = Decimal(str(self.realized_pnl))
+        self.positions = dict(self.positions)
+        self.avg_cost = {symbol: Decimal(str(cost)) for symbol, cost in self.avg_cost.items()}
+        self.buy_qty_today = dict(self.buy_qty_today)
 
     def on_trading_day_start(self, trade_date: str) -> None:
-        self.current_day = str(trade_date)
-        self.buy_qty_today.clear()
+        """Unlock prior-day buys once, preserving initial snapshot restrictions.
+
+        Example:
+            account.on_trading_day_start("2026-07-06")
+        """
+        if self.current_day == trade_date:
+            return
+        if self.current_day is not None:
+            if trade_date < self.current_day:
+                raise ValueError("account trade_date must not regress")
+            self.buy_qty_today.clear()
+        self.current_day = trade_date
 
     def t1_sellable(self, symbol: str) -> int:
-        pos = int(self.positions.get(symbol, 0))
-        bought_today = int(self.buy_qty_today.get(symbol, 0))
-        return max(0, pos - bought_today)
+        """Return shares not bought in the current account day.
+
+        Example:
+            sellable = account.t1_sellable("600000")
+        """
+        return self.positions.get(symbol, 0) - self.buy_qty_today.get(symbol, 0)
 
     def apply_fill(
-        self,
-        f: FillEvent,
-        *,
-        cost: FillCost | None,
+        self, fill: FillEvent, *, cost: FillCost,
         meta_out: MutableMapping[str, object],
     ) -> None:
+        """Apply the exact fill; settlement owns identity and all ledger writes.
+
+        Example:
+            account.apply_fill(fill, cost=cost, meta_out={})
         """
-        Apply fill fact into portfolio state.
-
-        This method:
-        - updates cash/positions/avg_cost/realized_pnl
-        - does NOT write ledger (ledger is written by settlement)
-        - outputs explicit facts into meta_out (pnl, avg_cost, etc)
-        """
-        symbol = str(f.symbol)
-        qty = int(f.qty)
-        px = float(f.price)
-
-        order_id = int(getattr(f, "order_id", 0) or 0)
-        price_i = int(round(px * 1_000_000))
-        key: FillKey = (order_id if order_id != 0 else -1, int(f.ts_us), qty, price_i, f.side.value, symbol)
-        if key in self._applied_fills:
-            meta_out["idempotent_skip"] = True
-            return
-        self._applied_fills.add(key)
-
-        cur_pos = int(self.positions.get(symbol, 0))
-        cur_avg = float(self.avg_cost.get(symbol, 0.0))
-
-        meta_out.update(
-            {
-                "pos_before": cur_pos,
-                "avg_cost_before": cur_avg,
-            }
-        )
-
-        if f.side.value == "BUY":
-            trade_val = px * qty
-            self.cash -= trade_val
-
-            new_pos = cur_pos + qty
-            new_avg = ((cur_avg * cur_pos) + (px * qty)) / new_pos if new_pos > 0 else 0.0
-
-            self.positions[symbol] = new_pos
-            self.avg_cost[symbol] = new_avg
-            self.buy_qty_today[symbol] = self.buy_qty_today.get(symbol, 0) + qty
-
-            meta_out.update(
-                {
-                    "pos_after": new_pos,
-                    "avg_cost_after": new_avg,
-                }
-            )
-
-        elif f.side.value == "SELL":
-            sell_qty = min(qty, cur_pos)
-            if sell_qty <= 0:
-                meta_out["reject_reason"] = "SELL_NO_POSITION"
-                return
-
-            proceeds = px * sell_qty
-            self.cash += proceeds
-
-            pnl_gross = (px - cur_avg) * sell_qty
-            self.realized_pnl += pnl_gross
-
-            new_pos = cur_pos - sell_qty
-            if new_pos > 0:
-                self.positions[symbol] = new_pos
-            else:
-                self.positions.pop(symbol, None)
-                self.avg_cost.pop(symbol, None)
-                self.buy_qty_today.pop(symbol, None)
-
-            meta_out.update(
-                {
-                    "pos_after": new_pos,
-                    "avg_cost": cur_avg,
-                    "pnl_gross": float(pnl_gross),
-                    "sell_qty": int(sell_qty),
-                }
-            )
-
-            # costs are applied as explicit settlement facts
-            if cost is not None:
-                self.cash -= float(cost.total)
-                self.realized_pnl -= float(cost.total)
-
-                pnl_net = float(pnl_gross) - float(cost.total)
-            else:
-                pnl_net = float(pnl_gross)
-
-            meta_out["pnl_net"] = float(pnl_net)
-
+        quantity = self.positions.get(fill.symbol, 0)
+        if fill.side == Side.SELL and fill.qty > quantity:
+            raise ValueError("fill exceeds account position")
+        prior_cost = self.avg_cost[fill.symbol] if quantity else Decimal("0")
+        turnover = fill.price * fill.qty
+        cash_after = self.cash + (turnover if fill.side == Side.SELL else -turnover) - cost.total
+        if cash_after < 0:
+            raise ValueError("fill would overdraw account cash")
+        meta_out.update(pos_before=quantity, avg_cost_before=float(prior_cost))
+        if fill.side == Side.BUY:
+            self.avg_cost[fill.symbol] = (prior_cost * quantity + turnover) / (quantity + fill.qty)
+            self.positions[fill.symbol] = quantity + fill.qty
+            self.buy_qty_today[fill.symbol] = self.buy_qty_today.get(fill.symbol, 0) + fill.qty
+            meta_out.update(pos_after=quantity + fill.qty, avg_cost_after=float(self.avg_cost[fill.symbol]))
         else:
-            raise ValueError(f"unknown side={f.side}")
-
-        if cost is not None and f.side.value == "BUY":
-            # apply cost for BUY as well (net-of-cost)
-            self.cash -= float(cost.total)
-            self.realized_pnl -= float(cost.total)
-
-        meta_out["cash_after"] = float(self.cash)
-        meta_out["realized_pnl_after"] = float(self.realized_pnl)
+            pnl = (fill.price - prior_cost) * fill.qty
+            self.realized_pnl += pnl
+            remaining = quantity - fill.qty
+            if remaining:
+                self.positions[fill.symbol] = remaining
+                if fill.symbol in self.buy_qty_today:
+                    self.buy_qty_today[fill.symbol] = min(self.buy_qty_today[fill.symbol], remaining)
+            else:
+                self.positions.pop(fill.symbol)
+                self.avg_cost.pop(fill.symbol)
+                self.buy_qty_today.pop(fill.symbol, None)
+            meta_out.update(pos_after=remaining, avg_cost=float(prior_cost),
+                            pnl_gross=float(pnl), pnl_net=float(pnl - cost.total),
+                            sell_qty=fill.qty)
+        self.cash = cash_after
+        self.realized_pnl -= cost.total
+        meta_out.update(cash_after=float(self.cash), realized_pnl_after=float(self.realized_pnl))
