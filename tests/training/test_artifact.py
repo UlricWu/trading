@@ -121,6 +121,25 @@ def test_loader_rejects_wrong_type_without_revalidating_model_sources(tmp_path: 
         artifact.load(tmp_path / "missing.joblib")
 
 
+def test_loader_rejects_model_missing_prediction_method(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = _train_model()
+    ref = tmp_path / "incomplete.joblib"
+    previous_state = model.__getstate__()[:-1]
+    with monkeypatch.context() as patch:
+        patch.setattr(InferenceModel, "__getstate__", lambda self: previous_state)
+        joblib.dump(model, ref)
+    original = ref.read_bytes()
+
+    with pytest.raises(TypeError, match="missing fields: prediction_method.*retrain") as caught:
+        artifact.load(ref)
+
+    assert str(ref) in str(caught.value)
+    assert ref.read_bytes() == original
+    assert list(tmp_path.iterdir()) == [ref]
+
+
 def test_loader_preserves_original_restoration_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     error = ImportError("missing model dependency")
 

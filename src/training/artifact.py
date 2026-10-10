@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+from dataclasses import fields
 from pathlib import Path
 
 import joblib
@@ -37,7 +38,7 @@ def save(ref: Path, model: InferenceModel) -> None:
 
 
 def load(ref: Path) -> InferenceModel:
-    """Restore the exact ready object; propagate I/O and restoration errors.
+    """Restore a complete current model; propagate I/O and restoration errors.
 
     Example:
         model = load(Path("/data/trading/models/run-001.joblib"))
@@ -48,4 +49,10 @@ def load(ref: Path) -> InferenceModel:
     restored: object = joblib.load(ref)
     if not isinstance(restored, InferenceModel):
         raise TypeError("model file must contain an InferenceModel")
+    missing = [field.name for field in fields(InferenceModel) if not hasattr(restored, field.name)]
+    if missing:
+        raise TypeError(
+            f"model file does not contain a complete current InferenceModel: {ref}; "
+            f"missing fields: {', '.join(missing)}; retrain the model with the current code"
+        )
     return restored
