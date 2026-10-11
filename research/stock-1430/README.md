@@ -172,8 +172,7 @@ Acceptance 实质变化后重验，wall/RSS 没有预设 SLA 时只作观测。
 数据版本想法见[后续研究边界](../subscription-training/README.md#未来想法)。
 这表示本卷宗结束后续研究，不表示原完整训练/回放目标已完成或被实验否定。
 
-本次迁移与清理是本地工作树 draft，尚未 commit 或合入目标分支；没有新实验、
-release、deploy 或正式数据写入，已采用的数据契约和原冻结证据保持不变。
+该迁移只调整研究归属，没有新实验，已采用的数据契约和原冻结证据保持不变。
 
 [h01-history]: https://github.com/UlricWu/trading/blob/c2b84bc4533d1e38fe826f55c0cff91b5504bf94/research/stock-1430/README.md#h01
 [h02-history]: https://github.com/UlricWu/trading/blob/c2b84bc4533d1e38fe826f55c0cff91b5504bf94/research/stock-1430/README.md#h02

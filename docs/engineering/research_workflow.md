@@ -100,6 +100,8 @@ README 保存研究判断及其详细论证，文档整合遵循根 [AGENTS.md](
 Notebook 或冻结证据中。Acceptance 可引用运行前冻结的确定版本，摘要不得省略会改变
 判定的条件；Evidence 必须能定位支持或限制当前结论的具体运行，包括相关失败结果。
 完整性由卷宗与可恢复证据共同保证，不要求 README 重述全部事实。
+任务汇报与卷宗内容的取舍遵循根 [AGENTS.md 的文档持久化边界](../../AGENTS.md#文档持久化边界)。
+第 2 节的 draft 限制描述证据的权威与适用范围，不要求卷宗跟踪每次 Git 操作进度。
 
 ### 写入与按需读取
 
@@ -298,4 +300,4 @@ diff 与证据状态进行的完成性判断。
 
 - 研究完成事实与原 Scope、停止条件、Evidence 和 Conclusion 一致；记录整理不冒充验收通过。
 - Adopted 同步 Owner docs、实现、测试和候选状态；Rejected 清理候选并保留必要认识。
-- design、working tree、commit、merge、release、deploy 和外部运行状态分别报告。
+- 对话中的完成汇报遵循根 [AGENTS.md 的证据与完成](../../AGENTS.md#证据与完成)，不作为卷宗固定字段。
