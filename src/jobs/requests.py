@@ -355,7 +355,10 @@ class ExecutionEvalSubmission(BaseModel):
 
 
 class StrategyEvalSubmission(BaseModel):
-    """Run a strategy using reference fills and real account constraints.
+    """Run a strategy with reference or price-model fills and no business risk.
+
+    Price-model execution requires both execution.slippage_bp and strategy.quote;
+    leaving both as None selects reference fills.
 
     Example:
         submission = StrategyEvalSubmission(mode="strategy_eval", start="2026-07-03",
@@ -375,10 +378,10 @@ class StrategyEvalSubmission(BaseModel):
     kind: Literal["backtest"] = "backtest"
 
     @model_validator(mode="after")
-    def _validate_reference(self) -> Self:
+    def _validate_strategy(self) -> Self:
         _require_range(self.start, self.end)
-        if self.execution.slippage_bp is not None or self.strategy.quote is not None:
-            raise ValueError("strategy_eval does not accept price-model or quote parameters")
+        if (self.execution.slippage_bp is None) != (self.strategy.quote is None):
+            raise ValueError("strategy_eval requires execution.slippage_bp and strategy.quote together for price-model execution")
         if self.execution.risk_check_ts_us:
             raise ValueError("strategy_eval does not run risk checks")
         if self.strategy.order_window_minutes is None:

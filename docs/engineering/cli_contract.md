@@ -242,11 +242,19 @@ case_refs、order_refs 和 prediction_refs 是有序绝对路径数组；空事�
 | quantity_rules 每证券值 | buy_min_qty、buy_step_qty、sell_min_qty、sell_step_qty、fill_step_qty 都是正整数，price_tick 是正数有限 Decimal，enforce_t1 是显式 bool；不可用 bool 代替数量 |
 | fees | commission_rate、stamp_tax_rate、transfer_rate、min_commission，均为非负有限 Decimal；不使用隐含费率或最低佣金 |
 | risk | rules 非空数组，按声明顺序选具名规则；每项为 type=max_single_name 和非负有限 max_ratio，或 type=max_gross_exposure 和非负有限 max_gross_ratio，或 type=max_drawdown 和 [0,1] max_drawdown |
-| strategy | type、params、order_window_minutes；full 另须 quote，strategy_eval 不接受 quote。窗口分钟为正整数 |
+| strategy | type、params、order_window_minutes；full 另须 quote，strategy_eval 按下述成交假设成对提供 quote 与 slippage_bp。窗口分钟为正整数 |
 | quote | buy_offset_bp、sell_offset_bp，均为 [0,10000) 的有限 Decimal；不接受额外字段 |
 
-execution/full 必须提供 [0,10000) 的有限 slippage_bp；strategy_eval 不提供它，明确使用参考
-成交。只有 full 可提供 risk_check_ts_us 整数数组，省略为空；其他两种交易模式不接受
+execution/full 必须提供 [0,10000) 的有限 slippage_bp。strategy_eval 沿用同一数值约束，
+由现有 execution.slippage_bp 与 strategy.quote 选择成交假设：
+
+| execution.slippage_bp | strategy.quote | strategy_eval 构造结果 |
+| --- | --- | --- |
+| 省略或 null | 省略或 null | 参考成交 |
+| 有效数值，包含 0 | 完整报价规则 | 价格和成交量约束下的模拟成交 |
+| 仅其中一项非 null | 另一项缺失或 null | 拒绝，必须成对提供 |
+
+这两种 strategy_eval 都不接受 risk。只有 full 可提供 risk_check_ts_us 整数数组，省略为空；其他两种交易模式不接受
 非空风险检查时间。规则配置缺失、空规则或价格模型缺失不能解释为自动关闭能力。
 
 strategy.params 只允许与 type 对应的结构：
@@ -263,6 +271,8 @@ fixed_holding: {max_positions: positive-int, decision_time: local-time, exit_tim
 fixed_holding 的两个 time 不带 UTC offset，使用市场时区。三种策略的 order_window_minutes
 在交易请求必需；原两个构造器的股数默认值仍如上，新策略没有默认资金、名额或时点。
 完整选择/资金/退出和风险计算语义由 Offline owner 定义，本文件只拥有参数构造。
+已有预测加价量约束模拟成交的完整请求见 [Job API 示例](job_api_contract.md#post-jobs)；
+用于 CLI 时移除 kind 和 mode，将其余对象编码为 --input-json，并指定 --mode strategy_eval。
 
 仅评价已有预测的例子（文件必须实际存在）：
 

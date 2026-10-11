@@ -836,7 +836,7 @@ signal/strategy/full 使用其中的 `min_listing_calendar_days` 在模型推理
 | `signal_eval` / `run_signal_evaluation` | 已保存预测，或给定模型产生的预测；复用训练的固定预测评价 | 模型目标 Rank IC、逐决策覆盖、缺失与无定义原因；不要求策略、资金或市场，不创建交易账户 |
 | `risk_rule_eval` / `run_risk_rule_evaluation` | 固定的风控前目标或定时检查案例及明确规则 | 原始案例、决定及逐条规则观察；不加载模型，不撮合，不从后来的账户反推输入 |
 | `execution_eval` / `run_execution_evaluation` | 固定委托/撤单、初始账户、市场和价格模型 | 订单接纳、报价判断、部分成交、费用、未完成原因和最终账户；不运行策略或业务风控 |
-| `strategy_eval` / `run_strategy_evaluation` | 参考成交假设下的策略评价，输入为信号、策略和账户 | 原始目标、参考成交、费用、权益和策略收益；保留资金/可卖约束，不证明报价或市场量下可成交 |
+| `strategy_eval` / `run_strategy_evaluation` | 所选成交假设下的策略评价，输入为信号、策略、账户和执行参数；不运行业务风控 | 原始目标、委托、成交、费用、权益和策略收益；参考成交不检验报价或市场量约束，价格模型结果限于所声明的模拟假设 |
 | `full_backtest` / `run_full_backtest` | 信号、策略、非空真实风控、账户、价格模型 | 在一条共享反馈路径内保存并评价信号、风控、成交和组合事实 |
 
 五个入口的公共返回值均为 `None`。CLI 根据 submission 类型选择入口，各 workflow
@@ -860,6 +860,8 @@ full_backtest: AdvanceExecutionStep → AccountingStep → SignalStep → Portfo
 两个单次评价使用独立 Context 和 `run_steps`，不创建交易 State。三种交易入口共用
 `ReplayClock`、`BacktestPipeline`、推进、估值、FakeExecution 和唯一 SettlementEngine。
 不构造全量 Components、空策略、NoOpRiskManager 或模式专用指标公式。
+strategy_eval 在 workflow 组装时按已校验的执行配置选择 ReferenceVenue 或 LimitPriceVenue，
+两个分支使用相同 Step 链及账户结算；价格与数量计算继续复用 execution/full 的实现。
 
 回放结束后的完整 `final_steps` 为：
 
@@ -992,10 +994,12 @@ buy/sell_step_qty 量化。允许、缩减、拒绝及清仓分别记录；RiskD
 买卖方向、报价和数量合法化在最终目标进入订单边界后完成。
 
 OrderIntent 显式保存 ts_us、symbol、side、qty、order_id、active_ts_us、expires_ts_us、
-limit_price。full 的报价来自提交时可见价格及显式买卖 offset_bp：买价上界向下取
+limit_price。full 及选用价格模型的 strategy_eval，其报价来自提交时可见价格及显式买卖 offset_bp：买价上界向下取
 price_tick，卖价下界向上取 price_tick；execution 消费订单原报价。价格模型将观察
 价格先加/减显式滑点，再检查买价不高于上限、卖价不低于下限，不能把不匹配价格夹回
-限价。strategy_eval 不要求报价或滑点，不调用报价判断，使用随后完整观察的参考价。
+限价。strategy_eval 的参考成交配置不提供报价和滑点，使用随后完整观察的参考价；
+价量约束配置成对提供 slippage_bp 与 quote，零滑点也必须检查报价和市场量。
+字段组合的构造约束由 [CLI Backtest](engineering/cli_contract.md#backtest) 拥有。
 
 只有 `active <= observation.start < observation.end <= expires` 的完整后续区间可成交。
 提交时不成交；最后可执行区间先撮合后到期撤余。价格模型的数量预算同时受余量、
@@ -1078,6 +1082,9 @@ workflow 读取输入前，按模式、日期、信号/案例/委托、策略、
 逐项记录 JSON 开始日志。Workflow 接收并填充初始 metrics，`MetricsPersistStep` 在评价完成后
 写入参数及结果，最终 HTML 复用已保存快照，不另生成参数制品。这样既能解释已保存结果，
 也能在输入失败、尚无 metrics 文件时定位请求；开始日志不是成功证据。
+strategy_eval 的 not_run 始终记录 risk=strategy_only、signal_evaluation=strategy_return_only；
+只有参考成交时另记 price_feasibility=reference_fills。价格模型分支不能继续标记报价约束未运行，
+所用滑点与报价规则由同一 submission 快照说明。
 
 Pipeline 使用注入的单调时钟，处理后距上次进度至少 5 秒且仍有后续唤醒时输出当前交易日、
 时点及累计处理数；短任务没有逐时进度。所有 Step 异常保留原对象，并附加 scope 和

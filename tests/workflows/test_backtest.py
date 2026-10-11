@@ -267,6 +267,78 @@ def test_reference_fills_are_account_constrained_and_ignore_quote_and_market_vol
     assert metrics["not_run"]["price_feasibility"] == "reference_fills"
 
 
+@pytest.mark.parametrize(('slippage_bp', 'buy_offset_bp', 'filled_qty', 'fill_price'), [
+    (0, 0, 360, Decimal('10')),
+    (10, 0, 0, None),
+    (10, 10, 360, Decimal('10.01')),
+])
+def test_strategy_price_model_limits_fills_and_replays_without_business_risk(
+    scenario: tuple[PathManager, dict[str, object], Mock], slippage_bp: int,
+    buy_offset_bp: int, filled_qty: int, fill_price: Decimal | None,
+) -> None:
+    pm, fields, _ = scenario
+    fields.pop('risk')
+    fields['execution'].pop('risk_check_ts_us')
+    fields['execution']['slippage_bp'] = slippage_bp
+    fields['execution']['fees'].update(commission_rate='0.001', min_commission='5')
+    fields['strategy']['quote']['buy_offset_bp'] = buy_offset_bp
+    submission = create_backtest_submission(mode='strategy_eval', **fields)
+    metrics = BacktestMetrics(mode=submission.mode, parameters=submission.model_dump(mode='json'), not_run={})
+    name = 'backtest_2026-10-11_strategy-price'
+
+    run_strategy_evaluation(submission=submission, path_manager=pm, experiment_name=name, metrics=metrics)
+
+    result = _metrics(pm, name)
+    run_dir = pm.experiment_dir(experiment_name=name)
+    orders = json.loads((run_dir / 'orders.json').read_text())
+    facts = pq.read_table(pm.experiment_backtest_execution(experiment_name=name)).to_pylist()
+    fills = [row for row in facts if row['event'] == 'FILL']
+    assert len(orders) == 1 and orders[0]['qty'] == 1000
+    assert Decimal(orders[0]['limit_price']) == Decimal('10') * (1 + Decimal(buy_offset_bp) / 10000)
+    assert [row['qty'] for row in fills] == ([300, 60] if filled_qty else [])
+    assert all(Decimal(row['price']) == fill_price for row in fills)
+    assert [row['ts_us'] for row in fills] == ([_ts('2026-07-03', 14, 31), _ts('2026-07-03', 14, 32)] if filled_qty else [])
+    expired = [row for row in facts if row['status'] == 'expired']
+    assert [(row['ts_us'], row['remaining_qty']) for row in expired] == [(_ts('2026-07-03', 14, 32), 1000 - filled_qty)]
+    assert result['final_account']['positions'] == ({'600000': filled_qty} if filled_qty else {})
+    expected_cash = Decimal('20000') - (fill_price * filled_qty + 5 if fill_price is not None else 0)
+    assert Decimal(result['final_account']['cash']) == expected_cash
+    assert Decimal(result['portfolio']['total_fees']) == (5 if filled_qty else 0)
+    assert result['not_run'] == {'signal_evaluation': 'strategy_return_only', 'risk': 'strategy_only'}
+    assert 'risk_eval' not in result and not (run_dir / 'risk-cases.json').exists()
+    assert result['prediction_refs'] == fields['signal']['prediction_refs']
+    assert result['parameters'] == submission.model_dump(mode='json')
+    assert 'reference_fills' not in pm.experiment_backtest_report(experiment_name=name).read_text()
+
+    replay_submission = create_backtest_submission(mode='execution_eval', start=fields['start'], end=fields['end'],
+        order_refs=[str(run_dir / 'orders.json')], initial_account=fields['initial_account'], execution=fields['execution'])
+    replay_metrics = BacktestMetrics(mode=replay_submission.mode, parameters=replay_submission.model_dump(mode='json'), not_run={})
+    replay_name = 'backtest_2026-10-11_strategy-orders'
+    run_execution_evaluation(submission=replay_submission, path_manager=pm, experiment_name=replay_name, metrics=replay_metrics)
+    assert _metrics(pm, replay_name)['final_account'] == result['final_account']
+    assert pq.read_table(pm.experiment_backtest_execution(experiment_name=replay_name)).to_pylist() == facts
+
+
+def test_strategy_price_model_requires_observed_volume_before_publishing(
+    scenario: tuple[PathManager, dict[str, object], Mock],
+) -> None:
+    pm, fields, _ = scenario
+    fields.pop('risk')
+    fields['execution'].pop('risk_check_ts_us')
+    market_ref = Path(fields['execution']['market_ref'])
+    market = json.loads(market_ref.read_text())
+    for observation in market['observations']:
+        observation['volume_qty'] = None
+    market_ref.write_text(json.dumps(market))
+    submission = create_backtest_submission(mode='strategy_eval', **fields)
+    metrics = BacktestMetrics(mode=submission.mode, parameters=submission.model_dump(mode='json'), not_run={})
+    name = 'backtest_2026-10-11_missing-volume'
+
+    with pytest.raises(ValueError, match='explicit observed volume_qty'):
+        run_strategy_evaluation(submission=submission, path_manager=pm, experiment_name=name, metrics=metrics)
+    assert not pm.experiment_dir(experiment_name=name).exists()
+
+
 def test_fixed_holding_exits_without_signal_retries_and_retains_unfilled_end_position(
     scenario: tuple[PathManager, dict[str, object], Mock],
 ) -> None:

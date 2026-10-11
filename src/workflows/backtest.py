@@ -161,7 +161,7 @@ def run_strategy_evaluation(
     *, submission: StrategyEvalSubmission, path_manager: PathManager,
     experiment_name: str, metrics: BacktestMetrics,
 ) -> None:
-    """Evaluate a declared strategy using reference fills and a run-owned account.
+    """Evaluate a strategy with its declared execution assumptions and no business risk.
 
     The caller supplies the experiment name and initial metrics for this submission.
 
@@ -170,8 +170,7 @@ def run_strategy_evaluation(
         run_strategy_evaluation(submission=submission, path_manager=pm,
             experiment_name="backtest_2026-10-11_strategy-1", metrics=metrics)
     """
-    metrics.not_run = {"signal_evaluation": "strategy_return_only", "risk": "reference_strategy",
-                       "price_feasibility": "reference_fills"}
+    metrics.not_run = {"signal_evaluation": "strategy_return_only", "risk": "strategy_only"}
     config = submission.execution
     access = Access(pm=path_manager, processed_version=PROCESSED_VERSION)
     market = prepare_market(config=config, initial=submission.initial_account, access=access)
@@ -180,7 +179,12 @@ def run_strategy_evaluation(
     validate_recorded_model_uses(batches)
     _validate_signal_times(batches.keys(), submission.initial_account.ts_us, config.end_ts_us)
     state = create_state(submission.initial_account)
-    execution = _execution(state, config, ReferenceVenue(), None)
+    if config.slippage_bp is None:
+        metrics.not_run["price_feasibility"] = "reference_fills"
+        execution = _execution(state, config, ReferenceVenue(), None)
+    else:
+        execution = _execution(state, config,
+            LimitPriceVenue(FixedBPSlippageModel(config.slippage_bp)), submission.strategy.quote)
     portfolio_step = _portfolio_step(submission.strategy, market, config, submission.initial_account)
     windows = tuple(window for session in market.source.sessions for window in session.windows)
     clock = ReplayClock.from_iterable((*market.timestamps(), *batches,

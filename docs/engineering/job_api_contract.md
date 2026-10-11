@@ -159,6 +159,8 @@ CLI-only 的 `data-calendar`、`data-standard-bootstrap`、`data-level2-minute-b
     start/end/signal/strategy/initial_account/execution；full 另须 risk。
     signal、strategy_eval 和 full 还必须在 body 顶层提供 min_listing_calendar_days，
     构造约束沿用上述 CLI schema；risk/execution 不接受该字段。
+    strategy_eval 的成交假设也沿用该 schema，通过 execution.slippage_bp 与 strategy.quote
+    成对选择，不增加 mode 或额外 HTTP 参数。
   - 有日期时使用规范 YYYY-MM-DD 且 start<=end；risk 按全部案例输入定义完整任务，不虚构日期。
   - 每个请求只创建一个 Job；路径、数值和嵌套结构先由共享构造边界校验。
 
@@ -192,6 +194,45 @@ CLI-only 的 `data-calendar`、`data-standard-bootstrap`、`data-level2-minute-b
   "signal": {"type": "recorded", "prediction_refs": ["/data/prediction.parquet"]}
 }
 ```
+
+已有预测、策略及价量约束模拟成交的示例（不运行业务风控）。日期、路径、初始账户与
+行情覆盖须替换为实际输入；所有数值是演示参数。此例的起止时刻为上海时区
+2026-07-03 14:30 与 15:00，零滑点仍检查报价和可分配成交量：
+
+```json
+{
+  "kind": "backtest",
+  "mode": "strategy_eval",
+  "start": "2026-07-03",
+  "end": "2026-07-03",
+  "min_listing_calendar_days": 120,
+  "signal": {"type": "recorded", "prediction_refs": ["/data/prediction.parquet"]},
+  "strategy": {
+    "type": "threshold",
+    "params": {"threshold": 0.5, "target_quantity": 1000},
+    "order_window_minutes": 2,
+    "quote": {"buy_offset_bp": 0, "sell_offset_bp": 0}
+  },
+  "initial_account": {
+    "ts_us": 1783060200000000, "trade_date": "2026-07-03", "cash": "20000",
+    "positions": {}, "sellable": {}, "average_cost": {}, "peak_equity": 20000
+  },
+  "execution": {
+    "market_ref": "/data/market.json", "end_ts_us": 1783062000000000,
+    "quantity_rules": {
+      "600000": {
+        "buy_min_qty": 100, "buy_step_qty": 100, "sell_min_qty": 1,
+        "sell_step_qty": 1, "fill_step_qty": 1, "price_tick": "0.01", "enforce_t1": true
+      }
+    },
+    "fees": {"commission_rate": 0, "stamp_tax_rate": 0, "transfer_rate": 0, "min_commission": 0},
+    "annual_factor": 252,
+    "slippage_bp": 0
+  }
+}
+```
+
+仅将此例的 strategy.quote 和 execution.slippage_bp 同时移除或设为 null，即选择参考成交。
 
 固定风控案例示例（0.2 是演示参数，实际任务明确选择）：
 

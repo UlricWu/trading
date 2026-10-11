@@ -176,6 +176,65 @@ def test_backtest_command_preserves_mode_and_uses_job_id_as_experiment_id(
         assert "strategy" not in fields and "initial_account" not in fields
 
 
+@pytest.mark.parametrize("source", ["model", "recorded"])
+@pytest.mark.parametrize("slippage_bp", [0, 10])
+def test_strategy_evaluation_accepts_price_model_and_preserves_cli_parameters(
+    source: str, slippage_bp: int, backtest_payload: Callable[[str], dict[str, object]],
+) -> None:
+    payload = backtest_payload("strategy_eval")
+    payload["execution"]["slippage_bp"] = slippage_bp
+    payload["strategy"]["quote"] = {"buy_offset_bp": 10, "sell_offset_bp": 0}
+    if source == "recorded":
+        payload["signal"] = {"type": "recorded", "prediction_refs": ["/data/fixed.parquet"]}
+
+    submission = parse_job_request(payload)[0]
+    command = build_cli_command(submission, "strategy-price")
+    fields = json.loads(command[command.index("--input-json") + 1])
+
+    assert submission.execution.slippage_bp == slippage_bp
+    assert submission.strategy.quote.buy_offset_bp == 10
+    assert fields["execution"]["slippage_bp"] == slippage_bp
+    assert parse_job_request({"kind": "backtest", "mode": "strategy_eval", **fields}) == [submission]
+    assert "risk" not in fields
+
+
+@pytest.mark.parametrize("missing", ["slippage_bp", "quote"])
+def test_strategy_evaluation_rejects_incomplete_price_model(
+    missing: str, backtest_payload: Callable[[str], dict[str, object]],
+) -> None:
+    payload = backtest_payload("strategy_eval")
+    if missing != "slippage_bp":
+        payload["execution"]["slippage_bp"] = 0
+    if missing != "quote":
+        payload["strategy"]["quote"] = {"buy_offset_bp": 0, "sell_offset_bp": 0}
+
+    with pytest.raises(InvalidJobRequest, match="slippage_bp.*quote"):
+        parse_job_request(payload)
+
+
+@pytest.mark.parametrize("price_model", [False, True])
+@pytest.mark.parametrize(("risk_input", "error_field", "message"), [
+    ("risk", "risk", "Extra inputs are not permitted"),
+    ("risk_check_ts_us", "request", "does not run risk checks"),
+])
+def test_strategy_evaluation_rejects_business_risk_with_either_execution_model(
+    price_model: bool, risk_input: str, error_field: str, message: str,
+    backtest_payload: Callable[[str], dict[str, object]],
+) -> None:
+    payload = backtest_payload("strategy_eval")
+    if price_model:
+        payload["execution"]["slippage_bp"] = 0
+        payload["strategy"]["quote"] = {"buy_offset_bp": 0, "sell_offset_bp": 0}
+    if risk_input == "risk":
+        payload["risk"] = {"rules": [{"type": "max_single_name", "max_ratio": 0.2}]}
+    else:
+        payload["execution"]["risk_check_ts_us"] = [1]
+
+    with pytest.raises(InvalidJobRequest, match=message) as caught:
+        parse_job_request(payload)
+    assert caught.value.field == error_field
+
+
 @pytest.mark.parametrize("mode", ["signal_eval", "strategy_eval", "full_backtest"])
 @pytest.mark.parametrize("source", ["model", "recorded"])
 def test_backtest_requires_explicit_listing_age(

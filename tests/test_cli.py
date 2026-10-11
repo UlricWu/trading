@@ -413,6 +413,42 @@ def test_backtest_routes_validated_input_to_its_workflow(
     assert not args["path_manager"].experiment_dir(experiment_name=args["experiment_name"]).exists()
 
 
+@pytest.mark.parametrize("missing", [None, "slippage_bp", "quote"])
+def test_strategy_backtest_validates_price_model_before_running(
+    missing: str | None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    backtest_payload: Callable[[str], dict[str, object]], backtest_log: Path,
+) -> None:
+    load_config = Mock(return_value=SimpleNamespace(storage_root=tmp_path))
+    run = Mock()
+    monkeypatch.setattr(cli.AppConfig, "load", load_config)
+    monkeypatch.setattr(cli.DateTimeUtils, "today", Mock(return_value="2026-10-11"))
+    monkeypatch.setattr(cli, "run_strategy_evaluation", run)
+    fields = backtest_payload("strategy_eval")
+    del fields["kind"], fields["mode"]
+    if missing != "slippage_bp":
+        fields["execution"]["slippage_bp"] = 0
+    if missing != "quote":
+        fields["strategy"]["quote"] = {"buy_offset_bp": 10, "sell_offset_bp": 0}
+
+    result = CliRunner().invoke(cli.app, ["backtest", "--mode", "strategy_eval",
+        "--experiment-id", "strategy-price", "--input-json", json.dumps(fields)])
+
+    if missing is not None:
+        assert result.exit_code == 2, result.output
+        assert "execution.slippage_bp" in result.output and "strategy.quote" in result.output
+        load_config.assert_not_called()
+        run.assert_not_called()
+        return
+    assert result.exit_code == 0, result.output
+    load_config.assert_called_once_with()
+    run.assert_called_once()
+    args = run.call_args.kwargs
+    assert args["submission"].execution.slippage_bp == 0
+    assert args["submission"].strategy.quote.buy_offset_bp == 10
+    assert args["metrics"].parameters == args["submission"].model_dump(mode="json")
+    assert _logged_parameters(backtest_log, experiment_name=args["experiment_name"]) == args["metrics"].parameters
+
+
 @pytest.mark.parametrize("mode", ["signal_eval", "strategy_eval", "full_backtest"])
 @pytest.mark.parametrize("listing_fields", [{}, {"min_listing_calendar_days": -1}])
 def test_backtest_rejects_missing_or_invalid_listing_age_before_loading_config(
