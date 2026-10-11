@@ -13,7 +13,7 @@ from src.trading.core.events import PendingOrder, TargetEvent
 from src.trading.core.ledger import ExecutionLedger
 from src.trading.core.tape import SignalTape, TargetTape
 from src.trading.portfolio.state import PortfolioState
-from src.trading.risk.evaluation import RiskCase, RiskObservation
+from src.trading.risk.evaluation import RiskCases, RiskObservation
 
 
 @dataclass(slots=True)
@@ -34,10 +34,10 @@ class RiskEvaluationContext:
     """Fixed risk inputs and actual rule observations, never a mutable account.
 
     Example:
-        context = RiskEvaluationContext(cases=(case,), metrics=metrics)
+        context = RiskEvaluationContext(cases=RiskCases((case,)), metrics=metrics)
     """
 
-    cases: tuple[RiskCase, ...]
+    cases: RiskCases
     metrics: BacktestMetrics
     risk_observations: tuple[RiskObservation, ...] = ()
 

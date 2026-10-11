@@ -3,9 +3,13 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import Self
 
+from src.config.backtest_config import RiskConfig, SingleNameRiskConfig, GrossRiskConfig
 from src.trading.core.events import Side
 from src.trading.risk.base import RiskContext, RiskDecision, RiskRule, RuleObservation, TargetPositions
+from src.trading.risk.rules.max_drawdown import MaxDrawdownRule
+from src.trading.risk.rules.max_position import MaxSingleNameNotionalRule, MaxGrossExposureRule
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,6 +27,25 @@ class RiskManager:
         object.__setattr__(self, "rules", tuple(self.rules))
         if not self.rules:
             raise ValueError("risk requires a nonempty rule chain")
+
+    @classmethod
+    def from_config(cls, config: RiskConfig) -> Self:
+        """Construct the explicitly selected rule order without a registry or NoOp fallback.
+
+        Example:
+            manager = RiskManager.from_config(RiskConfig(rules=(
+                SingleNameRiskConfig(type="max_single_name", max_ratio=0.2),
+            )))
+        """
+        rules: list[RiskRule] = []
+        for rule in config.rules:
+            if isinstance(rule, SingleNameRiskConfig):
+                rules.append(MaxSingleNameNotionalRule(rule.max_ratio))
+            elif isinstance(rule, GrossRiskConfig):
+                rules.append(MaxGrossExposureRule(rule.max_gross_ratio))
+            else:
+                rules.append(MaxDrawdownRule(rule.max_drawdown))
+        return cls(rules)
 
     def apply(self, *, target: TargetPositions | None, ctx: RiskContext) -> RiskDecision:
         """Reduce current commitments on timer checks without reviving old targets.

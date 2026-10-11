@@ -8,7 +8,6 @@ from src.trading.backtest.context import BacktestResultContext, RiskEvaluationCo
 from src.trading.backtest.evaluation import evaluate_execution, evaluate_portfolio, evaluate_risk, evaluate_signals
 from src.trading.backtest.reporting.metrics import AccountResult
 from src.trading.risk.engine import RiskManager
-from src.trading.risk.evaluation import evaluate_risk_cases
 from src.training.evaluation import evaluate_prediction_records
 from src.utils.path import PathManager
 
@@ -51,7 +50,7 @@ class RiskEvaluationStep:
         Example:
             context = step.run(context)
         """
-        context.risk_observations = evaluate_risk_cases(context.cases, risk=self.risk)
+        context.risk_observations = context.cases.evaluate(risk=self.risk)
         return context
 
 

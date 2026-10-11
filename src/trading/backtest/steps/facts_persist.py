@@ -10,7 +10,7 @@ import pyarrow as pa
 from pydantic import TypeAdapter
 
 from src.trading.core.events import OrderIntent, CancelOrders, TargetEvent
-from src.trading.risk.evaluation import RiskCase
+from src.trading.risk.evaluation import RiskCases
 from src.utils.filesystem import FileSystem
 
 from src.trading.backtest.context import BacktestResultContext
@@ -120,7 +120,5 @@ class FactsPersistStep:
         FileSystem.write_bytes_atomic(run_dir / "targets.json",
             TypeAdapter(tuple[TargetEvent, ...]).dump_json(tuple(context.state.target_tape.events)))
         if context.state.risk_observations:
-            FileSystem.write_bytes_atomic(run_dir / "risk-cases.json",
-                TypeAdapter(tuple[RiskCase, ...]).dump_json(
-                    tuple(item.case for item in context.state.risk_observations)))
+            RiskCases(tuple(item.case for item in context.state.risk_observations)).write(run_dir / "risk-cases.json")
         return context

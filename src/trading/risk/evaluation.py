@@ -5,11 +5,12 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
-from typing import Annotated
+from typing import Annotated, Self
 
 from pydantic import ConfigDict, PlainSerializer, StrictInt, TypeAdapter
 
 from src.utils.datetime_utils import DateTimeUtils
+from src.utils.filesystem import FileSystem
 
 from src.trading.risk.base import RiskContext, RiskDecision
 from src.trading.risk.engine import RiskManager
@@ -50,23 +51,46 @@ class RiskObservation:
     decision: RiskDecision
 
 
-def read_risk_cases(refs: Sequence[Path]) -> tuple[RiskCase, ...]:
-    """Read ordered case arrays without reconstructing later account facts.
+@dataclass(frozen=True, slots=True)
+class RiskCases:
+    """Own ordered, uniquely identified frozen inputs for independent risk evaluation.
 
     Example:
-        cases = read_risk_cases((Path("/data/cases.json"),))
+        cases = RiskCases((case,))
+        observations = cases.evaluate(risk=risk_manager)
     """
-    cases = tuple(case for ref in refs
-                  for case in TypeAdapter(tuple[RiskCase, ...]).validate_json(ref.read_bytes(), strict=True))
-    if len({case.case_id for case in cases}) != len(cases):
-        raise ValueError("risk case_id must be unique")
-    return cases
 
+    cases: Sequence[RiskCase]
 
-def evaluate_risk_cases(cases: Sequence[RiskCase], *, risk: RiskManager) -> tuple[RiskObservation, ...]:
-    """Run the same risk calculation used in a trading feedback loop.
+    def __post_init__(self) -> None:
+        cases = tuple(self.cases)
+        if len({case.case_id for case in cases}) != len(cases):
+            raise ValueError("risk case_id must be unique")
+        object.__setattr__(self, "cases", cases)
 
-    Example:
-        observations = evaluate_risk_cases(cases, risk=risk_manager)
-    """
-    return tuple(RiskObservation(case, risk.apply(target=case.target, ctx=case.context)) for case in cases)
+    @classmethod
+    def from_files(cls, refs: Sequence[Path]) -> Self:
+        """Strictly parse case arrays in file order, then establish collection invariants.
+
+        Example:
+            cases = RiskCases.from_files((Path("/data/cases.json"),))
+        """
+        adapter = TypeAdapter(tuple[RiskCase, ...])
+        return cls(tuple(case for ref in refs
+                         for case in adapter.validate_json(ref.read_bytes(), strict=True)))
+
+    def write(self, ref: Path) -> None:
+        """Atomically write the original ordered case array without evaluating rules.
+
+        Example:
+            cases.write(Path("/data/risk-cases.json"))
+        """
+        FileSystem.write_bytes_atomic(ref, TypeAdapter(tuple[RiskCase, ...]).dump_json(self.cases))
+
+    def evaluate(self, *, risk: RiskManager) -> tuple[RiskObservation, ...]:
+        """Apply the shared rule chain once per frozen case without changing the inputs.
+
+        Example:
+            observations = cases.evaluate(risk=risk_manager)
+        """
+        return tuple(RiskObservation(case, risk.apply(target=case.target, ctx=case.context)) for case in self.cases)

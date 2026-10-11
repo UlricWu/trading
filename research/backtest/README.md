@@ -354,7 +354,7 @@ full 组装的是同一账户反馈闭环内的组件，不是依次启动其他
 | 可定位的实现事实 | 对本次目标的影响 |
 | --- | --- |
 | `run_daily_alpha_backtest` 在所有 mode 下组装同一套八个逐日 Step，见 [workflow](../../src/workflows/backtest.py) | 信号评价也依赖策略、现金、执行和账户，任务没有真正分离 |
-| [build_components](../../src/trading/backtest/components.py) 只按 mode 切换 IdealExecution / ExecutionOrchestrator，risk 始终是 NoOpRiskManager | `risk_eval` 名称不能证明启用过风险规则；[现有组件测试](../../tests/trading/backtest/test_components.py)还明确验证这种固定映射 |
+| [build_components](../../src/trading/backtest/components.py) 只按 mode 切换 IdealExecution / ExecutionOrchestrator，risk 始终是 NoOpRiskManager | `risk_eval` 名称不能证明启用过风险规则；[当时的组件测试](https://github.com/UlricWu/trading/blob/76c25a279685b6961cda69143f542e8ec3936f51/tests/trading/sim/test_components.py)还明确验证这种固定映射 |
 | [TradableAlphaEvalStep](../../src/trading/backtest/steps/backtest_layers.py) 调用基于两期价格及固定成本扣减的 [tradable_alpha_frame](../../src/trading/backtest/evaluation.py)，没有委托、成交量或盘口输入 | 它是条件收益诊断，不能证明可交易性；当前调用也没有传入非零成本 |
 | [SimImmediateVenue](https://github.com/UlricWu/trading/blob/f733a2bc87903de4f218dfc0e1fc34b2d83768be/src/trading/backtest/execution/venue/sim_immediate.py) 对有价格的 intent 一次生成全量 fill | 没有部分成交、有效挂单和跨时点等待，不能回答价格出现时自己的订单能否完成 |
 | [metrics persist](../../src/trading/backtest/steps/metrics_persist.py) 总是写入全部五类结果 | “有指标字段”会掩盖实际只使用了理想执行或空风控 |

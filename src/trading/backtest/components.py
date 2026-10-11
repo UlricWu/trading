@@ -2,17 +2,11 @@
 from __future__ import annotations
 
 from src.access import Access
-from src.config.backtest_config import (
-    FakeExecutionConfig, InitialAccount, RiskConfig, SingleNameRiskConfig, GrossRiskConfig,
-)
+from src.config.backtest_config import FakeExecutionConfig, InitialAccount
 from src.trading.backtest.context import BacktestState
 from src.trading.backtest.market.replay import ReplayMarket, ReplayMarketInput
 from src.trading.core.equity import EquityCurve
 from src.trading.portfolio.state import PortfolioState
-from src.trading.risk.base import RiskRule
-from src.trading.risk.engine import RiskManager
-from src.trading.risk.rules.max_drawdown import MaxDrawdownRule
-from src.trading.risk.rules.max_position import MaxSingleNameNotionalRule, MaxGrossExposureRule
 
 
 def prepare_market(*, config: FakeExecutionConfig, initial: InitialAccount, access: Access) -> ReplayMarket:
@@ -52,20 +46,3 @@ def create_state(initial: InitialAccount) -> BacktestState:
         buy_qty_today={s: qty - initial.sellable[s] for s, qty in initial.positions.items()},
         current_day=initial.trade_date)
     return BacktestState(account, equity_curve=EquityCurve(starting_peak_equity=initial.peak_equity))
-
-
-def build_risk(config: RiskConfig) -> RiskManager:
-    """Construct the explicitly selected rule order without a registry or NoOp fallback.
-
-    Example:
-        risk = build_risk(risk_config)
-    """
-    rules: list[RiskRule] = []
-    for rule in config.rules:
-        if isinstance(rule, SingleNameRiskConfig):
-            rules.append(MaxSingleNameNotionalRule(rule.max_ratio))
-        elif isinstance(rule, GrossRiskConfig):
-            rules.append(MaxGrossExposureRule(rule.max_gross_ratio))
-        else:
-            rules.append(MaxDrawdownRule(rule.max_drawdown))
-    return RiskManager(tuple(rules))

@@ -15,7 +15,7 @@ from src.observability.instrumentation import Instrumentation
 from src.pipeline import PipelineStep, run_steps
 from src.trading.backtest.clock import ReplayClock
 from src.trading.backtest.commands import OrderCommandSchedule
-from src.trading.backtest.components import prepare_market, create_state, build_risk
+from src.trading.backtest.components import prepare_market, create_state
 from src.trading.backtest.context import (
     BacktestContext, BacktestState, SignalEvaluationContext, RiskEvaluationContext,
 )
@@ -45,7 +45,7 @@ from src.trading.backtest.steps.report import ReportStep
 from src.trading.execution.policies.constraints import QuoteRule
 from src.trading.portfolio.constructors.factory import build_portfolio_constructor
 from src.trading.portfolio.constructors.topk_hysteresis import TopKHysteresisConstructor
-from src.trading.risk.evaluation import read_risk_cases
+from src.trading.risk import RiskCases, RiskManager
 from src.utils.path import PathManager
 from src.workflows import PROCESSED_VERSION
 
@@ -94,9 +94,9 @@ def run_risk_rule_evaluation(
             experiment_name="backtest_2026-10-11_risk-1", metrics=metrics)
     """
     metrics.not_run = {"signal": "fixed_risk_cases", "strategy": "fixed_risk_cases", "execution": "fixed_risk_cases"}
-    cases = read_risk_cases(submission.case_refs)
+    cases = RiskCases.from_files(submission.case_refs)
     steps: tuple[PipelineStep[RiskEvaluationContext], ...] = (
-        RiskEvaluationStep(build_risk(submission.risk)),
+        RiskEvaluationStep(RiskManager.from_config(submission.risk)),
         RiskMetricsStep(configured_rules=tuple(rule.type for rule in submission.risk.rules)),
         MetricsPersistStep(path_manager, experiment_name),
         ReportStep(ReportingBundle(path_manager), experiment_name),
@@ -215,7 +215,7 @@ def run_full_backtest(
     state = create_state(submission.initial_account)
     execution = _execution(state, config,
         LimitPriceVenue(FixedBPSlippageModel(cast(float, config.slippage_bp))), submission.strategy.quote)
-    risk = build_risk(submission.risk)
+    risk = RiskManager.from_config(submission.risk)
     portfolio_step = _portfolio_step(submission.strategy, market, config, submission.initial_account)
     windows = tuple(window for session in market.source.sessions for window in session.windows)
     clock = ReplayClock.from_iterable((*market.timestamps(), *batches, *config.risk_check_ts_us,

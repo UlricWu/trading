@@ -5,10 +5,12 @@ import json
 from copy import deepcopy
 from decimal import Decimal
 from pathlib import Path
+from unittest.mock import Mock
 
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
+from pydantic import TypeAdapter
 
 from src.trading.portfolio.state import PortfolioState
 from src.trading.backtest.context import BacktestResultContext, BacktestState
@@ -17,6 +19,8 @@ from src.trading.backtest.steps.facts_persist import FactsPersistStep
 from src.trading.core.events import FillEvent, OrderEvent, OrderStatus, Side
 from src.trading.backtest.execution.models.cost_a_share import AShareCostModel
 from src.trading.backtest.execution.settlement import SettlementEngine
+from src.trading.risk import RiskCase, RiskCases, RiskContext, RiskManager, RiskObservation
+from src.trading.risk.rules.max_position import MaxSingleNameNotionalRule
 from src.utils.path import PathManager
 
 
@@ -26,6 +30,27 @@ def context() -> BacktestResultContext:
         metrics=BacktestMetrics(mode='execution_eval', parameters={}, not_run={}),
         state=BacktestState(PortfolioState(20_000, 20_000)),
     )
+
+
+def test_risk_cases_preserve_original_facts_without_reapplying_rules(
+    tmp_path: Path, context: BacktestResultContext, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pm = PathManager(tmp_path)
+    case = RiskCase('risk-1', '2026-07-03', {'A': 1000},
+        RiskContext(1, {'A': 10}, 20000, 20000, 20000, {}, (), {'A': 100}))
+    decision = RiskManager((MaxSingleNameNotionalRule(.2),)).apply(target=case.target, ctx=case.context)
+    observation = RiskObservation(case, decision)
+    context.state.risk_observations.append(observation)
+    expected = TypeAdapter(tuple[RiskCase, ...]).dump_json((case,), warnings='error')
+    monkeypatch.setattr(RiskManager, 'apply', Mock(side_effect=AssertionError('must preserve original decisions')))
+
+    FactsPersistStep(pm=pm, experiment_name='risk-facts').run(context)
+
+    ref = pm.experiment_dir(experiment_name='risk-facts') / 'risk-cases.json'
+    assert ref.read_bytes() == expected
+    assert RiskCases.from_files((ref,)).cases == (case,)
+    assert context.state.risk_observations == [observation]
+    assert observation.decision is decision
 
 
 def test_execution_preserves_identities_exact_money_metadata_and_order_states(

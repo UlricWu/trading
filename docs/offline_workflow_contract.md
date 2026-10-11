@@ -974,9 +974,18 @@ max_positions、decision_time、exit_time、初始持仓的 initial_exit_dates �
 
 ### 风险规则与动作
 
-risk/full 的 rules 必须非空且参数显式给出，按声明顺序执行。RiskContext 是当时现金、
-权益、峰值、价格、持仓、有效委托和证券数量步长的不可变快照；RiskCase 保存风控前
-完整目标，target=None 唯一表示检查当前承诺。缺失受控证券的价格或步长必须失败。
+risk/full 的 rules 必须非空且参数显式给出，`RiskManager.from_config()` 按声明顺序构造
+规则链，`RiskManager.apply()` 是固定案例评价和交易回放共用的唯一风险计算入口。
+RiskContext 是当时现金、权益、峰值、价格、持仓、有效委托和证券数量步长的不可变快照；
+RiskCase 保存风控前完整目标，target=None 唯一表示检查当前承诺。缺失受控证券的价格
+或步长必须失败。
+
+固定案例集合由 `RiskCases` 持有，构造时取得独立 tuple 并检查集合内 case_id 唯一；
+空集合合法，案例顺序不被排序或去重。`from_files()` 按文件及数组顺序严格解析外部记录，
+再调用构造函数；单个案例及上下文沿用各自构造约束，下游不重复检查已建立的契约。
+`evaluate(risk=...)` 对每个案例调用一次所选规则链，按原顺序返回 RiskObservation，
+不修改案例或账户。同一案例集合可评价不同规则链，不保存所选规则或上次评价结果；
+案例持久化与规则计算因此能够分别使用，full 的运行时决策无需依赖案例文件。
 
 - max_single_name：权益×max_ratio 除以价格形成单证券数量上限，按声明步长向下取整，
   与请求数量取较小值。
@@ -1032,7 +1041,8 @@ price_tick，卖价下界向上取 price_tick；execution 消费订单原报价�
 ### 评价、制品与日志
 
 交易完成后先由 FactsPersistStep 保存原始 execution/equity、orders.json、targets.json，
-full 另保存 risk-cases.json；随后评价、写 metrics.json、生成 report.html。单项 signal/risk
+full 另由 `RiskCases.write()` 按原有 JSON 数组格式保存 risk-cases.json；写入只序列化
+当时记录的案例，不执行风险规则。随后评价、写 metrics.json、生成 report.html。单项 signal/risk
 只保存自己的评价与报告，不写交易占位文件。每个文件原子写入，但整体不是多文件事务；
 失败保留已写制品且阻止后续步骤。
 这些阶段全部由显式 Step 拥有，并处于同一次 Instrumentation 作用域内；完整链包括

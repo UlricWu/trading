@@ -1,13 +1,39 @@
 # filepath: tests/trading/risk/test_engine.py
+from collections.abc import Mapping
 from decimal import Decimal
 
 import pytest
 
+from src.config.backtest_config import RiskConfig
 from src.trading.core.events import OrderIntent, PendingOrder, Side
 from src.trading.risk.base import RiskContext
 from src.trading.risk.engine import RiskManager
 from src.trading.risk.rules.max_drawdown import MaxDrawdownRule
 from src.trading.risk.rules.max_position import MaxGrossExposureRule, MaxSingleNameNotionalRule
+
+
+def test_declared_risk_chain_observes_and_reduces_in_configured_order() -> None:
+    risk = RiskManager.from_config(RiskConfig.model_validate({'rules': [
+        {'type': 'max_single_name', 'max_ratio': .4}, {'type': 'max_gross_exposure', 'max_gross_ratio': .5}]}))
+    context = RiskContext(1, {'A': 10, 'B': 10}, 10000, 10000, 10000, {}, (), {'A': 100, 'B': 100})
+    decision = risk.apply(target={'A': 1000, 'B': 1000}, ctx=context)
+    assert decision.adjusted == {'A': 200, 'B': 200}
+    assert [rule.rule for rule in decision.rules] == ['max_single_name', 'max_gross_exposure']
+    assert all(rule.triggered for rule in decision.rules)
+
+
+@pytest.mark.parametrize(('max_drawdown', 'expected_target'), [(.1, {'A': 0}), (.3, None)])
+def test_from_config_uses_the_explicit_drawdown_parameter(
+    max_drawdown: float, expected_target: Mapping[str, int] | None,
+) -> None:
+    risk = RiskManager.from_config(RiskConfig.model_validate({'rules': [
+        {'type': 'max_drawdown', 'max_drawdown': max_drawdown}]}))
+    context = RiskContext(2, {'A': 10}, 8000, 0, 10000, {'A': 800}, (), {'A': 100})
+
+    decision = risk.apply(target=None, ctx=context)
+
+    assert decision.adjusted == expected_target
+    assert [rule.rule for rule in decision.rules] == ['max_drawdown']
 
 
 def test_timer_does_not_restore_expired_buy_or_undo_existing_sell() -> None:
