@@ -171,9 +171,9 @@ def test_backtest_command_preserves_mode_and_uses_job_id_as_experiment_id(
     fields = json.loads(command[command.index("--input-json") + 1])
     assert parse_job_request({"kind": "backtest", "mode": mode.value, **fields}) == [submission]
     if mode == BacktestMode.RISK_RULE_EVAL:
-        assert "start" not in fields and "signal" not in fields
+        assert "start" in fields and "signal" in fields and "risk" in fields
     if mode == BacktestMode.SIGNAL_EVAL:
-        assert "strategy" not in fields and "initial_account" not in fields
+        assert "strategy" in fields and "initial_account" in fields
 
 
 @pytest.mark.parametrize("source", ["model", "recorded"])
@@ -182,7 +182,7 @@ def test_strategy_evaluation_accepts_price_model_and_preserves_cli_parameters(
     source: str, slippage_bp: int, backtest_payload: Callable[[str], dict[str, object]],
 ) -> None:
     payload = backtest_payload("strategy_eval")
-    payload["execution"]["slippage_bp"] = slippage_bp
+    payload["execution"]["fill"] = {"type": "limit_price", "slippage_bp": slippage_bp}
     payload["strategy"]["quote"] = {"buy_offset_bp": 10, "sell_offset_bp": 0}
     if source == "recorded":
         payload["signal"] = {"type": "recorded", "prediction_refs": ["/data/fixed.parquet"]}
@@ -191,9 +191,9 @@ def test_strategy_evaluation_accepts_price_model_and_preserves_cli_parameters(
     command = build_cli_command(submission, "strategy-price")
     fields = json.loads(command[command.index("--input-json") + 1])
 
-    assert submission.execution.slippage_bp == slippage_bp
+    assert submission.execution.fill.slippage_bp == slippage_bp
     assert submission.strategy.quote.buy_offset_bp == 10
-    assert fields["execution"]["slippage_bp"] == slippage_bp
+    assert fields["execution"]["fill"]["slippage_bp"] == slippage_bp
     assert parse_job_request({"kind": "backtest", "mode": "strategy_eval", **fields}) == [submission]
     assert "risk" not in fields
 
@@ -204,11 +204,11 @@ def test_strategy_evaluation_rejects_incomplete_price_model(
 ) -> None:
     payload = backtest_payload("strategy_eval")
     if missing != "slippage_bp":
-        payload["execution"]["slippage_bp"] = 0
+        payload["execution"]["fill"] = {"type": "limit_price", "slippage_bp": 0}
     if missing != "quote":
         payload["strategy"]["quote"] = {"buy_offset_bp": 0, "sell_offset_bp": 0}
 
-    with pytest.raises(InvalidJobRequest, match="slippage_bp.*quote"):
+    with pytest.raises(InvalidJobRequest, match="strategy.quote"):
         parse_job_request(payload)
 
 
@@ -223,7 +223,7 @@ def test_strategy_evaluation_rejects_business_risk_with_either_execution_model(
 ) -> None:
     payload = backtest_payload("strategy_eval")
     if price_model:
-        payload["execution"]["slippage_bp"] = 0
+        payload["execution"]["fill"] = {"type": "limit_price", "slippage_bp": 0}
         payload["strategy"]["quote"] = {"buy_offset_bp": 0, "sell_offset_bp": 0}
     if risk_input == "risk":
         payload["risk"] = {"rules": [{"type": "max_single_name", "max_ratio": 0.2}]}
@@ -235,7 +235,7 @@ def test_strategy_evaluation_rejects_business_risk_with_either_execution_model(
     assert caught.value.field == error_field
 
 
-@pytest.mark.parametrize("mode", ["signal_eval", "strategy_eval", "full_backtest"])
+@pytest.mark.parametrize("mode", ["signal_eval", "strategy_eval", "risk_rule_eval", "full_backtest"])
 @pytest.mark.parametrize("source", ["model", "recorded"])
 def test_backtest_requires_explicit_listing_age(
     mode: str, source: str, backtest_payload: Callable[[str], dict[str, object]],
@@ -249,7 +249,7 @@ def test_backtest_requires_explicit_listing_age(
     assert caught.value.field == "min_listing_calendar_days"
 
 
-@pytest.mark.parametrize("mode", ["signal_eval", "strategy_eval", "full_backtest"])
+@pytest.mark.parametrize("mode", ["signal_eval", "strategy_eval", "risk_rule_eval", "full_backtest"])
 @pytest.mark.parametrize("source", ["model", "recorded"])
 @pytest.mark.parametrize("listing_age", [0, 90])
 def test_backtest_accepts_task_listing_age_and_preserves_it_in_cli_input(
@@ -269,7 +269,7 @@ def test_backtest_accepts_task_listing_age_and_preserves_it_in_cli_input(
     assert parse_job_request({"kind": "backtest", "mode": mode, **fields}) == [submission]
 
 
-@pytest.mark.parametrize("mode", ["signal_eval", "strategy_eval", "full_backtest"])
+@pytest.mark.parametrize("mode", ["signal_eval", "strategy_eval", "risk_rule_eval", "full_backtest"])
 @pytest.mark.parametrize("listing_age", [-1, True, 1.5, "120", None])
 def test_backtest_rejects_invalid_listing_age(
     mode: str, listing_age: object, backtest_payload: Callable[[str], dict[str, object]],
@@ -281,7 +281,7 @@ def test_backtest_rejects_invalid_listing_age(
     assert caught.value.field == "min_listing_calendar_days"
 
 
-@pytest.mark.parametrize("mode", ["risk_rule_eval", "execution_eval"])
+@pytest.mark.parametrize("mode", ["execution_eval"])
 def test_backtest_rejects_listing_age_without_signals(
     mode: str, backtest_payload: Callable[[str], dict[str, object]],
 ) -> None:
@@ -397,13 +397,13 @@ def test_omitted_and_null_evaluation_both_mean_pure_training() -> None:
 
 
 @pytest.mark.parametrize("ref", ["training-run", "relative/model.joblib", "../model.joblib", None, 1])
-def test_backtest_requires_a_concrete_absolute_model_reference(ref: object) -> None:
-    from src.jobs.requests import create_backtest_submission
+def test_backtest_requires_a_concrete_absolute_model_reference(
+    ref: object, backtest_payload: Callable[[str], dict[str, object]],
+) -> None:
+    payload = backtest_payload("signal_eval")
+    payload["signal"] = {"type": "model", "model_ref": ref}
     with pytest.raises(InvalidJobRequest) as caught:
-        create_backtest_submission(
-            mode="signal_eval", start="2026-07-01", end="2026-07-02",
-            signal={"type": "model", "model_ref": ref}, min_listing_calendar_days=120,
-        )
+        parse_job_request(payload)
     assert caught.value.field == "signal.model_ref"
 
 
@@ -437,26 +437,40 @@ def test_session_counts_must_be_nonnegative_integers(gap: object, field: str) ->
         parse_job_request({**_training_request(), field: gap})
 
 
-def test_signal_evaluation_accepts_fixed_predictions_without_trading_inputs() -> None:
-    submission = parse_job_request({
-        "kind": "backtest", "mode": "signal_eval",
-        "start": "2026-07-03", "end": "2026-07-03",
-        "signal": {"type": "recorded", "prediction_refs": ["/data/fixed.parquet"]},
-        "min_listing_calendar_days": 120,
-    })[0]
+def test_signal_evaluation_accepts_fixed_predictions_with_an_account(
+    backtest_payload: Callable[[str], dict[str, object]],
+) -> None:
+    payload = backtest_payload("signal_eval")
+    payload["signal"] = {"type": "recorded", "prediction_refs": ["/data/fixed.parquet"]}
+    submission = parse_job_request(payload)[0]
     assert submission.signal.prediction_refs == (Path("/data/fixed.parquet"),)
-    assert "--strategy-json" not in build_cli_command(submission, "signal-run")
+    assert submission.strategy.quote is not None
+    assert submission.execution.fill.type == "quoted"
 
 
-def test_signal_evaluation_rejects_unrelated_strategy() -> None:
-    with pytest.raises(InvalidJobRequest, match="Extra inputs|not allowed"):
-        parse_job_request({
-            "kind": "backtest", "mode": "signal_eval",
-            "start": "2026-07-03", "end": "2026-07-03",
-            "signal": {"type": "recorded", "prediction_refs": ["/data/fixed.parquet"]},
-            "min_listing_calendar_days": 120,
-            "strategy": {"type": "threshold", "params": {"threshold": 0.5}},
-        })
+@pytest.mark.parametrize("field", ["strategy", "initial_account", "execution"])
+def test_signal_evaluation_requires_trading_inputs(
+    backtest_payload: Callable[[str], dict[str, object]], field: str,
+) -> None:
+    payload = backtest_payload("signal_eval")
+    del payload[field]
+    with pytest.raises(InvalidJobRequest) as caught:
+        parse_job_request(payload)
+    assert caught.value.field == field
+
+
+@pytest.mark.parametrize(("section", "field", "value"), [
+    ("strategy", "quote", None), ("strategy", "order_window_minutes", None),
+    ("execution", "slippage_bp", 0), ("execution", "risk_check_ts_us", [1]),
+    ("execution", "end_ts_us", 1),
+])
+def test_signal_evaluation_rejects_conflicting_fill_assumptions(
+    backtest_payload: Callable[[str], dict[str, object]], section: str, field: str, value: object,
+) -> None:
+    payload = backtest_payload("signal_eval")
+    payload[section][field] = value
+    with pytest.raises(InvalidJobRequest):
+        parse_job_request(payload)
 
 
 @pytest.mark.parametrize(('field', 'value'), [('risk', None), ('risk', {'rules': []}),
@@ -471,7 +485,8 @@ def test_full_rejects_missing_or_empty_risk_and_unrelated_fields(
 
 
 @pytest.mark.parametrize(('section', 'field', 'value'), [
-    ('execution', 'slippage_bp', None), ('execution', 'slippage_bp', float('nan')),
+    ('execution', 'fill', {'type': 'limit_price', 'slippage_bp': None}),
+    ('execution', 'fill', {'type': 'limit_price', 'slippage_bp': float('nan')}),
     ('strategy', 'quote', None), ('strategy', 'order_window_minutes', True)])
 def test_full_rejects_incomplete_execution_assumptions(
     backtest_payload: Callable[[BacktestMode | str], dict[str, object]],
@@ -495,3 +510,41 @@ def test_quantity_rules_reject_coercion_and_unknown_fields(
     rule['lot_guess'] = 100
     with pytest.raises(InvalidJobRequest):
         parse_job_request(payload)
+
+
+@pytest.mark.parametrize('mode', list(BacktestMode))
+def test_backtest_requires_an_explicit_fill_model(
+    mode: BacktestMode, backtest_payload: Callable[[BacktestMode], dict[str, object]],
+) -> None:
+    payload = backtest_payload(mode)
+    del payload['execution']['fill']
+    with pytest.raises(InvalidJobRequest) as caught:
+        parse_job_request(payload)
+    assert caught.value.field == 'execution.fill'
+
+
+@pytest.mark.parametrize(('mode', 'fill'), [
+    ('signal_eval', {'type': 'reference'}),
+    ('signal_eval', {'type': 'limit_price', 'slippage_bp': 0}),
+    ('full_backtest', {'type': 'quoted'}),
+    ('execution_eval', {'type': 'quoted'}),
+    ('strategy_eval', {'type': 'limit_price'}),
+    ('risk_rule_eval', {'type': 'quoted', 'slippage_bp': 0}),
+])
+def test_backtest_rejects_fill_models_outside_the_declared_mode_contract(
+    mode: str, fill: dict[str, object], backtest_payload: Callable[[str], dict[str, object]],
+) -> None:
+    payload = backtest_payload(mode)
+    payload['execution']['fill'] = fill
+    with pytest.raises(InvalidJobRequest):
+        parse_job_request(payload)
+
+
+def test_risk_comparison_rejects_archived_case_inputs(
+    backtest_payload: Callable[[str], dict[str, object]],
+) -> None:
+    payload = backtest_payload('risk_rule_eval')
+    payload['case_refs'] = ['/data/cases.json']
+    with pytest.raises(InvalidJobRequest) as caught:
+        parse_job_request(payload)
+    assert caught.value.field == 'case_refs'

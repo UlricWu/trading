@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from src.trading.backtest.context import BacktestResultContext, RiskEvaluationContext, SignalEvaluationContext
+from src.trading.backtest.context import BacktestResultContext, RiskComparisonContext
 from src.trading.backtest.reporting.bundle import ReportingBundle
 
 
@@ -12,13 +12,12 @@ class ReportStep:
     """Render the persisted results before completing the workflow's measured scope.
 
     Example:
-        context = ReportStep(ReportingBundle(pm), experiment_name).run(context)
+        context = ReportStep(ReportingBundle(output_dir)).run(context)
     """
 
     bundle: ReportingBundle
-    experiment_name: str
 
-    def run[ContextT: SignalEvaluationContext | RiskEvaluationContext | BacktestResultContext](
+    def run[ContextT: RiskComparisonContext | BacktestResultContext](
         self, context: ContextT,
     ) -> ContextT:
         """Publish HTML and its concise summary, retaining report failures as failures.
@@ -26,5 +25,5 @@ class ReportStep:
         Example:
             context = step.run(context)
         """
-        self.bundle.run(experiment_name=self.experiment_name)
+        self.bundle.run()
         return context

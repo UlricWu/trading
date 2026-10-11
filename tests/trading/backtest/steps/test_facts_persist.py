@@ -44,7 +44,7 @@ def test_risk_cases_preserve_original_facts_without_reapplying_rules(
     expected = TypeAdapter(tuple[RiskCase, ...]).dump_json((case,), warnings='error')
     monkeypatch.setattr(RiskManager, 'apply', Mock(side_effect=AssertionError('must preserve original decisions')))
 
-    FactsPersistStep(pm=pm, experiment_name='risk-facts').run(context)
+    FactsPersistStep(output_dir=pm.experiment_dir(experiment_name='risk-facts')).run(context)
 
     ref = pm.experiment_dir(experiment_name='risk-facts') / 'risk-cases.json'
     assert ref.read_bytes() == expected
@@ -83,7 +83,7 @@ def test_execution_preserves_identities_exact_money_metadata_and_order_states(
     original_events = tuple(ledger.order_events)
     original_cash = context.state.portfolio_state.cash
 
-    assert FactsPersistStep(pm=pm, experiment_name="execution").run(context) is context
+    assert FactsPersistStep(output_dir=pm.experiment_dir(experiment_name="execution")).run(context) is context
 
     table = pq.read_table(pm.experiment_backtest_execution(experiment_name="execution"))
     rows = table.to_pylist()
@@ -131,7 +131,7 @@ def test_equity_keeps_actual_valuation_times_and_replaced_snapshot(
     curve.append(ts_us=3, cash=9_000.0, market_value=8_000.0)
     original_points = tuple(curve.points)
 
-    FactsPersistStep(pm=pm, experiment_name="equity").run(context)
+    FactsPersistStep(output_dir=pm.experiment_dir(experiment_name="equity")).run(context)
 
     table = pq.read_table(pm.experiment_backtest_equity(experiment_name="equity"))
     assert table.to_pylist() == [
@@ -150,7 +150,7 @@ def test_empty_fact_collections_have_stable_typed_files(
     tmp_path: Path, context: BacktestResultContext,
 ) -> None:
     pm = PathManager(tmp_path)
-    FactsPersistStep(pm=pm, experiment_name="empty").run(context)
+    FactsPersistStep(output_dir=pm.experiment_dir(experiment_name="empty")).run(context)
 
     execution = pq.read_table(pm.experiment_backtest_execution(experiment_name="empty"))
     equity = pq.read_table(pm.experiment_backtest_equity(experiment_name="empty"))

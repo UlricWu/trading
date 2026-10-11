@@ -30,7 +30,7 @@ class LedgerRecord(TypedDict, total=False):
     reason: NotRequired[str]
     price: NotRequired[str]
     fill_id: NotRequired[str]
-    observation_id: NotRequired[str]
+    observation_id: NotRequired[str | None]
     reference_price: NotRequired[str]
     commission: NotRequired[str]
     stamp_tax: NotRequired[str]

@@ -393,18 +393,18 @@ def test_cancellation_timer_start_failure_force_stops_job_and_closes_runtime(
     runtime.close()
 
 
-def test_risk_job_exposes_case_scope_and_runs_without_range_fields(
+def test_risk_job_exposes_strategy_replay_range(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     backtest_payload: Callable[[BacktestMode | str], dict[str, object]],
 ) -> None:
     from src.jobs.requests import parse_job_request
-    from src.jobs.runtime import CaseJobScope
+    from src.jobs.runtime import RangeJobScope
     factory = _ProcessFactory()
     monkeypatch.setattr(runtime_module.subprocess, 'Popen', factory)
     runtime = JobRuntime(tmp_path, clock=lambda: _FIXED_NOW)
     try:
         job = runtime.submit(parse_job_request(backtest_payload('risk_rule_eval')))[0]
-        assert job.scope == CaseJobScope(('/data/cases.json',))
+        assert job.scope == RangeJobScope("2026-07-01", "2026-07-20")
         factory.processes[0].finish(0)
         _wait_for_status(runtime, job.job_id, JobStatus.SUCCESS)
     finally:

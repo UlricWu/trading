@@ -41,11 +41,12 @@ class BacktestPipeline:
         self._instrumentation = instrumentation
         self._progress_clock = progress_clock
 
-    def run(self, state: BacktestState, *, metrics: BacktestMetrics) -> None:
-        """Preserve stage order, fresh Contexts and deadlines discovered during replay.
+    def run(self, state: BacktestState, *, metrics: BacktestMetrics) -> BacktestResultContext:
+        """Advance the account and return the final chain's completed result context.
 
         Example:
-            pipeline.run(state, metrics=metrics)
+            result = pipeline.run(state, metrics=metrics)
+            portfolio = result.metrics.portfolio
         """
         context: BacktestContext | None = None
         last_progress = self._progress_clock()
@@ -68,5 +69,5 @@ class BacktestPipeline:
                     last_progress = now
             if context is None:
                 raise ValueError("backtest requires at least one clock tick")
-            run_steps(context=BacktestResultContext(state=state, metrics=metrics),
+            return run_steps(context=BacktestResultContext(state=state, metrics=metrics),
                       steps=self._final_steps, instrumentation=self._instrumentation)

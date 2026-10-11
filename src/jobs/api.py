@@ -14,7 +14,6 @@ from src import logs
 from src.config.app_config import AppConfig
 from src.jobs.requests import InvalidJobRequest, parse_job_request
 from src.jobs.runtime import (
-    CaseJobScope,
     JobNotCancellableError,
     JobNotFoundError,
     JobRuntime,
@@ -45,13 +44,11 @@ def create_app(job_runtime: JobRuntime) -> Flask:
         "eval_range": DATE_RANGE_OR_NULL}``.
         Each date range has inclusive start/end dates. Optional evaluation uses
         the same fitted model for every selected trading day.
-      - Backtest uses one of five typed requests. For example,
-        ``{"kind":"backtest","mode":"signal_eval","start":"2026-07-03",
-        "end":"2026-07-03","signal":{"type":"recorded","prediction_refs":[]},
-        "min_listing_calendar_days":120}``.
-        Risk evaluation accepts case_refs and risk without a date range; execution
-        accepts orders, account and market assumptions without a signal. Strategy
-        runs additionally select a strategy, and full replay requires real risk rules.
+      - Backtest uses one of five typed requests, each with start/end,
+        initial_account and execution.fill. Signal, strategy, risk and full tasks
+        provide signal and strategy; risk and full also require nonempty risk rules.
+        Risk evaluation compares independent account paths with and without those
+        rules. Execution evaluation provides order_refs instead of signal/strategy.
 
       Dates are canonical, ranges require start <= end, and extra fields are
       rejected. Each request creates one Job covering its complete input scope.
@@ -232,8 +229,7 @@ def _job_to_json(job: JobSnapshot) -> dict[str, object]:
     return {
         "job_id": job.job_id,
         "kind": job.kind,
-        "scope": ({"case_refs": list(job.scope.case_refs)} if isinstance(job.scope, CaseJobScope)
-                  else {"start": job.scope.start, "end": job.scope.end}),
+        "scope": {"start": job.scope.start, "end": job.scope.end},
         "status": job.status.value,
         "submitted_at": job.submitted_at,
         "started_at": job.started_at,

@@ -4,6 +4,7 @@ from __future__ import annotations
 from collections.abc import Mapping, MutableMapping, Sequence
 from dataclasses import dataclass, field, replace
 from decimal import Decimal
+from math import lcm
 from typing import cast
 
 from src.trading.core.events import (
@@ -15,7 +16,7 @@ from src.trading.execution.policies.constraints import (
     QuantityRules, QuoteRule, reconcile_target_orders,
 )
 from src.trading.backtest.execution.settlement import SettlementEngine, affordable_quantity
-from src.trading.backtest.execution.venue.fake import LimitPriceVenue, ReferenceVenue
+from src.trading.backtest.execution.venue.fake import LimitPriceVenue, QuotedPriceVenue, ReferenceVenue
 from src.trading.backtest.market.data_view import ExecutionObservation, PriceView
 from src.trading.portfolio.state import PortfolioState
 
@@ -38,7 +39,7 @@ class FakeExecution:
     ledger: ExecutionLedger
     pending_orders: MutableMapping[int, PendingOrder]
     settlement: SettlementEngine
-    venue: LimitPriceVenue | ReferenceVenue
+    venue: LimitPriceVenue | QuotedPriceVenue | ReferenceVenue
     rules: Mapping[str, QuantityRules]
     quote_rule: QuoteRule | None
     _ts_us: int | None = field(default=None, init=False)
@@ -71,7 +72,7 @@ class FakeExecution:
     def submit_orders(
         self, *, orders: Sequence[OrderIntent], market: PriceView,
     ) -> tuple[OrderEvent, ...]:
-        """Accept or reject each frozen quantity; submission never produces fills.
+        """Accept frozen quantities and settle active orders under the quote-fill assumption.
 
         Example:
             events = execution.submit_orders(orders=(order,), market=market)
@@ -83,7 +84,7 @@ class FakeExecution:
                 raise ValueError(f"duplicate order_id={order.order_id}")
             rule = self.rules[order.symbol]
             if self.venue.requires_quote and order.limit_price is None:
-                raise ValueError("price-model execution requires a limit_price")
+                raise ValueError("quoted execution requires a limit_price")
             if not self.venue.requires_quote and order.limit_price is not None:
                 raise ValueError("reference orders require limit_price=None")
             self.ledger.orders_by_id[order.order_id] = order
@@ -91,6 +92,8 @@ class FakeExecution:
             self.ledger.record_order_submit(ts_us=order.ts_us, symbol=order.symbol,
                 side=order.side.value, qty=order.qty, order_id=order.order_id)
             step = rule.buy_step_qty if order.side == Side.BUY else rule.sell_step_qty
+            if isinstance(self.venue, QuotedPriceVenue):
+                step = lcm(step, rule.fill_step_qty)
             minimum = rule.buy_min_qty if order.side == Side.BUY else rule.sell_min_qty
             reason = ""
             reservation_price = order.limit_price
@@ -122,6 +125,16 @@ class FakeExecution:
                                if item.intent.symbol == order.symbol)
                 if order.qty > sellable - reserved:
                     reason = "insufficient_sellable"
+                elif isinstance(self.venue, QuotedPriceVenue):
+                    turnover = reservation_price * order.qty
+                    cost = self.settlement.incremental_cost(order_id=order.order_id, side=order.side,
+                        symbol=order.symbol, turnover=turnover, ledger=self.ledger)
+                    reserved_cash = max(Decimal(0), cost.total - turnover)
+                    available = self.portfolio.cash - sum(
+                        (item.reserved_cash for item in self.pending_orders.values()), Decimal(0)
+                    )
+                    if reserved_cash > available:
+                        reason = "insufficient_cash_for_fees"
             if reason:
                 self.ledger.record_order_reject(ts_us=order.ts_us, symbol=order.symbol,
                     side=order.side.value, qty=order.qty, order_id=order.order_id, reason=reason)
@@ -134,6 +147,10 @@ class FakeExecution:
                 )
                 events.append(self._event(order.ts_us, order.order_id, OrderStatus.PENDING,
                                           order.qty, "accepted"))
+                if isinstance(self.venue, QuotedPriceVenue):
+                    first_event = len(self.ledger.order_events)
+                    self._fill_at_quotes(order.ts_us)
+                    events.extend(self.ledger.order_events[first_event:])
         return tuple(events)
 
     def submit_targets(
@@ -148,7 +165,7 @@ class FakeExecution:
         """
         self._advance_time(target.ts_us)
         if self.venue.requires_quote and self.quote_rule is None:
-            raise ValueError("target-based price-model execution requires quote_rule")
+            raise ValueError("quoted target execution requires quote_rule")
         prices = {symbol: Decimal(str(price)) for symbol in target.targets
                   if (price := market.get_price(symbol)) is not None}
         plan = reconcile_target_orders(target=target, positions=self.portfolio.positions,
@@ -159,6 +176,8 @@ class FakeExecution:
         for order in plan.orders:
             rule = self.rules[order.symbol]
             step = rule.buy_step_qty if order.side == Side.BUY else rule.sell_step_qty
+            if isinstance(self.venue, QuotedPriceVenue):
+                step = lcm(step, rule.fill_step_qty)
             qty = order.qty // step * step
             if order.side == Side.BUY:
                 cash = self.portfolio.cash - sum(
@@ -205,15 +224,18 @@ class FakeExecution:
     def advance(
         self, *, ts_us: int, observations: Sequence[ExecutionObservation],
     ) -> tuple[FillEvent, ...]:
-        """Settle complete eligible intervals before expiring their remaining orders.
+        """Settle active quote fills or complete eligible market intervals.
 
-        Repeated identical observations are ignored; conflicts, late input and
-        overlapping liquidity streams fail before this batch changes the account.
+        Under market-based venues, repeated identical observations are ignored;
+        conflicts, late input and overlapping liquidity streams fail before settlement.
+        QuotedPriceVenue uses activation ticks without consuming observations.
 
         Example:
             fills = execution.advance(ts_us=minute_end_us, observations=(observation,))
         """
         self._advance_time(ts_us)
+        if isinstance(self.venue, QuotedPriceVenue):
+            return self._fill_at_quotes(ts_us)
         fresh: dict[str, ExecutionObservation] = {}
         last_end = dict(self._last_interval_end)
         for observation in observations:
@@ -326,6 +348,25 @@ class FakeExecution:
                 reason = "no_observation" if last.observation_id is None else last.reason
                 self._event(ts_us, order_id, OrderStatus.EXPIRED, item.remaining_qty, f"expired:{reason}")
                 del self.pending_orders[order_id]
+        return tuple(fills)
+
+    def _fill_at_quotes(self, ts_us: int) -> tuple[FillEvent, ...]:
+        ordered = sorted(self.pending_orders.values(), key=lambda item: item.intent.active_ts_us)
+        if any(item.intent.active_ts_us < ts_us for item in ordered):
+            raise ValueError("quoted execution requires a clock tick at every order activation")
+        fills = []
+        for pending in ordered:
+            order = pending.intent
+            if order.active_ts_us > ts_us:
+                continue
+            price = cast(Decimal, order.limit_price)
+            fill = FillEvent(ts_us, order.symbol, order.side, order.qty, price, order.order_id,
+                f"{order.order_id}:quote:{ts_us}", None, price)
+            self.settlement.settle_fill(fill=fill, portfolio=self.portfolio, ledger=self.ledger)
+            del self.pending_orders[order.order_id]
+            self._event(ts_us, order.order_id, OrderStatus.FILLED, 0, "filled_at_quote",
+                        candidate_price=price)
+            fills.append(fill)
         return tuple(fills)
 
     def _advance_time(self, ts_us: int) -> None:

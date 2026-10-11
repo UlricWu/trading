@@ -22,7 +22,6 @@ from src.config.secret_config import SecretConfig
 from src.jobs.api import create_app
 from src.jobs.requests import (
     parse_job_request,
-    RiskRuleEvalSubmission,
     JobSubmission,
     TrainingSubmission,
 )
@@ -32,7 +31,6 @@ from src.jobs.runtime import (
     JobSnapshot,
     JobStatus,
     RangeJobScope,
-    CaseJobScope,
 )
 
 def _training_request() -> dict[str, object]:
@@ -80,7 +78,8 @@ def test_strategy_post_validates_execution_selection_before_creating_a_job(
 ) -> None:
     runtime = _StubRuntime()
     payload = backtest_payload("strategy_eval")
-    payload["execution"]["slippage_bp"] = slippage_bp
+    payload["execution"]["fill"] = ({"type": "reference"} if slippage_bp is None
+                                     else {"type": "limit_price", "slippage_bp": slippage_bp})
     if quote:
         payload["strategy"]["quote"] = {"buy_offset_bp": 0, "sell_offset_bp": 0}
 
@@ -91,7 +90,7 @@ def test_strategy_post_validates_execution_selection_before_creating_a_job(
         assert len(runtime.submitted) == len(runtime.jobs) == 1
         assert runtime.submitted == parse_job_request(payload)
     else:
-        assert "execution.slippage_bp and strategy.quote together" in response.get_json()["error"]["message"]
+        assert "strategy.quote" in response.get_json()["error"]["message"]
         assert runtime.jobs == {} and runtime.submitted == []
 
 
@@ -102,17 +101,11 @@ def test_strategy_post_validates_execution_selection_before_creating_a_job(
     ("availability_evidence_ref", "caller-provided-evidence"),
 ])
 def test_backtest_post_rejects_internal_fields_without_creating_a_job(
-    field: str, value: object,
+    field: str, value: object, backtest_payload: Callable[[str], dict[str, object]],
 ) -> None:
     runtime = _StubRuntime()
     response = create_app(cast(JobRuntime, runtime)).test_client().post(
-        "/jobs", json={
-            "kind": "backtest", "mode": "signal_eval",
-            "start": "2026-07-01", "end": "2026-07-20",
-            "signal": {"type": "model", "model_ref": "/data/training/model.joblib"},
-            "min_listing_calendar_days": 120,
-            field: value,
-        },
+        "/jobs", json={**backtest_payload("signal_eval"), field: value},
     )
 
     assert response.status_code == 400
@@ -160,7 +153,7 @@ def test_backtest_post_requires_both_dates(field: str) -> None:
     assert runtime.jobs == {} and runtime.submitted == []
 
 
-@pytest.mark.parametrize("mode", ["signal_eval", "strategy_eval", "full_backtest"])
+@pytest.mark.parametrize("mode", ["signal_eval", "strategy_eval", "risk_rule_eval", "full_backtest"])
 @pytest.mark.parametrize("listing_fields", [{}, {"min_listing_calendar_days": -1}])
 def test_backtest_post_rejects_missing_or_invalid_listing_age_before_creating_a_job(
     mode: str, listing_fields: dict[str, object],
@@ -187,9 +180,7 @@ class _StubRuntime:
         snapshots: list[JobSnapshot] = []
         for submission in submissions:
             job_id = f"00000000-0000-4000-8000-{len(self.jobs) + 1:012d}"
-            scope = (CaseJobScope(tuple(str(ref) for ref in submission.case_refs))
-                     if isinstance(submission, RiskRuleEvalSubmission)
-                     else RangeJobScope(submission.start, submission.end))
+            scope = RangeJobScope(submission.start, submission.end)
             snapshot = JobSnapshot(
                 job_id=job_id,
                 kind=submission.kind,

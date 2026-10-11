@@ -21,6 +21,18 @@ class PriceMatch:
 
 
 @dataclass(frozen=True, slots=True)
+class QuotedPriceVenue:
+    """Assume full fills at each accepted order's quote when it becomes active.
+
+    Example:
+        venue = QuotedPriceVenue()
+        execution = FakeExecution(account, ledger, pending, settlement, venue, rules, quote)
+    """
+
+    requires_quote: ClassVar[bool] = True
+
+
+@dataclass(frozen=True, slots=True)
 class ReferenceVenue:
     """Use subsequent reference prices without quote or market-volume tests.
 

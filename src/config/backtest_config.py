@@ -196,15 +196,52 @@ class FeeConfig(BaseModel):
     min_commission: NonnegativeMoney
 
 
+class QuotedFillConfig(BaseModel):
+    """Fill accepted orders in full at their quotes when they become active.
+
+    Example:
+        fill = QuotedFillConfig(type="quoted")
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    type: Literal["quoted"]
+
+
+class ReferenceFillConfig(BaseModel):
+    """Fill from subsequent reference observations without price or volume limits.
+
+    Example:
+        fill = ReferenceFillConfig(type="reference")
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    type: Literal["reference"]
+
+
+class LimitPriceFillConfig(BaseModel):
+    """Apply explicit slippage, order quotes and available observation volume.
+
+    Example:
+        fill = LimitPriceFillConfig(type="limit_price", slippage_bp=0)
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    type: Literal["limit_price"]
+    slippage_bp: float = Field(ge=0, lt=10000, allow_inf_nan=False, strict=True)
+
+
+FillConfig: TypeAlias = Annotated[
+    QuotedFillConfig | ReferenceFillConfig | LimitPriceFillConfig, Field(discriminator="type"),
+]
+
+
 class FakeExecutionConfig(BaseModel):
     """Prepare normalized observations, quantity rules and an explicit simulation end.
-
-    None slippage means the reference scenario; it is rejected by market execution.
 
     Example:
         config = FakeExecutionConfig(market_ref="/data/market.json", end_ts_us=3,
                                      quantity_rules=rules, fees=fees, annual_factor=252,
-                                     slippage_bp=0)
+                                     fill=LimitPriceFillConfig(type="limit_price", slippage_bp=0))
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -213,7 +250,7 @@ class FakeExecutionConfig(BaseModel):
     quantity_rules: dict[str, QuantityRules]
     fees: FeeConfig
     annual_factor: float = Field(gt=0, allow_inf_nan=False, strict=True)
-    slippage_bp: float | None = Field(default=None, ge=0, lt=10000, allow_inf_nan=False, strict=True)
+    fill: FillConfig
     risk_check_ts_us: tuple[StrictInt, ...] = ()
 
     @model_validator(mode="after")

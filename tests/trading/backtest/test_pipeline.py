@@ -113,7 +113,7 @@ def test_final_chain_receives_replaced_state_and_forwards_replaced_context(metri
         return replace(context, metrics=next_metrics)
 
     last = Mock(side_effect=lambda context: context)
-    BacktestPipeline(clock=ReplayClock.from_iterable((1, 2)),
+    result = BacktestPipeline(clock=ReplayClock.from_iterable((1, 2)),
         session_at=lambda ts: SimpleNamespace(trade_date='2026-07-03'),
         per_timing_steps=(SimpleNamespace(run=tick),),
         final_steps=(SimpleNamespace(run=first_final), SimpleNamespace(run=last)),
@@ -121,6 +121,8 @@ def test_final_chain_receives_replaced_state_and_forwards_replaced_context(metri
     assert visited == [initial, replacement]
     last.assert_called_once()
     assert last.call_args.args[0].metrics is next_metrics
+
+    assert result.metrics is next_metrics and result.state is replacement
 
 
 def test_failed_final_step_preserves_original_error_and_stops_chain(metrics: BacktestMetrics) -> None:

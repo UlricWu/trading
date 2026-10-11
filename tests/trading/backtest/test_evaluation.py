@@ -29,5 +29,5 @@ def test_unchanged_event_wakeups_cannot_change_day_sampled_returns_or_sharpe() -
     for ts, value in ((1, 100), (2, 100), (3, 110), (4, 110), (5, 99)):
         dense.append(ts_us=ts, cash=value, market_value=0)
     daily = {'2026-07-02': sparse.points[1], '2026-07-03': sparse.points[2]}
-    assert evaluate_portfolio(sparse, daily_equity=daily, ledger=ExecutionLedger(), annual_factor=252) == (
-        evaluate_portfolio(dense, daily_equity=daily, ledger=ExecutionLedger(), annual_factor=252))
+    assert evaluate_portfolio(sparse, initial_equity=100, daily_equity=daily, ledger=ExecutionLedger(), annual_factor=252) == (
+        evaluate_portfolio(dense, initial_equity=100, daily_equity=daily, ledger=ExecutionLedger(), annual_factor=252))

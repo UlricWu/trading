@@ -22,22 +22,22 @@ def test_report_summarizes_without_expanding_observations_and_preserves_metrics(
         input_count=2, no_prediction_count=0, missing_label_count=0, value=.06223456, pair_count=2,
         undefined_reasons=(), prediction_ref='/daily-detail-only.parquet') for ts in range(count))
     metrics = BacktestMetrics(mode='signal_eval', parameters={'mode': 'signal_eval'},
-        not_run={'execution': 'signal_only'}, signal_eval=SignalEvaluation(observations=observations,
+        not_run={'risk': 'signal_only'}, signal_eval=SignalEvaluation(observations=observations,
             decision_count=count, trade_day_count=1, defined_day_count=1, mean_ic=.06223456,
             daily_ic={'2026-07-03': .06223456}, undefined_reason_counts={}))
-    persist_backtest_metrics(metrics=metrics, pm=pm, experiment_name='summary')
+    persist_backtest_metrics(metrics=metrics, output_dir=pm.experiment_dir(experiment_name='summary'))
     ref = pm.experiment_backtest_metrics(experiment_name='summary')
     original = ref.read_bytes()
     messages = []
     sink = logs.add(lambda message: messages.append(str(message)), format='{message}',
                     filter='src.trading.backtest.reporting.bundle')
     try:
-        report = ReportingBundle(pm).run(experiment_name='summary')
+        report = ReportingBundle(pm.experiment_dir(experiment_name='summary')).run()
     finally:
         logs.remove(sink)
     text = ''.join(messages)
     assert f'模型目标 Rank IC：0.062235（有效 1 / 1 日；{count} 次决策）' in text
-    assert '未运行能力' in text and 'execution' in text
+    assert '未运行能力' in text and 'risk' in text
     assert 'daily-detail-only' not in text and 'parameters' not in text
     assert len(text.splitlines()) < 12
     assert ref.read_bytes() == original
@@ -52,13 +52,13 @@ def test_report_distinguishes_undefined_values_no_orders_and_unrun_capabilities(
     curve.append(ts_us=2, cash=100, market_value=0)
     metrics = BacktestMetrics(mode='full_backtest', parameters={}, not_run={'signal': 'no_selected_records'},
         execution_eval=evaluate_execution(ExecutionLedger()), portfolio=evaluate_portfolio(curve,
-            daily_equity={'2026-07-03': curve.points[-1]}, ledger=ExecutionLedger(), annual_factor=252))
-    persist_backtest_metrics(metrics=metrics, pm=pm, experiment_name='empty')
+            initial_equity=100, daily_equity={'2026-07-03': curve.points[-1]}, ledger=ExecutionLedger(), annual_factor=252))
+    persist_backtest_metrics(metrics=metrics, output_dir=pm.experiment_dir(experiment_name='empty'))
     messages = []
     sink = logs.add(lambda message: messages.append(str(message)), format='{message}',
                     filter='src.trading.backtest.reporting.bundle')
     try:
-        ReportingBundle(pm).run(experiment_name='empty')
+        ReportingBundle(pm.experiment_dir(experiment_name='empty')).run()
     finally:
         logs.remove(sink)
     text = ''.join(messages)

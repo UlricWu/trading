@@ -81,23 +81,6 @@ def validate_model_use(*, model_ref: Path, model: InferenceModel, first_decision
         raise ValueError("model use requires training label maturity <= first backtest decision")
 
 
-def prepare_evaluation_signals(
-    signal: SignalInput, *, start: str, end: str, access: Access,
-    pm: PathManager, min_listing_calendar_days: int,
-) -> dict[int, SignalBatch]:
-    """Prepare signal evaluation without imposing trading constraints on fixed records.
-
-    Example:
-        signal_inputs_by_ts_us = prepare_evaluation_signals(signal, start="2026-07-03", end="2026-07-03",
-            access=access, pm=pm, min_listing_calendar_days=120)
-    """
-    if isinstance(signal, RecordedSignalInput):
-        return {ts_us: prediction.batch for ts_us, prediction in
-                _prepare_recorded_signals(signal, start=start, end=end).items()}
-    return _prepare_model_signals(signal, start=start, end=end, access=access, pm=pm,
-                                  min_listing_calendar_days=min_listing_calendar_days)
-
-
 def prepare_signals(
     signal: SignalInput, *, start: str, end: str, access: Access,
     pm: PathManager, min_listing_calendar_days: int, start_ts_us: int, end_ts_us: int,

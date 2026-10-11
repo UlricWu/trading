@@ -3,13 +3,15 @@ from __future__ import annotations
 
 from datetime import date
 
+
 from src.access import Access
 from src.config.backtest_config import FakeExecutionConfig, FixedHoldingStrategyConfig, InitialAccount, StrategyConfig
 from src.trading.backtest.context import BacktestState
 from src.trading.backtest.execution.fake import FakeExecution
 from src.trading.backtest.execution.models.cost_a_share import AShareCostModel
+from src.trading.backtest.execution.models.slippage_fixed_bp import FixedBPSlippageModel
 from src.trading.backtest.execution.settlement import SettlementEngine
-from src.trading.backtest.execution.venue.fake import LimitPriceVenue, ReferenceVenue
+from src.trading.backtest.execution.venue.fake import LimitPriceVenue, QuotedPriceVenue, ReferenceVenue
 from src.trading.backtest.market.replay import ReplayMarket, ReplayMarketInput
 from src.trading.backtest.steps.backtest_layers import FixedHoldingStep, PortfolioStep
 from src.trading.core.equity import EquityCurve
@@ -39,7 +41,7 @@ def prepare_market(*, config: FakeExecutionConfig, initial: InitialAccount, acce
         market.session_at(ts_us)
         if not initial.ts_us <= ts_us <= config.end_ts_us:
             raise ValueError("risk check is outside the simulation interval")
-    if config.slippage_bp is not None and any(o.volume_qty is None for o in source.observations):
+    if config.fill.type == "limit_price" and any(o.volume_qty is None for o in source.observations):
         raise ValueError("price-model execution requires explicit observed volume_qty")
     symbols = {o.symbol for o in source.observations} | initial.positions.keys()
     if not symbols <= config.quantity_rules.keys():
@@ -62,13 +64,20 @@ def create_state(initial: InitialAccount) -> BacktestState:
 
 def create_execution(
     *, state: BacktestState, config: FakeExecutionConfig,
-    venue: ReferenceVenue | LimitPriceVenue, quote_rule: QuoteRule | None,
+    quote_rule: QuoteRule | None,
 ) -> FakeExecution:
     """Bind the selected venue and explicit fees to this run's account and pending orders.
 
     Example:
-        execution = create_execution(state=state, config=config, venue=ReferenceVenue(), quote_rule=None)
+        execution = create_execution(state=state, config=config, quote_rule=None)
     """
+    venue: ReferenceVenue | LimitPriceVenue | QuotedPriceVenue
+    if config.fill.type == "quoted":
+        venue = QuotedPriceVenue()
+    elif config.fill.type == "reference":
+        venue = ReferenceVenue()
+    else:
+        venue = LimitPriceVenue(FixedBPSlippageModel(config.fill.slippage_bp))
     fees = config.fees
     cost_model = AShareCostModel(
         commission_rate=fees.commission_rate,

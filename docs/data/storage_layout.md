@@ -251,7 +251,7 @@ Meta 必须在实际部署迁移前单独确认。
 `experiments/` 保存一次研究运行的当前正式现场。当前只有彼此独立的 training experiment
 和 backtest experiment，不定义 train-to-backtest 组合 experiment。
 
-Training 使用下述 training/report 子目录；backtest 直接在实验根目录保存自身制品。
+Training 使用下述 training/report 子目录；backtest 的单账户结果在实验根目录，风控对照的两条账户结果各有子目录。
 子目录按实际产物创建，不要求空目录。Experiment name 的生成规则由
 `docs/offline_workflow_contract.md` 拥有；PathManager 只校验生成后的名称并返回完整路径。
 
@@ -309,26 +309,40 @@ feature_sha256、trade_date、decision_ts_us。模型摘要对完整文件字节
 Metrics 与 HTML 在模型交付后分别原子写入，不组成多文件事务。它们缺失或失败不表示
 模型不可恢复；模型可加载也不表示评价、报告或整个 workflow 成功。
 
-当前 backtest experiment 按实际能力保留：
+单账户 backtest experiment 按实际能力保留：
 
 ```text
 experiments/<experiment_name>/
 ├── predictions/<YYYY-MM-DD>/<ts_us>.parquet  # 本次实际推理才创建
-├── orders.json                             # 三种交易任务：完整委托/撤单输入流
-├── targets.json                            # 三种交易任务：风控前策略目标
-├── risk-cases.json                         # full：不可变风控前案例
-├── execution.parquet                       # 三种交易任务：执行与结算事实
-├── equity.parquet                          # 三种交易任务：事件估值
+├── orders.json                             # 完整委托/撤单输入流
+├── targets.json                            # 风控前策略目标，execution 为空
+├── risk-cases.json                         # 实际运行业务风控时保存案例
+├── execution.parquet                       # 执行与结算事实
+├── equity.parquet                          # 事件估值
 ├── metrics.json
 └── report.html
 ```
 
+risk_rule_eval 的两条账户路径使用相同事实文件名，分别放入 without_risk 与 with_risk：
+
+```text
+experiments/<experiment_name>/
+├── predictions/<YYYY-MM-DD>/<ts_us>.parquet  # 两条路径共用本次产生的预测
+├── without_risk/                           # orders、targets、execution、equity、metrics、report
+├── with_risk/                              # 同上，另含实际产生的 risk-cases.json
+├── metrics.json                            # 两份组合指标及有风控减去无风控的差值
+└── report.html                             # 对照表及两份子报告链接
+```
+
+根对照没有第三条交易路径，不写根 orders/execution/equity。每条路径自己的 metrics
+保存预测引用、完整账户指标及 applied_risk；根 parameters 保存同一原始请求。无风控路径
+的 applied_risk 为 null，有风控路径保存实际规则，避免把原请求中的 risk 误认为两者都已应用。
+
 五种回测统一使用 `backtest_{today}_{experiment_id}`，today 为 CLI 完成请求解析和配置加载后的
 Asia/Shanghai 当天日期，格式为 `YYYY-MM-DD`；日期采样与唯一 ID 责任由
 [Offline 工作流](../offline_workflow_contract.md#共同边界)定义。目录不包含回测日期范围或
-模式前缀，也不增加重复 backtest/report 子目录。五种 mode 共用以上根布局，仅生成实际
-能力的制品；signal/risk 不创建交易占位文件。mode、日期范围或案例引用保存在 metrics
-的 parameters 中，不按 mode 另分目录。固定预测输入保留外部引用，不无条件复制。
+模式前缀，也不增加重复 backtest/report 子目录。只有风控对照按账户路径分子目录；
+各模式只生成实际能力的制品，mode 和日期范围保存在 metrics 的 parameters 中。固定预测输入保留外部引用，不无条件复制。
 同日多次推理按 UTC epoch 微秒 ts_us 区分，预测 schema 与训练相同，不写回 training。
 
 metrics 同时保存实际评价、预测引用和运行参数；不另写 binding.json、run_meta.json、
@@ -341,9 +355,8 @@ HTML 由 metrics 生成，不拥有另一份结果。模型目标评价保存在
 训练记录仍在模型同目录 schedule.json；预测中的模型/特征摘要及指标中的标签摘要
 不等于完整源码、环境、输入归档或模型历史可用性证明。PathManager 提供 experiment 根目录
 及固定路径方法；`experiment_backtest_predictions_dir(experiment_name=...)` 统一返回本次
-运行的 predictions 目录，workflow 通过该方法向预测 Step 传入目录。预测生产边界在该目录
-按交易日期与决策时间生成文件；上述 JSON 事实仍由对应领域在 experiment 根目录按本节
-固定名称生成。路径方法只返回路径，所需父目录由实际写入工具创建。不新增接受任意制品
+运行的 predictions 目录。Workflow 把根预测目录及本路径的输出目录传给对应 Step；预测按
+交易日期与决策时间生成文件，事实、指标和报告在该路径的输出目录按本节固定名称生成。路径方法只返回路径，所需父目录由实际写入工具创建。不新增接受任意制品
 名称的公共路径 API，不根据文件存在性判断任务成功。
 
 新运行采用上述布局，历史结果保持原位，不自动移动或增加旧路径探测。旧 metrics 的

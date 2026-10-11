@@ -2,14 +2,14 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from src.trading.backtest.commands import OrderCommandSchedule
-from src.trading.backtest.context import BacktestContext, SignalEvaluationContext
+from src.trading.backtest.context import BacktestContext
 from src.trading.backtest.execution.fake import FakeExecution
 from src.trading.backtest.market.replay import ReplayMarket
-from src.trading.backtest.market.signals import SignalBatch, produce_signal
+from src.trading.backtest.market.signals import RecordedSignalBatch, SignalBatch, produce_signal
 from src.trading.core.events import OrderIntent, OrderTerms, Side, TargetEvent
 from src.trading.core.time import TradingWindow, advance_trading_minutes
 from src.trading.portfolio.constructors.base import PortfolioConstructor
@@ -18,30 +18,6 @@ from src.trading.portfolio.engine import make_executable_targets, mark_to_market
 from src.trading.risk.base import RiskContext
 from src.trading.risk.engine import RiskManager
 from src.trading.risk.evaluation import RiskCase, RiskObservation
-
-
-@dataclass(frozen=True, slots=True)
-class PredictionGenerationStep:
-    """Produce the selected fixed predictions for a single-pass signal evaluation.
-
-    Example:
-        context = PredictionGenerationStep(signal_inputs_by_ts_us, prediction_dir).run(context)
-    """
-
-    signal_inputs_by_ts_us: Mapping[int, SignalBatch]
-    prediction_dir: Path
-
-    def run(self, context: SignalEvaluationContext) -> SignalEvaluationContext:
-        """Record actual prediction identities and their decision dates in input order.
-
-        Example:
-            context = step.run(context)
-        """
-        produced = tuple(produce_signal(batch, prediction_dir=self.prediction_dir)
-                         for batch in self.signal_inputs_by_ts_us.values())
-        context.prediction_refs = tuple(batch.prediction_ref for batch in produced)
-        context.decision_dates = {batch.event.ts_us: batch.trade_date for batch in produced}
-        return context
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,6 +64,11 @@ class AccountingStep:
         prices = {symbol: float(price) for symbol, price in self.market.prices.items()}
         value, state.last_mark_prices = mark_to_market(positions=state.portfolio_state.positions,
             current_raw_prices=prices, last_mark_prices=state.last_mark_prices)
+        if state.initial_equity is None:
+            state.initial_equity = float(state.portfolio_state.cash) + value
+            state.equity_curve.starting_peak_equity = max(
+                state.equity_curve.starting_peak_equity, state.initial_equity,
+            )
         state.equity_curve.append(ts_us=context.timing.ts_us,
             cash=float(state.portfolio_state.cash), market_value=value)
         session = self.market.session_at(context.timing.ts_us)
@@ -109,16 +90,22 @@ class SignalStep:
 
     signal_inputs_by_ts_us: Mapping[int, SignalBatch]
     prediction_dir: Path
+    _recorded_by_ts_us: dict[int, RecordedSignalBatch] = field(default_factory=dict, init=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "signal_inputs_by_ts_us", dict(self.signal_inputs_by_ts_us))
 
     def run(self, context: BacktestContext) -> BacktestContext:
-        """Save one inference result and never initialize or reset account state.
+        """Produce each prediction once and reuse it across independent account replays.
 
         Example:
             context = step.run(context)
         """
         batch = self.signal_inputs_by_ts_us.get(context.timing.ts_us)
         if batch is not None:
-            context.signal = produce_signal(batch, prediction_dir=self.prediction_dir)
+            if context.timing.ts_us not in self._recorded_by_ts_us:
+                self._recorded_by_ts_us[context.timing.ts_us] = produce_signal(batch, prediction_dir=self.prediction_dir)
+            context.signal = self._recorded_by_ts_us[context.timing.ts_us]
             context.state.signal_tape.append(context.signal.event)
             context.state.prediction_refs.append(context.signal.prediction_ref)
             context.state.decision_dates[context.timing.ts_us] = context.signal.trade_date

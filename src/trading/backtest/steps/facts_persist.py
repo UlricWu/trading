@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict
+from pathlib import Path
 
 import pyarrow as pa
 from pydantic import TypeAdapter
@@ -15,7 +16,6 @@ from src.utils.filesystem import FileSystem
 
 from src.trading.backtest.context import BacktestResultContext
 from src.utils.parquet_writer import write_parquet_atomic
-from src.utils.path import PathManager
 
 
 _EXECUTION_SCHEMA = pa.schema([
@@ -56,21 +56,20 @@ class FactsPersistStep:
 
     Example:
         step = FactsPersistStep(
-            pm=path_manager, experiment_name="backtest_2026-10-11_9c5a9280-922e-4d1a-af01-ce896eb9668c",
+            output_dir=Path("/data/experiments/backtest_2026-10-11_run"),
         )
         persisted_context = step.run(completed_context)
     """
 
-    def __init__(self, *, pm: PathManager, experiment_name: str) -> None:
+    def __init__(self, *, output_dir: Path) -> None:
         """Bind the destination of one backtest's original facts.
 
         Example:
             step = FactsPersistStep(
-                pm=path_manager, experiment_name="backtest_2026-10-11_9c5a9280-922e-4d1a-af01-ce896eb9668c",
+                output_dir=Path("/data/experiments/backtest_2026-10-11_run"),
             )
         """
-        self._pm = pm
-        self._experiment_name = experiment_name
+        self._output_dir = output_dir
 
     def run(self, context: BacktestResultContext) -> BacktestResultContext:
         """Serialize existing facts without changing the runtime state.
@@ -105,16 +104,16 @@ class FactsPersistStep:
             for sequence, event in enumerate(ledger.order_events)
         )
         write_parquet_atomic(
-            output_file=self._pm.experiment_backtest_execution(experiment_name=self._experiment_name),
+            output_file=self._output_dir / "execution.parquet",
             table=pa.Table.from_pylist(rows, schema=_EXECUTION_SCHEMA),
         )
         write_parquet_atomic(
-            output_file=self._pm.experiment_backtest_equity(experiment_name=self._experiment_name),
+            output_file=self._output_dir / "equity.parquet",
             table=pa.Table.from_pylist(
                 [asdict(point) for point in context.state.equity_curve.points], schema=_EQUITY_SCHEMA,
             ),
         )
-        run_dir = self._pm.experiment_dir(experiment_name=self._experiment_name)
+        run_dir = self._output_dir
         FileSystem.write_bytes_atomic(run_dir / "orders.json",
             TypeAdapter(tuple[OrderIntent | CancelOrders, ...]).dump_json(tuple(ledger.commands)))
         FileSystem.write_bytes_atomic(run_dir / "targets.json",

@@ -4,10 +4,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import cast
 
-from src.trading.backtest.context import BacktestResultContext, RiskEvaluationContext, SignalEvaluationContext
-from src.trading.backtest.evaluation import evaluate_execution, evaluate_portfolio, evaluate_risk, evaluate_signals
-from src.trading.backtest.reporting.metrics import AccountResult
-from src.trading.risk.engine import RiskManager
+from src.trading.backtest.context import BacktestResultContext, RiskComparisonContext
+from src.trading.backtest.evaluation import PortfolioEvaluation, evaluate_execution, evaluate_portfolio, evaluate_risk, evaluate_signals
+from src.trading.backtest.reporting.metrics import AccountResult, RiskComparison
 from src.training.evaluation import evaluate_prediction_records
 from src.utils.path import PathManager
 
@@ -22,7 +21,7 @@ class SignalEvaluationStep:
 
     pm: PathManager
 
-    def run[ContextT: SignalEvaluationContext | BacktestResultContext](self, context: ContextT) -> ContextT:
+    def run(self, context: BacktestResultContext) -> BacktestResultContext:
         """Read labels and summarize the shared model-target observations by decision day.
 
         Example:
@@ -35,28 +34,8 @@ class SignalEvaluationStep:
 
 
 @dataclass(frozen=True, slots=True)
-class RiskEvaluationStep:
-    """Apply the shared risk manager once to each supplied frozen case.
-
-    Example:
-        context = RiskEvaluationStep(risk).run(context)
-    """
-
-    risk: RiskManager
-
-    def run(self, context: RiskEvaluationContext) -> RiskEvaluationContext:
-        """Retain the actual before/after and rule coverage facts for aggregation.
-
-        Example:
-            context = step.run(context)
-        """
-        context.risk_observations = context.cases.evaluate(risk=self.risk)
-        return context
-
-
-@dataclass(frozen=True, slots=True)
 class RiskMetricsStep:
-    """Summarize rule observations from fixed cases or the completed trading path.
+    """Summarize rule observations from the completed trading path.
 
     Example:
         context = RiskMetricsStep(configured_rules=("max_single_name",)).run(context)
@@ -64,7 +43,7 @@ class RiskMetricsStep:
 
     configured_rules: tuple[str, ...]
 
-    def run[ContextT: RiskEvaluationContext | BacktestResultContext](self, context: ContextT) -> ContextT:
+    def run(self, context: BacktestResultContext) -> BacktestResultContext:
         """Preserve checked, triggered and undefined results without reapplying risk.
 
         Example:
@@ -108,7 +87,8 @@ class PortfolioEvaluationStep:
             context = step.run(context)
         """
         state = context.state
-        context.metrics.portfolio = evaluate_portfolio(state.equity_curve, daily_equity=state.daily_equity,
+        context.metrics.portfolio = evaluate_portfolio(state.equity_curve,
+            initial_equity=cast(float, state.initial_equity), daily_equity=state.daily_equity,
             ledger=state.execution_ledger, annual_factor=self.annual_factor)
         return context
 
@@ -133,4 +113,33 @@ class BacktestSummaryStep:
             average_cost=account.avg_cost, trade_date=cast(str, account.current_day),
             equity=state.equity_curve.points[-1].equity, pending_order_ids=tuple(state.pending_orders))
         context.metrics.prediction_refs = tuple(str(ref) for ref in state.prediction_refs)
+        return context
+
+
+class RiskComparisonStep:
+    """Compare completed portfolios without reapplying rules or sharing account state.
+
+    Example:
+        context = RiskComparisonStep().run(context)
+    """
+
+    def run(self, context: RiskComparisonContext) -> RiskComparisonContext:
+        """Preserve both results and signed differences, including undefined returns.
+
+        Example:
+            context = step.run(context)
+        """
+        baseline = cast(PortfolioEvaluation, context.without_risk.portfolio)
+        treatment = cast(PortfolioEvaluation, context.with_risk.portfolio)
+        context.metrics.risk_comparison = RiskComparison(
+            without_risk=baseline, with_risk=treatment,
+            net_profit_delta=treatment.net_profit - baseline.net_profit,
+            total_return_delta=(None if treatment.total_return is None or baseline.total_return is None
+                                else treatment.total_return - baseline.total_return),
+            max_drawdown_delta=treatment.max_drawdown - baseline.max_drawdown,
+            total_fees_delta=treatment.total_fees - baseline.total_fees,
+            turnover_delta=(None if treatment.turnover is None or baseline.turnover is None
+                            else treatment.turnover - baseline.turnover),
+        )
+        context.metrics.prediction_refs = context.with_risk.prediction_refs
         return context

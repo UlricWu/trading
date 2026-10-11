@@ -134,7 +134,7 @@ def test_trading_preparation_checks_maturity_at_earliest_selected_decision(
 
 
 @pytest.mark.parametrize("training_record", ["missing", "immature"])
-def test_fixed_signal_evaluation_does_not_require_trading_model_use(
+def test_fixed_signals_require_a_mature_training_record(
     tmp_path: Path, model_ref: Path, prediction_refs: tuple[Path, ...], access: Mock, training_record: str,
 ) -> None:
     record_ref = model_ref.with_name("schedule.json")
@@ -148,10 +148,6 @@ def test_fixed_signal_evaluation_does_not_require_trading_model_use(
         expected_error = ValueError
     signal = RecordedSignalInput(type="recorded", prediction_refs=prediction_refs)
 
-    signal_inputs_by_ts_us = signals.prepare_evaluation_signals(signal, start="2026-07-03", end="2026-07-06",
-        access=access, pm=PathManager(tmp_path), min_listing_calendar_days=120)
-
-    assert tuple(signal_inputs_by_ts_us) == (FIRST_DECISION_TS_US, LAST_DECISION_TS_US)
     with pytest.raises(expected_error):
         signals.prepare_signals(signal, start="2026-07-03", end="2026-07-06",
             access=access, pm=PathManager(tmp_path), min_listing_calendar_days=120,

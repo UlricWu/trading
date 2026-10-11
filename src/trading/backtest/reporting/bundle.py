@@ -9,7 +9,6 @@ from pathlib import Path
 from src import logs
 from src.trading.backtest.reporting.metrics import BacktestMetrics
 from src.utils.filesystem import FileSystem
-from src.utils.path import PathManager
 
 
 @dataclass(frozen=True, slots=True)
@@ -17,20 +16,24 @@ class ReportingBundle:
     """Render an inspectable summary from validated persisted evaluations.
 
     Example:
-        report = ReportingBundle(pm).run(experiment_name=experiment_name)
+        report = ReportingBundle(output_dir).run()
     """
 
-    pm: PathManager
+    output_dir: Path
 
-    def run(self, *, experiment_name: str) -> Path:
+    def run(self) -> Path:
         """Show only actual task coverage and keep detailed facts in their artifacts.
 
         Example:
-            report = ReportingBundle(pm).run(experiment_name=experiment_name)
+            report = ReportingBundle(output_dir).run()
         """
-        ref = self.pm.experiment_backtest_metrics(experiment_name=experiment_name)
+        ref = self.output_dir / "metrics.json"
         metrics = BacktestMetrics.model_validate_json(ref.read_bytes())
         sections: list[tuple[str, object]] = []
+        execution_config = metrics.parameters.get("execution", {})
+        if execution_config.get("fill", {}).get("type") == "quoted":
+            sections.append(("成交假设", "合法接纳的订单在生效时按申报价全额成交，保留资金、数量、费用和 T+1 约束。"
+                             "不检验市场触价、流动性或排队；期末持仓按当时可见行情估值，不强制平仓。"))
         if metrics.signal_eval is not None:
             sections.append(("信号评价", metrics.signal_eval.model_dump(exclude={"observations", "daily_ic"})))
         if metrics.risk_eval is not None:
@@ -41,16 +44,51 @@ class ReportingBundle:
             sections.append(("策略收益", metrics.portfolio.model_dump(mode="json", exclude={"daily_returns"})))
         if metrics.final_account is not None:
             sections.append(("最终账户", metrics.final_account.model_dump(mode="json")))
+            sections.append(("本路径业务风控", metrics.applied_risk.model_dump(mode="json") if metrics.applied_risk else None))
         sections.append(("未运行能力", metrics.not_run))
         sections.append(("运行参数", metrics.parameters))
         body = "\n".join(f"<section><h2>{escape(title)}</h2><pre>{escape(json.dumps(value, ensure_ascii=False, indent=2, allow_nan=False))}</pre></section>"
                          for title, value in sections)
+        if metrics.risk_comparison is not None:
+            comparison = metrics.risk_comparison
+            rows = []
+            for label, field, difference in (
+                ("净利润", "net_profit", comparison.net_profit_delta),
+                ("收益率", "total_return", comparison.total_return_delta),
+                ("最大回撤", "max_drawdown", comparison.max_drawdown_delta),
+                ("费用", "total_fees", comparison.total_fees_delta),
+                ("换手率", "turnover", comparison.turnover_delta),
+            ):
+                before = getattr(comparison.without_risk, field)
+                after = getattr(comparison.with_risk, field)
+                values = []
+                for index, value in enumerate((before, after, difference)):
+                    if value is None:
+                        values.append("无值")
+                        continue
+                    sign = "+" if index == 2 else ""
+                    if field in ("total_return", "max_drawdown", "turnover"):
+                        values.append(format(value, f"{sign}.4%"))
+                    else:
+                        values.append(format(value, f"{sign},.2f"))
+                rows.append(f"<tr><th>{label}</th>" + "".join(f"<td>{escape(value)}</td>" for value in values) + "</tr>")
+            body = ('<section><h2>有／无风控对照</h2><p>同一信号、策略、初始账户及成交假设；'
+                    '两条路径独立推进。差值为有风控减去无风控，回撤差值为负表示回撤减小。'
+                    '收益差异不能单独证明规则正确。</p><table><thead><tr><th>指标</th>'
+                    '<th>无业务风控</th><th>指定风控</th><th>差值</th></tr></thead><tbody>'
+                    + "".join(rows) + '</tbody></table><p>完整指标、账户及交易明细：'
+                    '<a href="without_risk/report.html">无业务风控</a> · '
+                    '<a href="with_risk/report.html">指定风控</a></p></section>' + body)
+        if metrics.final_account is not None:
+            body += ('<p>交易明细：<a href="orders.json">委托</a> · '
+                     '<a href="execution.parquet">成交与费用</a> · '
+                     '<a href="equity.parquet">权益曲线</a></p>')
         html = (f'<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>回测报告</title>'
-                f'<body><h1>{escape(experiment_name)}</h1><p>模式：{metrics.mode.value}</p>'
+                f'<body><h1>{escape(self.output_dir.name)}</h1><p>模式：{metrics.mode.value}</p>'
                 '<p>null 表示无定义，原因随指标保存；空样本及规则未触发不表示验证通过。'
                 '成交结论仅适用于声明的模拟假设。详细观察见 <a href="metrics.json">metrics.json</a> 和事实制品。</p>'
                 f'{body}</body></html>')
-        output = self.pm.experiment_backtest_report(experiment_name=experiment_name)
+        output = self.output_dir / "report.html"
         FileSystem.write_bytes_atomic(output, html.encode())
         lines = [f"模式：{metrics.mode.value}"]
         if metrics.signal_eval is not None:
@@ -63,7 +101,7 @@ class ReportingBundle:
             portfolio = metrics.portfolio
             result = "无值" if portfolio.total_return is None else f"{portfolio.total_return:+.4%}"
             sharpe = "无值" if portfolio.sharpe is None else f"{portfolio.sharpe:.4f}"
-            lines.append(f"期末权益 {portfolio.final_equity:,.2f} 元；区间收益 {result}；最大回撤 {portfolio.max_drawdown:.4%}；夏普 {sharpe}")
+            lines.append(f"期末权益 {portfolio.final_equity:,.2f} 元；净利润 {portfolio.net_profit:+,.2f} 元；区间收益 {result}；最大回撤 {portfolio.max_drawdown:.4%}；夏普 {sharpe}")
             lines.append(f"费用合计：{portfolio.total_fees:,.2f} 元")
             if portfolio.undefined_reasons:
                 lines.append(f"组合无值原因：{json.dumps(portfolio.undefined_reasons, ensure_ascii=False)}")
@@ -81,9 +119,14 @@ class ReportingBundle:
                 lines.append("风控无样本")
             for name, coverage in risk.rule_coverage.items():
                 lines.append(f"规则 {name}：检查 {coverage.checked} 次；触发 {coverage.triggered} 次")
+        if metrics.risk_comparison is not None:
+            comparison = metrics.risk_comparison
+            lines.append(f"风控对照净利润：无风控 {comparison.without_risk.net_profit:+,.2f} 元；"
+                         f"有风控 {comparison.with_risk.net_profit:+,.2f} 元；差值 {comparison.net_profit_delta:+,.2f} 元")
+            lines.append(f"最大回撤差值（有－无）：{comparison.max_drawdown_delta:+.4%}")
         if metrics.not_run:
             lines.append(f"未运行能力：{json.dumps(metrics.not_run, ensure_ascii=False)}")
         lines.append(f"制品目录：{output.parent}；详细观察：metrics.json；报告：report.html")
         summary = "\n".join(lines)
-        logs.info(f"✅ 回测报告; experiment={experiment_name}\n{summary}")
+        logs.info(f"✅ 回测报告; experiment={self.output_dir.name}\n{summary}")
         return output

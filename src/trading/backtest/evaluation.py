@@ -176,11 +176,13 @@ class PortfolioEvaluation(BaseModel):
     """Returns on one settled path, sampled at declared account-day closes.
 
     Example:
-        evaluation = evaluate_portfolio(equity, daily_equity=daily, ledger=ledger, annual_factor=252)
+        evaluation = evaluate_portfolio(equity, initial_equity=20000,
+            daily_equity=daily, ledger=ledger, annual_factor=252)
     """
 
     initial_equity: float
     final_equity: float
+    net_profit: float
     total_return: float | None
     gross_return: float | None
     total_fees: Decimal
@@ -193,7 +195,7 @@ class PortfolioEvaluation(BaseModel):
 
 
 def evaluate_portfolio(
-    equity: EquityCurve, *, daily_equity: Mapping[str, EquityPoint],
+    equity: EquityCurve, *, initial_equity: float, daily_equity: Mapping[str, EquityPoint],
     ledger: ExecutionLedger, annual_factor: float,
 ) -> PortfolioEvaluation:
     """Keep event wakeup frequency out of daily returns, Sharpe and turnover.
@@ -201,9 +203,10 @@ def evaluate_portfolio(
     Gross return adds fees back on the same realized path; it is not another simulation.
 
     Example:
-        evaluation = evaluate_portfolio(equity, daily_equity=daily, ledger=ledger, annual_factor=252)
+        evaluation = evaluate_portfolio(equity, initial_equity=20000,
+            daily_equity=daily, ledger=ledger, annual_factor=252)
     """
-    initial = equity.points[0].equity
+    initial = initial_equity
     final = equity.points[-1].equity
     previous = initial
     returns: dict[str, float | None] = {}
@@ -228,7 +231,7 @@ def evaluate_portfolio(
         reasons["returns"] = "nonpositive_initial_equity"
     if average <= 0:
         reasons["turnover"] = "nonpositive_average_equity"
-    return PortfolioEvaluation(initial_equity=initial, final_equity=final,
+    return PortfolioEvaluation(initial_equity=initial, final_equity=final, net_profit=final - initial,
         total_return=final / initial - 1 if initial > 0 else None,
         gross_return=(final + float(fees)) / initial - 1 if initial > 0 else None,
         total_fees=fees, turnover=float(notional) / average if average > 0 else None,

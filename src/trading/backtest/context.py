@@ -13,33 +13,20 @@ from src.trading.core.events import PendingOrder, TargetEvent
 from src.trading.core.ledger import ExecutionLedger
 from src.trading.core.tape import SignalTape, TargetTape
 from src.trading.portfolio.state import PortfolioState
-from src.trading.risk.evaluation import RiskCases, RiskObservation
+from src.trading.risk.evaluation import RiskObservation
 
 
 @dataclass(slots=True)
-class SignalEvaluationContext:
-    """Single-pass evaluation facts with no trading state.
+class RiskComparisonContext:
+    """Completed independent account results for a matched risk comparison.
 
     Example:
-        context = SignalEvaluationContext(metrics=metrics)
+        context = RiskComparisonContext(without_risk=baseline, with_risk=treatment, metrics=metrics)
     """
 
+    without_risk: BacktestMetrics
+    with_risk: BacktestMetrics
     metrics: BacktestMetrics
-    prediction_refs: tuple[Path, ...] = ()
-    decision_dates: dict[int, str] = field(default_factory=dict)
-
-
-@dataclass(slots=True)
-class RiskEvaluationContext:
-    """Fixed risk inputs and actual rule observations, never a mutable account.
-
-    Example:
-        context = RiskEvaluationContext(cases=RiskCases((case,)), metrics=metrics)
-    """
-
-    cases: RiskCases
-    metrics: BacktestMetrics
-    risk_observations: tuple[RiskObservation, ...] = ()
 
 
 @dataclass(slots=True)
@@ -54,6 +41,7 @@ class BacktestState:
     execution_ledger: ExecutionLedger = field(default_factory=ExecutionLedger)
     pending_orders: dict[int, PendingOrder] = field(default_factory=dict)
     equity_curve: EquityCurve = field(default_factory=EquityCurve)
+    initial_equity: float | None = None
     daily_equity: dict[str, EquityPoint] = field(default_factory=dict)
     signal_tape: SignalTape = field(default_factory=SignalTape)
     target_tape: TargetTape = field(default_factory=TargetTape)

@@ -89,7 +89,7 @@ class OrderIntent:
 
 @dataclass(frozen=True, slots=True)
 class FillEvent:
-    """A uniquely identified fill and its contemporaneous reference price.
+    """A uniquely identified fill; assumed quote fills have no market observation.
 
     Example:
         fill = FillEvent(2, "600000", Side.BUY, 100, Decimal("10"), 1,
@@ -102,12 +102,12 @@ class FillEvent:
     price: Decimal
     order_id: int
     fill_id: str
-    observation_id: str
+    observation_id: str | None
     reference_price: Decimal
     forced_close: bool = False
 
     def __post_init__(self) -> None:
-        if not self.fill_id or not self.observation_id:
+        if not self.fill_id or (self.observation_id is not None and not self.observation_id):
             raise ValueError("fill and observation identities must be nonempty")
         if type(self.qty) is not int or self.qty <= 0:
             raise ValueError("fill qty must be a positive integer")

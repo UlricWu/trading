@@ -76,15 +76,17 @@ Collection Variables 中的 `testBaseUrl` 或 `trainingBaseUrl`。训练文件�
 其 Health 的 `environment` 为 `dev`；“训练”只表示客户端文件夹用途。这些客户端预设不改变上述正式部署端口、
 服务启动配置或服务端 `ENV`，目标地址必须已有服务监听或端口映射。
 
-Collection 覆盖全部 5 个路由，包含 Standard 数据、Level-2 数据、训练、独立信号及固定风控
+Collection 覆盖全部 5 个路由，包含 Standard 数据、Level-2 数据、训练、信号账户评价及完整策略风控对照
 回测请求示例，每个环境 9 个请求，共 18 个请求。数据与信号日期范围，以及
 训练的 `trainingStart`、`trainingEnd`、`trainingEvalRangeJson`、`trainingModel`、
 `trainingFeatureGroup`、`trainingLabelGroup` 在 Collection Variables 中设置；评价范围
 可填 JSON object 或 null，日期须落在目标环境实际可用的数据范围内。创建成功后，
 Job ID 自动写入 Collection 的 `testJobId` 或 `trainingJobId`，查询和取消读取对应环境的 ID。
 回测前从训练 schedule.json 及具体已发布模型文件取得绝对 ref，手动填写 `testModelRef`
-或 `trainingModelRef`；固定风控填写对应环境的 RiskCaseRef 及 riskRulesJson，
-示例风险阈值只用于演示，发送前按任务确认。Job ID 只标识任务，不能推导模型引用；计划中的 ref 也不证明发布成功。
+或 `trainingModelRef`；两种回测均填写 `backtestStrategyJson`、`backtestInitialAccountJson`、
+`backtestExecutionJson`，并使账户/模拟时间、证券规则和市场路径覆盖所选预测。signal 的
+execution.fill 固定为 quoted；risk 另填写 riskRulesJson。变量内账户及执行示例对应
+2026-07-03 14:30 至 15:00，发送前与日期范围和实际输入一起调整；示例阈值和费用不是默认值。Job ID 只标识任务，不能推导模型引用；计划中的 ref 也不证明发布成功。
 服务重启后须重新填写或创建 Job ID。单独发送所需请求；批量运行整个 Collection
 会创建全部示例 Job，并执行取消请求。
 
@@ -154,14 +156,12 @@ CLI-only 的 `data-calendar`、`data-standard-bootstrap`、`data-level2-minute-b
   - body 为 kind、mode 加所选模式的字段，完整 schema 复用
     [CLI Backtest](cli_contract.md#backtest) 的输入表；不把 CLI 的 input-json 字符串嵌入 HTTP。
     不接受其他模式的额外字段。
-  - signal 使用 start/end/signal；risk 使用 case_refs/risk；execution 使用
-    start/end/order_refs/initial_account/execution；strategy_eval 使用
-    start/end/signal/strategy/initial_account/execution；full 另须 risk。
-    signal、strategy_eval 和 full 还必须在 body 顶层提供 min_listing_calendar_days，
-    构造约束沿用上述 CLI schema；risk/execution 不接受该字段。
-    strategy_eval 的成交假设也沿用该 schema，通过 execution.slippage_bp 与 strategy.quote
-    成对选择，不增加 mode 或额外 HTTP 参数。
-  - 有日期时使用规范 YYYY-MM-DD 且 start<=end；risk 按全部案例输入定义完整任务，不虚构日期。
+  - signal 和 strategy 使用 start/end/signal/strategy/initial_account/execution；
+    risk/full 在这些字段基础上另须 risk；execution 使用 start/end/order_refs/initial_account/execution。
+    四种含 signal 的请求必须在顶层提供 min_listing_calendar_days；execution 不接受该字段。
+    execution.fill 显式声明 quoted、reference 或 limit_price，构造约束沿用 CLI schema。
+    risk_rule_eval 在一个 Job 内执行无业务风控与指定风控两条完整策略路径。
+  - 日期使用规范 YYYY-MM-DD 且 start<=end；risk 的日期选择信号决策，不能用案例文件代替。
   - 每个请求只创建一个 Job；路径、数值和嵌套结构先由共享构造边界校验。
 
 一个 Job 对应一个完整 workflow 执行单位；每个有效请求只创建一个 Job。请求必须先完成
@@ -182,7 +182,9 @@ CLI-only 的 `data-calendar`、`data-standard-bootstrap`、`data-level2-minute-b
 }
 ```
 
-独立信号评价示例（预测路径与日期须替换为实际输入）：
+信号账户评价示例：独立预测加明确购买规则，同时评价预测质量和账户盈利。合法订单在
+生效时按申报价全额成交；报价偏移、初始资金、费用和数量规则均为演示参数，需按任务明确
+提供。预测与市场路径须替换为实际输入；此例覆盖上海时区 2026-07-03 14:30 至 15:00。
 
 ```json
 {
@@ -191,7 +193,29 @@ CLI-only 的 `data-calendar`、`data-standard-bootstrap`、`data-level2-minute-b
   "start": "2026-07-03",
   "end": "2026-07-03",
   "min_listing_calendar_days": 120,
-  "signal": {"type": "recorded", "prediction_refs": ["/data/prediction.parquet"]}
+  "signal": {"type": "recorded", "prediction_refs": ["/data/prediction.parquet"]},
+  "strategy": {
+    "type": "threshold",
+    "params": {"threshold": 0.5, "target_quantity": 1000},
+    "order_window_minutes": 2,
+    "quote": {"buy_offset_bp": 0, "sell_offset_bp": 0}
+  },
+  "initial_account": {
+    "ts_us": 1783060200000000, "trade_date": "2026-07-03", "cash": "20000",
+    "positions": {}, "sellable": {}, "average_cost": {}, "peak_equity": 20000
+  },
+  "execution": {
+    "market_ref": "/data/market.json", "end_ts_us": 1783062000000000,
+    "quantity_rules": {
+      "600000": {
+        "buy_min_qty": 100, "buy_step_qty": 100, "sell_min_qty": 1,
+        "sell_step_qty": 1, "fill_step_qty": 1, "price_tick": "0.01", "enforce_t1": true
+      }
+    },
+    "fees": {"commission_rate": 0, "stamp_tax_rate": 0, "transfer_rate": 0, "min_commission": 0},
+    "annual_factor": 252,
+    "fill": {"type": "quoted"}
+  }
 }
 ```
 
@@ -227,23 +251,23 @@ CLI-only 的 `data-calendar`、`data-standard-bootstrap`、`data-level2-minute-b
     },
     "fees": {"commission_rate": 0, "stamp_tax_rate": 0, "transfer_rate": 0, "min_commission": 0},
     "annual_factor": 252,
-    "slippage_bp": 0
+    "fill": {"type": "limit_price", "slippage_bp": 0}
   }
 }
 ```
 
-仅将此例的 strategy.quote 和 execution.slippage_bp 同时移除或设为 null，即选择参考成交。
+将此例的 execution.fill 改为 `{"type":"reference"}`，并移除 strategy.quote，可选择参考成交。
+将 fill 改为 `{"type":"quoted"}` 且保留 quote，可选择生效时按申报价全额成交。
 
-固定风控案例示例（0.2 是演示参数，实际任务明确选择）：
+完整策略风控对照沿用上面的完整策略请求，将 mode 改为 risk_rule_eval，添加：
 
 ```json
-{
-  "kind": "backtest",
-  "mode": "risk_rule_eval",
-  "case_refs": ["/data/risk-cases.json"],
-  "risk": {"rules": [{"type": "max_single_name", "max_ratio": 0.2}]}
-}
+{"risk": {"rules": [{"type": "max_single_name", "max_ratio": 0.2}]}}
 ```
+
+0.2 是演示参数。其余信号、策略、账户及成交参数在两条路径间保持相同，任务内部独立
+计算无风控与指定风控的账户结果。根报告给出对照，子报告保留各自的交易事实与完整指标；
+固定案例回归使用领域 RiskCases API，不作为 HTTP 的另一种 risk_rule_eval 输入。
 
 成功固定返回：
 
@@ -278,14 +302,13 @@ Job JSON 必须且只包含：
 job_id, kind, scope, status, submitted_at, started_at, finished_at
 ```
 
-`scope` 只表达该 Job 的完整执行单位。日期任务使用：
+`scope` 表达该 Job 请求的完整日期范围，所有任务统一使用：
 
 ```json
 {"start": "YYYY-MM-DD", "end": "YYYY-MM-DD"}
 ```
 
-risk_rule_eval 使用 `{"case_refs":["/absolute/risk-cases.json"]}`，不读取案例文件来伪造提交时
-的日期范围。两种 scope 均只包含各自的字段，不附加空 start/end。
+risk_rule_eval 的两条回放属于同一 Job，scope 使用请求的信号决策日期范围。
 
 三个时间字段使用带 `Asia/Shanghai` UTC offset、包含微秒的 ISO 8601 字符串。
 `started_at` 和 `finished_at` 在尚未发生对应事件时为 `null`。不得公开 command、PID、

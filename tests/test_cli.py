@@ -54,16 +54,17 @@ def _training_args() -> list[str]:
 @pytest.mark.parametrize("experiment_id", ["run-1", "A", "model.v2_3", "a" * 64])
 def test_experiment_id_option_preserves_valid_values(
     command: str, experiment_id: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    backtest_payload: Callable[[str], dict[str, object]],
 ) -> None:
     config = SimpleNamespace(storage_root=tmp_path, models={}, feature_groups={})
-    workflow_name = "run_offline_training" if command == "train" else "run_signal_evaluation"
+    workflow_name = "run_offline_training" if command == "train" else "run_backtest"
     workflow = Mock()
     monkeypatch.setattr(cli.AppConfig, "load", Mock(return_value=config))
     monkeypatch.setattr(cli.DateTimeUtils, "today", Mock(return_value="2026-10-11"))
     monkeypatch.setattr(cli, workflow_name, workflow)
     arguments = _training_args() if command == "train" else [
         "--mode", "signal_eval", "--input-json",
-        '{"start":"2026-07-01","end":"2026-07-02","min_listing_calendar_days":120,"signal":{"type":"recorded","prediction_refs":[]}}',
+        json.dumps({k: v for k, v in backtest_payload("signal_eval").items() if k not in ("kind", "mode")}),
     ]
 
     result = CliRunner().invoke(cli.app, [command, *arguments, f"--experiment-id={experiment_id}"])
@@ -85,13 +86,13 @@ def test_experiment_id_option_rejects_invalid_values_before_command_execution(
     load_config = Mock()
     workflow = Mock()
     create_name = "create_training_submission" if command == "train" else "create_backtest_submission"
-    workflow_name = "run_offline_training" if command == "train" else "run_signal_evaluation"
+    workflow_name = "run_offline_training" if command == "train" else "run_backtest"
     monkeypatch.setattr(cli, create_name, create_submission)
     monkeypatch.setattr(cli.AppConfig, "load", load_config)
     monkeypatch.setattr(cli, workflow_name, workflow)
     arguments = _training_args() if command == "train" else [
         "--mode", "signal_eval", "--input-json",
-        '{"start":"2026-07-01","end":"2026-07-02","min_listing_calendar_days":120,"signal":{"type":"recorded","prediction_refs":[]}}',
+        '{}',
     ]
 
     result = CliRunner().invoke(cli.app, [command, *arguments, f"--experiment-id={experiment_id}"])
@@ -367,9 +368,9 @@ def test_train_command_round_trip_preserves_named_choices_and_ranges(
 
 
 @pytest.mark.parametrize(("mode", "workflow"), [
-    ("signal_eval", "run_signal_evaluation"), ("risk_rule_eval", "run_risk_rule_evaluation"),
-    ("execution_eval", "run_execution_evaluation"), ("strategy_eval", "run_strategy_evaluation"),
-    ("full_backtest", "run_full_backtest"),
+    ("signal_eval", "run_backtest"), ("risk_rule_eval", "run_backtest"),
+    ("execution_eval", "run_backtest"), ("strategy_eval", "run_backtest"),
+    ("full_backtest", "run_backtest"),
 ])
 def test_backtest_routes_validated_input_to_its_workflow(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
@@ -383,7 +384,7 @@ def test_backtest_routes_validated_input_to_its_workflow(
     monkeypatch.setattr(cli.DateTimeUtils, "today", today)
     monkeypatch.setattr(cli, workflow, run)
     fields = backtest_payload(mode)
-    if mode in ("signal_eval", "strategy_eval", "full_backtest"):
+    if mode in ("signal_eval", "strategy_eval", "risk_rule_eval", "full_backtest"):
         fields["min_listing_calendar_days"] = 90
     del fields["kind"], fields["mode"]
     result = CliRunner().invoke(cli.app, ["backtest", "--mode", mode,
@@ -403,7 +404,7 @@ def test_backtest_routes_validated_input_to_its_workflow(
     assert metrics.not_run == {}
     assert "backtest_config" not in args
     assert "backtest_config" not in expected
-    if mode in ("signal_eval", "strategy_eval", "full_backtest"):
+    if mode in ("signal_eval", "strategy_eval", "risk_rule_eval", "full_backtest"):
         assert expected["min_listing_calendar_days"] == 90
     else:
         assert "min_listing_calendar_days" not in expected
@@ -422,11 +423,11 @@ def test_strategy_backtest_validates_price_model_before_running(
     run = Mock()
     monkeypatch.setattr(cli.AppConfig, "load", load_config)
     monkeypatch.setattr(cli.DateTimeUtils, "today", Mock(return_value="2026-10-11"))
-    monkeypatch.setattr(cli, "run_strategy_evaluation", run)
+    monkeypatch.setattr(cli, "run_backtest", run)
     fields = backtest_payload("strategy_eval")
     del fields["kind"], fields["mode"]
     if missing != "slippage_bp":
-        fields["execution"]["slippage_bp"] = 0
+        fields["execution"]["fill"] = {"type": "limit_price", "slippage_bp": 0}
     if missing != "quote":
         fields["strategy"]["quote"] = {"buy_offset_bp": 10, "sell_offset_bp": 0}
 
@@ -435,7 +436,7 @@ def test_strategy_backtest_validates_price_model_before_running(
 
     if missing is not None:
         assert result.exit_code == 2, result.output
-        assert "execution.slippage_bp" in result.output and "strategy.quote" in result.output
+        assert "strategy.quote" in result.output
         load_config.assert_not_called()
         run.assert_not_called()
         return
@@ -443,13 +444,13 @@ def test_strategy_backtest_validates_price_model_before_running(
     load_config.assert_called_once_with()
     run.assert_called_once()
     args = run.call_args.kwargs
-    assert args["submission"].execution.slippage_bp == 0
+    assert args["submission"].execution.fill.slippage_bp == 0
     assert args["submission"].strategy.quote.buy_offset_bp == 10
     assert args["metrics"].parameters == args["submission"].model_dump(mode="json")
     assert _logged_parameters(backtest_log, experiment_name=args["experiment_name"]) == args["metrics"].parameters
 
 
-@pytest.mark.parametrize("mode", ["signal_eval", "strategy_eval", "full_backtest"])
+@pytest.mark.parametrize("mode", ["signal_eval", "strategy_eval", "risk_rule_eval", "full_backtest"])
 @pytest.mark.parametrize("listing_fields", [{}, {"min_listing_calendar_days": -1}])
 def test_backtest_rejects_missing_or_invalid_listing_age_before_loading_config(
     mode: str, listing_fields: dict[str, object], monkeypatch: pytest.MonkeyPatch,
@@ -473,24 +474,36 @@ def test_backtest_rejects_missing_or_invalid_listing_age_before_loading_config(
     (datetime(2026, 10, 10, 15, 59, tzinfo=UTC), "2026-10-10"),
     (datetime(2026, 10, 10, 16, 0, tzinfo=UTC), "2026-10-11"),
 ])
-def test_backtest_preserves_start_parameters_in_the_persisted_result(
+def test_backtest_preserves_run_date_and_logged_parameters_in_the_persisted_result(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, backtest_log: Path,
     current_time: datetime, run_date: str,
+    backtest_payload: Callable[[str], dict[str, object]],
 ) -> None:
     monkeypatch.setattr(cli.DateTimeUtils, "now_utc", lambda: current_time)
     monkeypatch.setattr(cli.AppConfig, "load", Mock(return_value=SimpleNamespace(storage_root=tmp_path)))
     experiment_id = "9c5a9280-922e-4d1a-af01-ce896eb9668c"
-    fields = {"case_refs": [], "risk": {"rules": [{"type": "max_single_name", "max_ratio": 0.2}]}}
+    fields = backtest_payload("risk_rule_eval")
+    del fields["kind"], fields["mode"]
+    fields['signal'] = {'type': 'recorded', 'prediction_refs': []}
+    market_ref = tmp_path / 'market.json'
+    market_ref.write_text(json.dumps({'price_basis': 'raw', 'quantity_unit': 'shares',
+        'sessions': [{'trade_date': '2026-07-01', 'start_ts_us': 0, 'close_ts_us': 3,
+                      'windows': [{'trade_date': '2026-07-01', 'start_ts_us': 0, 'end_ts_us': 3}]}],
+        'marks': [], 'observations': []}))
+    fields['execution']['market_ref'] = str(market_ref)
+    monkeypatch.setattr('src.workflows.backtest.Access', Mock(return_value=Mock(
+        trade_dates=Mock(return_value=['2026-07-01']))))
     result = CliRunner().invoke(cli.app, ["backtest", "--mode", "risk_rule_eval",
         "--experiment-id", experiment_id, "--input-json", json.dumps(fields)])
     assert result.exit_code == 0, result.output
-    pm = PathManager(tmp_path)
     name = f"backtest_{run_date}_{experiment_id}"
-    metrics = json.loads(pm.experiment_backtest_metrics(experiment_name=name).read_text())
-    assert metrics["risk_eval"]["case_count"] == 0
+    root = PathManager(tmp_path).experiment_dir(experiment_name=name)
+    metrics = json.loads((root / 'metrics.json').read_text())
     assert metrics["parameters"] == _logged_parameters(backtest_log, experiment_name=name)
-    assert "backtest_config" not in metrics["parameters"]
-    assert pm.experiment_backtest_report(experiment_name=name).is_file()
+    assert "backtest_config" not in metrics['parameters']
+    assert metrics['risk_comparison']['net_profit_delta'] == 0
+    assert (root / 'report.html').is_file()
+    assert (root / 'without_risk/report.html').is_file() and (root / 'with_risk/report.html').is_file()
 
 
 @pytest.mark.parametrize(("old_mode", "mode"), [
@@ -525,9 +538,9 @@ def test_backtest_rejects_retired_modes_before_loading_config(
         (
             [
                 "backtest", "--mode", "signal_eval", "--experiment-id", "run-1",
-                "--input-json", '{"start":"2026-07-01","end":"2026-07-02","min_listing_calendar_days":120,"signal":{"type":"recorded","prediction_refs":[]}}',
+                "--input-json", '{}',
             ],
-            "run_signal_evaluation",
+            "run_backtest",
         ),
     ],
 )
@@ -537,7 +550,15 @@ def test_empty_runtime_schedule_propagates_as_exit_code_1(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     backtest_log: Path,
+    backtest_payload: Callable[[str], dict[str, object]],
 ) -> None:
+    if arguments[0] == "backtest":
+        arguments = list(arguments)
+        payload = backtest_payload("signal_eval")
+        payload["signal"] = {"type": "recorded", "prediction_refs": []}
+        arguments[arguments.index("--input-json") + 1] = json.dumps({
+            k: v for k, v in payload.items() if k not in ("kind", "mode")
+        })
     monkeypatch.setattr(cli.DateTimeUtils, "today", Mock(return_value="2026-10-11"))
     monkeypatch.setattr(
         cli.AppConfig,

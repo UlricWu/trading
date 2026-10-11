@@ -29,13 +29,7 @@ from src.trading.backtest.reporting.metrics import BacktestMetrics
 from src.utils.datetime_utils import DateTimeUtils
 from src.utils.logger import configure_cli_logging
 from src.utils.path import PathManager
-from src.workflows.backtest import (
-    run_signal_evaluation, run_risk_rule_evaluation, run_execution_evaluation,
-    run_strategy_evaluation, run_full_backtest,
-)
-from src.jobs.requests import (
-    SignalEvalSubmission, RiskRuleEvalSubmission, ExecutionEvalSubmission, StrategyEvalSubmission,
-)
+from src.workflows.backtest import run_backtest
 from src.workflows.offline_daily_data import (
     run_feature_backfill,
     run_level2_minute_backfill,
@@ -387,7 +381,9 @@ def backtest(
 
     Example:
         backtest(mode="signal_eval", experiment_id="signal-1",
-                 input_json='{"start":"2026-07-03","end":"2026-07-03","signal":{"type":"recorded","prediction_refs":[]},"min_listing_calendar_days":120}')
+            input_json=json.dumps({"start": "2026-07-03", "end": "2026-07-03",
+                "signal": {"type": "recorded", "prediction_refs": []}, "min_listing_calendar_days": 120,
+                "strategy": strategy, "initial_account": account, "execution": execution}))
     """
     try:
         fields = json.loads(input_json)
@@ -406,25 +402,13 @@ def backtest(
     parameters = submission.model_dump(mode="json")
     metrics = BacktestMetrics(mode=submission.mode, parameters=parameters, not_run={})
     labels = (("mode", "模式"), ("start", "开始日期"), ("end", "结束日期"),
-              ("signal", "信号输入"), ("case_refs", "风控案例"), ("order_refs", "委托输入"),
+              ("signal", "信号输入"), ("order_refs", "委托输入"),
               ("strategy", "策略"), ("initial_account", "初始账户"), ("risk", "风控"),
               ("execution", "执行"), ("kind", "任务"), ("min_listing_calendar_days", "最短上市天数"))
     summary = "\n".join(f"{label} {key}={json.dumps(metrics.parameters[key], ensure_ascii=False)}"
                         for key, label in labels if key in metrics.parameters)
     logs.info(f"▶️ 回测任务; experiment={name}\n{summary}")
-    if isinstance(submission, SignalEvalSubmission):
-        run_signal_evaluation(submission=submission, path_manager=pm,
-                              experiment_name=name, metrics=metrics)
-    elif isinstance(submission, RiskRuleEvalSubmission):
-        run_risk_rule_evaluation(submission=submission, path_manager=pm, experiment_name=name, metrics=metrics)
-    elif isinstance(submission, ExecutionEvalSubmission):
-        run_execution_evaluation(submission=submission, path_manager=pm, experiment_name=name, metrics=metrics)
-    elif isinstance(submission, StrategyEvalSubmission):
-        run_strategy_evaluation(submission=submission, path_manager=pm,
-                                experiment_name=name, metrics=metrics)
-    else:
-        run_full_backtest(submission=submission, path_manager=pm,
-                          experiment_name=name, metrics=metrics)
+    run_backtest(submission=submission, path_manager=pm, experiment_name=name, metrics=metrics)
 
 
 if __name__ == "__main__":

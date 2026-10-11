@@ -282,11 +282,12 @@ SignalInput: TypeAlias = Annotated[ModelSignalInput | RecordedSignalInput, Field
 
 
 class SignalEvalSubmission(BaseModel):
-    """Evaluate signals without strategy, execution or account inputs.
+    """Evaluate prediction quality and account returns with fills at submitted quotes.
 
     Example:
         submission = SignalEvalSubmission(mode="signal_eval", start="2026-07-03",
-            end="2026-07-03", signal=recorded_signal, min_listing_calendar_days=120)
+            end="2026-07-03", signal=recorded_signal, min_listing_calendar_days=120,
+            strategy=strategy, initial_account=account, execution=execution)
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -295,31 +296,54 @@ class SignalEvalSubmission(BaseModel):
     end: str
     signal: SignalInput
     min_listing_calendar_days: int = Field(ge=0, strict=True)
+    strategy: StrategyConfig
+    initial_account: InitialAccount
+    execution: FakeExecutionConfig
     kind: Literal["backtest"] = "backtest"
 
     @model_validator(mode="after")
-    def _validate_range(self) -> Self:
+    def _validate_signal(self) -> Self:
         _require_range(self.start, self.end)
+        if self.strategy.quote is None:
+            raise ValueError("signal_eval requires strategy.quote for quoted fills")
+        if self.execution.fill.type != "quoted":
+            raise ValueError("signal_eval requires execution.fill.type=quoted")
+        if self.execution.risk_check_ts_us:
+            raise ValueError("signal_eval does not run risk checks")
+        if self.strategy.order_window_minutes is None:
+            raise ValueError("signal_eval requires order_window_minutes")
+        if self.initial_account.ts_us >= self.execution.end_ts_us:
+            raise ValueError("initial account must precede simulation end")
         return self
 
 
 class RiskRuleEvalSubmission(BaseModel):
-    """Evaluate all selected frozen risk cases without a model or account loop.
+    """Compare full strategy replays with and without the selected business risk.
 
     Example:
-        submission = RiskRuleEvalSubmission(mode="risk_rule_eval", case_refs=("/data/cases.json",), risk=risk)
+        submission = RiskRuleEvalSubmission(mode="risk_rule_eval", start="2026-07-03",
+            end="2026-07-03", signal=signal, min_listing_calendar_days=120,
+            strategy=strategy, initial_account=account, execution=execution, risk=risk)
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
     mode: Literal[BacktestMode.RISK_RULE_EVAL]
-    case_refs: tuple[Path, ...]
+    start: str
+    end: str
+    signal: SignalInput
+    min_listing_calendar_days: int = Field(ge=0, strict=True)
+    strategy: StrategyConfig
+    initial_account: InitialAccount
+    execution: FakeExecutionConfig
     risk: RiskConfig
     kind: Literal["backtest"] = "backtest"
 
     @model_validator(mode="after")
-    def _validate_refs(self) -> Self:
-        if any(not ref.is_absolute() for ref in self.case_refs):
-            raise ValueError("case_refs must be absolute file paths")
+    def _validate_comparison(self) -> Self:
+        _require_range(self.start, self.end)
+        _require_strategy_execution(self.strategy, self.execution)
+        if self.initial_account.ts_us >= self.execution.end_ts_us:
+            raise ValueError("initial account must precede simulation end")
         return self
 
 
@@ -345,8 +369,8 @@ class ExecutionEvalSubmission(BaseModel):
         _require_range(self.start, self.end)
         if any(not ref.is_absolute() for ref in self.order_refs):
             raise ValueError("order_refs must be absolute file paths")
-        if self.execution.slippage_bp is None:
-            raise ValueError("execution_eval requires an explicit price model slippage_bp")
+        if self.execution.fill.type != "limit_price":
+            raise ValueError("execution_eval requires execution.fill.type=limit_price")
         if self.execution.risk_check_ts_us:
             raise ValueError("execution_eval does not run risk checks")
         if self.initial_account.ts_us >= self.execution.end_ts_us:
@@ -355,10 +379,7 @@ class ExecutionEvalSubmission(BaseModel):
 
 
 class StrategyEvalSubmission(BaseModel):
-    """Run a strategy with reference or price-model fills and no business risk.
-
-    Price-model execution requires both execution.slippage_bp and strategy.quote;
-    leaving both as None selects reference fills.
+    """Run a strategy with explicitly selected fills and no business risk.
 
     Example:
         submission = StrategyEvalSubmission(mode="strategy_eval", start="2026-07-03",
@@ -380,12 +401,9 @@ class StrategyEvalSubmission(BaseModel):
     @model_validator(mode="after")
     def _validate_strategy(self) -> Self:
         _require_range(self.start, self.end)
-        if (self.execution.slippage_bp is None) != (self.strategy.quote is None):
-            raise ValueError("strategy_eval requires execution.slippage_bp and strategy.quote together for price-model execution")
+        _require_strategy_execution(self.strategy, self.execution)
         if self.execution.risk_check_ts_us:
             raise ValueError("strategy_eval does not run risk checks")
-        if self.strategy.order_window_minutes is None:
-            raise ValueError("strategy requires order_window_minutes")
         if self.initial_account.ts_us >= self.execution.end_ts_us:
             raise ValueError("initial account must precede simulation end")
         return self
@@ -415,13 +433,22 @@ class FullBacktestSubmission(BaseModel):
     @model_validator(mode="after")
     def _validate_full(self) -> Self:
         _require_range(self.start, self.end)
-        if self.execution.slippage_bp is None or self.strategy.quote is None:
-            raise ValueError("full_backtest requires price-model slippage_bp and strategy quote")
-        if self.strategy.order_window_minutes is None:
-            raise ValueError("strategy requires order_window_minutes")
+        if self.execution.fill.type != "limit_price":
+            raise ValueError("full_backtest requires execution.fill.type=limit_price")
+        _require_strategy_execution(self.strategy, self.execution)
         if self.initial_account.ts_us >= self.execution.end_ts_us:
             raise ValueError("initial account must precede simulation end")
         return self
+
+
+def _require_strategy_execution(strategy: StrategyConfig, execution: FakeExecutionConfig) -> None:
+    if strategy.order_window_minutes is None:
+        raise ValueError("strategy requires order_window_minutes")
+    if execution.fill.type == "reference":
+        if strategy.quote is not None:
+            raise ValueError("reference fills do not accept strategy.quote")
+    elif strategy.quote is None:
+        raise ValueError("quoted and limit_price fills require strategy.quote")
 
 
 BacktestSubmission: TypeAlias = Annotated[
@@ -596,7 +623,8 @@ def create_backtest_submission(*, mode: object, **fields: object) -> BacktestSub
 
     Example:
         submission = create_backtest_submission(mode="signal_eval", start="2026-07-03",
-            end="2026-07-03", signal={"type": "recorded", "prediction_refs": []}, min_listing_calendar_days=120)
+            end="2026-07-03", signal={"type": "recorded", "prediction_refs": []},
+            min_listing_calendar_days=120, strategy=strategy, initial_account=account, execution=execution)
     """
     try:
         return TypeAdapter(BacktestSubmission).validate_python({"mode": mode, **fields})

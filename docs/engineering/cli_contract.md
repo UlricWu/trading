@@ -215,20 +215,20 @@ mode 只接受下表五个值；旧任务名称 `tradable_alpha_eval`、`risk_ev
 
 | MODE / Submission | JSON 字段 |
 | --- | --- |
-| signal_eval / SignalEvalSubmission | start、end、signal、min_listing_calendar_days |
-| risk_rule_eval / RiskRuleEvalSubmission | case_refs、risk；没有日期范围 |
+| signal_eval / SignalEvalSubmission | start、end、signal、min_listing_calendar_days、strategy、initial_account、execution |
+| risk_rule_eval / RiskRuleEvalSubmission | start、end、signal、min_listing_calendar_days、strategy、initial_account、risk、execution |
 | execution_eval / ExecutionEvalSubmission | start、end、order_refs、initial_account、execution |
 | strategy_eval / StrategyEvalSubmission | start、end、signal、min_listing_calendar_days、strategy、initial_account、execution |
 | full_backtest / FullBacktestSubmission | start、end、signal、min_listing_calendar_days、strategy、initial_account、risk、execution |
 
-有日期的请求使用规范 `YYYY-MM-DD` 且 start<=end。信号来源是二选一的 object：
+五种请求都使用规范 `YYYY-MM-DD` 且 start<=end。信号来源是二选一的 object：
 `{"type":"model","model_ref":"/absolute/model.joblib"}` 或
 `{"type":"recorded","prediction_refs":["/absolute/prediction.parquet"]}`。
-三种含 signal 的 submission 顶层都必须显式提供 `min_listing_calendar_days`，无论信号来源
+四种含 signal 的 submission 顶层都必须显式提供 `min_listing_calendar_days`，无论信号来源
 是 model 还是 recorded；值为非负整数，不接受 bool、字符串或小数，没有默认值。
-risk/execution 不接受该字段。其资格筛选作用由
+execution 不接受该字段。其资格筛选作用由
 [Backtest workflow](../offline_workflow_contract.md#backtest-workflow) 定义。
-case_refs、order_refs 和 prediction_refs 是有序绝对路径数组；空事实可报告无样本。
+order_refs 和 prediction_refs 是有序绝对路径数组；空事实可报告无样本。
 模型同目录训练记录、预测身份和首次实际决策的成熟时间核验由
 [Backtest workflow](../offline_workflow_contract.md#backtest-workflow) 拥有，不要求调用者
 提供 model_use、生效时间、binding_refs 或训练记录路径。
@@ -238,24 +238,29 @@ case_refs、order_refs 和 prediction_refs 是有序绝对路径数组；空事�
 | 对象 | 字段及构造约束 |
 | --- | --- |
 | initial_account | ts_us 整数、trade_date、非负有限 Decimal cash、positions 非负整数映射、sellable 同键映射且不超过持仓、average_cost 同键非负有限 Decimal 映射、非负有限 peak_equity；ts_us 必须早于模拟终点 |
-| execution | market_ref 绝对 JSON 路径、end_ts_us 整数、quantity_rules 证券映射、fees、正数有限 annual_factor；slippage_bp 和 risk_check_ts_us 按模式约束如下 |
+| execution | market_ref 绝对 JSON 路径、end_ts_us 整数、quantity_rules 证券映射、fees、正数有限 annual_factor、fill；risk_check_ts_us 按模式约束如下 |
 | quantity_rules 每证券值 | buy_min_qty、buy_step_qty、sell_min_qty、sell_step_qty、fill_step_qty 都是正整数，price_tick 是正数有限 Decimal，enforce_t1 是显式 bool；不可用 bool 代替数量 |
 | fees | commission_rate、stamp_tax_rate、transfer_rate、min_commission，均为非负有限 Decimal；不使用隐含费率或最低佣金 |
 | risk | rules 非空数组，按声明顺序选具名规则；每项为 type=max_single_name 和非负有限 max_ratio，或 type=max_gross_exposure 和非负有限 max_gross_ratio，或 type=max_drawdown 和 [0,1] max_drawdown |
-| strategy | type、params、order_window_minutes；full 另须 quote，strategy_eval 按下述成交假设成对提供 quote 与 slippage_bp。窗口分钟为正整数 |
+| strategy | type、params、order_window_minutes；quoted/limit_price 须 quote，reference 不接受非 null quote。窗口分钟为正整数 |
 | quote | buy_offset_bp、sell_offset_bp，均为 [0,10000) 的有限 Decimal；不接受额外字段 |
 
-execution/full 必须提供 [0,10000) 的有限 slippage_bp。strategy_eval 沿用同一数值约束，
-由现有 execution.slippage_bp 与 strategy.quote 选择成交假设：
+execution.fill 是必须显式提供的带 type 判别字段的对象，不根据 null 或缺失滑点推导成交行为：
 
-| execution.slippage_bp | strategy.quote | strategy_eval 构造结果 |
-| --- | --- | --- |
-| 省略或 null | 省略或 null | 参考成交 |
-| 有效数值，包含 0 | 完整报价规则 | 价格和成交量约束下的模拟成交 |
-| 仅其中一项非 null | 另一项缺失或 null | 拒绝，必须成对提供 |
+| execution.fill | 构造与适用范围 |
+| --- | --- |
+| `{"type":"quoted"}` | 生效时按申报价全额成交，不接受 slippage_bp；signal_eval 固定使用，strategy/risk 也可选择 |
+| `{"type":"reference"}` | 后续参考观察成交，不接受 slippage_bp；适用于 strategy/risk |
+| `{"type":"limit_price","slippage_bp":0}` | 滑点为必填 [0,10000) 有限数；价量约束，适用于 strategy/risk，execution/full 固定使用 |
 
-这两种 strategy_eval 都不接受 risk。只有 full 可提供 risk_check_ts_us 整数数组，省略为空；其他两种交易模式不接受
-非空风险检查时间。规则配置缺失、空规则或价格模型缺失不能解释为自动关闭能力。
+所有 fill 对象拒绝额外字段，旧的 execution.slippage_bp 不再接受。信号驱动路径使用
+quoted 或 limit_price 时必须提供完整 strategy.quote；reference 时 quote 只能省略或为 null。
+execution_eval 的报价取自冻结委托，不接受 strategy。
+
+signal_eval/strategy_eval 不接受 risk；risk_rule_eval/full_backtest 必须提供非空 rules。
+只有 risk/full 可提供非空 risk_check_ts_us 整数数组，省略为空。risk 比较两条完整策略路径，
+不再接收 case_refs，也不在无风控基线中绕过账户约束。缺少规则或成交模型是非法请求，
+不能解释为自动关闭能力。
 
 strategy.params 只允许与 type 对应的结构：
 
@@ -271,19 +276,14 @@ fixed_holding: {max_positions: positive-int, decision_time: local-time, exit_tim
 fixed_holding 的两个 time 不带 UTC offset，使用市场时区。三种策略的 order_window_minutes
 在交易请求必需；原两个构造器的股数默认值仍如上，新策略没有默认资金、名额或时点。
 完整选择/资金/退出和风险计算语义由 Offline owner 定义，本文件只拥有参数构造。
-已有预测加价量约束模拟成交的完整请求见 [Job API 示例](job_api_contract.md#post-jobs)；
-用于 CLI 时移除 kind 和 mode，将其余对象编码为 --input-json，并指定 --mode strategy_eval。
-
-仅评价已有预测的例子（文件必须实际存在）：
-
-```bash
-python -m src.cli backtest --mode signal_eval --experiment-id signal-1 \
-  --input-json '{"start":"2026-07-03","end":"2026-07-03","signal":{"type":"recorded","prediction_refs":["/data/prediction.parquet"]},"min_listing_calendar_days":120}'
-```
+signal_eval 和价量约束 strategy_eval 的完整请求见 [Job API 示例](job_api_contract.md#post-jobs)。
+用于 CLI 时移除 kind/mode，将其余字段编码为 --input-json，并用 --mode 指定对应任务；
+引用文件必须实际存在。signal_eval 保留预测指标，同时要求显式策略、初始账户、市场、
+费用与数量规则，不接受原先只有预测的请求。
 
 CLI 不构造 config override。加载一次 AppConfig 后，统一生成实验名称，将已解析 submission
 序列化为参数快照并初始化 `BacktestMetrics`，使用该快照记录开始日志，再把 `experiment_name`
-和 `metrics` 随 submission 传给对应的具名 workflow。快照、日志及最终制品的内容由
+和 `metrics` 随 submission 传给 `run_backtest`。快照、日志及最终制品的内容由
 [Backtest 结果契约](../offline_workflow_contract.md#backtest-workflow)定义；CLI 此时只构造内存记录，
 不写参数或 metrics 文件。回测业务参数统一来自 submission，不再加载独立 BacktestConfig；
 示例中的 min_listing_calendar_days=120 是显式任务输入，不是应用默认设置。

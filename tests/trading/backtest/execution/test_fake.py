@@ -15,7 +15,7 @@ from src.trading.backtest.execution.models.cost_a_share import AShareCostModel
 from src.trading.backtest.execution.models.slippage_fixed_bp import FixedBPSlippageModel
 from src.trading.execution.policies.constraints import QuantityRules, QuoteRule
 from src.trading.backtest.execution.settlement import SettlementEngine
-from src.trading.backtest.execution.venue.fake import LimitPriceVenue, ReferenceVenue
+from src.trading.backtest.execution.venue.fake import LimitPriceVenue, QuotedPriceVenue, ReferenceVenue
 from src.trading.backtest.market.data_view import ExecutionObservation
 from src.trading.portfolio.state import PortfolioState
 from src.utils.datetime_utils import DateTimeUtils
@@ -58,6 +58,92 @@ def _observation(end: int, *, price: str = "10", volume: int | None = 300,
     return ExecutionObservation(f"{symbol}:{end}", symbol,
         BarTime("minute", 1, "2026-07-03", T + (end - 1) * M, T + end * M, T + end * M),
         Decimal(price), volume)
+
+
+def test_quoted_fills_settle_at_activation_without_market_observations() -> None:
+    execution = _execution(cash=1005, minimum=5)
+    execution.venue = QuotedPriceVenue()
+    execution.submit_orders(orders=(_order(qty=100, active=T + M),), market=Market({"A": 99}))
+    assert execution.portfolio.cash == 1005
+    assert not execution.advance(ts_us=T, observations=())
+    fills = execution.advance(ts_us=T + M, observations=())
+    assert [(fill.ts_us, fill.qty, fill.price, fill.observation_id) for fill in fills] == [
+        (T + M, 100, Decimal("10"), None),
+    ]
+    assert execution.portfolio.cash == 0
+    assert execution.portfolio.positions == {"A": 100}
+    assert not execution.pending_orders
+    assert not execution.advance(ts_us=T + M, observations=())
+    assert execution.ledger.order_costs[1].total == 5
+
+
+def test_quoted_fills_keep_cash_t1_and_quantity_constraints() -> None:
+    execution = _execution(cash=1005, minimum=5)
+    execution.venue = QuotedPriceVenue()
+    market = Market({"A": 10})
+    execution.submit_targets(target=TargetEvent(T, {"A": 1000}), cancel_order_ids=(),
+        terms={"A": OrderTerms(T, T + M)}, market=market)
+    assert execution.portfolio.cash == 0
+    assert execution.portfolio.positions == {"A": 100}
+    assert execution.ledger.orders_by_id[1].qty == 100
+    rejected = execution.submit_orders(orders=(
+        _order(2, qty=1), _order(3, qty=100, side=Side.SELL),
+    ), market=market)
+    assert [event.reason for event in rejected] == ["insufficient_cash", "insufficient_sellable"]
+    execution.portfolio.on_trading_day_start("2026-07-06")
+    execution.submit_orders(orders=(_order(4, qty=100, side=Side.SELL),), market=market)
+    assert execution.portfolio.cash == 995
+    assert not execution.portfolio.positions
+
+
+def test_quoted_sale_rejects_unfunded_fees() -> None:
+    execution = _execution(cash=0, minimum=15)
+    execution.venue = QuotedPriceVenue()
+    execution.portfolio.positions["A"] = 1
+    execution.portfolio.avg_cost["A"] = Decimal("10")
+    events = execution.submit_orders(orders=(_order(qty=1, side=Side.SELL),), market=Market({"A": 10}))
+    assert events[0].reason == "insufficient_cash_for_fees"
+    assert not execution.ledger.fills_by_id
+    assert execution.portfolio.positions == {"A": 1}
+
+
+def test_quoted_targets_satisfy_both_order_and_fill_steps() -> None:
+    execution = _execution()
+    execution.venue = QuotedPriceVenue()
+    execution.rules = {"A": QuantityRules(100, 100, 1, 1, 60, Decimal("0.01"), True)}
+    market = Market({"A": 10})
+    execution.submit_targets(target=TargetEvent(T, {"A": 400}), cancel_order_ids=(),
+        terms={"A": OrderTerms(T, T + M)}, market=market)
+    assert execution.portfolio.positions == {"A": 300}
+    assert next(iter(execution.ledger.fills_by_id.values())).qty == 300
+    rejected = execution.submit_orders(orders=(_order(2, qty=100),), market=market)
+    assert rejected[0].reason == "quantity_rule"
+
+
+def test_quoted_pending_sale_reserves_fee_shortfall_until_cancelled() -> None:
+    execution = _execution(cash=16, minimum=15)
+    execution.venue = QuotedPriceVenue()
+    execution.portfolio.positions["A"] = 1
+    execution.portfolio.avg_cost["A"] = Decimal("10")
+    market = Market({"A": 10, "B": 1})
+    execution.submit_orders(orders=(_order(qty=1, side=Side.SELL, active=T + M),), market=market)
+    assert execution.pending_orders[1].reserved_cash == 5
+    events = execution.submit_orders(orders=(_order(2, qty=1, symbol="B", limit="0.01"),), market=market)
+    assert events[0].reason == "insufficient_cash"
+    execution.cancel_orders(ts_us=T, order_ids=(1,))
+    assert not execution.advance(ts_us=T + M, observations=())
+    assert execution.portfolio.cash == 16
+    assert execution.portfolio.positions == {"A": 1}
+
+
+def test_quoted_execution_cannot_backdate_a_missed_activation() -> None:
+    execution = _execution()
+    execution.venue = QuotedPriceVenue()
+    execution.submit_orders(orders=(_order(active=T + M),), market=Market({"A": 10}))
+    with pytest.raises(ValueError, match="clock tick at every order activation"):
+        execution.advance(ts_us=T + 2 * M, observations=())
+    assert not execution.ledger.fills_by_id
+    assert execution.portfolio.cash == 20000
 
 
 def test_partial_fills_last_minute_then_expiry_and_no_automatic_reentry() -> None:

@@ -21,7 +21,6 @@ from src.jobs.requests import (
     JOB_EXIT_CODE_SKIPPED,
     JobKind,
     JobSubmission,
-    RiskRuleEvalSubmission,
     build_cli_command,
 )
 from src.utils.datetime_utils import DateTimeUtils
@@ -60,17 +59,6 @@ class RangeJobScope:
 
 
 @dataclass(frozen=True, slots=True)
-class CaseJobScope:
-    """Locate fixed risk cases without inventing a date range before reading them.
-
-    Example:
-        scope = CaseJobScope(case_refs=("/data/risk-cases.json",))
-    """
-
-    case_refs: tuple[str, ...]
-
-
-@dataclass(frozen=True, slots=True)
 class JobSnapshot:
     """Expose the immutable public view of one process-local job.
 
@@ -91,7 +79,7 @@ class JobSnapshot:
 
     job_id: str
     kind: JobKind
-    scope: RangeJobScope | CaseJobScope
+    scope: RangeJobScope
     status: JobStatus
     submitted_at: str
     started_at: str | None
@@ -617,9 +605,7 @@ class JobRuntime:
         return JobSnapshot(
             job_id=job.job_id,
             kind=submission.kind,
-            scope=(CaseJobScope(tuple(str(ref) for ref in submission.case_refs))
-                   if isinstance(submission, RiskRuleEvalSubmission)
-                   else RangeJobScope(start=submission.start, end=submission.end)),
+            scope=RangeJobScope(start=submission.start, end=submission.end),
             status=job.status,
             submitted_at=job.submitted_at,
             started_at=job.started_at,
