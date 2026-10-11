@@ -23,22 +23,22 @@ from src.trading.portfolio.state import PortfolioState
 from src.utils.datetime_utils import DateTimeUtils
 
 
-def prepare_market(*, config: FakeExecutionConfig, initial: InitialAccount, access: Access) -> ReplayMarket:
-    """Validate normalized input coverage against the formal account calendar.
+def prepare_market_input(*, config: FakeExecutionConfig, initial: InitialAccount, access: Access) -> ReplayMarketInput:
+    """Read shared market facts and validate their calendar, account and execution coverage.
 
     Example:
-        market = prepare_market(config=execution_config, initial=account_snapshot, access=access)
+        source = prepare_market_input(config=execution_config, initial=account_snapshot, access=access)
+        market = ReplayMarket(source)
     """
     source = ReplayMarketInput.model_validate_json(config.market_ref.read_bytes(), strict=True)
     actual = access.trade_dates(start_date=source.sessions[0].trade_date, end_date=source.sessions[-1].trade_date)
     if tuple(actual) != tuple(session.trade_date for session in source.sessions):
         raise ValueError("prepared account sessions must exactly cover the formal trading calendar")
-    market = ReplayMarket(source)
-    if market.session_at(initial.ts_us).trade_date != initial.trade_date:
+    if source.session_at(initial.ts_us).trade_date != initial.trade_date:
         raise ValueError("initial snapshot trade_date disagrees with replay start")
-    market.session_at(config.end_ts_us)
+    source.session_at(config.end_ts_us)
     for ts_us in config.risk_check_ts_us:
-        market.session_at(ts_us)
+        source.session_at(ts_us)
         if not initial.ts_us <= ts_us <= config.end_ts_us:
             raise ValueError("risk check is outside the simulation interval")
     if config.fill.type == "limit_price" and any(o.volume_qty is None for o in source.observations):
@@ -46,7 +46,7 @@ def prepare_market(*, config: FakeExecutionConfig, initial: InitialAccount, acce
     symbols = {o.symbol for o in source.observations} | initial.positions.keys()
     if not symbols <= config.quantity_rules.keys():
         raise ValueError("execution quantity rules must cover all observed and held symbols")
-    return market
+    return source
 
 
 def create_state(initial: InitialAccount) -> BacktestState:
@@ -116,7 +116,7 @@ def prepare_portfolio_step(
             for symbol, day in params.initial_exit_dates.items()
         }
         for deadline in deadlines.values():
-            market.session_at(deadline)
+            market.source.session_at(deadline)
             if deadline < initial.ts_us:
                 raise ValueError("initial exit plan precedes account snapshot")
         fixed_holding = FixedHoldingConstructor(

@@ -1074,9 +1074,11 @@ def test_risk_comparison_replays_accounts_and_publishes_signed_differences(
     metrics = BacktestMetrics(mode=submission.mode, parameters=submission.model_dump(mode='json'), not_run={})
     read_record = mocker.spy(signals, 'read_prediction_record')
     name = f'backtest_2026-10-11_compare-{fill}'
+    read_bytes = mocker.spy(Path, 'read_bytes')
 
     run_backtest(submission=submission, path_manager=pm, experiment_name=name, metrics=metrics)
 
+    assert sum(call.args == (ref,) for call in read_bytes.call_args_list) == 1
     root = pm.experiment_dir(experiment_name=name)
     baseline = json.loads((root / 'without_risk/metrics.json').read_text())
     treatment = json.loads((root / 'with_risk/metrics.json').read_text())

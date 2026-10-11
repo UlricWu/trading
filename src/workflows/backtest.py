@@ -15,7 +15,7 @@ from src.observability.instrumentation import Instrumentation
 from src.pipeline import PipelineStep, run_steps
 from src.trading.backtest.clock import ReplayClock
 from src.trading.backtest.commands import OrderCommandSchedule
-from src.trading.backtest.components import prepare_market, create_state, create_execution, prepare_portfolio_step
+from src.trading.backtest.components import prepare_market_input, create_state, create_execution, prepare_portfolio_step
 from src.trading.backtest.context import BacktestContext, BacktestResultContext, RiskComparisonContext
 from src.trading.backtest.market.replay import ReplayMarket, ReplayMarketInput
 from src.trading.backtest.market.signals import prepare_signals
@@ -52,11 +52,11 @@ def run_backtest(
     """
     output_dir = path_manager.experiment_dir(experiment_name=experiment_name)
     access = Access(pm=path_manager, processed_version=PROCESSED_VERSION)
-    market_source = prepare_market(
+    market_source = prepare_market_input(
         config=submission.execution,
         initial=submission.initial_account,
         access=access,
-    ).source
+    )
 
     if isinstance(submission, ExecutionEvalSubmission):
         _run_order_account(
@@ -140,7 +140,7 @@ def _run_signal_account(
         if isinstance(portfolio_step, FixedHoldingStep) else ()
     )
     replay_ts_us = (
-        *market.timestamps(),
+        *market_source.timestamps(),
         *signal_step.signal_inputs_by_ts_us,
         *execution_config.risk_check_ts_us,
         *initial_exit_ts_us,
@@ -189,7 +189,7 @@ def _run_signal_account(
 
     pipeline = BacktestPipeline(
         clock=clock,
-        session_at=market.session_at,
+        session_at=market_source.session_at,
         per_timing_steps=per_timing_steps,
         final_steps=final_steps,
         instrumentation=Instrumentation(output_dir.name),
@@ -204,21 +204,21 @@ def _run_order_account(
     """Replay frozen order commands through a fresh account and evaluate its completed facts."""
     initial_account = submission.initial_account
     execution_config = submission.execution
-    market = ReplayMarket(market_source)
     commands = OrderCommandSchedule.from_files(
         submission.order_refs,
         start=submission.start,
         end=submission.end,
-        market=market,
+        market=market_source,
         start_ts_us=initial_account.ts_us,
         end_ts_us=execution_config.end_ts_us,
     )
 
     state = create_state(initial_account)
+    market = ReplayMarket(market_source)
     execution = create_execution(state=state, config=execution_config, quote_rule=None)
 
     replay_ts_us = (
-        *market.timestamps(),
+        *market_source.timestamps(),
         *commands.timestamps(),
         initial_account.ts_us,
         execution_config.end_ts_us,
@@ -247,7 +247,7 @@ def _run_order_account(
 
     pipeline = BacktestPipeline(
         clock=clock,
-        session_at=market.session_at,
+        session_at=market_source.session_at,
         per_timing_steps=per_timing_steps,
         final_steps=final_steps,
         instrumentation=Instrumentation(output_dir.name),

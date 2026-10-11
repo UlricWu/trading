@@ -63,10 +63,13 @@ class MarkObservation(BaseModel):
 
 
 class ReplayMarketInput(BaseModel):
-    """A recoverable, unit-normalized input file; no source-unit inference is performed.
+    """Share normalized facts and schedule queries across independent account replays.
+
+    No source-unit inference is performed.
 
     Example:
-        market = ReplayMarketInput.model_validate_json(Path("/data/market.json").read_bytes())
+        source = ReplayMarketInput.model_validate_json(Path("/data/market.json").read_bytes(), strict=True)
+        session = source.session_at(start_ts_us)
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -108,6 +111,27 @@ class ReplayMarketInput(BaseModel):
                 raise ValueError("execution observation must belong to its declared session")
         return self
 
+    def session_at(self, ts_us: int) -> ReplaySession:
+        """Resolve the account day from the declared schedule, independently of bars.
+
+        Example:
+            session = source.session_at(ts_us)
+        """
+        index = bisect_right(self.sessions, ts_us, key=lambda session: session.start_ts_us) - 1
+        if index < 0 or ts_us > self.sessions[index].close_ts_us:
+            raise ValueError("timestamp is outside the prepared account sessions")
+        return self.sessions[index]
+
+    def timestamps(self) -> tuple[int, ...]:
+        """Return required schedule and input wakeups, including days without bars.
+
+        Example:
+            clock = ReplayClock.from_iterable(source.timestamps(), end_us=end_us)
+        """
+        return tuple(sorted({*(s.start_ts_us for s in self.sessions),
+            *(s.close_ts_us for s in self.sessions), *(m.ts_us for m in self.marks),
+            *(o.time.available_ts_us for o in self.observations)}))
+
 
 class ReplayMarket:
     """Expose only facts delivered by the current timestamp and merge same-time batches.
@@ -134,7 +158,6 @@ class ReplayMarket:
         self._observation_index = 0
         self._ts_us: int | None = None
         self._available: tuple[ExecutionObservation, ...] = ()
-        self._session_starts = tuple(session.start_ts_us for session in source.sessions)
 
     def on_time(self, ts_us: int) -> None:
         """Advance visible marks; execution bars supply prices only after their end.
@@ -191,24 +214,3 @@ class ReplayMarket:
         if ts_us != self._ts_us:
             raise ValueError("advance the market before consuming observations")
         return self._available
-
-    def session_at(self, ts_us: int) -> ReplaySession:
-        """Resolve the account day from the declared schedule, independently of bars.
-
-        Example:
-            session = market.session_at(ts_us)
-        """
-        index = bisect_right(self._session_starts, ts_us) - 1
-        if index < 0 or ts_us > self.source.sessions[index].close_ts_us:
-            raise ValueError("timestamp is outside the prepared account sessions")
-        return self.source.sessions[index]
-
-    def timestamps(self) -> tuple[int, ...]:
-        """Return required schedule and input wakeups, including days without bars.
-
-        Example:
-            clock = ReplayClock.from_iterable(market.timestamps(), end_us=end_us)
-        """
-        return tuple(sorted({*(s.start_ts_us for s in self.source.sessions),
-            *(s.close_ts_us for s in self.source.sessions), *(m.ts_us for m in self.source.marks),
-            *(o.time.available_ts_us for o in self.source.observations)}))

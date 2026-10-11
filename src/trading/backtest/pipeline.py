@@ -19,7 +19,7 @@ class BacktestPipeline:
     """Advance one account clock with explicit, ordered workflow-supplied Steps.
 
     Example:
-        pipeline = BacktestPipeline(clock=clock, session_at=market.session_at,
+        pipeline = BacktestPipeline(clock=clock, session_at=market_source.session_at,
             per_timing_steps=steps, final_steps=(), instrumentation=instrumentation)
         pipeline.run(state, metrics=metrics)
     """
@@ -31,7 +31,7 @@ class BacktestPipeline:
         """Bind the dynamic schedule without consuming or freezing it.
 
         Example:
-            pipeline = BacktestPipeline(clock=clock, session_at=market.session_at,
+            pipeline = BacktestPipeline(clock=clock, session_at=market_source.session_at,
                 per_timing_steps=steps, final_steps=(), instrumentation=instrumentation)
         """
         self._clock = clock

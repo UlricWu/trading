@@ -71,7 +71,7 @@ class AccountingStep:
             )
         state.equity_curve.append(ts_us=context.timing.ts_us,
             cash=float(state.portfolio_state.cash), market_value=value)
-        session = self.market.session_at(context.timing.ts_us)
+        session = self.market.source.session_at(context.timing.ts_us)
         if context.timing.ts_us == session.close_ts_us:
             close_symbols = self.market.daily_close_symbols.get(session.close_ts_us, set())
             if not state.portfolio_state.positions.keys() <= close_symbols:
@@ -260,7 +260,7 @@ class RecordedOrdersStep:
 
     Example:
         commands = OrderCommandSchedule((order, cancel), start="2026-07-03", end="2026-07-03",
-            market=market, start_ts_us=initial_account.ts_us, end_ts_us=execution_config.end_ts_us)
+            market=market.source, start_ts_us=initial_account.ts_us, end_ts_us=execution_config.end_ts_us)
         context = RecordedOrdersStep(execution, market, commands).run(context)
     """
 

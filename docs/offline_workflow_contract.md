@@ -833,7 +833,11 @@ signal/strategy/risk/full 使用其中的 `min_listing_calendar_days` 在模型�
 | `execution_eval` | 固定委托/撤单、账户及 `limit_price` | 一次账户回放；成交、费用、收益、回撤及期末持仓 |
 | `full_backtest` | 信号、策略、非空风控、账户及 `limit_price` | 一次完整反馈回放；信号、风控、成交及组合指标 |
 
-`run_backtest` 公共返回值为 `None`，直接准备共享行情、信号，再选择账户回放或风控对照。
+`run_backtest` 公共返回值为 `None`，先由 `prepare_market_input` 严格读取一次行情，检查正式
+日历覆盖及与初始账户、风险检查时点、执行配置的一致性，返回共享的 `ReplayMarketInput`。
+输入对象提供不依赖推进状态的 `session_at()` 和 `timestamps()` 查询，准备、委托日程及
+时钟组装直接消费它，不为校验构造临时 `ReplayMarket`。每条账户路径再创建独立的
+`ReplayMarket`，保存该路径的可见价格、读取游标和当前观察批次；组合约束不在此重复校验。
 按实际决策来源保留两种组装：信号账户执行策略并按需应用风控，委托账户消费冻结指令。
 signal/strategy/risk/full 复用信号账户组装；两类组装分别接收对应的 submission，策略在
 信号路径中必选，委托路径不携带策略，避免用彼此依赖的可空参数表达输入关系。

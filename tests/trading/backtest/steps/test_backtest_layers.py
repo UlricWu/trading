@@ -36,7 +36,7 @@ def test_recorded_orders_step_uses_only_current_commands_in_original_order(order
     order = OrderIntent(10, 'A', Side.BUY, 100, 2, 10, 90, Decimal('10'))
     replacement = OrderIntent(10, 'A', Side.BUY, 100, 1, 10, 90, Decimal('10'))
     commands = OrderCommandSchedule((order, CancelOrders(10, (2,)), replacement),
-        start='2026-07-03', end='2026-07-03', market=order_market, start_ts_us=10, end_ts_us=50)
+        start='2026-07-03', end='2026-07-03', market=order_market.source, start_ts_us=10, end_ts_us=50)
     execution = Mock(spec=FakeExecution)
     state = BacktestState(PortfolioState(2000, 2000, current_day='2026-07-03'))
     step = RecordedOrdersStep(execution, order_market, commands)
