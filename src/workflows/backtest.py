@@ -2,13 +2,9 @@
 """Compose independent evaluations and three shared-account replay workflows."""
 from __future__ import annotations
 
-from collections import defaultdict
 from collections.abc import Iterable
-from pathlib import Path
 from datetime import date
 from typing import cast
-
-from pydantic import TypeAdapter
 
 from src.access import Access
 from src.config.backtest_config import FakeExecutionConfig, FixedHoldingStrategyConfig, StrategyConfig, InitialAccount
@@ -19,6 +15,7 @@ from src.jobs.requests import (
 from src.observability.instrumentation import Instrumentation
 from src.pipeline import PipelineStep, run_steps
 from src.trading.backtest.clock import ReplayClock
+from src.trading.backtest.commands import OrderCommandSchedule
 from src.trading.backtest.components import prepare_market, create_state, build_risk
 from src.trading.backtest.context import (
     BacktestContext, BacktestState, SignalEvaluationContext, RiskEvaluationContext,
@@ -46,7 +43,6 @@ from src.trading.backtest.steps.evaluation import (
 from src.trading.backtest.steps.facts_persist import FactsPersistStep
 from src.trading.backtest.steps.metrics_persist import MetricsPersistStep
 from src.trading.backtest.steps.report import ReportStep
-from src.trading.core.events import OrderIntent, CancelOrders
 from src.trading.execution.policies.constraints import QuoteRule
 from src.trading.portfolio.constructors.factory import build_portfolio_constructor
 from src.trading.portfolio.constructors.topk_hysteresis import TopKHysteresisConstructor
@@ -128,26 +124,17 @@ def run_execution_evaluation(
     config = submission.execution
     market = prepare_market(config=config, initial=submission.initial_account,
                             access=Access(pm=path_manager, processed_version=PROCESSED_VERSION))
-    commands = tuple(command for ref in submission.order_refs
-        for command in TypeAdapter(tuple[OrderIntent | CancelOrders, ...]).validate_json(ref.read_bytes(), strict=True))
-    if any(a.ts_us > b.ts_us for a, b in zip(commands, commands[1:])):
-        raise ValueError("frozen order/cancel commands must retain chronological order")
-    by_time: dict[int, list[OrderIntent | CancelOrders]] = defaultdict(list)
-    for command in commands:
-        if not submission.start <= market.session_at(command.ts_us).trade_date <= submission.end:
-            raise ValueError("frozen command date is outside the selected request range")
-        if not submission.initial_account.ts_us <= command.ts_us <= config.end_ts_us:
-            raise ValueError("frozen command is outside the simulation interval")
-        by_time[command.ts_us].append(command)
+    commands = OrderCommandSchedule.from_files(submission.order_refs, start=submission.start, end=submission.end,
+        market=market, start_ts_us=submission.initial_account.ts_us, end_ts_us=config.end_ts_us)
     state = create_state(submission.initial_account)
     execution = _execution(state, config,
         LimitPriceVenue(FixedBPSlippageModel(cast(float, config.slippage_bp))), None)
-    clock = ReplayClock.from_iterable((*market.timestamps(), *by_time,
+    clock = ReplayClock.from_iterable((*market.timestamps(), *commands.timestamps(),
         submission.initial_account.ts_us, config.end_ts_us),
         start_us=submission.initial_account.ts_us, end_us=config.end_ts_us)
     per_timing_steps: tuple[PipelineStep[BacktestContext], ...] = (
         AdvanceExecutionStep(execution, market), AccountingStep(market),
-        RecordedOrdersStep(execution, market, {ts: tuple(items) for ts, items in by_time.items()}),
+        RecordedOrdersStep(execution, market, commands),
     )
     BacktestPipeline(clock=clock, session_at=market.session_at, per_timing_steps=per_timing_steps,
         final_steps=(

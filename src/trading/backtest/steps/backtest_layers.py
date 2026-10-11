@@ -5,11 +5,12 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from src.trading.backtest.commands import OrderCommandSchedule
 from src.trading.backtest.context import BacktestContext, SignalEvaluationContext
 from src.trading.backtest.execution.fake import FakeExecution
 from src.trading.backtest.market.replay import ReplayMarket
 from src.trading.backtest.market.signals import SignalBatch, produce_signal
-from src.trading.core.events import CancelOrders, OrderIntent, OrderTerms, Side, TargetEvent
+from src.trading.core.events import OrderIntent, OrderTerms, Side, TargetEvent
 from src.trading.core.time import TradingWindow, advance_trading_minutes
 from src.trading.portfolio.constructors.base import PortfolioConstructor
 from src.trading.portfolio.constructors.fixed_holding import FixedHoldingConstructor
@@ -271,12 +272,14 @@ class RecordedOrdersStep:
     """Replay frozen commands in their original order without invoking a strategy.
 
     Example:
+        commands = OrderCommandSchedule((order, cancel), start="2026-07-03", end="2026-07-03",
+            market=market, start_ts_us=initial_account.ts_us, end_ts_us=execution_config.end_ts_us)
         context = RecordedOrdersStep(execution, market, commands).run(context)
     """
 
     execution: FakeExecution
     market: ReplayMarket
-    commands: Mapping[int, tuple[OrderIntent | CancelOrders, ...]]
+    commands: OrderCommandSchedule
 
     def run(self, context: BacktestContext) -> BacktestContext:
         """Use the same order acceptance and cancellation boundary as target submission.
@@ -284,7 +287,7 @@ class RecordedOrdersStep:
         Example:
             context = step.run(context)
         """
-        for command in self.commands.get(context.timing.ts_us, ()):
+        for command in self.commands.at(context.timing.ts_us):
             if isinstance(command, OrderIntent):
                 self.execution.submit_orders(orders=(command,), market=self.market)
             else:

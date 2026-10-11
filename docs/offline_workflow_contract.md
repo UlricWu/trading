@@ -841,6 +841,15 @@ signal/strategy/full 使用其中的 `min_listing_calendar_days` 在模型推理
 
 五个入口的公共返回值均为 `None`。CLI 根据 submission 类型选择入口，各 workflow
 直接声明自己的 Step tuple；策略、风险、撮合、结算及指标计算不接收 mode。
+Workflow 通过 `OrderCommandSchedule.from_files()` 读取冻结委托文件，严格解析为
+OrderIntent/CancelOrders，再调用该类的构造函数。该时间表属于本次回测，在
+构造时统一检查时间顺序、请求日期及模拟区间，非法输入失败，检查通过后建立只读索引；
+构造成功即满足本次回测的上述输入约束。市场和日期、时间边界只参与初始化校验，不保存为
+对象状态。时间表保留引用文件及同一时点的原始指令顺序，分组为 tuple，不保留调用方的
+可变容器。`timestamps()` 返回全部唯一指令时点的 tuple，`at(ts_us)` 返回该时点指令的
+tuple，无指令时返回空 tuple；查询不消费指令。Workflow 用时间表组装时钟，
+RecordedOrdersStep 只读取当前时点指令；文件入口及下游不重复执行构造函数的校验或分组。
+账户、挂单及成交事实仍由 BacktestState 和执行器维护。
 两种单次评价的完整链为：
 
 ```text
