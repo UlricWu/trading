@@ -226,7 +226,7 @@
                 ],
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"kind\": \"backtest\",\n  \"mode\": \"signal_eval\",\n  \"start\": \"{{backtestStart}}\",\n  \"end\": \"{{backtestEnd}}\",\n  \"signal\": {\n    \"type\": \"model\",\n    \"model_ref\": \"{{testModelRef}}\"\n  }\n}",
+                  "raw": "{\n  \"kind\": \"backtest\",\n  \"mode\": \"signal_eval\",\n  \"start\": \"{{backtestStart}}\",\n  \"end\": \"{{backtestEnd}}\",\n  \"min_listing_calendar_days\": 120,\n  \"signal\": {\n    \"type\": \"model\",\n    \"model_ref\": \"{{testModelRef}}\"\n  }\n}",
                   "options": {
                     "raw": {
                       "language": "json"
@@ -558,7 +558,7 @@
                 ],
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"kind\": \"backtest\",\n  \"mode\": \"signal_eval\",\n  \"start\": \"{{backtestStart}}\",\n  \"end\": \"{{backtestEnd}}\",\n  \"signal\": {\n    \"type\": \"model\",\n    \"model_ref\": \"{{trainingModelRef}}\"\n  }\n}",
+                  "raw": "{\n  \"kind\": \"backtest\",\n  \"mode\": \"signal_eval\",\n  \"start\": \"{{backtestStart}}\",\n  \"end\": \"{{backtestEnd}}\",\n  \"min_listing_calendar_days\": 120,\n  \"signal\": {\n    \"type\": \"model\",\n    \"model_ref\": \"{{trainingModelRef}}\"\n  }\n}",
                   "options": {
                     "raw": {
                       "language": "json"

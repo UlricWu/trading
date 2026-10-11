@@ -7,7 +7,6 @@ import pytest
 from pydantic import TypeAdapter, ValidationError
 
 from src.config.backtest_config import (
-    BacktestConfig,
     StrategyConfig,
     ThresholdStrategyConfig,
     TopKHysteresisStrategyConfig,
@@ -40,59 +39,6 @@ def test_topk_strategy_applies_confirmed_defaults() -> None:
     assert strategy.params.rebalance_interval_minutes == 1
     assert strategy.params.keep_winners is False
     assert strategy.params.target_quantity == 100
-
-
-def test_backtest_requires_explicit_listing_age() -> None:
-    config = BacktestConfig.model_validate(
-        {
-            "min_listing_calendar_days": 120,
-        }
-    )
-
-    assert config.min_listing_calendar_days == 120
-
-
-@pytest.mark.parametrize(
-    ("field_name", "value"),
-    [
-        ("name", "daily_alpha"),
-        ("dates", ["2026-05-06", "2026-05-07"]),
-        ("symbols", ["000001"]),
-        ("backtest_mode", "full_backtest"),
-        ("model", {"name": "training-1"}),
-        ("strategy", {"type": "threshold", "params": {"threshold": 0.5}}),
-    ],
-)
-def test_backtest_rejects_runtime_submission_fields(
-    field_name: str,
-    value: object,
-) -> None:
-    payload: dict[str, object] = {
-        "min_listing_calendar_days": 120,
-        field_name: value,
-    }
-    with pytest.raises(ValidationError):
-        BacktestConfig.model_validate(payload)
-
-
-@pytest.mark.parametrize(
-    ("field_name", "value"),
-    [
-        ("min_listing_calendar_days", -1),
-        ("min_listing_calendar_days", True),
-    ],
-)
-def test_backtest_rejects_invalid_universe_policy(
-    field_name: str,
-    value: object,
-) -> None:
-    payload: dict[str, object] = {
-        "min_listing_calendar_days": 120,
-    }
-    payload[field_name] = value
-
-    with pytest.raises(ValidationError):
-        BacktestConfig.model_validate(payload)
 
 
 @pytest.mark.parametrize(

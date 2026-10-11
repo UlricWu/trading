@@ -157,6 +157,8 @@ CLI-only 的 `data-calendar`、`data-standard-bootstrap`、`data-level2-minute-b
   - signal 使用 start/end/signal；risk 使用 case_refs/risk；execution 使用
     start/end/order_refs/initial_account/execution；strategy_eval 使用
     start/end/signal/strategy/initial_account/execution；full 另须 risk。
+    signal、strategy_eval 和 full 还必须在 body 顶层提供 min_listing_calendar_days，
+    构造约束沿用上述 CLI schema；risk/execution 不接受该字段。
   - 有日期时使用规范 YYYY-MM-DD 且 start<=end；risk 按全部案例输入定义完整任务，不虚构日期。
   - 每个请求只创建一个 Job；路径、数值和嵌套结构先由共享构造边界校验。
 
@@ -186,6 +188,7 @@ CLI-only 的 `data-calendar`、`data-standard-bootstrap`、`data-level2-minute-b
   "mode": "signal_eval",
   "start": "2026-07-03",
   "end": "2026-07-03",
+  "min_listing_calendar_days": 120,
   "signal": {"type": "recorded", "prediction_refs": ["/data/prediction.parquet"]}
 }
 ```

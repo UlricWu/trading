@@ -15,7 +15,6 @@ import pytest
 from typer.testing import CliRunner
 
 from src import cli, logs
-from src.config.backtest_config import BacktestConfig
 from src.jobs.requests import build_cli_command, create_training_submission
 from src.utils.path import PathManager
 
@@ -56,8 +55,7 @@ def _training_args() -> list[str]:
 def test_experiment_id_option_preserves_valid_values(
     command: str, experiment_id: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    config = SimpleNamespace(storage_root=tmp_path, models={}, feature_groups={},
-                             backtest=BacktestConfig(min_listing_calendar_days=120))
+    config = SimpleNamespace(storage_root=tmp_path, models={}, feature_groups={})
     workflow_name = "run_offline_training" if command == "train" else "run_signal_evaluation"
     workflow = Mock()
     monkeypatch.setattr(cli.AppConfig, "load", Mock(return_value=config))
@@ -65,7 +63,7 @@ def test_experiment_id_option_preserves_valid_values(
     monkeypatch.setattr(cli, workflow_name, workflow)
     arguments = _training_args() if command == "train" else [
         "--mode", "signal_eval", "--input-json",
-        '{"start":"2026-07-01","end":"2026-07-02","signal":{"type":"recorded","prediction_refs":[]}}',
+        '{"start":"2026-07-01","end":"2026-07-02","min_listing_calendar_days":120,"signal":{"type":"recorded","prediction_refs":[]}}',
     ]
 
     result = CliRunner().invoke(cli.app, [command, *arguments, f"--experiment-id={experiment_id}"])
@@ -93,7 +91,7 @@ def test_experiment_id_option_rejects_invalid_values_before_command_execution(
     monkeypatch.setattr(cli, workflow_name, workflow)
     arguments = _training_args() if command == "train" else [
         "--mode", "signal_eval", "--input-json",
-        '{"start":"2026-07-01","end":"2026-07-02","signal":{"type":"recorded","prediction_refs":[]}}',
+        '{"start":"2026-07-01","end":"2026-07-02","min_listing_calendar_days":120,"signal":{"type":"recorded","prediction_refs":[]}}',
     ]
 
     result = CliRunner().invoke(cli.app, [command, *arguments, f"--experiment-id={experiment_id}"])
@@ -378,14 +376,15 @@ def test_backtest_routes_validated_input_to_its_workflow(
     backtest_payload: Callable[[str], dict[str, object]], mode: str, workflow: str,
     backtest_log: Path,
 ) -> None:
-    config = BacktestConfig(min_listing_calendar_days=120)
-    load_config = Mock(return_value=SimpleNamespace(storage_root=tmp_path, backtest=config))
+    load_config = Mock(return_value=SimpleNamespace(storage_root=tmp_path))
     today = Mock(return_value="2026-10-11")
     run = Mock()
     monkeypatch.setattr(cli.AppConfig, "load", load_config)
     monkeypatch.setattr(cli.DateTimeUtils, "today", today)
     monkeypatch.setattr(cli, workflow, run)
     fields = backtest_payload(mode)
+    if mode in ("signal_eval", "strategy_eval", "full_backtest"):
+        fields["min_listing_calendar_days"] = 90
     del fields["kind"], fields["mode"]
     result = CliRunner().invoke(cli.app, ["backtest", "--mode", mode,
         "--experiment-id", "run-1", "--input-json", json.dumps(fields)])
@@ -402,15 +401,36 @@ def test_backtest_routes_validated_input_to_its_workflow(
     expected = args["submission"].model_dump(mode="json")
     assert metrics.mode.value == mode
     assert metrics.not_run == {}
+    assert "backtest_config" not in args
+    assert "backtest_config" not in expected
     if mode in ("signal_eval", "strategy_eval", "full_backtest"):
-        assert args["backtest_config"] is config
-        expected["backtest_config"] = {"min_listing_calendar_days": 120}
+        assert expected["min_listing_calendar_days"] == 90
     else:
-        assert "backtest_config" not in args
+        assert "min_listing_calendar_days" not in expected
     assert metrics.parameters == expected
     assert _logged_parameters(backtest_log, experiment_name=args["experiment_name"]) == expected
     assert "observations" not in backtest_log.read_text()
     assert not args["path_manager"].experiment_dir(experiment_name=args["experiment_name"]).exists()
+
+
+@pytest.mark.parametrize("mode", ["signal_eval", "strategy_eval", "full_backtest"])
+@pytest.mark.parametrize("listing_fields", [{}, {"min_listing_calendar_days": -1}])
+def test_backtest_rejects_missing_or_invalid_listing_age_before_loading_config(
+    mode: str, listing_fields: dict[str, object], monkeypatch: pytest.MonkeyPatch,
+    backtest_payload: Callable[[str], dict[str, object]],
+) -> None:
+    load_config = Mock()
+    monkeypatch.setattr(cli.AppConfig, "load", load_config)
+    fields = backtest_payload(mode)
+    del fields["kind"], fields["mode"], fields["min_listing_calendar_days"]
+    fields.update(listing_fields)
+
+    result = CliRunner().invoke(cli.app, ["backtest", "--mode", mode,
+        "--experiment-id", "listing-age", "--input-json", json.dumps(fields)])
+
+    assert result.exit_code == 2, result.output
+    assert "min_listing_calendar_days" in result.output
+    load_config.assert_not_called()
 
 
 @pytest.mark.parametrize(("current_time", "run_date"), [
@@ -469,7 +489,7 @@ def test_backtest_rejects_retired_modes_before_loading_config(
         (
             [
                 "backtest", "--mode", "signal_eval", "--experiment-id", "run-1",
-                "--input-json", '{"start":"2026-07-01","end":"2026-07-02","signal":{"type":"recorded","prediction_refs":[]}}',
+                "--input-json", '{"start":"2026-07-01","end":"2026-07-02","min_listing_calendar_days":120,"signal":{"type":"recorded","prediction_refs":[]}}',
             ],
             "run_signal_evaluation",
         ),
@@ -490,7 +510,6 @@ def test_empty_runtime_schedule_propagates_as_exit_code_1(
             return_value=SimpleNamespace(
                 storage_root=tmp_path,
                 models=object(), feature_groups=object(),
-                backtest=BacktestConfig(min_listing_calendar_days=120),
             )
         ),
     )
@@ -509,7 +528,7 @@ def test_empty_runtime_schedule_propagates_as_exit_code_1(
         name = "backtest_2026-10-11_run-1"
         parameters = _logged_parameters(backtest_log, experiment_name=name)
         assert parameters["signal"] == {"type": "recorded", "prediction_refs": []}
-        assert parameters["backtest_config"] == {"min_listing_calendar_days": 120}
+        assert parameters["min_listing_calendar_days"] == 120
         assert "✅ 回测报告" not in backtest_log.read_text()
         assert not PathManager(tmp_path).experiment_dir(experiment_name=name).exists()
 

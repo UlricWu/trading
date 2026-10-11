@@ -40,8 +40,6 @@ feature_groups:
     feature_set: features
     feature_version: v1
     feature_columns: [factor]
-backtest:
-  min_listing_calendar_days: 120
 """.lstrip(),
         encoding="utf-8",
     )
@@ -71,24 +69,28 @@ def test_override_recursively_merges_any_formal_config_field(
     config = AppConfig.load(
         override={
             "models": {"sgd_regression": {"model_params": {"alpha": 0.001}}},
-            "backtest": {"min_listing_calendar_days": 90},
         }
     )
 
     assert config.models["sgd_regression"].model_params == {"alpha": 0.001}
     assert config.models["sgd_regression"].group == "sgd_regression"
     assert config.feature_groups["daily_basic_selected_v1"].feature_columns == ["factor"]
-    assert config.backtest.min_listing_calendar_days == 90
+    assert "backtest" not in config.model_dump()
 
 
+@pytest.mark.parametrize("override", [
+    {"storage_root": Path("/other")},
+    {"backtest": {"min_listing_calendar_days": 90}},
+])
 def test_override_rejects_non_config_root_fields(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    override: dict[str, object],
 ) -> None:
     _install_environment(tmp_path=tmp_path, monkeypatch=monkeypatch)
 
-    with pytest.raises(ValueError, match="data, models, feature_groups, or backtest"):
-        AppConfig.load(override={"storage_root": Path("/other")})
+    with pytest.raises(ValueError, match="data, models, or feature_groups"):
+        AppConfig.load(override=override)
 
 
 def test_formal_base_config_declares_only_level2_file_sources(

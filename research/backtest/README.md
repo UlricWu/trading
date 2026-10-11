@@ -699,11 +699,11 @@ CLI 仍保留 `backtest --mode ...`。在已有 CLI/请求构造边界一次完�
 
 | mode / `src/workflows/backtest.py` 入口 | Submission 及必需字段（均无业务默认值） |
 | --- | --- |
-| `signal_eval` / `run_signal_evaluation` | `SignalEvalSubmission`：`start: str`、`end: str`、`signal: SignalInput`；评价目标来自信号关联模型 |
-| `strategy_eval` / `run_strategy_evaluation` | `StrategyEvalSubmission`：`start: str`、`end: str`、`signal: SignalInput`、`strategy: StrategyConfig`、`initial_account: InitialAccount`、`execution: FakeExecutionConfig` |
+| `signal_eval` / `run_signal_evaluation` | `SignalEvalSubmission`：`start: str`、`end: str`、`signal: SignalInput`、`min_listing_calendar_days: int`；评价目标来自信号关联模型 |
+| `strategy_eval` / `run_strategy_evaluation` | `StrategyEvalSubmission`：`start: str`、`end: str`、`signal: SignalInput`、`min_listing_calendar_days: int`、`strategy: StrategyConfig`、`initial_account: InitialAccount`、`execution: FakeExecutionConfig` |
 | `risk_rule_eval` / `run_risk_rule_evaluation` | `RiskRuleEvalSubmission`：`case_refs: tuple[Path, ...]`、`risk: RiskConfig`；评价全部所选案例，时间覆盖取自案例事实 |
 | `execution_eval` / `run_execution_evaluation` | `ExecutionEvalSubmission`：`start: str`、`end: str`、`order_refs: tuple[Path, ...]`、`initial_account: InitialAccount`、`execution: FakeExecutionConfig`；记录含委托与撤单时间序列 |
-| `full_backtest` / `run_full_backtest` | `FullBacktestSubmission`：`start: str`、`end: str`、`signal: SignalInput`、`strategy: StrategyConfig`、`initial_account: InitialAccount`、`risk: RiskConfig`、`execution: FakeExecutionConfig` |
+| `full_backtest` / `run_full_backtest` | `FullBacktestSubmission`：`start: str`、`end: str`、`signal: SignalInput`、`min_listing_calendar_days: int`、`strategy: StrategyConfig`、`initial_account: InitialAccount`、`risk: RiskConfig`、`execution: FakeExecutionConfig` |
 
 submission 只保留任务实际需要的日期范围；CLI 将 experiment_id 转为实验名称，并将
 `experiment_name`、初始 `BacktestMetrics` 和 `PathManager` 显式传给 workflow。
@@ -738,7 +738,15 @@ Workflow 的 `experiment_id` 入参改为 `experiment_name` 和 `metrics`，仍�
 预测目录由 `PathManager.experiment_backtest_predictions_dir()` 统一返回，signal、strategy、
 full 三个 workflow 通过该方法向 Step 传入路径，避免各自重复表达 predictions 目录布局。
 该方法封装固定路径决策；预测生产边界继续生成日期与决策时间文件名，目录创建仍归写入工具。
-此处是用户已确定的直接采用设计，拟议 owner 与实现同步，不新增研究候选，也不表示
+同日用户进一步确定将唯一独立回测设置 `min_listing_calendar_days` 移到上述三种 submission
+顶层，删除 BacktestConfig、AppConfig.backtest、base.yml 对应区段及 workflow 的配置入参。
+调用者因此只需提供一份任务参数，不再同时关注应用配置，也不引入新的运行配置类型或
+合并层。该字段在 submission 构造边界校验为必填非负整数，拒绝 bool、字符串、小数和
+空值，下游不重复校验或提供默认值；120 仅是显式示例。模型来源将该值传给 Access 的
+资格筛选；recorded 来源同样显式记录字段，但不据此重新筛选已有预测，以保留原记录的
+证券集合。risk/execution 没有信号，不接受该字段。CLI 直接序列化 submission 作为快照
+和开始日志，不再额外嵌入 backtest_config。
+以上是用户已确定的直接采用设计，拟议 owner 与实现同步，不新增研究候选，也不表示
 H02/H03 整体已采用。
 
 请求中的稳定结构按以下边界表达；类型名只对应当前确有两种来源或业务事实的差异：
@@ -781,8 +789,8 @@ model_ref，不能为了旧设计重新发明绑定平台。本轮对模型输�
 实验名称使用运行日期，不能生成虚假的模型日期。任务适配变化同时列入 CLI/Job API 验收。
 
 五个 workflow 都是显式编排并返回 `None`，结果写入本次 experiment。它们的共同调用形状
-以 full 为例；其余入口换用表中对应的函数名和 submission 类型，risk/execution 不接收
-`backtest_config`。省略号仅省略函数体，不作为 public API 的使用示例：
+以 full 为例；其余入口只换用表中对应的函数名和 submission 类型。省略号仅省略函数体，
+不作为 public API 的使用示例：
 
 ```python
 # filepath: src/workflows/backtest.py
@@ -792,7 +800,6 @@ def run_full_backtest(
     path_manager: PathManager,
     experiment_name: str,
     metrics: BacktestMetrics,
-    backtest_config: BacktestConfig,
 ) -> None: ...
 ```
 
@@ -1428,9 +1435,53 @@ PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -B -m pytest -q -p no:cacheprovider \
 
 结果为 **60 passed**，240 条既有 joblib/NumPy 弃用警告；受影响 workflow 的推理、制品与
 失败现场测试通过。未运行全仓测试或真实市场实验。用户随后明确要求 commit，本次路径
-收口的实现、拟议 owner、测试与记录一并提交到 `feature/backtest-h03`。提交准备仅更新
+收口的实现、拟议 owner、测试与记录一并提交到 `feature/backtest-h03` 的
+`81ab69b32cf0cfed42d7869fc6d5f6eb4ffd8554`。提交准备仅更新
 Git 状态并检查差异，不重复运行未变化的代码测试。未 push、merge、release 或 deploy，
 不改变 H02/H03 的整体采用状态。
+
+### 回测参数归属验收（2026-10-11）
+
+按[入口与请求类型](#入口与请求类型)中用户明确选择的 submission 归属，在
+`feature/backtest-h03` 的 `81ab69b32cf0cfed42d7869fc6d5f6eb4ffd8554` 加本轮工作树上
+同步实现、拟议 owner、CLI/HTTP/Postman 示例及测试。完成条件是三种含信号的请求必须
+显式提供上市天数，参数在请求、CLI、workflow、日志与制品之间一致；模型推理使用提交值，
+已有预测不重筛；移除应用配置中的同一字段及独立 BacktestConfig，不增加兼容来源。
+
+生产代码修改前，新增请求边界测试并运行下列子集，得到 **18 failed、97 deselected**：
+三种模式乘两种信号来源的六个缺少字段场景被旧实现错误接受；同样组合分别提交 0 或 90
+的十二个合法场景被旧实现作为额外字段拒绝。这是本轮迁移前的失败证据。
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -B -m pytest -q -p no:cacheprovider \
+  tests/jobs/test_requests.py \
+  -k 'requires_explicit_listing_age or accepts_task_listing_age' \
+  --tb=line --show-capture=no
+```
+
+迁移后使用仓库测试夹具与临时目录验证。请求覆盖 0、90、120 及负数、bool、小数、
+字符串、空值和缺失字段；模型和已有预测两种来源均覆盖。CLI 输入错误在加载 AppConfig
+前退出 2，HTTP 输入错误返回 400 且不创建 Job。2026-07 合成行情的模型流程将提交的 90
+传给逐日 Access.universe 并原样保存；已有预测分别提交 120 和 0，证券与评价结果保持一致，
+且不调用资格筛选。AppConfig 不再包含 backtest，override 也不接受该根键。
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -B -m pytest -q -p no:cacheprovider \
+  tests/config tests/jobs tests/test_cli.py tests/workflows/test_backtest.py \
+  tests/trading/backtest --tb=short --show-capture=no
+```
+
+结果为 **402 passed**，240 条既有 joblib/NumPy 弃用警告。13 个改动 Python 文件的语法与
+路径标识检查通过；base.yml 已移除对应区段，两份 Postman 信号请求在将日期和模型引用
+占位符替换为明确测试值后，通过共享请求构造边界。此次改动的 15 个非 Markdown 文件按
+相对路径排序，拼接 `UTF-8 相对路径 + NUL + 文件字节 + NUL` 后的 SHA-256 为
+`f8f08112a270a1eb5294a4ca4619937dda6b6ecb62265ca9300274f69c8e9c20`。
+
+上述为本地工作树验证，未运行全仓测试、真实市场实验或外部 Job 服务；不据此改变
+H02/H03 的整体采用状态。该局部设计已由用户明确指定，用户随后明确要求 commit；
+实现、拟议 owner、测试及记录一并提交到 `feature/backtest-h03`。提交准备核对代码与输入
+指纹一致，仅更新本节 Git 状态并检查差异，不重复运行未变化的代码测试。未 push、merge、
+release 或 deploy。
 
 ## H03 后续行情驱动的模拟执行
 

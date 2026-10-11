@@ -47,7 +47,8 @@ def create_app(job_runtime: JobRuntime) -> Flask:
         the same fitted model for every selected trading day.
       - Backtest uses one of five typed requests. For example,
         ``{"kind":"backtest","mode":"signal_eval","start":"2026-07-03",
-        "end":"2026-07-03","signal":{"type":"recorded","prediction_refs":[]}}``.
+        "end":"2026-07-03","signal":{"type":"recorded","prediction_refs":[]},
+        "min_listing_calendar_days":120}``.
         Risk evaluation accepts case_refs and risk without a date range; execution
         accepts orders, account and market assumptions without a signal. Strategy
         runs additionally select a strategy, and full replay requires real risk rules.

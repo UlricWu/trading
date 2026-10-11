@@ -52,18 +52,15 @@ run_offline_training(
 ) -> None
 
 run_signal_evaluation(*, submission: SignalEvalSubmission, path_manager: PathManager,
-                      experiment_name: str, metrics: BacktestMetrics,
-                      backtest_config: BacktestConfig) -> None
+                      experiment_name: str, metrics: BacktestMetrics) -> None
 run_risk_rule_evaluation(*, submission: RiskRuleEvalSubmission, path_manager: PathManager,
                         experiment_name: str, metrics: BacktestMetrics) -> None
 run_execution_evaluation(*, submission: ExecutionEvalSubmission, path_manager: PathManager,
                          experiment_name: str, metrics: BacktestMetrics) -> None
 run_strategy_evaluation(*, submission: StrategyEvalSubmission, path_manager: PathManager,
-                        experiment_name: str, metrics: BacktestMetrics,
-                        backtest_config: BacktestConfig) -> None
+                        experiment_name: str, metrics: BacktestMetrics) -> None
 run_full_backtest(*, submission: FullBacktestSubmission, path_manager: PathManager,
-                  experiment_name: str, metrics: BacktestMetrics,
-                  backtest_config: BacktestConfig) -> None
+                  experiment_name: str, metrics: BacktestMetrics) -> None
 ```
 
 `src/workflows` 只负责自身拥有的入口前置条件、运行元数据、日程解析和依赖组装，并通过不可变 tuple 显式
@@ -826,8 +823,10 @@ metrics。制品按“模型”“IC 指标 JSON”“完整诊断 HTML 报告�
 本节唯一拥有五种回测任务、交易编排、账户与执行假设、策略和风险规则及输出解释。
 任务字段与 CLI/HTTP 映射分别由 [CLI](engineering/cli_contract.md#backtest) 和
 [Job API](engineering/job_api_contract.md) 拥有。数据含义、交易日历、Feature/Label 的
-可见时刻和价格口径继续由对应数据 owner 定义。`BacktestConfig` 只保存静态
-`min_listing_calendar_days`；现金、成本、时点、数量规则和风险阈值必须由交易任务提供。
+可见时刻和价格口径继续由对应数据 owner 定义。回测参数统一来自各自的 submission；
+signal/strategy/full 使用其中的 `min_listing_calendar_days` 在模型推理时筛选股票资格，
+已有预测记录只按请求日期选择，不按本次参数重新筛选证券。该值随任务记录，不从应用
+配置补齐或覆盖；现金、成本、时点、数量规则和风险阈值也必须由交易任务提供。
 不从旧代码的初始资金、费率、滑点或 NoOp 反推业务默认值。
 
 ### 五种任务与组装
@@ -1071,11 +1070,11 @@ metrics.json 的稳定顶层结构是 mode、parameters、not_run、prediction_r
   权益的算术平均。事件权益继续用于回撤，因此增加不改变账户/价格的唤醒不会改变日报告。
   组合结果不自动包含未声明的比较基线，不能据此给出模型/策略盈利采用结论。
 
-CLI 在分派前从已解析 submission 构造一次参数快照，记录全部实际值及默认值；
-signal/strategy/full 另保存实际使用的 BacktestConfig，其中只有 min_listing_calendar_days，
-risk/execution 不保存未使用的模型配置。原始请求日期不被筛选后的日期替换。CLI 用该快照
+CLI 在分派前用 `submission.model_dump(mode="json")` 构造一次参数快照，记录全部实际值及
+字段定义的默认值；signal/strategy/full 的 min_listing_calendar_days 直接保存在顶层，
+risk/execution 不包含该字段，不额外嵌入 backtest_config。原始请求日期不被筛选后的日期替换。CLI 用该快照
 初始化 `BacktestMetrics(mode=submission.mode, parameters=parameters, not_run={})`，并在
-workflow 读取输入前，按模式、日期、信号/案例/委托、策略、账户、风控、执行和静态设置
+workflow 读取输入前，按模式、日期、信号/案例/委托、策略、账户、风控、执行和最短上市天数
 逐项记录 JSON 开始日志。Workflow 接收并填充初始 metrics，`MetricsPersistStep` 在评价完成后
 写入参数及结果，最终 HTML 复用已保存快照，不另生成参数制品。这样既能解释已保存结果，
 也能在输入失败、尚无 metrics 文件时定位请求；开始日志不是成功证据。

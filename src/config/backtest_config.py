@@ -155,20 +155,6 @@ StrategyConfig: TypeAlias = Annotated[
 ]
 
 
-class BacktestConfig(BaseModel):
-    """Provide the static historical-universe eligibility setting.
-
-    Example:
-        config = BacktestConfig(
-            min_listing_calendar_days=120,
-        )
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    min_listing_calendar_days: int = Field(ge=0, strict=True)
-
-
 class InitialAccount(BaseModel):
     """Describe the account at the exact replay start, including same-day limits.
 

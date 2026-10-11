@@ -67,13 +67,6 @@ data:
       version: "v1"
 
 # ==================================================
-# Backtest System
-# - Runtime mode, model ref and strategy belong to BacktestSubmission.
-# - Minimum listing age is explicit; Access always excludes current ST and suspension.
-# ==================================================
-backtest:
-  min_listing_calendar_days: 120
-# ==================================================
 # Training presets and ordered feature selections
 # ==================================================
 models:

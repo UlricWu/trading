@@ -31,7 +31,7 @@ Submission 的日期与范围保证由 `src.jobs.requests` 中相应的 `create_
 ## AppConfig
 
 `AppConfig.load()` 是完整应用配置的唯一加载入口。调用者一次获得 `environment`、
-`storage_root`、`secret`、`data`、`models`、`feature_groups` 和 `backtest`，无需分别识别或加载配置区段。
+`storage_root`、`secret`、`data`、`models` 和 `feature_groups`，无需分别识别或加载配置区段。
 进程变量 `ENV` 选择项目根目录的 `.env.dev`、`.env.test` 或 `.env.prod`，缺省为
 `dev`；加载过程不得把文件内容写入进程环境。`ZERO_STORAGE_ROOT` 仍由进程环境提供，
 路径可用性由 `PathManager` 校验。
@@ -41,7 +41,7 @@ Submission 的日期与范围保证由 `src.jobs.requests` 中相应的 `create_
 SDK 地址。FTP 配置不再读取或要求。Level-2 使用配置指定且已登录的百度网盘客户端，
 客户端凭证由客户端管理。
 
-`override` 只能包含 `data`、`models`、`feature_groups` 或 `backtest` 根键；因此不能改变
+`override` 只能包含 `data`、`models` 或 `feature_groups` 根键；因此不能改变
 `environment`、`storage_root` 或 `secret`。mapping 递归合并，标量、列表和显式
 `None` 直接替换，不定义字段级特殊合并规则。合并后必须校验完整 `AppConfig`。HTTP Job
 API 和所有 CLI 命令都不得用 request runtime 字段构造 config override。配置读取、
@@ -215,15 +215,19 @@ mode 只接受下表五个值；旧任务名称 `tradable_alpha_eval`、`risk_ev
 
 | MODE / Submission | JSON 字段 |
 | --- | --- |
-| signal_eval / SignalEvalSubmission | start、end、signal |
+| signal_eval / SignalEvalSubmission | start、end、signal、min_listing_calendar_days |
 | risk_rule_eval / RiskRuleEvalSubmission | case_refs、risk；没有日期范围 |
 | execution_eval / ExecutionEvalSubmission | start、end、order_refs、initial_account、execution |
-| strategy_eval / StrategyEvalSubmission | start、end、signal、strategy、initial_account、execution |
-| full_backtest / FullBacktestSubmission | start、end、signal、strategy、initial_account、risk、execution |
+| strategy_eval / StrategyEvalSubmission | start、end、signal、min_listing_calendar_days、strategy、initial_account、execution |
+| full_backtest / FullBacktestSubmission | start、end、signal、min_listing_calendar_days、strategy、initial_account、risk、execution |
 
 有日期的请求使用规范 `YYYY-MM-DD` 且 start<=end。信号来源是二选一的 object：
 `{"type":"model","model_ref":"/absolute/model.joblib"}` 或
 `{"type":"recorded","prediction_refs":["/absolute/prediction.parquet"]}`。
+三种含 signal 的 submission 顶层都必须显式提供 `min_listing_calendar_days`，无论信号来源
+是 model 还是 recorded；值为非负整数，不接受 bool、字符串或小数，没有默认值。
+risk/execution 不接受该字段。其资格筛选作用由
+[Backtest workflow](../offline_workflow_contract.md#backtest-workflow) 定义。
 case_refs、order_refs 和 prediction_refs 是有序绝对路径数组；空事实可报告无样本。
 模型同目录训练记录、预测身份和首次实际决策的成熟时间核验由
 [Backtest workflow](../offline_workflow_contract.md#backtest-workflow) 拥有，不要求调用者
@@ -264,14 +268,14 @@ fixed_holding 的两个 time 不带 UTC offset，使用市场时区。三种策�
 
 ```bash
 python -m src.cli backtest --mode signal_eval --experiment-id signal-1 \
-  --input-json '{"start":"2026-07-03","end":"2026-07-03","signal":{"type":"recorded","prediction_refs":["/data/prediction.parquet"]}}'
+  --input-json '{"start":"2026-07-03","end":"2026-07-03","signal":{"type":"recorded","prediction_refs":["/data/prediction.parquet"]},"min_listing_calendar_days":120}'
 ```
 
 CLI 不构造 config override。加载一次 AppConfig 后，统一生成实验名称，将已解析 submission
 序列化为参数快照并初始化 `BacktestMetrics`，使用该快照记录开始日志，再把 `experiment_name`
 和 `metrics` 随 submission 传给对应的具名 workflow。快照、日志及最终制品的内容由
 [Backtest 结果契约](../offline_workflow_contract.md#backtest-workflow)定义；CLI 此时只构造内存记录，
-不写参数或 metrics 文件。只有 signal/strategy_eval/full 接收并记录静态 BacktestConfig，
-其唯一字段是 min_listing_calendar_days；risk/execution 不消费或记录模型设置。
+不写参数或 metrics 文件。回测业务参数统一来自 submission，不再加载独立 BacktestConfig；
+示例中的 min_listing_calendar_days=120 是显式任务输入，不是应用默认设置。
 初始现金只来自 initial_account。HTTP 使用同一字段模型，build_cli_command 用一个
 `--input-json` 参数保留嵌套 JSON，Job UUID 作为 experiment ID。

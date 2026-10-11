@@ -176,6 +176,63 @@ def test_backtest_command_preserves_mode_and_uses_job_id_as_experiment_id(
         assert "strategy" not in fields and "initial_account" not in fields
 
 
+@pytest.mark.parametrize("mode", ["signal_eval", "strategy_eval", "full_backtest"])
+@pytest.mark.parametrize("source", ["model", "recorded"])
+def test_backtest_requires_explicit_listing_age(
+    mode: str, source: str, backtest_payload: Callable[[str], dict[str, object]],
+) -> None:
+    payload = backtest_payload(mode)
+    payload.pop("min_listing_calendar_days", None)
+    if source == "recorded":
+        payload["signal"] = {"type": "recorded", "prediction_refs": []}
+    with pytest.raises(InvalidJobRequest) as caught:
+        parse_job_request(payload)
+    assert caught.value.field == "min_listing_calendar_days"
+
+
+@pytest.mark.parametrize("mode", ["signal_eval", "strategy_eval", "full_backtest"])
+@pytest.mark.parametrize("source", ["model", "recorded"])
+@pytest.mark.parametrize("listing_age", [0, 90])
+def test_backtest_accepts_task_listing_age_and_preserves_it_in_cli_input(
+    mode: str, source: str, listing_age: int,
+    backtest_payload: Callable[[str], dict[str, object]],
+) -> None:
+    payload = backtest_payload(mode)
+    payload["min_listing_calendar_days"] = listing_age
+    if source == "recorded":
+        payload["signal"] = {"type": "recorded", "prediction_refs": []}
+    submission = parse_job_request(payload)[0]
+    assert submission.min_listing_calendar_days == listing_age
+    command = build_cli_command(submission, "listing-age")
+    fields = json.loads(command[command.index("--input-json") + 1])
+    assert fields["min_listing_calendar_days"] == listing_age
+    assert "backtest_config" not in fields
+    assert parse_job_request({"kind": "backtest", "mode": mode, **fields}) == [submission]
+
+
+@pytest.mark.parametrize("mode", ["signal_eval", "strategy_eval", "full_backtest"])
+@pytest.mark.parametrize("listing_age", [-1, True, 1.5, "120", None])
+def test_backtest_rejects_invalid_listing_age(
+    mode: str, listing_age: object, backtest_payload: Callable[[str], dict[str, object]],
+) -> None:
+    payload = backtest_payload(mode)
+    payload["min_listing_calendar_days"] = listing_age
+    with pytest.raises(InvalidJobRequest) as caught:
+        parse_job_request(payload)
+    assert caught.value.field == "min_listing_calendar_days"
+
+
+@pytest.mark.parametrize("mode", ["risk_rule_eval", "execution_eval"])
+def test_backtest_rejects_listing_age_without_signals(
+    mode: str, backtest_payload: Callable[[str], dict[str, object]],
+) -> None:
+    payload = backtest_payload(mode)
+    payload["min_listing_calendar_days"] = 120
+    with pytest.raises(InvalidJobRequest) as caught:
+        parse_job_request(payload)
+    assert caught.value.field == "min_listing_calendar_days"
+
+
 @pytest.mark.parametrize(("old_mode", "mode"), [
     ("tradable_alpha_eval", "strategy_eval"), ("risk_eval", "risk_rule_eval"),
 ])
@@ -286,7 +343,7 @@ def test_backtest_requires_a_concrete_absolute_model_reference(ref: object) -> N
     with pytest.raises(InvalidJobRequest) as caught:
         create_backtest_submission(
             mode="signal_eval", start="2026-07-01", end="2026-07-02",
-            signal={"type": "model", "model_ref": ref},
+            signal={"type": "model", "model_ref": ref}, min_listing_calendar_days=120,
         )
     assert caught.value.field == "signal.model_ref"
 
@@ -326,6 +383,7 @@ def test_signal_evaluation_accepts_fixed_predictions_without_trading_inputs() ->
         "kind": "backtest", "mode": "signal_eval",
         "start": "2026-07-03", "end": "2026-07-03",
         "signal": {"type": "recorded", "prediction_refs": ["/data/fixed.parquet"]},
+        "min_listing_calendar_days": 120,
     })[0]
     assert submission.signal.prediction_refs == (Path("/data/fixed.parquet"),)
     assert "--strategy-json" not in build_cli_command(submission, "signal-run")
@@ -337,6 +395,7 @@ def test_signal_evaluation_rejects_unrelated_strategy() -> None:
             "kind": "backtest", "mode": "signal_eval",
             "start": "2026-07-03", "end": "2026-07-03",
             "signal": {"type": "recorded", "prediction_refs": ["/data/fixed.parquet"]},
+            "min_listing_calendar_days": 120,
             "strategy": {"type": "threshold", "params": {"threshold": 0.5}},
         })
 

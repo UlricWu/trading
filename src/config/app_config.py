@@ -10,12 +10,11 @@ import yaml
 from dotenv import dotenv_values
 from pydantic import BaseModel, ConfigDict
 
-from .backtest_config import BacktestConfig
 from .data_config import DataConfig
 from .model_config import FeatureGroupConfig, FeatureGroupName, ModelPreset, TrainingModelName
 from .secret_config import SecretConfig
 
-_CONFIG_SECTIONS = ("data", "models", "feature_groups", "backtest")
+_CONFIG_SECTIONS = ("data", "models", "feature_groups")
 _ENVIRONMENTS = ("dev", "test", "prod")
 
 
@@ -35,7 +34,6 @@ class AppConfig(BaseModel):
     data: DataConfig
     models: dict[TrainingModelName, ModelPreset]
     feature_groups: dict[FeatureGroupName, FeatureGroupConfig]
-    backtest: BacktestConfig
 
     @classmethod
     def load(
@@ -75,7 +73,7 @@ class AppConfig(BaseModel):
             invalid_roots = [name for name in override if name not in _CONFIG_SECTIONS]
             if invalid_roots:
                 raise ValueError(
-                    "override may only contain data, models, feature_groups, or backtest; "
+                    "override may only contain data, models, or feature_groups; "
                     f"got={invalid_roots!r}"
                 )
             sections = _deep_merge(sections, override)

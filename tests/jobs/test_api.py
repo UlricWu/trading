@@ -85,6 +85,7 @@ def test_backtest_post_rejects_internal_fields_without_creating_a_job(
             "kind": "backtest", "mode": "signal_eval",
             "start": "2026-07-01", "end": "2026-07-20",
             "signal": {"type": "model", "model_ref": "/data/training/model.joblib"},
+            "min_listing_calendar_days": 120,
             field: value,
         },
     )
@@ -122,6 +123,7 @@ def test_backtest_post_requires_both_dates(field: str) -> None:
         "kind": "backtest", "mode": "signal_eval",
         "start": "2026-07-01", "end": "2026-07-20",
         "signal": {"type": "model", "model_ref": "/data/training/model.joblib"},
+        "min_listing_calendar_days": 120,
     }
     del payload[field]
     response = create_app(cast(JobRuntime, runtime)).test_client().post(
@@ -130,6 +132,24 @@ def test_backtest_post_requires_both_dates(field: str) -> None:
 
     assert response.status_code == 400
     assert response.get_json()["error"]["field"] == field
+    assert runtime.jobs == {} and runtime.submitted == []
+
+
+@pytest.mark.parametrize("mode", ["signal_eval", "strategy_eval", "full_backtest"])
+@pytest.mark.parametrize("listing_fields", [{}, {"min_listing_calendar_days": -1}])
+def test_backtest_post_rejects_missing_or_invalid_listing_age_before_creating_a_job(
+    mode: str, listing_fields: dict[str, object],
+    backtest_payload: Callable[[str], dict[str, object]],
+) -> None:
+    runtime = _StubRuntime()
+    payload = backtest_payload(mode)
+    del payload["min_listing_calendar_days"]
+    payload.update(listing_fields)
+
+    response = create_app(cast(JobRuntime, runtime)).test_client().post("/jobs", json=payload)
+
+    assert response.status_code == 400
+    assert response.get_json()["error"]["field"] == "min_listing_calendar_days"
     assert runtime.jobs == {} and runtime.submitted == []
 
 

@@ -11,7 +11,7 @@ from typing import cast
 from pydantic import TypeAdapter
 
 from src.access import Access
-from src.config.backtest_config import BacktestConfig, FakeExecutionConfig, FixedHoldingStrategyConfig, StrategyConfig, InitialAccount
+from src.config.backtest_config import FakeExecutionConfig, FixedHoldingStrategyConfig, StrategyConfig, InitialAccount
 from src.jobs.requests import (
     SignalEvalSubmission, RiskRuleEvalSubmission, ExecutionEvalSubmission,
     StrategyEvalSubmission, FullBacktestSubmission,
@@ -57,7 +57,7 @@ from src.workflows import PROCESSED_VERSION
 
 def run_signal_evaluation(
     *, submission: SignalEvalSubmission, path_manager: PathManager,
-    experiment_name: str, metrics: BacktestMetrics, backtest_config: BacktestConfig,
+    experiment_name: str, metrics: BacktestMetrics,
 ) -> None:
     """Evaluate fixed signals without preparing any trading account or strategy.
 
@@ -66,12 +66,12 @@ def run_signal_evaluation(
     Example:
         metrics = BacktestMetrics(mode=submission.mode, parameters=parameters, not_run={})
         run_signal_evaluation(submission=submission, path_manager=pm,
-            experiment_name="backtest_2026-10-11_signal-1", metrics=metrics, backtest_config=config)
+            experiment_name="backtest_2026-10-11_signal-1", metrics=metrics)
     """
     metrics.not_run = {"strategy": "signal_only", "risk": "signal_only", "execution": "signal_only"}
     batches = prepare_signals(submission.signal, start=submission.start, end=submission.end,
         access=Access(pm=path_manager, processed_version=PROCESSED_VERSION), pm=path_manager,
-        min_listing_calendar_days=backtest_config.min_listing_calendar_days)
+        min_listing_calendar_days=submission.min_listing_calendar_days)
     steps: tuple[PipelineStep[SignalEvaluationContext], ...] = (
         PredictionGenerationStep(
             batches=batches,
@@ -159,7 +159,7 @@ def run_execution_evaluation(
 
 def run_strategy_evaluation(
     *, submission: StrategyEvalSubmission, path_manager: PathManager,
-    experiment_name: str, metrics: BacktestMetrics, backtest_config: BacktestConfig,
+    experiment_name: str, metrics: BacktestMetrics,
 ) -> None:
     """Evaluate a declared strategy using reference fills and a run-owned account.
 
@@ -168,7 +168,7 @@ def run_strategy_evaluation(
     Example:
         metrics = BacktestMetrics(mode=submission.mode, parameters=parameters, not_run={})
         run_strategy_evaluation(submission=submission, path_manager=pm,
-            experiment_name="backtest_2026-10-11_strategy-1", metrics=metrics, backtest_config=config)
+            experiment_name="backtest_2026-10-11_strategy-1", metrics=metrics)
     """
     metrics.not_run = {"signal_evaluation": "strategy_return_only", "risk": "reference_strategy",
                        "price_feasibility": "reference_fills"}
@@ -176,7 +176,7 @@ def run_strategy_evaluation(
     access = Access(pm=path_manager, processed_version=PROCESSED_VERSION)
     market = prepare_market(config=config, initial=submission.initial_account, access=access)
     batches = prepare_signals(submission.signal, start=submission.start, end=submission.end,
-        access=access, pm=path_manager, min_listing_calendar_days=backtest_config.min_listing_calendar_days)
+        access=access, pm=path_manager, min_listing_calendar_days=submission.min_listing_calendar_days)
     validate_recorded_model_uses(batches)
     _validate_signal_times(batches.keys(), submission.initial_account.ts_us, config.end_ts_us)
     state = create_state(submission.initial_account)
@@ -206,7 +206,7 @@ def run_strategy_evaluation(
 
 def run_full_backtest(
     *, submission: FullBacktestSubmission, path_manager: PathManager,
-    experiment_name: str, metrics: BacktestMetrics, backtest_config: BacktestConfig,
+    experiment_name: str, metrics: BacktestMetrics,
 ) -> None:
     """Compose one signal/strategy/risk/execution loop and evaluate its saved facts.
 
@@ -215,13 +215,13 @@ def run_full_backtest(
     Example:
         metrics = BacktestMetrics(mode=submission.mode, parameters=parameters, not_run={})
         run_full_backtest(submission=submission, path_manager=pm,
-            experiment_name="backtest_2026-10-11_full-1", metrics=metrics, backtest_config=config)
+            experiment_name="backtest_2026-10-11_full-1", metrics=metrics)
     """
     config = submission.execution
     access = Access(pm=path_manager, processed_version=PROCESSED_VERSION)
     market = prepare_market(config=config, initial=submission.initial_account, access=access)
     batches = prepare_signals(submission.signal, start=submission.start, end=submission.end,
-        access=access, pm=path_manager, min_listing_calendar_days=backtest_config.min_listing_calendar_days)
+        access=access, pm=path_manager, min_listing_calendar_days=submission.min_listing_calendar_days)
     validate_recorded_model_uses(batches)
     _validate_signal_times(batches.keys(), submission.initial_account.ts_us, config.end_ts_us)
     state = create_state(submission.initial_account)

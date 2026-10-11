@@ -17,6 +17,7 @@ def backtest_payload() -> Callable[[BacktestMode | str], dict[str, object]]:
         payload.update(start="2026-07-01", end="2026-07-20")
         if mode != BacktestMode.EXECUTION_EVAL:
             payload["signal"] = {"type": "model", "model_ref": "/data/models/training-1.joblib"}
+            payload["min_listing_calendar_days"] = 120
         if mode == BacktestMode.SIGNAL_EVAL:
             return payload
         rule = {"buy_min_qty": 100, "buy_step_qty": 100, "sell_min_qty": 1, "sell_step_qty": 1,

@@ -286,7 +286,7 @@ class SignalEvalSubmission(BaseModel):
 
     Example:
         submission = SignalEvalSubmission(mode="signal_eval", start="2026-07-03",
-                                          end="2026-07-03", signal=recorded_signal)
+            end="2026-07-03", signal=recorded_signal, min_listing_calendar_days=120)
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -294,6 +294,7 @@ class SignalEvalSubmission(BaseModel):
     start: str
     end: str
     signal: SignalInput
+    min_listing_calendar_days: int = Field(ge=0, strict=True)
     kind: Literal["backtest"] = "backtest"
 
     @model_validator(mode="after")
@@ -358,7 +359,8 @@ class StrategyEvalSubmission(BaseModel):
 
     Example:
         submission = StrategyEvalSubmission(mode="strategy_eval", start="2026-07-03",
-            end="2026-07-03", signal=signal, strategy=strategy, initial_account=account, execution=execution)
+            end="2026-07-03", signal=signal, min_listing_calendar_days=120,
+            strategy=strategy, initial_account=account, execution=execution)
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -366,6 +368,7 @@ class StrategyEvalSubmission(BaseModel):
     start: str
     end: str
     signal: SignalInput
+    min_listing_calendar_days: int = Field(ge=0, strict=True)
     strategy: StrategyConfig
     initial_account: InitialAccount
     execution: FakeExecutionConfig
@@ -390,7 +393,7 @@ class FullBacktestSubmission(BaseModel):
 
     Example:
         submission = FullBacktestSubmission(mode="full_backtest", start="2026-07-03",
-            end="2026-07-03", signal=signal, strategy=strategy, risk=risk,
+            end="2026-07-03", signal=signal, min_listing_calendar_days=120, strategy=strategy, risk=risk,
             initial_account=account, execution=execution)
     """
 
@@ -399,6 +402,7 @@ class FullBacktestSubmission(BaseModel):
     start: str
     end: str
     signal: SignalInput
+    min_listing_calendar_days: int = Field(ge=0, strict=True)
     strategy: StrategyConfig
     initial_account: InitialAccount
     risk: RiskConfig
@@ -589,7 +593,7 @@ def create_backtest_submission(*, mode: object, **fields: object) -> BacktestSub
 
     Example:
         submission = create_backtest_submission(mode="signal_eval", start="2026-07-03",
-            end="2026-07-03", signal={"type": "recorded", "prediction_refs": []})
+            end="2026-07-03", signal={"type": "recorded", "prediction_refs": []}, min_listing_calendar_days=120)
     """
     try:
         return TypeAdapter(BacktestSubmission).validate_python({"mode": mode, **fields})
