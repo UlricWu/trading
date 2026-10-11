@@ -107,10 +107,10 @@ def test_trading_preparation_enforces_half_open_simulation_interval(
                 access=access, pm=PathManager(tmp_path), min_listing_calendar_days=120,
                 start_ts_us=start_ts_us, end_ts_us=end_ts_us)
         return
-    batches = signals.prepare_signals(signal_input, start="2026-07-03", end="2026-07-06",
+    signal_inputs_by_ts_us = signals.prepare_signals(signal_input, start="2026-07-03", end="2026-07-06",
         access=access, pm=PathManager(tmp_path), min_listing_calendar_days=120,
         start_ts_us=start_ts_us, end_ts_us=end_ts_us)
-    assert tuple(batches) == (FIRST_DECISION_TS_US, LAST_DECISION_TS_US)
+    assert tuple(signal_inputs_by_ts_us) == (FIRST_DECISION_TS_US, LAST_DECISION_TS_US)
 
 
 @pytest.mark.parametrize("offset", [-1, 0, 1])
@@ -127,10 +127,10 @@ def test_trading_preparation_checks_maturity_at_earliest_selected_decision(
                 access=access, pm=PathManager(tmp_path), min_listing_calendar_days=120,
                 start_ts_us=FIRST_DECISION_TS_US, end_ts_us=LAST_DECISION_TS_US + 1)
         return
-    batches = signals.prepare_signals(signal_input, start="2026-07-03", end="2026-07-06",
+    signal_inputs_by_ts_us = signals.prepare_signals(signal_input, start="2026-07-03", end="2026-07-06",
         access=access, pm=PathManager(tmp_path), min_listing_calendar_days=120,
         start_ts_us=FIRST_DECISION_TS_US, end_ts_us=LAST_DECISION_TS_US + 1)
-    assert tuple(batches) == (FIRST_DECISION_TS_US, LAST_DECISION_TS_US)
+    assert tuple(signal_inputs_by_ts_us) == (FIRST_DECISION_TS_US, LAST_DECISION_TS_US)
 
 
 @pytest.mark.parametrize("training_record", ["missing", "immature"])
@@ -148,10 +148,10 @@ def test_fixed_signal_evaluation_does_not_require_trading_model_use(
         expected_error = ValueError
     signal = RecordedSignalInput(type="recorded", prediction_refs=prediction_refs)
 
-    batches = signals.prepare_evaluation_signals(signal, start="2026-07-03", end="2026-07-06",
+    signal_inputs_by_ts_us = signals.prepare_evaluation_signals(signal, start="2026-07-03", end="2026-07-06",
         access=access, pm=PathManager(tmp_path), min_listing_calendar_days=120)
 
-    assert tuple(batches) == (FIRST_DECISION_TS_US, LAST_DECISION_TS_US)
+    assert tuple(signal_inputs_by_ts_us) == (FIRST_DECISION_TS_US, LAST_DECISION_TS_US)
     with pytest.raises(expected_error):
         signals.prepare_signals(signal, start="2026-07-03", end="2026-07-06",
             access=access, pm=PathManager(tmp_path), min_listing_calendar_days=120,
@@ -166,7 +166,7 @@ def test_preparation_reuses_fixed_records_and_model_without_changing_missing_row
     predict = mocker.patch.object(InferenceModel, "predict", side_effect=AssertionError("fixed predictions"))
     signal = RecordedSignalInput(type="recorded", prediction_refs=tuple(reversed(prediction_refs)))
 
-    batches = signals.prepare_signals(signal, start="2026-07-03", end="2026-07-06",
+    signal_inputs_by_ts_us = signals.prepare_signals(signal, start="2026-07-03", end="2026-07-06",
         access=access, pm=PathManager(tmp_path), min_listing_calendar_days=120,
         start_ts_us=FIRST_DECISION_TS_US, end_ts_us=LAST_DECISION_TS_US + 1)
 
@@ -174,8 +174,8 @@ def test_preparation_reuses_fixed_records_and_model_without_changing_missing_row
     load_model.assert_called_once()
     predict.assert_not_called()
     access.universe.assert_not_called()
-    assert tuple(batches) == (FIRST_DECISION_TS_US, LAST_DECISION_TS_US)
-    for batch, ref in zip(batches.values(), prediction_refs, strict=True):
+    assert tuple(signal_inputs_by_ts_us) == (FIRST_DECISION_TS_US, LAST_DECISION_TS_US)
+    for batch, ref in zip(signal_inputs_by_ts_us.values(), prediction_refs, strict=True):
         assert isinstance(batch, signals.RecordedSignalBatch)
         assert batch.prediction_ref == ref
         assert batch.symbols == ("000001", "600000")
@@ -208,10 +208,10 @@ def test_each_recorded_model_is_checked_at_its_own_first_decision(
                 access=access, pm=pm, min_listing_calendar_days=120,
                 start_ts_us=FIRST_DECISION_TS_US, end_ts_us=LAST_DECISION_TS_US + 1)
         return
-    batches = signals.prepare_signals(signal, start="2026-07-03", end="2026-07-06",
+    signal_inputs_by_ts_us = signals.prepare_signals(signal, start="2026-07-03", end="2026-07-06",
         access=access, pm=pm, min_listing_calendar_days=120,
         start_ts_us=FIRST_DECISION_TS_US, end_ts_us=LAST_DECISION_TS_US + 1)
-    assert tuple(batches) == (FIRST_DECISION_TS_US, LAST_DECISION_TS_US)
+    assert tuple(signal_inputs_by_ts_us) == (FIRST_DECISION_TS_US, LAST_DECISION_TS_US)
 
 
 def test_reusing_a_model_does_not_hide_a_different_recorded_digest(

@@ -2,11 +2,9 @@
 """Compose independent evaluations and three shared-account replay workflows."""
 from __future__ import annotations
 
-from datetime import date
 from typing import cast
 
 from src.access import Access
-from src.config.backtest_config import FakeExecutionConfig, FixedHoldingStrategyConfig, StrategyConfig, InitialAccount
 from src.jobs.requests import (
     SignalEvalSubmission, RiskRuleEvalSubmission, ExecutionEvalSubmission,
     StrategyEvalSubmission, FullBacktestSubmission,
@@ -15,25 +13,19 @@ from src.observability.instrumentation import Instrumentation
 from src.pipeline import PipelineStep, run_steps
 from src.trading.backtest.clock import ReplayClock
 from src.trading.backtest.commands import OrderCommandSchedule
-from src.trading.backtest.components import prepare_market, create_state
+from src.trading.backtest.components import prepare_market, create_state, create_execution, prepare_portfolio_step
 from src.trading.backtest.context import (
-    BacktestContext, BacktestState, SignalEvaluationContext, RiskEvaluationContext,
+    BacktestContext, BacktestResultContext, SignalEvaluationContext, RiskEvaluationContext,
 )
-from src.trading.backtest.execution.fake import FakeExecution
-from src.trading.backtest.execution.models.cost_a_share import AShareCostModel
 from src.trading.backtest.execution.models.slippage_fixed_bp import FixedBPSlippageModel
-from src.trading.backtest.execution.settlement import SettlementEngine
 from src.trading.backtest.execution.venue.fake import ReferenceVenue, LimitPriceVenue
-from src.trading.backtest.market.replay import ReplayMarket
-from src.trading.portfolio.constructors.fixed_holding import FixedHoldingConstructor
-from src.utils.datetime_utils import DateTimeUtils
 from src.trading.backtest.market.signals import prepare_evaluation_signals, prepare_signals
 from src.trading.backtest.pipeline import BacktestPipeline
 from src.trading.backtest.reporting.bundle import ReportingBundle
 from src.trading.backtest.reporting.metrics import BacktestMetrics
 from src.trading.backtest.steps.backtest_layers import (
     PredictionGenerationStep, AdvanceExecutionStep, AccountingStep,
-    SignalStep, PortfolioStep, FixedHoldingStep, RiskDecisionStep, SubmitTargetsStep, RecordedOrdersStep,
+    SignalStep, FixedHoldingStep, RiskDecisionStep, SubmitTargetsStep, RecordedOrdersStep,
 )
 from src.trading.backtest.steps.evaluation import (
     SignalEvaluationStep, RiskEvaluationStep, RiskMetricsStep, ExecutionEvaluationStep,
@@ -42,9 +34,6 @@ from src.trading.backtest.steps.evaluation import (
 from src.trading.backtest.steps.facts_persist import FactsPersistStep
 from src.trading.backtest.steps.metrics_persist import MetricsPersistStep
 from src.trading.backtest.steps.report import ReportStep
-from src.trading.execution.policies.constraints import QuoteRule
-from src.trading.portfolio.constructors.factory import build_portfolio_constructor
-from src.trading.portfolio.constructors.topk_hysteresis import TopKHysteresisConstructor
 from src.trading.risk import RiskCases, RiskManager
 from src.utils.path import PathManager
 from src.workflows import PROCESSED_VERSION
@@ -64,12 +53,12 @@ def run_signal_evaluation(
             experiment_name="backtest_2026-10-11_signal-1", metrics=metrics)
     """
     metrics.not_run = {"strategy": "signal_only", "risk": "signal_only", "execution": "signal_only"}
-    batches = prepare_evaluation_signals(submission.signal, start=submission.start, end=submission.end,
+    signal_inputs_by_ts_us = prepare_evaluation_signals(submission.signal, start=submission.start, end=submission.end,
         access=Access(pm=path_manager, processed_version=PROCESSED_VERSION), pm=path_manager,
         min_listing_calendar_days=submission.min_listing_calendar_days)
     steps: tuple[PipelineStep[SignalEvaluationContext], ...] = (
         PredictionGenerationStep(
-            batches=batches,
+            signal_inputs_by_ts_us=signal_inputs_by_ts_us,
             prediction_dir=path_manager.experiment_backtest_predictions_dir(experiment_name=experiment_name),
         ),
         SignalEvaluationStep(path_manager),
@@ -120,27 +109,55 @@ def run_execution_evaluation(
             experiment_name="backtest_2026-10-11_execution-1", metrics=metrics)
     """
     metrics.not_run = {"signal": "frozen_commands", "strategy": "frozen_commands", "risk": "frozen_commands"}
-    config = submission.execution
-    market = prepare_market(config=config, initial=submission.initial_account,
-                            access=Access(pm=path_manager, processed_version=PROCESSED_VERSION))
-    commands = OrderCommandSchedule.from_files(submission.order_refs, start=submission.start, end=submission.end,
-        market=market, start_ts_us=submission.initial_account.ts_us, end_ts_us=config.end_ts_us)
-    state = create_state(submission.initial_account)
-    execution = _execution(state, config,
-        LimitPriceVenue(FixedBPSlippageModel(cast(float, config.slippage_bp))), None)
-    clock = ReplayClock.from_iterable((*market.timestamps(), *commands.timestamps(),
-        submission.initial_account.ts_us, config.end_ts_us),
-        start_us=submission.initial_account.ts_us, end_us=config.end_ts_us)
+    initial_account = submission.initial_account
+    execution_config = submission.execution
+    access = Access(pm=path_manager, processed_version=PROCESSED_VERSION)
+
+    market = prepare_market(config=execution_config, initial=initial_account, access=access)
+    commands = OrderCommandSchedule.from_files(
+        submission.order_refs,
+        start=submission.start,
+        end=submission.end,
+        market=market,
+        start_ts_us=initial_account.ts_us,
+        end_ts_us=execution_config.end_ts_us,
+    )
+
+    state = create_state(initial_account)
+    venue = LimitPriceVenue(FixedBPSlippageModel(cast(float, execution_config.slippage_bp)))
+    execution = create_execution(state=state, config=execution_config, venue=venue, quote_rule=None)
+
+    replay_ts_us = (
+        *market.timestamps(),
+        *commands.timestamps(),
+        initial_account.ts_us,
+        execution_config.end_ts_us,
+    )
+    clock = ReplayClock.from_iterable(
+        replay_ts_us, start_us=initial_account.ts_us, end_us=execution_config.end_ts_us,
+    )
+
     per_timing_steps: tuple[PipelineStep[BacktestContext], ...] = (
-        AdvanceExecutionStep(execution, market), AccountingStep(market),
+        AdvanceExecutionStep(execution, market),
+        AccountingStep(market),
         RecordedOrdersStep(execution, market, commands),
     )
-    BacktestPipeline(clock=clock, session_at=market.session_at, per_timing_steps=per_timing_steps,
-        final_steps=(
-            FactsPersistStep(pm=path_manager, experiment_name=experiment_name),
-            ExecutionEvaluationStep(), BacktestSummaryStep(),
-            MetricsPersistStep(path_manager, experiment_name), ReportStep(ReportingBundle(path_manager), experiment_name),
-        ), instrumentation=Instrumentation(experiment_name)).run(state, metrics=metrics)
+    final_steps: tuple[PipelineStep[BacktestResultContext], ...] = (
+        FactsPersistStep(pm=path_manager, experiment_name=experiment_name),
+        ExecutionEvaluationStep(),
+        BacktestSummaryStep(),
+        MetricsPersistStep(path_manager, experiment_name),
+        ReportStep(ReportingBundle(path_manager), experiment_name),
+    )
+
+    pipeline = BacktestPipeline(
+        clock=clock,
+        session_at=market.session_at,
+        per_timing_steps=per_timing_steps,
+        final_steps=final_steps,
+        instrumentation=Instrumentation(experiment_name),
+    )
+    pipeline.run(state, metrics=metrics)
 
 
 def run_strategy_evaluation(
@@ -157,40 +174,82 @@ def run_strategy_evaluation(
             experiment_name="backtest_2026-10-11_strategy-1", metrics=metrics)
     """
     metrics.not_run = {"signal_evaluation": "strategy_return_only", "risk": "strategy_only"}
-    config = submission.execution
+    initial_account = submission.initial_account
+    execution_config = submission.execution
     access = Access(pm=path_manager, processed_version=PROCESSED_VERSION)
-    market = prepare_market(config=config, initial=submission.initial_account, access=access)
-    batches = prepare_signals(submission.signal, start=submission.start, end=submission.end,
-        access=access, pm=path_manager, min_listing_calendar_days=submission.min_listing_calendar_days,
-        start_ts_us=submission.initial_account.ts_us, end_ts_us=config.end_ts_us)
-    state = create_state(submission.initial_account)
-    if config.slippage_bp is None:
+
+    market = prepare_market(config=execution_config, initial=initial_account, access=access)
+    signal_inputs_by_ts_us = prepare_signals(
+        submission.signal,
+        start=submission.start,
+        end=submission.end,
+        access=access,
+        pm=path_manager,
+        min_listing_calendar_days=submission.min_listing_calendar_days,
+        start_ts_us=initial_account.ts_us,
+        end_ts_us=execution_config.end_ts_us,
+    )
+
+    state = create_state(initial_account)
+    venue: ReferenceVenue | LimitPriceVenue
+    if execution_config.slippage_bp is None:
         metrics.not_run["price_feasibility"] = "reference_fills"
-        execution = _execution(state, config, ReferenceVenue(), None)
+        venue = ReferenceVenue()
+        quote_rule = None
     else:
-        execution = _execution(state, config,
-            LimitPriceVenue(FixedBPSlippageModel(config.slippage_bp)), submission.strategy.quote)
-    portfolio_step = _portfolio_step(submission.strategy, market, config, submission.initial_account)
-    windows = tuple(window for session in market.source.sessions for window in session.windows)
-    clock = ReplayClock.from_iterable((*market.timestamps(), *batches,
-        *(portfolio_step.constructor.exit_due.values() if isinstance(portfolio_step, FixedHoldingStep) else ()),
-        submission.initial_account.ts_us, config.end_ts_us),
-        start_us=submission.initial_account.ts_us, end_us=config.end_ts_us)
+        venue = LimitPriceVenue(FixedBPSlippageModel(execution_config.slippage_bp))
+        quote_rule = submission.strategy.quote
+    execution = create_execution(state=state, config=execution_config, venue=venue, quote_rule=quote_rule)
+    portfolio_step = prepare_portfolio_step(
+        strategy=submission.strategy, market=market, execution=execution_config, initial=initial_account,
+    )
+    trading_windows = tuple(window for session in market.source.sessions for window in session.windows)
+
+    initial_exit_ts_us: tuple[int, ...] = ()
+    if isinstance(portfolio_step, FixedHoldingStep):
+        initial_exit_ts_us = tuple(portfolio_step.constructor.exit_due.values())
+    replay_ts_us = (
+        *market.timestamps(),
+        *signal_inputs_by_ts_us,
+        *initial_exit_ts_us,
+        initial_account.ts_us,
+        execution_config.end_ts_us,
+    )
+    clock = ReplayClock.from_iterable(
+        replay_ts_us, start_us=initial_account.ts_us, end_us=execution_config.end_ts_us,
+    )
+
     per_timing_steps: tuple[PipelineStep[BacktestContext], ...] = (
-        AdvanceExecutionStep(execution, market), AccountingStep(market),
+        AdvanceExecutionStep(execution, market),
+        AccountingStep(market),
         SignalStep(
-            batches=batches,
+            signal_inputs_by_ts_us=signal_inputs_by_ts_us,
             prediction_dir=path_manager.experiment_backtest_predictions_dir(experiment_name=experiment_name),
         ),
         portfolio_step,
-        SubmitTargetsStep(execution, market, windows, cast(int, submission.strategy.order_window_minutes)),
+        SubmitTargetsStep(
+            execution=execution,
+            market=market,
+            windows=trading_windows,
+            order_window_minutes=cast(int, submission.strategy.order_window_minutes),
+        ),
     )
-    BacktestPipeline(clock=clock, session_at=market.session_at, per_timing_steps=per_timing_steps,
-        final_steps=(
-            FactsPersistStep(pm=path_manager, experiment_name=experiment_name),
-            PortfolioEvaluationStep(annual_factor=config.annual_factor), BacktestSummaryStep(),
-            MetricsPersistStep(path_manager, experiment_name), ReportStep(ReportingBundle(path_manager), experiment_name),
-        ), instrumentation=Instrumentation(experiment_name)).run(state, metrics=metrics)
+    final_steps: tuple[PipelineStep[BacktestResultContext], ...] = (
+        FactsPersistStep(pm=path_manager, experiment_name=experiment_name),
+        PortfolioEvaluationStep(annual_factor=execution_config.annual_factor),
+        BacktestSummaryStep(),
+        MetricsPersistStep(path_manager, experiment_name),
+        ReportStep(ReportingBundle(path_manager), experiment_name),
+    )
+
+    pipeline = BacktestPipeline(
+        clock=clock,
+        session_at=market.session_at,
+        per_timing_steps=per_timing_steps,
+        final_steps=final_steps,
+        instrumentation=Instrumentation(experiment_name),
+    )
+    pipeline.run(state, metrics=metrics)
 
 
 def run_full_backtest(
@@ -206,66 +265,81 @@ def run_full_backtest(
         run_full_backtest(submission=submission, path_manager=pm,
             experiment_name="backtest_2026-10-11_full-1", metrics=metrics)
     """
-    config = submission.execution
+    initial_account = submission.initial_account
+    execution_config = submission.execution
     access = Access(pm=path_manager, processed_version=PROCESSED_VERSION)
-    market = prepare_market(config=config, initial=submission.initial_account, access=access)
-    batches = prepare_signals(submission.signal, start=submission.start, end=submission.end,
-        access=access, pm=path_manager, min_listing_calendar_days=submission.min_listing_calendar_days,
-        start_ts_us=submission.initial_account.ts_us, end_ts_us=config.end_ts_us)
-    state = create_state(submission.initial_account)
-    execution = _execution(state, config,
-        LimitPriceVenue(FixedBPSlippageModel(cast(float, config.slippage_bp))), submission.strategy.quote)
+
+    market = prepare_market(config=execution_config, initial=initial_account, access=access)
+    signal_inputs_by_ts_us = prepare_signals(
+        submission.signal,
+        start=submission.start,
+        end=submission.end,
+        access=access,
+        pm=path_manager,
+        min_listing_calendar_days=submission.min_listing_calendar_days,
+        start_ts_us=initial_account.ts_us,
+        end_ts_us=execution_config.end_ts_us,
+    )
+
+    state = create_state(initial_account)
+    venue = LimitPriceVenue(FixedBPSlippageModel(cast(float, execution_config.slippage_bp)))
+    execution = create_execution(
+        state=state, config=execution_config, venue=venue, quote_rule=submission.strategy.quote,
+    )
     risk = RiskManager.from_config(submission.risk)
-    portfolio_step = _portfolio_step(submission.strategy, market, config, submission.initial_account)
-    windows = tuple(window for session in market.source.sessions for window in session.windows)
-    clock = ReplayClock.from_iterable((*market.timestamps(), *batches, *config.risk_check_ts_us,
-        *(portfolio_step.constructor.exit_due.values() if isinstance(portfolio_step, FixedHoldingStep) else ()),
-        submission.initial_account.ts_us, config.end_ts_us),
-        start_us=submission.initial_account.ts_us, end_us=config.end_ts_us)
+    portfolio_step = prepare_portfolio_step(
+        strategy=submission.strategy, market=market, execution=execution_config, initial=initial_account,
+    )
+    trading_windows = tuple(window for session in market.source.sessions for window in session.windows)
+    quantity_steps = {symbol: rule.buy_step_qty for symbol, rule in execution_config.quantity_rules.items()}
+
+    initial_exit_ts_us: tuple[int, ...] = ()
+    if isinstance(portfolio_step, FixedHoldingStep):
+        initial_exit_ts_us = tuple(portfolio_step.constructor.exit_due.values())
+    replay_ts_us = (
+        *market.timestamps(),
+        *signal_inputs_by_ts_us,
+        *execution_config.risk_check_ts_us,
+        *initial_exit_ts_us,
+        initial_account.ts_us,
+        execution_config.end_ts_us,
+    )
+    clock = ReplayClock.from_iterable(
+        replay_ts_us, start_us=initial_account.ts_us, end_us=execution_config.end_ts_us,
+    )
+
     per_timing_steps: tuple[PipelineStep[BacktestContext], ...] = (
-        AdvanceExecutionStep(execution, market), AccountingStep(market),
+        AdvanceExecutionStep(execution, market),
+        AccountingStep(market),
         SignalStep(
-            batches=batches,
+            signal_inputs_by_ts_us=signal_inputs_by_ts_us,
             prediction_dir=path_manager.experiment_backtest_predictions_dir(experiment_name=experiment_name),
         ),
         portfolio_step,
-        RiskDecisionStep(risk, market, {symbol: rule.buy_step_qty for symbol, rule in config.quantity_rules.items()}),
-        SubmitTargetsStep(execution, market, windows, cast(int, submission.strategy.order_window_minutes)),
+        RiskDecisionStep(risk=risk, market=market, quantity_steps=quantity_steps),
+        SubmitTargetsStep(
+            execution=execution,
+            market=market,
+            windows=trading_windows,
+            order_window_minutes=cast(int, submission.strategy.order_window_minutes),
+        ),
     )
-    BacktestPipeline(clock=clock, session_at=market.session_at, per_timing_steps=per_timing_steps,
-        final_steps=(
-            FactsPersistStep(pm=path_manager, experiment_name=experiment_name), SignalEvaluationStep(path_manager),
-            RiskMetricsStep(configured_rules=tuple(rule.type for rule in submission.risk.rules)),
-            ExecutionEvaluationStep(), PortfolioEvaluationStep(annual_factor=config.annual_factor),
-            BacktestSummaryStep(), MetricsPersistStep(path_manager, experiment_name),
-            ReportStep(ReportingBundle(path_manager), experiment_name),
-        ), instrumentation=Instrumentation(experiment_name)).run(state, metrics=metrics)
+    final_steps: tuple[PipelineStep[BacktestResultContext], ...] = (
+        FactsPersistStep(pm=path_manager, experiment_name=experiment_name),
+        SignalEvaluationStep(path_manager),
+        RiskMetricsStep(configured_rules=tuple(rule.type for rule in submission.risk.rules)),
+        ExecutionEvaluationStep(),
+        PortfolioEvaluationStep(annual_factor=execution_config.annual_factor),
+        BacktestSummaryStep(),
+        MetricsPersistStep(path_manager, experiment_name),
+        ReportStep(ReportingBundle(path_manager), experiment_name),
+    )
 
-
-def _execution(state: BacktestState, config: FakeExecutionConfig,
-               venue: ReferenceVenue | LimitPriceVenue, quote: QuoteRule | None) -> FakeExecution:
-    fees = config.fees
-    settlement = SettlementEngine(cost_model=AShareCostModel(
-        fees.commission_rate, fees.stamp_tax_rate, fees.transfer_rate, fees.min_commission))
-    return FakeExecution(state.portfolio_state, state.execution_ledger, state.pending_orders,
-                         settlement, venue, config.quantity_rules, quote)
-
-
-def _portfolio_step(strategy: StrategyConfig, market: ReplayMarket,
-                    execution: FakeExecutionConfig, initial: InitialAccount) -> PortfolioStep | FixedHoldingStep:
-    if isinstance(strategy, FixedHoldingStrategyConfig):
-        params = strategy.params
-        if params.initial_exit_dates.keys() != {s for s, qty in initial.positions.items() if qty}:
-            raise ValueError("fixed_holding initial positions require explicit exit dates")
-        deadlines = {symbol: DateTimeUtils.local_time_to_utc_epoch_us(params.exit_time, date.fromisoformat(day))
-                     for symbol, day in params.initial_exit_dates.items()}
-        for deadline in deadlines.values():
-            market.session_at(deadline)
-            if deadline < initial.ts_us:
-                raise ValueError("initial exit plan precedes account snapshot")
-        return FixedHoldingStep(FixedHoldingConstructor(params.max_positions, params.decision_time,
-            params.exit_time, tuple(s.trade_date for s in market.source.sessions),
-            execution.quantity_rules, deadlines), market)
-    constructor = build_portfolio_constructor(strategy)
-    capacity = constructor.max_positions if isinstance(constructor, TopKHysteresisConstructor) else None
-    return PortfolioStep(constructor, market, capacity)
+    pipeline = BacktestPipeline(
+        clock=clock,
+        session_at=market.session_at,
+        per_timing_steps=per_timing_steps,
+        final_steps=final_steps,
+        instrumentation=Instrumentation(experiment_name),
+    )
+    pipeline.run(state, metrics=metrics)

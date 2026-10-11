@@ -25,10 +25,10 @@ class PredictionGenerationStep:
     """Produce the selected fixed predictions for a single-pass signal evaluation.
 
     Example:
-        context = PredictionGenerationStep(batches, prediction_dir).run(context)
+        context = PredictionGenerationStep(signal_inputs_by_ts_us, prediction_dir).run(context)
     """
 
-    batches: Mapping[int, SignalBatch]
+    signal_inputs_by_ts_us: Mapping[int, SignalBatch]
     prediction_dir: Path
 
     def run(self, context: SignalEvaluationContext) -> SignalEvaluationContext:
@@ -38,7 +38,7 @@ class PredictionGenerationStep:
             context = step.run(context)
         """
         produced = tuple(produce_signal(batch, prediction_dir=self.prediction_dir)
-                         for batch in self.batches.values())
+                         for batch in self.signal_inputs_by_ts_us.values())
         context.prediction_refs = tuple(batch.prediction_ref for batch in produced)
         context.decision_dates = {batch.event.ts_us: batch.trade_date for batch in produced}
         return context
@@ -104,10 +104,10 @@ class SignalStep:
     """Consume only the source batch belonging to the current decision.
 
     Example:
-        context = SignalStep(batches, prediction_dir).run(context)
+        context = SignalStep(signal_inputs_by_ts_us, prediction_dir).run(context)
     """
 
-    batches: Mapping[int, SignalBatch]
+    signal_inputs_by_ts_us: Mapping[int, SignalBatch]
     prediction_dir: Path
 
     def run(self, context: BacktestContext) -> BacktestContext:
@@ -116,7 +116,7 @@ class SignalStep:
         Example:
             context = step.run(context)
         """
-        batch = self.batches.get(context.timing.ts_us)
+        batch = self.signal_inputs_by_ts_us.get(context.timing.ts_us)
         if batch is not None:
             context.signal = produce_signal(batch, prediction_dir=self.prediction_dir)
             context.state.signal_tape.append(context.signal.event)

@@ -870,9 +870,9 @@ def test_fake_live_batch_delivery_reproduces_full_signal_target_risk_and_account
         signal: SignalInput, *, start: str, end: str, access: Access,
         pm: PathManager, min_listing_calendar_days: int, start_ts_us: int, end_ts_us: int,
     ) -> dict[int, SignalBatch]:
-        batches = prepare_signals(signal, start=start, end=end, access=access, pm=pm,
+        signal_inputs_by_ts_us = prepare_signals(signal, start=start, end=end, access=access, pm=pm,
             min_listing_calendar_days=min_listing_calendar_days, start_ts_us=start_ts_us, end_ts_us=end_ts_us)
-        deliveries = iter(batches.items())
+        deliveries = iter(signal_inputs_by_ts_us.items())
         ready = next(deliveries, None)
         class DeliveredSignals(dict[int, SignalBatch]):
             def get(self, timestamp: int, default: SignalBatch | None = None) -> SignalBatch | None:
@@ -884,7 +884,7 @@ def test_fake_live_batch_delivery_reproduces_full_signal_target_risk_and_account
                 batch = ready[1]
                 ready = next(deliveries, None)
                 return batch
-        return DeliveredSignals(batches)
+        return DeliveredSignals(signal_inputs_by_ts_us)
     monkeypatch.setattr('src.workflows.backtest.prepare_signals', prepare_live)
     monkeypatch.setattr(ReplayMarket, 'observations_at', deliver)
     metrics = BacktestMetrics(mode=submission.mode, parameters=submission.model_dump(mode="json"), not_run={})

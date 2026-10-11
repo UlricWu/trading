@@ -88,8 +88,8 @@ def prepare_evaluation_signals(
     """Prepare signal evaluation without imposing trading constraints on fixed records.
 
     Example:
-        batches = prepare_evaluation_signals(signal, start="2026-07-03", end="2026-07-03",
-                                            access=access, pm=pm, min_listing_calendar_days=120)
+        signal_inputs_by_ts_us = prepare_evaluation_signals(signal, start="2026-07-03", end="2026-07-03",
+            access=access, pm=pm, min_listing_calendar_days=120)
     """
     if isinstance(signal, RecordedSignalInput):
         return {ts_us: prediction.batch for ts_us, prediction in
@@ -107,11 +107,11 @@ def prepare_signals(
     Decisions must fall in [start_ts_us, end_ts_us). Evaluation labels are not read.
 
     Example:
-        batches = prepare_signals(signal, start="2026-07-03", end="2026-07-03",
+        signal_inputs_by_ts_us = prepare_signals(signal, start="2026-07-03", end="2026-07-03",
             access=access, pm=pm, min_listing_calendar_days=120,
             start_ts_us=initial_account.ts_us, end_ts_us=execution.end_ts_us)
     """
-    batches: dict[int, SignalBatch] = {}
+    signal_inputs_by_ts_us: dict[int, SignalBatch] = {}
     if isinstance(signal, RecordedSignalInput):
         first_uses: set[Path] = set()
         for ts_us, prediction in _prepare_recorded_signals(signal, start=start, end=end).items():
@@ -119,13 +119,13 @@ def prepare_signals(
                 validate_model_use(model_ref=prediction.model_ref, model=prediction.model,
                                    first_decision_ts_us=ts_us)
                 first_uses.add(prediction.model_ref)
-            batches[ts_us] = prediction.batch
+            signal_inputs_by_ts_us[ts_us] = prediction.batch
     else:
-        batches = _prepare_model_signals(signal, start=start, end=end, access=access, pm=pm,
-                                         min_listing_calendar_days=min_listing_calendar_days)
-    if any(not start_ts_us <= ts_us < end_ts_us for ts_us in batches):
+        signal_inputs_by_ts_us = _prepare_model_signals(signal, start=start, end=end, access=access, pm=pm,
+            min_listing_calendar_days=min_listing_calendar_days)
+    if any(not start_ts_us <= ts_us < end_ts_us for ts_us in signal_inputs_by_ts_us):
         raise ValueError("selected signal decisions must be within the simulation interval and precede its end")
-    return batches
+    return signal_inputs_by_ts_us
 
 
 def _prepare_recorded_signals(
@@ -160,7 +160,7 @@ def _prepare_model_signals(
     signal: ModelSignalInput, *, start: str, end: str, access: Access,
     pm: PathManager, min_listing_calendar_days: int,
 ) -> dict[int, SignalBatch]:
-    batches: dict[int, SignalBatch] = {}
+    signal_inputs_by_ts_us: dict[int, SignalBatch] = {}
     model = load(signal.model_ref)
     for day in access.trade_dates(start_date=start, end_date=end):
         features = read_features(pm=pm, feature_set=model.feature_set, version=model.feature_version,
@@ -174,12 +174,12 @@ def _prepare_model_signals(
             groups = ((ts_us, features),)
         for ts_us, frame in groups:
             timestamp = int(ts_us)
-            if frame["symbol"].duplicated().any() or timestamp in batches:
+            if frame["symbol"].duplicated().any() or timestamp in signal_inputs_by_ts_us:
                 raise ValueError("signal decisions require unique timestamps and symbols")
-            batches[timestamp] = ModelSignalBatch(day, timestamp, frame.copy(), signal.model_ref, model)
-    if batches:
-        validate_model_use(model_ref=signal.model_ref, model=model, first_decision_ts_us=min(batches))
-    return dict(sorted(batches.items()))
+            signal_inputs_by_ts_us[timestamp] = ModelSignalBatch(day, timestamp, frame.copy(), signal.model_ref, model)
+    if signal_inputs_by_ts_us:
+        validate_model_use(model_ref=signal.model_ref, model=model, first_decision_ts_us=min(signal_inputs_by_ts_us))
+    return dict(sorted(signal_inputs_by_ts_us.items()))
 
 
 def produce_signal(batch: SignalBatch, *, prediction_dir: Path) -> RecordedSignalBatch:
