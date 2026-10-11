@@ -2,7 +2,6 @@
 """Compose independent evaluations and three shared-account replay workflows."""
 from __future__ import annotations
 
-from collections.abc import Iterable
 from datetime import date
 from typing import cast
 
@@ -28,7 +27,7 @@ from src.trading.backtest.execution.venue.fake import ReferenceVenue, LimitPrice
 from src.trading.backtest.market.replay import ReplayMarket
 from src.trading.portfolio.constructors.fixed_holding import FixedHoldingConstructor
 from src.utils.datetime_utils import DateTimeUtils
-from src.trading.backtest.market.signals import prepare_signals, validate_recorded_model_uses
+from src.trading.backtest.market.signals import prepare_evaluation_signals, prepare_signals
 from src.trading.backtest.pipeline import BacktestPipeline
 from src.trading.backtest.reporting.bundle import ReportingBundle
 from src.trading.backtest.reporting.metrics import BacktestMetrics
@@ -65,7 +64,7 @@ def run_signal_evaluation(
             experiment_name="backtest_2026-10-11_signal-1", metrics=metrics)
     """
     metrics.not_run = {"strategy": "signal_only", "risk": "signal_only", "execution": "signal_only"}
-    batches = prepare_signals(submission.signal, start=submission.start, end=submission.end,
+    batches = prepare_evaluation_signals(submission.signal, start=submission.start, end=submission.end,
         access=Access(pm=path_manager, processed_version=PROCESSED_VERSION), pm=path_manager,
         min_listing_calendar_days=submission.min_listing_calendar_days)
     steps: tuple[PipelineStep[SignalEvaluationContext], ...] = (
@@ -162,9 +161,8 @@ def run_strategy_evaluation(
     access = Access(pm=path_manager, processed_version=PROCESSED_VERSION)
     market = prepare_market(config=config, initial=submission.initial_account, access=access)
     batches = prepare_signals(submission.signal, start=submission.start, end=submission.end,
-        access=access, pm=path_manager, min_listing_calendar_days=submission.min_listing_calendar_days)
-    validate_recorded_model_uses(batches)
-    _validate_signal_times(batches.keys(), submission.initial_account.ts_us, config.end_ts_us)
+        access=access, pm=path_manager, min_listing_calendar_days=submission.min_listing_calendar_days,
+        start_ts_us=submission.initial_account.ts_us, end_ts_us=config.end_ts_us)
     state = create_state(submission.initial_account)
     if config.slippage_bp is None:
         metrics.not_run["price_feasibility"] = "reference_fills"
@@ -212,9 +210,8 @@ def run_full_backtest(
     access = Access(pm=path_manager, processed_version=PROCESSED_VERSION)
     market = prepare_market(config=config, initial=submission.initial_account, access=access)
     batches = prepare_signals(submission.signal, start=submission.start, end=submission.end,
-        access=access, pm=path_manager, min_listing_calendar_days=submission.min_listing_calendar_days)
-    validate_recorded_model_uses(batches)
-    _validate_signal_times(batches.keys(), submission.initial_account.ts_us, config.end_ts_us)
+        access=access, pm=path_manager, min_listing_calendar_days=submission.min_listing_calendar_days,
+        start_ts_us=submission.initial_account.ts_us, end_ts_us=config.end_ts_us)
     state = create_state(submission.initial_account)
     execution = _execution(state, config,
         LimitPriceVenue(FixedBPSlippageModel(cast(float, config.slippage_bp))), submission.strategy.quote)
@@ -252,11 +249,6 @@ def _execution(state: BacktestState, config: FakeExecutionConfig,
         fees.commission_rate, fees.stamp_tax_rate, fees.transfer_rate, fees.min_commission))
     return FakeExecution(state.portfolio_state, state.execution_ledger, state.pending_orders,
                          settlement, venue, config.quantity_rules, quote)
-
-
-def _validate_signal_times(times: Iterable[int], start_us: int, end_us: int) -> None:
-    if any(not start_us <= ts < end_us for ts in times):
-        raise ValueError("selected signal decisions must be within the simulation interval and precede its end")
 
 
 def _portfolio_step(strategy: StrategyConfig, market: ReplayMarket,

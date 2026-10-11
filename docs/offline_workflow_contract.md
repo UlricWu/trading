@@ -903,7 +903,12 @@ Pipeline 的最终链接收循环中最后返回的 State；不把最后一个�
 同日多个决策不会覆盖。同一时刻只允许一个批次，每批 symbol 唯一。
 
 `RecordedSignalInput` 直接消费预测文件及其已有模型身份，不重新推理。纯事后 signal
-评价无需交易使用核验；strategy_eval/full 对每个模型的首次使用应用同一训练记录及成熟下界。
+评价由 `prepare_evaluation_signals` 准备，无需交易使用核验；strategy_eval/full 的
+`prepare_signals` 在返回前对每个模型的首次实际选中决策应用同一训练记录及成熟下界，
+并检查全部决策满足 `initial_account.ts_us <= decision_ts_us < execution.end_ts_us`。
+准备期间每份预测记录只读取一次，同一模型路径及内容摘要复用已加载模型；每份记录声明的
+模型身份仍须匹配，不能仅按路径复用而忽略不同摘要。Workflow 消费已准备批次，不追加
+模型使用或模拟区间校验；这些约束由准备边界建立，避免同一可信调用链重复读取和核验。
 预测缺失是合法无信号，非法数值或身份错误不是无信号。Threshold/TopK 对缺分数的已有
 持仓和有效委托保留承诺并占用容量；不因缺少评分自动平仓。
 

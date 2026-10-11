@@ -15,6 +15,7 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
+from pytest_mock import MockerFixture
 
 from src import logs
 from src.access import Access, meta
@@ -33,6 +34,7 @@ from src.workflows.backtest import (run_signal_evaluation, run_risk_rule_evaluat
 from src.training.artifact import load
 from src.training.prediction import save_prediction_record
 from src.trading.backtest.market.replay import ReplayMarketInput
+from src.trading.backtest.market import signals
 from src.trading.backtest.context import SignalEvaluationContext
 from src.trading.backtest.reporting.metrics import BacktestMetrics
 from src.trading.backtest.steps.backtest_layers import PredictionGenerationStep
@@ -169,6 +171,27 @@ def scenario(delivery: tuple[PathManager, Path, Mock], tmp_path: Path) -> tuple[
 
 def _metrics(pm: PathManager, name: str) -> dict[str, object]:
     return json.loads(pm.experiment_backtest_metrics(experiment_name=name).read_text())
+
+
+@pytest.mark.parametrize("mode", ["strategy_eval", "full_backtest"])
+def test_trading_preparation_reads_each_prediction_and_model_once(
+    scenario: tuple[PathManager, dict[str, object], Mock], mocker: MockerFixture, mode: str,
+) -> None:
+    pm, fields, _ = scenario
+    if mode == "strategy_eval":
+        del fields["risk"]
+        fields["execution"]["risk_check_ts_us"] = []
+    submission = create_backtest_submission(mode=mode, **fields)
+    read_record = mocker.spy(signals, "read_prediction_record")
+    load_model = mocker.spy(signals, "load_prediction_model")
+    workflow = run_strategy_evaluation if mode == "strategy_eval" else run_full_backtest
+    metrics = BacktestMetrics(mode=submission.mode, parameters=submission.model_dump(mode="json"), not_run={})
+
+    workflow(submission=submission, path_manager=pm,
+             experiment_name=f"backtest_2026-10-11_read-once-{mode}", metrics=metrics)
+
+    read_record.assert_called_once_with(Path(fields["signal"]["prediction_refs"][0]))
+    load_model.assert_called_once()
 
 
 def test_full_pipeline_closes_target_risk_partial_fills_and_expiry(
@@ -845,10 +868,10 @@ def test_fake_live_batch_delivery_reproduces_full_signal_target_risk_and_account
     released_signals: list[int] = []
     def prepare_live(
         signal: SignalInput, *, start: str, end: str, access: Access,
-        pm: PathManager, min_listing_calendar_days: int,
+        pm: PathManager, min_listing_calendar_days: int, start_ts_us: int, end_ts_us: int,
     ) -> dict[int, SignalBatch]:
         batches = prepare_signals(signal, start=start, end=end, access=access, pm=pm,
-                                  min_listing_calendar_days=min_listing_calendar_days)
+            min_listing_calendar_days=min_listing_calendar_days, start_ts_us=start_ts_us, end_ts_us=end_ts_us)
         deliveries = iter(batches.items())
         ready = next(deliveries, None)
         class DeliveredSignals(dict[int, SignalBatch]):
