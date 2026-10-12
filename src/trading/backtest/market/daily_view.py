@@ -76,6 +76,7 @@ class DailyView(MarketDataView):
         self._price_vec = frame[self._price_column].to_numpy(
             dtype=np.float64,
             na_value=np.nan,
+            copy=True,
         )
         self._feature_mat = _float_matrix(frame, self._feature_names)
         self._current_ts: int | None = None
@@ -173,4 +174,4 @@ def _default_ts_us(trade_date: str) -> int:
 def _float_matrix(frame: pd.DataFrame, columns: Sequence[str]) -> np.ndarray:
     if not columns:
         return np.empty((len(frame), 0), dtype=np.float64)
-    return frame.loc[:, list(columns)].to_numpy(dtype=np.float64, na_value=np.nan)
+    return frame.loc[:, list(columns)].to_numpy(dtype=np.float64, na_value=np.nan, copy=True)

@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from decimal import Decimal
 from threading import Lock
+from types import MappingProxyType
 from typing import Literal, NotRequired, Required, TypedDict
 
 from src.trading.core.events import CancelOrders, FillEvent, OrderEvent, OrderIntent
@@ -100,7 +101,7 @@ class ExecutionLedger:
         side: str,
         qty: int,
         order_id: int,
-        meta: Mapping[str, object] | None = None,
+        meta: Mapping[str, object] = MappingProxyType({}),
     ) -> None:
         """Record the submitted quantity and advance the run's identity sequence.
 
@@ -117,7 +118,7 @@ class ExecutionLedger:
                 "side": str(side),
                 "qty": int(qty),
                 "order_id": int(order_id),
-                "meta": dict(meta or {}),
+                "meta": dict(meta),
             }
         )
 
@@ -130,11 +131,15 @@ class ExecutionLedger:
         qty: int,
         order_id: int,
         reason: str,
-        meta: Mapping[str, object] | None = None,
+        meta: Mapping[str, object] = MappingProxyType({}),
     ) -> None:
-        r = (reason or "").strip() or "UNKNOWN"
+        """Record the rejection and count its reason within this run.
 
-        # --- NEW: count reject reason ---
+        Example:
+            ledger.record_order_reject(ts_us=1, symbol="600000", side="BUY",
+                qty=100, order_id=1, reason="insufficient_cash")
+        """
+        r = (reason or "").strip() or "UNKNOWN"
         self._reject_reason_counter[r] += 1
 
         self.records.append(
@@ -146,7 +151,7 @@ class ExecutionLedger:
                 "qty": int(qty),
                 "order_id": int(order_id),
                 "reason": r,
-                "meta": dict(meta or {}),
+                "meta": dict(meta),
             }
         )
 

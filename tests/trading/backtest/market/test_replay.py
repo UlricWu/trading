@@ -25,6 +25,20 @@ def test_starting_after_prior_marks_keeps_the_newest_visible_price() -> None:
     assert [o.observation_id for o in market.observations_at(60_000_000)] == ["bar"]
 
 
+def test_shared_market_marks_cannot_change_between_account_replays() -> None:
+    source = market_input()
+    baseline, treatment = ReplayMarket(source), ReplayMarket(source)
+    baseline.on_time(1)
+
+    with pytest.raises(TypeError):
+        source.marks[0].prices["A"] = Decimal("99")
+
+    treatment.on_time(1)
+    assert baseline.prices == treatment.prices == {"A": Decimal("10")}
+    restored = ReplayMarketInput.model_validate_json(source.model_dump_json(), strict=True)
+    assert restored == source
+
+
 def test_visibility_does_not_depend_on_intermediate_clock_wakeups() -> None:
     one, many = ReplayMarket(market_input()), ReplayMarket(market_input())
     one.on_time(120_000_000)

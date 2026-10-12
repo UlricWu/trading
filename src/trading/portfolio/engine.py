@@ -3,9 +3,21 @@ from __future__ import annotations
 
 import math
 from collections.abc import Collection, Mapping, Sequence
-
+from typing import NamedTuple
 
 from src.trading.core.events import PendingOrder, Side
+
+
+class PortfolioValuation(NamedTuple):
+    """Position market value and an independently owned snapshot of visible marks.
+
+    Example:
+        valuation = PortfolioValuation(market_value=1000.0, mark_prices={"600000": 10.0})
+        equity = 20000.0 + valuation.market_value
+    """
+
+    market_value: float
+    mark_prices: dict[str, float]
 
 
 def make_executable_targets(
@@ -85,8 +97,16 @@ def mark_to_market(
     positions: Mapping[str, int],
     current_raw_prices: Mapping[str, float],
     last_mark_prices: Mapping[str, float],
-) -> tuple[float, dict[str, float]]:
-    """Value current positions with current raw close or prior visible marks."""
+) -> PortfolioValuation:
+    """Value current positions with current raw close or prior visible marks.
+
+    Inputs are read-only; the returned mark map belongs to the caller.
+
+    Example:
+        valuation = mark_to_market(positions={"600000": 100},
+            current_raw_prices={"600000": 10.0}, last_mark_prices={})
+        equity = 20000.0 + valuation.market_value
+    """
     current_prices = {
         str(symbol): price
         for symbol, price in current_raw_prices.items()
@@ -117,7 +137,7 @@ def mark_to_market(
         updated_marks[sym] = float(price)
         market_value += normalized_qty * float(price)
 
-    return float(market_value), updated_marks
+    return PortfolioValuation(float(market_value), updated_marks)
 
 
 def _require_nonnegative_quantity(value: int, *, label: str) -> int:

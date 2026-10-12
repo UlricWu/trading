@@ -226,3 +226,23 @@ def test_reusing_a_model_does_not_hide_a_different_recorded_digest(
         signals.prepare_signals(signal, start="2026-07-03", end="2026-07-06",
             access=access, pm=PathManager(tmp_path), min_listing_calendar_days=120,
             start_ts_us=FIRST_DECISION_TS_US, end_ts_us=LAST_DECISION_TS_US + 1)
+
+
+@pytest.mark.usefixtures("prediction_refs")
+def test_model_batch_owns_features_until_prediction_is_produced(
+    tmp_path: Path, model_ref: Path,
+) -> None:
+    pm = PathManager(tmp_path)
+    model = load(model_ref)
+    features = pd.read_parquet(pm.feature_object(
+        feature_set=model.feature_set, version=model.feature_version, trade_date="2026-07-03",
+    ).payload_path)
+    batch = signals.ModelSignalBatch("2026-07-03", FIRST_DECISION_TS_US, features, model_ref, model)
+
+    features.loc[:, "factor"] = np.nan
+    produced = signals.produce_signal(batch, prediction_dir=tmp_path / "produced")
+
+    assert produced.event.scores == {"000001": 0.5}
+    assert produced.symbols == ("000001", "600000")
+    persisted = pd.read_parquet(produced.prediction_ref)
+    np.testing.assert_array_equal(persisted["prediction"].to_numpy(), [0.5, np.nan])

@@ -36,7 +36,7 @@ class RecordedSignalBatch:
 
 @dataclass(frozen=True, slots=True)
 class ModelSignalBatch:
-    """Only the features belonging to this decision, ready for direct inference.
+    """Own a feature snapshot for one decision, ready for direct inference.
 
     Example:
         batch = ModelSignalBatch("2026-07-03", decision_us, features, model_ref, model)
@@ -47,6 +47,9 @@ class ModelSignalBatch:
     features: pd.DataFrame
     model_ref: Path
     model: InferenceModel
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "features", self.features.copy())
 
 
 SignalBatch = RecordedSignalBatch | ModelSignalBatch
@@ -149,7 +152,7 @@ def _prepare_model_signals(
         features = read_features(pm=pm, feature_set=model.feature_set, version=model.feature_version,
                                  trade_date=day, feature_names=model.feature_names)
         eligible = access.universe(trade_date=day, min_listing_calendar_days=min_listing_calendar_days)
-        features = features.loc[features["symbol"].isin(eligible)].copy()
+        features = features.loc[features["symbol"].isin(eligible)]
         if "decision_ts_utc" in features:
             groups = tuple(features.groupby("decision_ts_utc", sort=True))
         else:
@@ -159,7 +162,7 @@ def _prepare_model_signals(
             timestamp = int(ts_us)
             if frame["symbol"].duplicated().any() or timestamp in signal_inputs_by_ts_us:
                 raise ValueError("signal decisions require unique timestamps and symbols")
-            signal_inputs_by_ts_us[timestamp] = ModelSignalBatch(day, timestamp, frame.copy(), signal.model_ref, model)
+            signal_inputs_by_ts_us[timestamp] = ModelSignalBatch(day, timestamp, frame, signal.model_ref, model)
     if signal_inputs_by_ts_us:
         validate_model_use(model_ref=signal.model_ref, model=model, first_decision_ts_us=min(signal_inputs_by_ts_us))
     return dict(sorted(signal_inputs_by_ts_us.items()))

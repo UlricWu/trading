@@ -4,6 +4,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import MappingProxyType
 
 from src.trading.backtest.commands import OrderCommandSchedule
 from src.trading.backtest.context import BacktestContext
@@ -62,15 +63,16 @@ class AccountingStep:
         """
         state = context.state
         prices = {symbol: float(price) for symbol, price in self.market.prices.items()}
-        value, state.last_mark_prices = mark_to_market(positions=state.portfolio_state.positions,
+        valuation = mark_to_market(positions=state.portfolio_state.positions,
             current_raw_prices=prices, last_mark_prices=state.last_mark_prices)
+        state.last_mark_prices = valuation.mark_prices
         if state.initial_equity is None:
-            state.initial_equity = float(state.portfolio_state.cash) + value
+            state.initial_equity = float(state.portfolio_state.cash) + valuation.market_value
             state.equity_curve.starting_peak_equity = max(
                 state.equity_curve.starting_peak_equity, state.initial_equity,
             )
         state.equity_curve.append(ts_us=context.timing.ts_us,
-            cash=float(state.portfolio_state.cash), market_value=value)
+            cash=float(state.portfolio_state.cash), market_value=valuation.market_value)
         session = self.market.source.session_at(context.timing.ts_us)
         if context.timing.ts_us == session.close_ts_us:
             close_symbols = self.market.daily_close_symbols.get(session.close_ts_us, set())
@@ -93,7 +95,7 @@ class SignalStep:
     _recorded_by_ts_us: dict[int, RecordedSignalBatch] = field(default_factory=dict, init=False)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "signal_inputs_by_ts_us", dict(self.signal_inputs_by_ts_us))
+        object.__setattr__(self, "signal_inputs_by_ts_us", MappingProxyType(dict(self.signal_inputs_by_ts_us)))
 
     def run(self, context: BacktestContext) -> BacktestContext:
         """Produce each prediction once and reuse it across independent account replays.
@@ -187,6 +189,9 @@ class RiskDecisionStep:
     market: ReplayMarket
     quantity_steps: Mapping[str, int]
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "quantity_steps", MappingProxyType(dict(self.quantity_steps)))
+
     def run(self, context: BacktestContext) -> BacktestContext:
         """Record an immutable case before submitting its explicit risk actions.
 
@@ -222,6 +227,9 @@ class SubmitTargetsStep:
     market: ReplayMarket
     windows: Sequence[TradingWindow]
     order_window_minutes: int
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "windows", tuple(self.windows))
 
     def run(self, context: BacktestContext) -> BacktestContext:
         """Reconcile before cancellation so reduced orders retain original terms.

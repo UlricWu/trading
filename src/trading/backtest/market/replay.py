@@ -4,9 +4,10 @@ from __future__ import annotations
 from bisect import bisect_right
 from collections.abc import Mapping
 from decimal import Decimal
-from typing import Literal, Self
+from types import MappingProxyType
+from typing import Annotated, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PlainSerializer, StrictInt, model_validator
 
 from src.trading.backtest.market.data_view import ExecutionObservation
 from src.trading.core.time import TradingWindow
@@ -41,7 +42,7 @@ class ReplaySession(BaseModel):
 
 
 class MarkObservation(BaseModel):
-    """Visible raw valuation prices, separate from execution-volume observations.
+    """Immutable raw valuation prices, separate from execution-volume observations.
 
     Example:
         mark = MarkObservation(ts_us=close_time, trade_date="2026-07-03",
@@ -51,7 +52,10 @@ class MarkObservation(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     ts_us: StrictInt
     trade_date: str
-    prices: dict[str, Decimal]
+    prices: Annotated[
+        Mapping[str, Decimal],
+        PlainSerializer(lambda prices: dict(prices), return_type=dict[str, Decimal]),
+    ]
     kind: Literal["mark", "daily_close"]
 
     @model_validator(mode="after")
@@ -59,6 +63,7 @@ class MarkObservation(BaseModel):
         DateTimeUtils.require_system_date(self.trade_date, field_name="trade_date")
         if any(not price.is_finite() or price <= 0 for price in self.prices.values()):
             raise ValueError("raw marks must be finite and positive")
+        object.__setattr__(self, "prices", MappingProxyType(dict(self.prices)))
         return self
 
 
@@ -98,9 +103,7 @@ class ReplayMarketInput(BaseModel):
             if keys & seen_marks:
                 raise ValueError("each symbol requires one unambiguous mark at a timestamp")
             seen_marks.update(keys)
-            if mark.kind == "daily_close" and (
-                mark.trade_date not in sessions or mark.ts_us != sessions[mark.trade_date].close_ts_us
-            ):
+            if mark.kind == "daily_close" and mark.ts_us != session.close_ts_us:
                 raise ValueError("daily_close marks must be available at the declared session close")
         for observation in self.observations:
             bar = observation.time

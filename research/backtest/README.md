@@ -360,7 +360,7 @@ full 组装的是同一账户反馈闭环内的组件，不是依次启动其他
 | [metrics persist](../../src/trading/backtest/steps/metrics_persist.py) 总是写入全部五类结果 | “有指标字段”会掩盖实际只使用了理想执行或空风控 |
 | [SettlementEngine](../../src/trading/backtest/execution/settlement.py) 在账户处理成交后无条件追加账本，账户内单独去重 | 重复处理同一成交时，持仓与账本可能不一致；H03 的唯一结算入口须覆盖全部副作用 |
 | [SignalStep](../../src/trading/backtest/steps/backtest_layers.py) 按日期生成预测文件名；[汇总](../../src/training/evaluation.py) 以观察条数填充 date_count | 同日多次决策须区分记录身份、决策次数与交易日数，不能直接沿用日频消费假设 |
-| [PerformanceReport](../../src/trading/reporting/performance.py) 对相邻事件权益计算收益，调用侧固定年化因子；[EquityCurve](../../src/trading/core/equity.py) 每次 append 扫描历史回撤 | 增加无变化唤醒也能改变 Sharpe；分钟路径还需增量维护权益统计，不能把事件数量当作等间隔报告样本 |
+| [PerformanceReport](https://github.com/UlricWu/trading/blob/76c25a279685b6961cda69143f542e8ec3936f51/src/trading/reporting/performance.py) 对相邻事件权益计算收益，调用侧固定年化因子；[EquityCurve](../../src/trading/core/equity.py) 每次 append 扫描历史回撤 | 增加无变化唤醒也能改变 Sharpe；分钟路径还需增量维护权益统计，不能把事件数量当作等间隔报告样本 |
 | `SignalStep` 每次预测调用 `on_trading_day_start`，后者无条件清空 `buy_qty_today` | 直接扩展为同日多次信号会重置当日可卖限制；日切必须由交易日程拥有，初始快照和同日后续唤醒均不得清空它 |
 | `IdealExecution` 自行调用 `PortfolioState.apply_fill` 并写 ledger，没有经过结算，也不约束资金或 T+1 | 不能把它直接当作新 tradable 的参考执行；应只替换价格处理，三种交易流程共用接纳、占用和结算 |
 | `BehaviorReport` 与 `execution_quality_frame` 均以 fill 条数除以 submit 条数 | 一笔订单分两次成交会被报为 200%；新报告须按 order_id 和累计数量汇总，原目标差量不能代替冻结订单数量 |
@@ -1721,7 +1721,7 @@ OHLC 一并暴露给开盘决策。由日线推导的结果必须标明成交假
 | [ReplayClock](../../src/trading/backtest/clock.py) | 能遍历显式给出的时间戳，不要求固定间隔；当前 from_data_view 只取得 bar 时间，尚未合并交易日程 |
 | [BacktestTiming](../../src/trading/backtest/timing.py) | 目前只有 signal_date/forward_date，须落实 H03 的时点与到期动作；标签日期不能继续充当交易时钟 |
 | [SignalStep](../../src/trading/backtest/steps/backtest_layers.py) | 当前读取日频对象、构造 DailyView、要求单个交易 bar，并按日期保存预测；分钟决策需按决策时点保存事实，消费与汇总修正见 H02 的评价采样章节 |
-| [MinuteFeatureDataView](../../src/trading/backtest/market/minute_feature_view.py) | 已有分钟特征/价格矩阵与 on_time 查询；默认时间列为 ts_utc，并按输入时间戳暴露对应行，不能据此保证完整分钟结束前不可见 |
+| [MinuteFeatureDataView](https://github.com/UlricWu/trading/blob/76c25a279685b6961cda69143f542e8ec3936f51/src/trading/market/minute_feature_view.py) | 已有分钟特征/价格矩阵与 on_time 查询；默认时间列为 ts_utc，并按输入时间戳暴露对应行，不能据此保证完整分钟结束前不可见 |
 | [分钟事实 owner](../../docs/data/level2_minute_contract.md#分钟身份与稀疏关系) | 正式数据是 minute_start_ts_utc 加 phase 的稀疏成交事实，当前不定义 Feature/Label；不能仅替换 DataView 类就假装完成 schema、可用时刻、数量单位和模型输入接线 |
 
 分钟路径的数据读取按日或必要窗口组织，不以全区间的稠密特征立方体作为必须的公共

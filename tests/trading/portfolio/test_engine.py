@@ -3,7 +3,11 @@
 
 from __future__ import annotations
 
-from src.trading.portfolio.engine import make_executable_targets
+from collections.abc import Mapping
+
+import pytest
+
+from src.trading.portfolio.engine import make_executable_targets, mark_to_market
 
 
 def test_skipped_holdings_are_unchanged_and_occupy_target_capacity() -> None:
@@ -36,3 +40,24 @@ def test_missing_score_preserves_a_pending_full_exit_as_an_explicit_zero_target(
     pending = PendingOrder(order, 100, Decimal(0), 100, Decimal(10))
     assert make_executable_targets(raw_targets={}, positions={'A': 100}, current_raw_prices={'A': 10},
         hold_symbols=('A',), pending_orders=(pending,)) == {'A': 0}
+
+
+def test_valuation_uses_visible_prices_and_returns_owned_marks() -> None:
+    positions = {"A": 100, "B": 200}
+    current = {"A": 11.0}
+    prior = {"A": 10.0, "B": 20.0, "C": 30.0}
+
+    valuation = mark_to_market(positions=positions, current_raw_prices=current, last_mark_prices=prior)
+
+    assert valuation.market_value == 5100.0
+    assert valuation.mark_prices == {"A": 11.0, "B": 20.0, "C": 30.0}
+    valuation.mark_prices["B"] = 99.0
+    assert prior == {"A": 10.0, "B": 20.0, "C": 30.0}
+    assert current == {"A": 11.0}
+    assert positions == {"A": 100, "B": 200}
+
+
+@pytest.mark.parametrize("prices", [{}, {"A": 0.0}, {"A": float("nan")}])
+def test_valuation_does_not_replace_invalid_or_missing_marks_with_zero(prices: Mapping[str, float]) -> None:
+    with pytest.raises(RuntimeError, match="held symbol=A"):
+        mark_to_market(positions={"A": 100}, current_raw_prices=prices, last_mark_prices={})
