@@ -2,15 +2,14 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
-from pathlib import Path
+from dataclasses import dataclass, replace
 from types import MappingProxyType
 
 from src.trading.backtest.commands import OrderCommandSchedule
 from src.trading.backtest.context import BacktestContext
 from src.trading.backtest.execution.fake import FakeExecution
 from src.trading.backtest.market.replay import ReplayMarket
-from src.trading.backtest.market.signals import RecordedSignalBatch, SignalBatch, produce_signal
+from src.trading.backtest.market.signals import ReplaySignal
 from src.trading.core.events import OrderIntent, OrderTerms, Side, TargetEvent
 from src.trading.core.time import TradingWindow, advance_trading_minutes
 from src.trading.portfolio.constructors.base import PortfolioConstructor
@@ -87,30 +86,23 @@ class SignalStep:
     """Consume only the source batch belonging to the current decision.
 
     Example:
-        context = SignalStep(signal_inputs_by_ts_us, prediction_dir).run(context)
+        context = SignalStep(signal=signal).run(context)
     """
 
-    signal_inputs_by_ts_us: Mapping[int, SignalBatch]
-    prediction_dir: Path
-    _recorded_by_ts_us: dict[int, RecordedSignalBatch] = field(default_factory=dict, init=False)
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "signal_inputs_by_ts_us", MappingProxyType(dict(self.signal_inputs_by_ts_us)))
+    signal: ReplaySignal
 
     def run(self, context: BacktestContext) -> BacktestContext:
-        """Produce each prediction once and reuse it across independent account replays.
+        """Record the shared prediction in this account's own signal history.
 
         Example:
             context = step.run(context)
         """
-        batch = self.signal_inputs_by_ts_us.get(context.timing.ts_us)
+        batch = self.signal.at(context.timing.ts_us)
         if batch is not None:
-            if context.timing.ts_us not in self._recorded_by_ts_us:
-                self._recorded_by_ts_us[context.timing.ts_us] = produce_signal(batch, prediction_dir=self.prediction_dir)
-            context.signal = self._recorded_by_ts_us[context.timing.ts_us]
-            context.state.signal_tape.append(context.signal.event)
-            context.state.prediction_refs.append(context.signal.prediction_ref)
-            context.state.decision_dates[context.timing.ts_us] = context.signal.trade_date
+            context.signal = batch
+            context.state.signal_tape.append(batch.event)
+            context.state.prediction_refs.append(batch.prediction_ref)
+            context.state.decision_dates[context.timing.ts_us] = batch.trade_date
         return context
 
 
@@ -212,6 +204,30 @@ class RiskDecisionStep:
         context.execution_target = (TargetEvent(context.timing.ts_us, decision.adjusted)
                                     if decision.adjusted is not None else None)
         context.cancel_order_ids = decision.cancel_order_ids
+        return context
+
+
+class RiskOutcomeStep:
+    """Attach settled account facts to the current risk decision.
+
+    Example:
+        context = RiskOutcomeStep().run(context)
+    """
+
+    def run(self, context: BacktestContext) -> BacktestContext:
+        """Capture the account after submission and its final same-tick valuation.
+
+        Example:
+            context = RiskOutcomeStep().run(context)
+        """
+        state = context.state
+        observation = state.risk_observations[-1]
+        equity = state.equity_curve.points[-1]
+        outcome = replace(observation.case.context,
+            equity=equity.equity, cash=float(state.portfolio_state.cash),
+            peak_equity=equity.peak_equity, positions=state.portfolio_state.positions,
+            pending_orders=tuple(state.pending_orders.values()))
+        state.risk_observations[-1] = replace(observation, outcome=outcome)
         return context
 
 

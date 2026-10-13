@@ -4,9 +4,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import cast
 
-from src.trading.backtest.context import BacktestResultContext, RiskComparisonContext
-from src.trading.backtest.evaluation import PortfolioEvaluation, evaluate_execution, evaluate_portfolio, evaluate_risk, evaluate_signals
-from src.trading.backtest.reporting.metrics import AccountResult, RiskComparison
+from src.config.backtest_config import RiskConfig
+from src.trading.backtest.context import BacktestResultContext
+from src.trading.backtest.evaluation import evaluate_execution, evaluate_portfolio, evaluate_risk, evaluate_signals
+from src.trading.backtest.reporting.metrics import AccountResult
+from src.trading.backtest.risk_effectiveness import evaluate_risk_effectiveness
 from src.training.evaluation import evaluate_prediction_records
 from src.utils.path import PathManager
 
@@ -38,10 +40,10 @@ class RiskMetricsStep:
     """Summarize rule observations from the completed trading path.
 
     Example:
-        context = RiskMetricsStep(configured_rules=("max_single_name",)).run(context)
+        context = RiskMetricsStep(config=risk_config).run(context)
     """
 
-    configured_rules: tuple[str, ...]
+    config: RiskConfig
 
     def run(self, context: BacktestResultContext) -> BacktestResultContext:
         """Preserve checked, triggered and undefined results without reapplying risk.
@@ -49,7 +51,10 @@ class RiskMetricsStep:
         Example:
             context = step.run(context)
         """
-        context.metrics.risk_eval = evaluate_risk(context.risk_observations, configured_rules=self.configured_rules)
+        context.metrics.risk_eval = evaluate_risk(context.risk_observations,
+            configured_rules=tuple(rule.type for rule in self.config.rules))
+        context.metrics.risk_effectiveness = evaluate_risk_effectiveness(context.risk_observations,
+            config=self.config, ledger=context.state.execution_ledger)
         return context
 
 
@@ -113,33 +118,4 @@ class BacktestSummaryStep:
             average_cost=account.avg_cost, trade_date=cast(str, account.current_day),
             equity=state.equity_curve.points[-1].equity, pending_order_ids=tuple(state.pending_orders))
         context.metrics.prediction_refs = tuple(str(ref) for ref in state.prediction_refs)
-        return context
-
-
-class RiskComparisonStep:
-    """Compare completed portfolios without reapplying rules or sharing account state.
-
-    Example:
-        context = RiskComparisonStep().run(context)
-    """
-
-    def run(self, context: RiskComparisonContext) -> RiskComparisonContext:
-        """Preserve both results and signed differences, including undefined returns.
-
-        Example:
-            context = step.run(context)
-        """
-        baseline = cast(PortfolioEvaluation, context.without_risk.portfolio)
-        treatment = cast(PortfolioEvaluation, context.with_risk.portfolio)
-        context.metrics.risk_comparison = RiskComparison(
-            without_risk=baseline, with_risk=treatment,
-            net_profit_delta=treatment.net_profit - baseline.net_profit,
-            total_return_delta=(None if treatment.total_return is None or baseline.total_return is None
-                                else treatment.total_return - baseline.total_return),
-            max_drawdown_delta=treatment.max_drawdown - baseline.max_drawdown,
-            total_fees_delta=treatment.total_fees - baseline.total_fees,
-            turnover_delta=(None if treatment.turnover is None or baseline.turnover is None
-                            else treatment.turnover - baseline.turnover),
-        )
-        context.metrics.prediction_refs = context.with_risk.prediction_refs
         return context

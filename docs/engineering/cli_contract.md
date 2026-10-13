@@ -258,8 +258,8 @@ quoted 或 limit_price 时必须提供完整 strategy.quote；reference 时 quot
 execution_eval 的报价取自冻结委托，不接受 strategy。
 
 signal_eval/strategy_eval 不接受 risk；risk_rule_eval/full_backtest 必须提供非空 rules。
-只有 risk/full 可提供非空 risk_check_ts_us 整数数组，省略为空。risk 比较两条完整策略路径，
-不再接收 case_refs，也不在无风控基线中绕过账户约束。缺少规则或成交模型是非法请求，
+只有 risk/full 可提供非空 risk_check_ts_us 整数数组，省略为空。risk 对一个场景执行一次
+带指定风控的完整账户回放，评价控制动作及实际剩余风险；不接收 case_refs 或隐式生成比较基线。缺少规则或成交模型是非法请求，
 不能解释为自动关闭能力。
 
 strategy.params 只允许与 type 对应的结构：

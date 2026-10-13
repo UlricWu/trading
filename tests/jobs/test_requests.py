@@ -540,7 +540,7 @@ def test_backtest_rejects_fill_models_outside_the_declared_mode_contract(
         parse_job_request(payload)
 
 
-def test_risk_comparison_rejects_archived_case_inputs(
+def test_risk_effectiveness_rejects_archived_case_inputs(
     backtest_payload: Callable[[str], dict[str, object]],
 ) -> None:
     payload = backtest_payload('risk_rule_eval')

@@ -5,7 +5,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from src.trading.backtest.context import BacktestResultContext, RiskComparisonContext
+from src.trading.backtest.context import BacktestResultContext
 from src.trading.backtest.reporting.metrics import BacktestMetrics
 from src.utils.filesystem import FileSystem
 
@@ -17,9 +17,7 @@ def persist_backtest_metrics(*, metrics: BacktestMetrics, output_dir: Path) -> N
         persist_backtest_metrics(metrics=metrics, output_dir=output_dir)
     """
     payload = metrics.model_dump(mode="json")
-    if metrics.final_account is None:
-        del payload["applied_risk"]
-    for name in ("signal_eval", "risk_eval", "execution_eval", "portfolio", "final_account", "risk_comparison"):
+    for name in ("signal_eval", "risk_eval", "execution_eval", "portfolio", "final_account", "risk_effectiveness"):
         if payload[name] is None:
             del payload[name]
     FileSystem.write_bytes_atomic(output_dir / "metrics.json",
@@ -36,9 +34,7 @@ class MetricsPersistStep:
 
     output_dir: Path
 
-    def run[ContextT: RiskComparisonContext | BacktestResultContext](
-        self, context: ContextT,
-    ) -> ContextT:
+    def run(self, context: BacktestResultContext) -> BacktestResultContext:
         """Atomically persist the current results and propagate write failures.
 
         Example:

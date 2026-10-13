@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from src.trading.backtest.context import BacktestResultContext, RiskComparisonContext
+from src.trading.backtest.context import BacktestResultContext
 from src.trading.backtest.reporting.bundle import ReportingBundle
 
 
@@ -17,9 +17,7 @@ class ReportStep:
 
     bundle: ReportingBundle
 
-    def run[ContextT: RiskComparisonContext | BacktestResultContext](
-        self, context: ContextT,
-    ) -> ContextT:
+    def run(self, context: BacktestResultContext) -> BacktestResultContext:
         """Publish HTML and its concise summary, retaining report failures as failures.
 
         Example:

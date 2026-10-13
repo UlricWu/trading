@@ -76,7 +76,7 @@ Collection Variables 中的 `testBaseUrl` 或 `trainingBaseUrl`。训练文件�
 其 Health 的 `environment` 为 `dev`；“训练”只表示客户端文件夹用途。这些客户端预设不改变上述正式部署端口、
 服务启动配置或服务端 `ENV`，目标地址必须已有服务监听或端口映射。
 
-Collection 覆盖全部 5 个路由，包含 Standard 数据、Level-2 数据、训练、信号账户评价及完整策略风控对照
+Collection 覆盖全部 5 个路由，包含 Standard 数据、Level-2 数据、训练、信号账户评价及风控有效性评价
 回测请求示例，每个环境 9 个请求，共 18 个请求。数据与信号日期范围，以及
 训练的 `trainingStart`、`trainingEnd`、`trainingEvalRangeJson`、`trainingModel`、
 `trainingFeatureGroup`、`trainingLabelGroup` 在 Collection Variables 中设置；评价范围
@@ -160,7 +160,7 @@ CLI-only 的 `data-calendar`、`data-standard-bootstrap`、`data-level2-minute-b
     risk/full 在这些字段基础上另须 risk；execution 使用 start/end/order_refs/initial_account/execution。
     四种含 signal 的请求必须在顶层提供 min_listing_calendar_days；execution 不接受该字段。
     execution.fill 显式声明 quoted、reference 或 limit_price，构造约束沿用 CLI schema。
-    risk_rule_eval 在一个 Job 内执行无业务风控与指定风控两条完整策略路径。
+    risk_rule_eval 在一个 Job 内执行一次带指定风控的账户回放，评价控制效果与剩余风险。
   - 日期使用规范 YYYY-MM-DD 且 start<=end；risk 的日期选择信号决策，不能用案例文件代替。
   - 每个请求只创建一个 Job；路径、数值和嵌套结构先由共享构造边界校验。
 
@@ -259,14 +259,14 @@ CLI-only 的 `data-calendar`、`data-standard-bootstrap`、`data-level2-minute-b
 将此例的 execution.fill 改为 `{"type":"reference"}`，并移除 strategy.quote，可选择参考成交。
 将 fill 改为 `{"type":"quoted"}` 且保留 quote，可选择生效时按申报价全额成交。
 
-完整策略风控对照沿用上面的完整策略请求，将 mode 改为 risk_rule_eval，添加：
+风控有效性评价沿用上面的完整策略请求，将 mode 改为 risk_rule_eval，添加：
 
 ```json
 {"risk": {"rules": [{"type": "max_single_name", "max_ratio": 0.2}]}}
 ```
 
-0.2 是演示参数。其余信号、策略、账户及成交参数在两条路径间保持相同，任务内部独立
-计算无风控与指定风控的账户结果。根报告给出对照，子报告保留各自的交易事实与完整指标；
+0.2 是演示参数。信号、策略、账户、风控和成交参数共同声明一个场景；根报告保存该账户
+的控制动作、实际暴露、剩余风险、执行事实与组合指标，不自动运行无风控基线；
 固定案例回归使用领域 RiskCases API，不作为 HTTP 的另一种 risk_rule_eval 输入。
 
 成功固定返回：
@@ -308,7 +308,7 @@ job_id, kind, scope, status, submitted_at, started_at, finished_at
 {"start": "YYYY-MM-DD", "end": "YYYY-MM-DD"}
 ```
 
-risk_rule_eval 的两条回放属于同一 Job，scope 使用请求的信号决策日期范围。
+risk_rule_eval 的一个场景对应一个 Job，scope 使用请求的信号决策日期范围。
 
 三个时间字段使用带 `Asia/Shanghai` UTC offset、包含微秒的 ISO 8601 字符串。
 `started_at` 和 `finished_at` 在尚未发生对应事件时为 `null`。不得公开 command、PID、

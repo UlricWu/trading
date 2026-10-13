@@ -37,7 +37,7 @@ class ReportingBundle:
         if metrics.signal_eval is not None:
             sections.append(("信号评价", metrics.signal_eval.model_dump(exclude={"observations", "daily_ic"})))
         if metrics.risk_eval is not None:
-            sections.append(("风控评价", metrics.risk_eval.model_dump(exclude={"observations"})))
+            sections.append(("风控规则覆盖", metrics.risk_eval.model_dump(exclude={"observations"})))
         if metrics.execution_eval is not None:
             sections.append(("成交评价", metrics.execution_eval.model_dump(mode="json", exclude={"orders"})))
         if metrics.portfolio is not None:
@@ -49,36 +49,32 @@ class ReportingBundle:
         sections.append(("运行参数", metrics.parameters))
         body = "\n".join(f"<section><h2>{escape(title)}</h2><pre>{escape(json.dumps(value, ensure_ascii=False, indent=2, allow_nan=False))}</pre></section>"
                          for title, value in sections)
-        if metrics.risk_comparison is not None:
-            comparison = metrics.risk_comparison
+        if metrics.risk_effectiveness is not None:
+            effectiveness = metrics.risk_effectiveness
             rows = []
-            for label, field, difference in (
-                ("净利润", "net_profit", comparison.net_profit_delta),
-                ("收益率", "total_return", comparison.total_return_delta),
-                ("最大回撤", "max_drawdown", comparison.max_drawdown_delta),
-                ("费用", "total_fees", comparison.total_fees_delta),
-                ("换手率", "turnover", comparison.turnover_delta),
-            ):
-                before = getattr(comparison.without_risk, field)
-                after = getattr(comparison.with_risk, field)
-                values = []
-                for index, value in enumerate((before, after, difference)):
-                    if value is None:
-                        values.append("无值")
-                        continue
-                    sign = "+" if index == 2 else ""
-                    if field in ("total_return", "max_drawdown", "turnover"):
-                        values.append(format(value, f"{sign}.4%"))
-                    else:
-                        values.append(format(value, f"{sign},.2f"))
-                rows.append(f"<tr><th>{label}</th>" + "".join(f"<td>{escape(value)}</td>" for value in values) + "</tr>")
-            body = ('<section><h2>有／无风控对照</h2><p>同一信号、策略、初始账户及成交假设；'
-                    '两条路径独立推进。差值为有风控减去无风控，回撤差值为负表示回撤减小。'
-                    '收益差异不能单独证明规则正确。</p><table><thead><tr><th>指标</th>'
-                    '<th>无业务风控</th><th>指定风控</th><th>差值</th></tr></thead><tbody>'
-                    + "".join(rows) + '</tbody></table><p>完整指标、账户及交易明细：'
-                    '<a href="without_risk/report.html">无业务风控</a> · '
-                    '<a href="with_risk/report.html">指定风控</a></p></section>' + body)
+            for result in effectiveness.rules:
+                amounts = ["无值" if value is None else f"{value:,.2f}" for value in (
+                    result.max_required_reduction_notional, result.max_residual_reduction_notional,
+                    result.final_residual_reduction_notional)]
+                duration = ("无值" if result.sampled_breach_duration_us is None
+                            else f"{result.sampled_breach_duration_us / 1_000_000:,.2f}")
+                values = (result.rule.model_dump_json(), f"{result.defined_count}/{result.sample_count}",
+                          str(result.observed_breach_count), str(result.residual_breach_count), *amounts, duration)
+                rows.append("<tr>" + "".join(f"<td>{escape(value)}</td>" for value in values) + "</tr>")
+            diagnostics = json.dumps(effectiveness.execution_reason_counts, ensure_ascii=False, indent=2)
+            body = ('<section><h2>风控有效性：目标与实际账户</h2>'
+                    '<p>暴露包含持仓和未成交买入承诺；未成交卖单不能抵扣持仓。'
+                    '回撤阈值触发清仓，残余金额表示尚未消除的暴露，不保证亏损止于阈值。'
+                    '有定义、未超限或未触发均不等于通过全部风控验证。</p>'
+                    '<table><thead><tr><th>配置目标</th><th>有定义/观察数</th><th>检查前超限次数</th>'
+                    '<th>执行后残余次数</th><th>检查前最大待减金额</th><th>执行后最大残余金额</th>'
+                    '<th>期末残余金额</th><th>采样超限时长（秒）</th></tr></thead><tbody>'
+                    + "".join(rows) + '</tbody></table>'
+                    '<p>时长按左端样本累计至下一个有定义观察，包含跨日间隔，期末不外推；'
+                    '不证明连续超限或精确响应时延。逐时点前后风险、无定义原因见 metrics.json。</p>'
+                    '<h3>本账户执行原因</h3><pre>' + escape(diagnostics) + '</pre>'
+                    '<p>按原始执行事件计数，可关联委托与成交事实追查；不是风控因果归因。'
+                    '本账户费用、换手和收益是运行背景，不表示风控增量成本。</p></section>' + body)
         if metrics.final_account is not None:
             body += ('<p>交易明细：<a href="orders.json">委托</a> · '
                      '<a href="execution.parquet">成交与费用</a> · '
@@ -119,11 +115,12 @@ class ReportingBundle:
                 lines.append("风控无样本")
             for name, coverage in risk.rule_coverage.items():
                 lines.append(f"规则 {name}：检查 {coverage.checked} 次；触发 {coverage.triggered} 次")
-        if metrics.risk_comparison is not None:
-            comparison = metrics.risk_comparison
-            lines.append(f"风控对照净利润：无风控 {comparison.without_risk.net_profit:+,.2f} 元；"
-                         f"有风控 {comparison.with_risk.net_profit:+,.2f} 元；差值 {comparison.net_profit_delta:+,.2f} 元")
-            lines.append(f"最大回撤差值（有－无）：{comparison.max_drawdown_delta:+.4%}")
+        if metrics.risk_effectiveness is not None:
+            for result in metrics.risk_effectiveness.rules:
+                residual = result.final_residual_reduction_notional
+                amount = "无值" if residual is None else f"{residual:,.2f} 元"
+                lines.append(f"控制目标 {result.rule.model_dump_json()}：期末残余 {amount}；"
+                             f"执行后有残余 {result.residual_breach_count}/{result.sample_count} 次")
         if metrics.not_run:
             lines.append(f"未运行能力：{json.dumps(metrics.not_run, ensure_ascii=False)}")
         lines.append(f"制品目录：{output.parent}；详细观察：metrics.json；报告：report.html")

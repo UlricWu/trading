@@ -251,7 +251,7 @@ Meta 必须在实际部署迁移前单独确认。
 `experiments/` 保存一次研究运行的当前正式现场。当前只有彼此独立的 training experiment
 和 backtest experiment，不定义 train-to-backtest 组合 experiment。
 
-Training 使用下述 training/report 子目录；backtest 的单账户结果在实验根目录，风控对照的两条账户结果各有子目录。
+Training 使用下述 training/report 子目录；五种 backtest 模式均在实验根目录保存单账户结果。
 子目录按实际产物创建，不要求空目录。Experiment name 的生成规则由
 `docs/offline_workflow_contract.md` 拥有；PathManager 只校验生成后的名称并返回完整路径。
 
@@ -309,7 +309,7 @@ feature_sha256、trade_date、decision_ts_us。模型摘要对完整文件字节
 Metrics 与 HTML 在模型交付后分别原子写入，不组成多文件事务。它们缺失或失败不表示
 模型不可恢复；模型可加载也不表示评价、报告或整个 workflow 成功。
 
-单账户 backtest experiment 按实际能力保留：
+五种 backtest 模式的 experiment 按实际能力保留：
 
 ```text
 experiments/<experiment_name>/
@@ -323,25 +323,15 @@ experiments/<experiment_name>/
 └── report.html
 ```
 
-risk_rule_eval 的两条账户路径使用相同事实文件名，分别放入 without_risk 与 with_risk：
-
-```text
-experiments/<experiment_name>/
-├── predictions/<YYYY-MM-DD>/<ts_us>.parquet  # 两条路径共用本次产生的预测
-├── without_risk/                           # orders、targets、execution、equity、metrics、report
-├── with_risk/                              # 同上，另含实际产生的 risk-cases.json
-├── metrics.json                            # 两份组合指标及有风控减去无风控的差值
-└── report.html                             # 对照表及两份子报告链接
-```
-
-根对照没有第三条交易路径，不写根 orders/execution/equity。每条路径自己的 metrics
-保存预测引用、完整账户指标及 applied_risk；根 parameters 保存同一原始请求。无风控路径
-的 applied_risk 为 null，有风控路径保存实际规则，避免把原请求中的 risk 误认为两者都已应用。
+risk_rule_eval 与其他模式使用同一布局；metrics 保存本账户的原始请求、预测引用、
+完整评价和 applied_risk，风控有效性放在 risk_effectiveness 中，字段语义由
+[Offline 工作流](../offline_workflow_contract.md#风控有效性评价)拥有。无业务风控时
+applied_risk 为 null；risk/full 保存实际规则。不生成隐式基线目录或根对照结果。
 
 五种回测统一使用 `backtest_{today}_{experiment_id}`，today 为 CLI 完成请求解析和配置加载后的
 Asia/Shanghai 当天日期，格式为 `YYYY-MM-DD`；日期采样与唯一 ID 责任由
 [Offline 工作流](../offline_workflow_contract.md#共同边界)定义。目录不包含回测日期范围或
-模式前缀，也不增加重复 backtest/report 子目录。只有风控对照按账户路径分子目录；
+模式前缀，也不增加重复 backtest/report 子目录；
 各模式只生成实际能力的制品，mode 和日期范围保存在 metrics 的 parameters 中。固定预测输入保留外部引用，不无条件复制。
 同日多次推理按 UTC epoch 微秒 ts_us 区分，预测 schema 与训练相同，不写回 training。
 

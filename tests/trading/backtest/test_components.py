@@ -9,9 +9,12 @@ from pydantic import ValidationError
 
 from src.access import Access
 from src.config.backtest_config import FakeExecutionConfig, FeeConfig, InitialAccount, LimitPriceFillConfig
-from src.trading.backtest.components import prepare_market_input
+from src.jobs.requests import RiskRuleEvalSubmission
+from src.trading.backtest.components import build_signal_account_components, prepare_market_input, prepare_signal
 from src.trading.backtest.market.replay import ReplayMarketInput
+from src.trading.backtest.reporting.metrics import BacktestMetrics
 from src.trading.execution.policies.constraints import QuantityRules
+from src.utils.path import PathManager
 
 
 @pytest.fixture
@@ -170,3 +173,46 @@ def test_prepare_market_input_preserves_calendar_failure(
     with pytest.raises(RuntimeError) as caught:
         prepare_market_input(config=config, initial=initial, access=access)
     assert caught.value is error
+
+
+def test_signal_account_factory_shares_predictions_but_isolates_account_progress(
+    market_scenario: tuple[FakeExecutionConfig, InitialAccount, Mock], tmp_path: Path,
+) -> None:
+    config, initial, access = market_scenario
+    source = prepare_market_input(config=config, initial=initial, access=access)
+    submission = RiskRuleEvalSubmission(
+        mode="risk_rule_eval", start="2026-07-03", end="2026-07-03",
+        signal={"type": "recorded", "prediction_refs": ()}, min_listing_calendar_days=0,
+        strategy={"type": "threshold", "params": {"threshold": 0.5, "target_quantity": 100},
+                  "order_window_minutes": 2, "quote": {"buy_offset_bp": 0, "sell_offset_bp": 0}},
+        initial_account=initial, execution=config,
+        risk={"rules": [{"type": "max_single_name", "max_ratio": 0.2}]},
+    )
+    signal = prepare_signal(submission=submission, access=access, pm=PathManager(tmp_path),
+        experiment_name="backtest_2026-10-12_components")
+    parameters = submission.model_dump(mode="json")
+    baseline_metrics = BacktestMetrics(mode=submission.mode, parameters=parameters, not_run={})
+    treatment_metrics = BacktestMetrics(mode=submission.mode, parameters=parameters, not_run={})
+    baseline = build_signal_account_components(submission=submission, market_source=source,
+        signal=signal, risk=None, metrics=baseline_metrics)
+    treatment = build_signal_account_components(submission=submission, market_source=source,
+        signal=signal, risk=submission.risk, metrics=treatment_metrics)
+
+    baseline.execution.portfolio.cash -= 100
+    baseline.market.on_time(initial.ts_us)
+    assert next(iter(baseline.clock)) == initial.ts_us
+
+    assert baseline.state.portfolio_state.cash == 900
+    assert treatment.state.portfolio_state.cash == treatment.execution.portfolio.cash == initial.cash == 1000
+    assert baseline.market.prices == {"A": Decimal("10"), "B": Decimal("20")}
+    assert treatment.market.prices == {}
+    assert baseline.clock.first() == 60_000_000
+    assert treatment.clock.first() == initial.ts_us
+    assert baseline.signal is treatment.signal is signal
+    assert baseline.constructor is not treatment.constructor
+    assert baseline.risk is None
+    assert treatment.risk is not None
+    assert baseline_metrics.applied_risk is None
+    assert baseline_metrics.not_run == {"risk": "no_business_risk"}
+    assert treatment_metrics.applied_risk == submission.risk
+    assert treatment_metrics.not_run == {}

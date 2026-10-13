@@ -17,19 +17,6 @@ from src.trading.risk.evaluation import RiskObservation
 
 
 @dataclass(slots=True)
-class RiskComparisonContext:
-    """Completed independent account results for a matched risk comparison.
-
-    Example:
-        context = RiskComparisonContext(without_risk=baseline, with_risk=treatment, metrics=metrics)
-    """
-
-    without_risk: BacktestMetrics
-    with_risk: BacktestMetrics
-    metrics: BacktestMetrics
-
-
-@dataclass(slots=True)
 class BacktestState:
     """Run-owned trading facts; no future labels or accumulated evaluation frames.
 

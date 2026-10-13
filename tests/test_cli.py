@@ -501,9 +501,12 @@ def test_backtest_preserves_run_date_and_logged_parameters_in_the_persisted_resu
     metrics = json.loads((root / 'metrics.json').read_text())
     assert metrics["parameters"] == _logged_parameters(backtest_log, experiment_name=name)
     assert "backtest_config" not in metrics['parameters']
-    assert metrics['risk_comparison']['net_profit_delta'] == 0
+    assert metrics['portfolio']['net_profit'] == 0
+    assert metrics['risk_effectiveness']['rules'][0]['final_residual_reduction_notional'] == 0
+    assert 'risk_comparison' not in metrics
     assert (root / 'report.html').is_file()
-    assert (root / 'without_risk/report.html').is_file() and (root / 'with_risk/report.html').is_file()
+    assert (root / 'risk-cases.json').is_file() and (root / 'execution.parquet').is_file()
+    assert not (root / 'without_risk').exists() and not (root / 'with_risk').exists()
 
 
 @pytest.mark.parametrize(("old_mode", "mode"), [

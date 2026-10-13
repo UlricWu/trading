@@ -318,7 +318,7 @@ class SignalEvalSubmission(BaseModel):
 
 
 class RiskRuleEvalSubmission(BaseModel):
-    """Compare full strategy replays with and without the selected business risk.
+    """Evaluate declared risk controls on one strategy and account replay.
 
     Example:
         submission = RiskRuleEvalSubmission(mode="risk_rule_eval", start="2026-07-03",
@@ -339,7 +339,7 @@ class RiskRuleEvalSubmission(BaseModel):
     kind: Literal["backtest"] = "backtest"
 
     @model_validator(mode="after")
-    def _validate_comparison(self) -> Self:
+    def _validate_scenario(self) -> Self:
         _require_range(self.start, self.end)
         _require_strategy_execution(self.strategy, self.execution)
         if self.initial_account.ts_us >= self.execution.end_ts_us:

@@ -1,9 +1,11 @@
 # filepath: src/trading/backtest/market/signals.py
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from datetime import date, time
 from pathlib import Path
+from types import MappingProxyType
 
 import numpy as np
 import pandas as pd
@@ -53,6 +55,47 @@ class ModelSignalBatch:
 
 
 SignalBatch = RecordedSignalBatch | ModelSignalBatch
+
+
+@dataclass(frozen=True, slots=True)
+class ReplaySignal:
+    """Own one task's signal inputs and lazily produced prediction facts.
+
+    Independent account steps share this source so inference and publication happen
+    once per decision, without producing later predictions ahead of the clock.
+
+    Example:
+        signal = ReplaySignal(signal_inputs_by_ts_us, prediction_dir)
+        prediction = signal.at(decision_ts_us)
+    """
+
+    inputs_by_ts_us: Mapping[int, SignalBatch]
+    prediction_dir: Path
+    _recorded_by_ts_us: dict[int, RecordedSignalBatch] = field(default_factory=dict, init=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "inputs_by_ts_us", MappingProxyType(dict(self.inputs_by_ts_us)))
+
+    def timestamps(self) -> tuple[int, ...]:
+        """Return decision times without running inference or writing predictions.
+
+        Example:
+            decision_times = signal.timestamps()
+        """
+        return tuple(self.inputs_by_ts_us)
+
+    def at(self, ts_us: int) -> RecordedSignalBatch | None:
+        """Produce or reuse this decision's prediction; return None on other ticks.
+
+        Example:
+            prediction = signal.at(decision_ts_us)
+        """
+        batch = self.inputs_by_ts_us.get(ts_us)
+        if batch is None:
+            return None
+        if ts_us not in self._recorded_by_ts_us:
+            self._recorded_by_ts_us[ts_us] = produce_signal(batch, prediction_dir=self.prediction_dir)
+        return self._recorded_by_ts_us[ts_us]
 
 
 @dataclass(frozen=True, slots=True)

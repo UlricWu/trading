@@ -9,9 +9,9 @@ from src.trading.backtest.execution.fake import FakeExecution
 from src.trading.backtest.execution.settlement import SettlementEngine
 from src.trading.backtest.execution.venue.fake import ReferenceVenue
 from src.trading.backtest.market.replay import ReplayMarket
-from src.trading.backtest.market.signals import RecordedSignalBatch
+from src.trading.backtest.market.signals import RecordedSignalBatch, ReplaySignal
 from src.trading.backtest.steps.backtest_layers import (
-    PortfolioStep, RecordedOrdersStep, RiskDecisionStep, SignalStep, SubmitTargetsStep,
+    PortfolioStep, RecordedOrdersStep, RiskDecisionStep, RiskOutcomeStep, SignalStep, SubmitTargetsStep,
 )
 from src.trading.backtest.timing import BacktestTiming
 from src.trading.core.events import CancelOrders, OrderIntent, Side, SignalEvent, TargetEvent
@@ -26,7 +26,7 @@ from src.trading.risk.rules.max_position import MaxSingleNameNotionalRule
 def test_signal_step_only_consumes_current_batch_and_does_not_reset_account() -> None:
     batch = RecordedSignalBatch('2026-07-03', SignalEvent(1, {'A': .8}), ('A', 'B'), Path('/prediction'))
     state = BacktestState(PortfolioState(2000, 2000, positions={'B': 100}, current_day='2026-07-03'))
-    step = SignalStep({1: batch}, Path('/unused'))
+    step = SignalStep(signal=ReplaySignal({1: batch}, Path('/unused')))
     context = BacktestContext(BacktestTiming(0, '2026-07-03'), state)
     assert step.run(context).signal is None
     context = BacktestContext(BacktestTiming(1, '2026-07-03'), state)
@@ -38,6 +38,33 @@ def test_signal_step_only_consumes_current_batch_and_does_not_reset_account() ->
     PortfolioStep(ThresholdConstructor(threshold=.5, target_quantity=100), market, None).run(context)
     assert context.execution_target.targets == {'A': 100, 'B': 100}
     assert state.target_tape.events == [context.execution_target]
+
+
+def test_risk_outcome_preserves_pre_control_case_and_freezes_post_settlement_account() -> None:
+    account = PortfolioState(10000, 6000, positions={'A': 400}, current_day='2026-07-03')
+    state = BacktestState(account)
+    state.equity_curve.starting_peak_equity = 10000
+    state.equity_curve.append(ts_us=1, cash=6000, market_value=4000)
+    market = Mock(prices={'A': 10})
+    context = BacktestContext(BacktestTiming(1, '2026-07-03'), state)
+    risk = RiskManager((MaxSingleNameNotionalRule(max_ratio=0.2),))
+    RiskDecisionStep(risk, market, {'A': 1}).run(context)
+    decision = state.risk_observations[0]
+    assert decision.outcome is None
+    account.positions['A'] = 200
+    account.cash = Decimal('7990')
+    state.equity_curve.append(ts_us=1, cash=7990, market_value=2000)
+
+    assert RiskOutcomeStep().run(context) is context
+    observation = state.risk_observations[0]
+    assert observation.case is decision.case and observation.decision is decision.decision
+    assert observation.case.context.positions == {'A': 400}
+    assert observation.outcome.positions == {'A': 200}
+    assert observation.outcome.equity == 9990 and observation.outcome.peak_equity == 10000
+    assert observation.outcome.cash == 7990
+    account.positions.clear()
+    account.cash = Decimal('9990')
+    assert observation.outcome.positions == {'A': 200} and observation.outcome.cash == 7990
 
 
 def test_recorded_orders_step_uses_only_current_commands_in_original_order(order_market: ReplayMarket) -> None:

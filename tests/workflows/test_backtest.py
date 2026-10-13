@@ -273,6 +273,48 @@ def test_signal_fixed_holding_settles_scheduled_exit_without_another_prediction(
     ]
 
 
+@pytest.mark.parametrize("exit_minute", [30, 33, 35, 40])
+def test_fixed_holding_initial_exit_respects_account_interval_without_signals_or_market_updates(
+    signal_scenario: tuple[PathManager, dict[str, object], Mock], exit_minute: int,
+) -> None:
+    pm, fields, _ = signal_scenario
+    day = fields["start"]
+    fields["signal"]["prediction_refs"] = []
+    fields["initial_account"].update(cash="0", positions={"600000": 100},
+        sellable={"600000": 100}, average_cost={"600000": "8"}, peak_equity=1000)
+    fields["strategy"] = {"type": "fixed_holding", "params": {"max_positions": 1,
+        "decision_time": "14:30:00", "exit_time": f"14:{exit_minute:02d}:00",
+        "initial_exit_dates": {"600000": day}}, "order_window_minutes": 2,
+        "quote": {"buy_offset_bp": 0, "sell_offset_bp": 0}}
+    fields["execution"]["end_ts_us"] = _ts(day, 14, 35)
+    market_ref = Path(fields["execution"]["market_ref"])
+    market = json.loads(market_ref.read_text())
+    market["observations"] = []
+    market_ref.write_text(json.dumps(market))
+    submission = create_backtest_submission(mode="signal_eval", **fields)
+    metrics = BacktestMetrics(mode=submission.mode, parameters=submission.model_dump(mode="json"), not_run={})
+    name = f"backtest_2026-10-12_initial-exit-{exit_minute}"
+
+    run_backtest(submission=submission, path_manager=pm, experiment_name=name, metrics=metrics)
+
+    result = _metrics(pm, name)
+    should_exit = exit_minute <= 35
+    assert result["signal_eval"]["decision_count"] == 0
+    assert result["final_account"]["positions"] == ({} if should_exit else {"600000": 100})
+    assert Decimal(result["final_account"]["cash"]) == (1000 if should_exit else 0)
+    assert result["portfolio"]["initial_equity"] == result["portfolio"]["final_equity"] == 1000
+    fills = [row for row in pq.read_table(pm.experiment_backtest_execution(experiment_name=name)).to_pylist()
+             if row["event"] == "FILL"]
+    assert [(row["ts_us"], row["side"], row["qty"]) for row in fills] == (
+        [(_ts(day, 14, exit_minute), "SELL", 100)] if should_exit else []
+    )
+    equity = pq.read_table(pm.experiment_backtest_equity(experiment_name=name)).to_pylist()
+    assert [row["ts_us"] for row in equity] == (
+        [_ts(day, 14, 30), _ts(day, 14, 33), _ts(day, 14, 35)]
+        if exit_minute == 33 else [_ts(day, 14, 30), _ts(day, 14, 35)]
+    )
+
+
 def test_signal_without_predictions_values_existing_holdings_without_trades(
     signal_scenario: tuple[PathManager, dict[str, object], Mock],
 ) -> None:
@@ -382,7 +424,14 @@ def test_full_facts_reproduce_independent_signal_risk_and_execution(
     observations = RiskCases.from_files((run_dir / "risk-cases.json",)).evaluate(
         risk=RiskManager.from_config(risk_config))
     risk = evaluate_risk(observations, configured_rules=tuple(rule.type for rule in risk_config.rules))
-    assert risk.model_dump(mode="json") == original["risk_eval"]
+    frozen_result = risk.model_dump(mode="json")
+    account_decisions = deepcopy(original["risk_eval"])
+    for item in account_decisions["observations"]:
+        assert item["outcome"] is not None
+        item["outcome"] = None
+    assert frozen_result == account_decisions
+    assert all(item["outcome"] is None for item in frozen_result["observations"])
+    assert original["risk_effectiveness"]["rules"][0]["final_residual_reduction_notional"] == 0
     execution = dict(fields["execution"])
     execution["risk_check_ts_us"] = []
     submission = create_backtest_submission(mode="execution_eval",
@@ -738,7 +787,11 @@ def test_rule_and_report_errors_preserve_the_original_exception(
     ('strategy_eval', ('AdvanceExecutionStep', 'AccountingStep', 'SignalStep', 'PortfolioStep', 'SubmitTargetsStep', 'AccountingStep'),
      ('FactsPersistStep', 'SignalEvaluationStep', 'ExecutionEvaluationStep', 'PortfolioEvaluationStep', 'BacktestSummaryStep', 'MetricsPersistStep', 'ReportStep')),
     ('full_backtest', ('AdvanceExecutionStep', 'AccountingStep', 'SignalStep', 'PortfolioStep',
-                       'RiskDecisionStep', 'SubmitTargetsStep', 'AccountingStep'),
+                       'RiskDecisionStep', 'SubmitTargetsStep', 'AccountingStep', 'RiskOutcomeStep'),
+     ('FactsPersistStep', 'SignalEvaluationStep', 'RiskMetricsStep', 'ExecutionEvaluationStep',
+      'PortfolioEvaluationStep', 'BacktestSummaryStep', 'MetricsPersistStep', 'ReportStep')),
+    ('risk_rule_eval', ('AdvanceExecutionStep', 'AccountingStep', 'SignalStep', 'PortfolioStep',
+                       'RiskDecisionStep', 'SubmitTargetsStep', 'AccountingStep', 'RiskOutcomeStep'),
      ('FactsPersistStep', 'SignalEvaluationStep', 'RiskMetricsStep', 'ExecutionEvaluationStep',
       'PortfolioEvaluationStep', 'BacktestSummaryStep', 'MetricsPersistStep', 'ReportStep')),
 ])
@@ -1035,7 +1088,7 @@ def test_fake_live_batch_delivery_reproduces_full_signal_target_risk_and_account
         return produce_signal(batch, prediction_dir=prediction_dir)
 
     monkeypatch.setattr(ReplayMarket, 'on_time', advance)
-    monkeypatch.setattr('src.trading.backtest.steps.backtest_layers.produce_signal', predict_at_availability)
+    monkeypatch.setattr('src.trading.backtest.market.signals.produce_signal', predict_at_availability)
     monkeypatch.setattr(ReplayMarket, 'observations_at', deliver)
     metrics = BacktestMetrics(mode=submission.mode, parameters=submission.model_dump(mode="json"), not_run={})
     run_backtest(submission=submission, path_manager=pm,
@@ -1054,7 +1107,7 @@ def test_fake_live_batch_delivery_reproduces_full_signal_target_risk_and_account
 
 
 @pytest.mark.parametrize('fill', ['quoted', 'reference', 'limit_price'])
-def test_risk_comparison_replays_accounts_and_publishes_signed_differences(
+def test_risk_runs_one_account_and_reports_actual_control_outcomes(
     signal_scenario: tuple[PathManager, dict[str, object], Mock], fill: str,
     backtest_log: Path, mocker: MockerFixture,
 ) -> None:
@@ -1080,40 +1133,37 @@ def test_risk_comparison_replays_accounts_and_publishes_signed_differences(
 
     assert sum(call.args == (ref,) for call in read_bytes.call_args_list) == 1
     root = pm.experiment_dir(experiment_name=name)
-    baseline = json.loads((root / 'without_risk/metrics.json').read_text())
-    treatment = json.loads((root / 'with_risk/metrics.json').read_text())
-    comparison = _metrics(pm, name)['risk_comparison']
-    baseline_qty = 360 if fill == 'limit_price' else 1000
-    assert baseline['final_account']['positions'] == {'600000': baseline_qty}
-    assert treatment['final_account']['positions'] == {'600000': 200}
-    assert baseline['portfolio']['net_profit'] == -2 * baseline_qty
-    assert treatment['portfolio']['net_profit'] == -400
-    assert comparison['without_risk'] == baseline['portfolio']
-    assert comparison['with_risk'] == treatment['portfolio']
-    assert comparison['net_profit_delta'] == 2 * baseline_qty - 400
-    assert comparison['total_return_delta'] == pytest.approx((2 * baseline_qty - 400) / 20000)
-    assert comparison['max_drawdown_delta'] == pytest.approx((400 - 2 * baseline_qty) / 20000)
-    assert Decimal(comparison['total_fees_delta']) == 0
-    assert comparison['turnover_delta'] == pytest.approx(treatment['portfolio']['turnover'] - baseline['portfolio']['turnover'])
-    assert baseline['signal_eval'] == treatment['signal_eval']
-    assert baseline['prediction_refs'] == treatment['prediction_refs'] == fields['signal']['prediction_refs']
-    assert baseline['applied_risk'] is None and treatment['applied_risk'] == fields['risk']
-    assert 'risk_eval' not in baseline and treatment['risk_eval']['case_count'] > 0
-    assert baseline['execution_eval']['filled_qty'] == baseline_qty
-    assert treatment['execution_eval']['filled_qty'] == 200
+    result = _metrics(pm, name)
+    assert result['final_account']['positions'] == {'600000': 200}
+    assert result['portfolio']['net_profit'] == -400
+    assert result['portfolio']['total_return'] == pytest.approx(-0.02)
+    assert result['portfolio']['max_drawdown'] == 0.02
+    assert Decimal(result['portfolio']['total_fees']) == 0
+    assert result['prediction_refs'] == fields['signal']['prediction_refs']
+    assert result['applied_risk'] == fields['risk']
+    assert result['risk_eval']['rule_coverage']['max_single_name']['triggered'] > 0
+    assert result['execution_eval']['filled_qty'] == 200
+    effectiveness = result['risk_effectiveness']['rules'][0]
+    assert effectiveness['sample_count'] == result['risk_eval']['case_count']
+    assert effectiveness['defined_count'] == effectiveness['sample_count']
+    assert effectiveness['residual_breach_count'] == 0
+    assert effectiveness['final_residual_reduction_notional'] == 0
+    assert all(item['outcome'] is not None for item in result['risk_eval']['observations'])
+    assert 'risk_comparison' not in result
+    assert not (root / 'without_risk').exists() and not (root / 'with_risk').exists()
     read_record.assert_called_once()
-    for path in ('without_risk', 'with_risk'):
-        for artifact in ('orders.json', 'targets.json', 'execution.parquet', 'equity.parquet', 'report.html'):
-            assert (root / path / artifact).is_file()
+    for artifact in ('orders.json', 'targets.json', 'risk-cases.json', 'execution.parquet', 'equity.parquet', 'report.html'):
+        assert (root / artifact).is_file()
     report = (root / 'report.html').read_text()
-    assert '有／无风控对照' in report and 'without_risk/report.html' in report and 'with_risk/report.html' in report
-    assert '-400.00' in report and f'{2 * baseline_qty - 400:+,.2f}' in report
+    assert '风控有效性：目标与实际账户' in report and '期末残余金额' in report
+    assert '未成交卖单不能抵扣持仓' in report and '风控增量成本' in report
+    assert 'without_risk/report.html' not in report and 'with_risk/report.html' not in report
     log = backtest_log.read_text()
-    assert log.count('✅ 步骤耗时; scope=without_risk') == log.count('✅ 步骤耗时; scope=with_risk') == 1
+    assert log.count(f'✅ 步骤耗时; scope={name}') == 1
     assert log.rindex('✅ 回测报告;') < log.index(f'✅ 步骤耗时; scope={name}')
 
 
-def test_risk_comparison_uses_one_model_prediction_and_preserves_undefined_returns(
+def test_risk_uses_one_model_prediction_and_preserves_undefined_measures(
     signal_scenario: tuple[PathManager, dict[str, object], Mock], mocker: MockerFixture,
 ) -> None:
     from src.training.inference_model import InferenceModel
@@ -1131,20 +1181,20 @@ def test_risk_comparison_uses_one_model_prediction_and_preserves_undefined_retur
 
     predict.assert_called_once()
     root = pm.experiment_dir(experiment_name=name)
-    baseline = json.loads((root / 'without_risk/metrics.json').read_text())
-    treatment = json.loads((root / 'with_risk/metrics.json').read_text())
-    assert baseline['prediction_refs'] == treatment['prediction_refs']
+    result = _metrics(pm, name)
+    assert len(result['prediction_refs']) == 1
     assert len(list((root / 'predictions').rglob('*.parquet'))) == 1
-    comparison = _metrics(pm, name)['risk_comparison']
-    assert comparison['total_return_delta'] is None and comparison['turnover_delta'] is None
-    for result in (baseline, treatment):
-        assert result['portfolio']['net_profit'] == 0
-        assert result['portfolio']['total_return'] is None
-        assert result['portfolio']['undefined_reasons']
-        assert result['final_account']['positions'] == {}
+    assert result['portfolio']['net_profit'] == 0
+    assert result['portfolio']['total_return'] is None
+    assert result['portfolio']['undefined_reasons']
+    assert result['final_account']['positions'] == {}
+    effectiveness = result['risk_effectiveness']['rules'][0]
+    assert effectiveness['defined_count'] == 0
+    assert effectiveness['final_residual_reduction_notional'] is None
+    assert effectiveness['undefined_reason_counts'] == {'nonpositive_equity': effectiveness['sample_count']}
 
 
-def test_risk_comparison_recalculates_strategy_targets_from_each_accounts_feedback(
+def test_risk_recalculates_strategy_targets_from_its_own_account_feedback(
     signal_scenario: tuple[PathManager, dict[str, object], Mock], tmp_path: Path,
 ) -> None:
     pm, fields, _ = signal_scenario
@@ -1172,12 +1222,12 @@ def test_risk_comparison_recalculates_strategy_targets_from_each_accounts_feedba
     run_backtest(submission=submission, path_manager=pm, experiment_name=name, metrics=metrics)
 
     root = pm.experiment_dir(experiment_name=name)
-    baseline = json.loads((root / 'without_risk/targets.json').read_text())
-    treatment = json.loads((root / 'with_risk/targets.json').read_text())
-    assert baseline[0] == treatment[0]
-    assert baseline[1]['targets'] == {'600000': 1000, '000001': 0, '000002': 0}
-    assert treatment[1]['targets'] == {'600000': 0, '000001': 0, '000002': 0}
-    assert len(baseline) == len(treatment) == 2
+    targets = json.loads((root / 'targets.json').read_text())
+    assert targets[0]['targets'] == {'600000': 1000, '000001': 0, '000002': 0}
+    assert targets[1]['targets'] == {'600000': 0, '000001': 0, '000002': 0}
+    assert len(targets) == 2
+    assert _metrics(pm, name)['execution_eval']['order_count'] == 0
+    assert _metrics(pm, name)['final_account']['positions'] == {}
 
 
 def test_signal_and_strategy_modes_with_identical_assumptions_have_identical_metrics(
@@ -1194,7 +1244,56 @@ def test_signal_and_strategy_modes_with_identical_assumptions_have_identical_met
         assert results[0][field] == results[1][field]
 
 
-def test_risk_failure_keeps_baseline_facts_and_does_not_publish_a_comparison(
+def test_risk_and_full_with_identical_configuration_have_identical_facts_and_metrics(
+    signal_scenario: tuple[PathManager, dict[str, object], Mock],
+) -> None:
+    pm, fields, _ = signal_scenario
+    fields['execution']['fill'] = {'type': 'limit_price', 'slippage_bp': 0}
+    fields['execution']['end_ts_us'] = _ts('2026-07-03', 15)
+    fields['execution']['risk_check_ts_us'] = []
+    fields['execution']['fees'].update(commission_rate='0.001', min_commission='3')
+    fields['risk'] = {'rules': [{'type': 'max_single_name', 'max_ratio': 0.1}]}
+    for mode in ('risk_rule_eval', 'full_backtest'):
+        submission = create_backtest_submission(mode=mode, **fields)
+        metrics = BacktestMetrics(mode=submission.mode, parameters=submission.model_dump(mode='json'), not_run={})
+        run_backtest(submission=submission, path_manager=pm, experiment_name=mode, metrics=metrics)
+
+    risk_dir = pm.experiment_dir(experiment_name='risk_rule_eval')
+    full_dir = pm.experiment_dir(experiment_name='full_backtest')
+    risk_metrics, full_metrics = _metrics(pm, 'risk_rule_eval'), _metrics(pm, 'full_backtest')
+    for field in ('portfolio', 'signal_eval', 'risk_eval', 'risk_effectiveness', 'execution_eval',
+                  'final_account', 'applied_risk', 'not_run'):
+        assert risk_metrics[field] == full_metrics[field]
+    for artifact in ('orders.json', 'targets.json', 'risk-cases.json'):
+        assert json.loads((risk_dir / artifact).read_text()) == json.loads((full_dir / artifact).read_text())
+    for artifact in ('execution.parquet', 'equity.parquet'):
+        assert pq.read_table(risk_dir / artifact).to_pylist() == pq.read_table(full_dir / artifact).to_pylist()
+    assert risk_metrics['execution_eval']['filled_qty'] == 200
+    assert risk_metrics['risk_effectiveness']['rules'][0]['final_residual_reduction_notional'] > 0
+
+
+def test_risk_account_setup_failure_does_not_publish_account_results(
+    signal_scenario: tuple[PathManager, dict[str, object], Mock], monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pm, fields, _ = signal_scenario
+    fields['risk'] = {'rules': [{'type': 'max_single_name', 'max_ratio': 0.2}]}
+    submission = create_backtest_submission(mode='risk_rule_eval', **fields)
+    metrics = BacktestMetrics(mode=submission.mode, parameters=submission.model_dump(mode='json'), not_run={})
+    error = ValueError('risk setup failed')
+    configure_risk = Mock(side_effect=error)
+    monkeypatch.setattr('src.trading.risk.engine.RiskManager.from_config', configure_risk)
+    name = 'backtest_2026-10-13_failed-risk-setup'
+
+    with pytest.raises(ValueError) as caught:
+        run_backtest(submission=submission, path_manager=pm, experiment_name=name, metrics=metrics)
+
+    assert caught.value is error
+    configure_risk.assert_called_once_with(submission.risk)
+    root = pm.experiment_dir(experiment_name=name)
+    assert not root.exists()
+
+
+def test_risk_decision_failure_propagates_without_publishing_success(
     signal_scenario: tuple[PathManager, dict[str, object], Mock], monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     pm, fields, _ = signal_scenario
@@ -1210,7 +1309,76 @@ def test_risk_failure_keeps_baseline_facts_and_does_not_publish_a_comparison(
 
     assert caught.value is error
     root = pm.experiment_dir(experiment_name=name)
-    assert (root / 'without_risk/report.html').is_file()
-    assert not (root / 'with_risk/metrics.json').exists()
-    assert not (root / 'metrics.json').exists() and not (root / 'report.html').exists()
-    assert 'scope=with_risk step=RiskDecisionStep' in error.__notes__[0]
+    assert not root.exists()
+    assert f'scope={name} step=RiskDecisionStep' in error.__notes__[0]
+
+
+@pytest.mark.parametrize(('fill', 'sellable', 'volumes', 'held', 'residual'), [
+    ('quoted', 1000, (300, 60), 400, 0),
+    ('quoted', 0, (300, 60), 1000, 6000),
+    ('limit_price', 1000, (300, 60), 640, 2400),
+    ('limit_price', 1000, (0, 0), 1000, 6000),
+])
+def test_risk_distinguishes_correct_reduction_targets_from_actual_unresolved_exposure(
+    signal_scenario: tuple[PathManager, dict[str, object], Mock],
+    fill: str, sellable: int, volumes: tuple[int, int], held: int, residual: float,
+) -> None:
+    pm, fields, _ = signal_scenario
+    fields['signal']['prediction_refs'] = []
+    fields['initial_account'].update(cash='10000', positions={'600000': 1000},
+        sellable={'600000': sellable}, average_cost={'600000': '10'})
+    fields['risk'] = {'rules': [{'type': 'max_single_name', 'max_ratio': 0.2}]}
+    fields['execution']['fill'] = {'type': fill, **({'slippage_bp': 0} if fill == 'limit_price' else {})}
+    fields['execution']['end_ts_us'] = _ts('2026-07-03', 14, 33)
+    ref = Path(fields['execution']['market_ref'])
+    market = json.loads(ref.read_text())
+    for observation, volume in zip(market['observations'], volumes, strict=True):
+        observation['volume_qty'] = volume
+    ref.write_text(json.dumps(market))
+    submission = create_backtest_submission(mode='risk_rule_eval', **fields)
+    metrics = BacktestMetrics(mode=submission.mode, parameters=submission.model_dump(mode='json'), not_run={})
+    run_backtest(submission=submission, path_manager=pm, experiment_name='risk-stress', metrics=metrics)
+
+    result = _metrics(pm, 'risk-stress')
+    assert result['risk_eval']['observations'][0]['decision']['adjusted'] == {'600000': 400}
+    assert result['final_account']['positions'] == {'600000': held}
+    effectiveness = result['risk_effectiveness']['rules'][0]
+    assert effectiveness['max_required_reduction_notional'] == 6000
+    assert effectiveness['final_residual_reduction_notional'] == residual
+    assert effectiveness['observations'][0]['before']['value'] == 0.5
+    assert effectiveness['sampled_breach_duration_us'] == (0 if residual == 0 else 3 * US_PER_MINUTE)
+    assert result['execution_eval']['filled_qty'] == 1000 - held
+    if sellable == 0:
+        assert result['execution_eval']['order_count'] == 0
+        assert result['risk_effectiveness']['execution_reason_counts'] == {}
+    if fill == 'limit_price':
+        outcome = result['risk_eval']['observations'][0]['outcome']
+        assert outcome['positions'] == {'600000': 1000}
+        assert outcome['pending_orders'][0]['intent']['side'] == 'SELL'
+        assert effectiveness['observations'][0]['after']['required_reduction_notional'] == 6000
+    if volumes == (0, 0):
+        assert result['risk_effectiveness']['execution_reason_counts']['volume_exhausted'] == 2
+
+
+@pytest.mark.parametrize('sellable', [0, 1000])
+def test_drawdown_liquidation_reports_unfilled_holdings_without_claiming_a_loss_cap(
+    signal_scenario: tuple[PathManager, dict[str, object], Mock], sellable: int,
+) -> None:
+    pm, fields, _ = signal_scenario
+    fields['signal']['prediction_refs'] = []
+    fields['initial_account'].update(cash='10000', positions={'600000': 1000},
+        sellable={'600000': sellable}, average_cost={'600000': '10'}, peak_equity=25000)
+    fields['risk'] = {'rules': [{'type': 'max_drawdown', 'max_drawdown': 0.1}]}
+    fields['execution']['end_ts_us'] = _ts('2026-07-03', 14, 33)
+    submission = create_backtest_submission(mode='risk_rule_eval', **fields)
+    metrics = BacktestMetrics(mode=submission.mode, parameters=submission.model_dump(mode='json'), not_run={})
+    run_backtest(submission=submission, path_manager=pm, experiment_name='drawdown-stress', metrics=metrics)
+
+    result = _metrics(pm, 'drawdown-stress')
+    effectiveness = result['risk_effectiveness']['rules'][0]
+    assert result['portfolio']['max_drawdown'] == 0.2
+    assert effectiveness['max_required_reduction_notional'] == 10000
+    assert effectiveness['final_residual_reduction_notional'] == (1000 - sellable) * 10
+    assert effectiveness['residual_breach_count'] == (0 if sellable else effectiveness['sample_count'])
+    assert all(row['after']['value'] == 0.2 for row in effectiveness['observations'])
+    assert result['execution_eval']['filled_qty'] == sellable

@@ -41,7 +41,9 @@ class RiskCase:
 
 @dataclass(frozen=True, slots=True)
 class RiskObservation:
-    """The exact decision produced by a frozen case and the selected risk chain.
+    """An exact decision, with an optional post-execution account snapshot.
+
+    Frozen-case evaluation has no outcome; account replay records it after settlement.
 
     Example:
         observation = RiskObservation(case, risk.apply(target=case.target, ctx=case.context))
@@ -49,6 +51,7 @@ class RiskObservation:
 
     case: RiskCase
     decision: RiskDecision
+    outcome: RiskContext | None = None
 
 
 @dataclass(frozen=True, slots=True)
