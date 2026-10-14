@@ -69,7 +69,7 @@ class OrderIntent:
     order_id: int
     active_ts_us: int
     expires_ts_us: int
-    limit_price: Decimal | None
+    limit_price: Decimal
     meta: Annotated[Mapping[str, object], PlainSerializer(lambda value: dict(value), return_type=dict[str, object])] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -80,11 +80,10 @@ class OrderIntent:
             raise ValueError("order qty must be a positive integer")
         if type(self.order_id) is not int or self.order_id <= 0:
             raise ValueError("order_id must be a positive integer")
-        if self.limit_price is not None:
-            price = Decimal(str(self.limit_price))
-            if not price.is_finite() or price <= 0:
-                raise ValueError("limit_price must be finite and positive")
-            object.__setattr__(self, "limit_price", price)
+        price = Decimal(str(self.limit_price))
+        if not price.is_finite() or price <= 0:
+            raise ValueError("limit_price must be finite and positive")
+        object.__setattr__(self, "limit_price", price)
 
 
 @dataclass(frozen=True, slots=True)
@@ -148,7 +147,7 @@ class PendingOrder:
 
 
 class OrderStatus(str, Enum):
-    """Fake execution states.
+    """Simulated order lifecycle states.
 
     Example:
         status = OrderStatus.PARTIAL

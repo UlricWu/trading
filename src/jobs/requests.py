@@ -304,14 +304,11 @@ class SignalEvalSubmission(BaseModel):
     @model_validator(mode="after")
     def _validate_signal(self) -> Self:
         _require_range(self.start, self.end)
-        if self.strategy.quote is None:
-            raise ValueError("signal_eval requires strategy.quote for quoted fills")
+        _require_strategy_order_inputs(self.strategy)
         if self.execution.fill.type != "quoted":
             raise ValueError("signal_eval requires execution.fill.type=quoted")
         if self.execution.risk_check_ts_us:
             raise ValueError("signal_eval does not run risk checks")
-        if self.strategy.order_window_minutes is None:
-            raise ValueError("signal_eval requires order_window_minutes")
         if self.initial_account.ts_us >= self.execution.end_ts_us:
             raise ValueError("initial account must precede simulation end")
         return self
@@ -341,7 +338,7 @@ class RiskRuleEvalSubmission(BaseModel):
     @model_validator(mode="after")
     def _validate_scenario(self) -> Self:
         _require_range(self.start, self.end)
-        _require_strategy_execution(self.strategy, self.execution)
+        _require_strategy_order_inputs(self.strategy)
         if self.initial_account.ts_us >= self.execution.end_ts_us:
             raise ValueError("initial account must precede simulation end")
         return self
@@ -401,7 +398,7 @@ class StrategyEvalSubmission(BaseModel):
     @model_validator(mode="after")
     def _validate_strategy(self) -> Self:
         _require_range(self.start, self.end)
-        _require_strategy_execution(self.strategy, self.execution)
+        _require_strategy_order_inputs(self.strategy)
         if self.execution.risk_check_ts_us:
             raise ValueError("strategy_eval does not run risk checks")
         if self.initial_account.ts_us >= self.execution.end_ts_us:
@@ -435,19 +432,16 @@ class FullBacktestSubmission(BaseModel):
         _require_range(self.start, self.end)
         if self.execution.fill.type != "limit_price":
             raise ValueError("full_backtest requires execution.fill.type=limit_price")
-        _require_strategy_execution(self.strategy, self.execution)
+        _require_strategy_order_inputs(self.strategy)
         if self.initial_account.ts_us >= self.execution.end_ts_us:
             raise ValueError("initial account must precede simulation end")
         return self
 
 
-def _require_strategy_execution(strategy: StrategyConfig, execution: FakeExecutionConfig) -> None:
+def _require_strategy_order_inputs(strategy: StrategyConfig) -> None:
     if strategy.order_window_minutes is None:
         raise ValueError("strategy requires order_window_minutes")
-    if execution.fill.type == "reference":
-        if strategy.quote is not None:
-            raise ValueError("reference fills do not accept strategy.quote")
-    elif strategy.quote is None:
+    if strategy.quote is None:
         raise ValueError("quoted and limit_price fills require strategy.quote")
 
 
@@ -636,6 +630,7 @@ def create_backtest_submission(*, mode: object, **fields: object) -> BacktestSub
             *(mode.value for mode in BacktestMode), "model", "recorded",
             "threshold", "topk_hysteresis", "fixed_holding",
             "max_single_name", "max_gross_exposure", "max_drawdown",
+            "quoted", "limit_price",
         })
         field = ".".join(str(part) for part in parts) or ("mode" if not location else "request")
         raise InvalidJobRequest(error["msg"], field=field) from exc

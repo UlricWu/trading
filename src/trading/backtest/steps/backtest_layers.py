@@ -7,7 +7,7 @@ from types import MappingProxyType
 
 from src.trading.backtest.commands import OrderCommandSchedule
 from src.trading.backtest.context import BacktestContext
-from src.trading.backtest.execution.fake import FakeExecution
+from src.trading.backtest.execution.simulator import AccountExecutionSimulator
 from src.trading.backtest.market.replay import ReplayMarket
 from src.trading.backtest.market.signals import ReplaySignal
 from src.trading.core.events import OrderIntent, OrderTerms, Side, TargetEvent
@@ -25,10 +25,10 @@ class AdvanceExecutionStep:
     """Change the account day and settle previously submitted orders before decisions.
 
     Example:
-        context = AdvanceExecutionStep(execution, market).run(context)
+        context = AdvanceExecutionStep(execution_simulator, market).run(context)
     """
 
-    execution: FakeExecution
+    execution_simulator: AccountExecutionSimulator
     market: ReplayMarket
 
     def run(self, context: BacktestContext) -> BacktestContext:
@@ -39,7 +39,7 @@ class AdvanceExecutionStep:
         """
         self.market.on_time(context.timing.ts_us)
         context.state.portfolio_state.on_trading_day_start(context.timing.trade_date)
-        self.execution.advance(ts_us=context.timing.ts_us,
+        self.execution_simulator.advance(ts_us=context.timing.ts_us,
                                observations=self.market.observations_at(context.timing.ts_us))
         return context
 
@@ -236,10 +236,10 @@ class SubmitTargetsStep:
     """Submit actions through H03 and request actual pending-order deadlines.
 
     Example:
-        context = SubmitTargetsStep(execution, market, windows, 2).run(context)
+        context = SubmitTargetsStep(execution_simulator, market, windows, 2).run(context)
     """
 
-    execution: FakeExecution
+    execution_simulator: AccountExecutionSimulator
     market: ReplayMarket
     windows: Sequence[TradingWindow]
     order_window_minutes: int
@@ -268,10 +268,10 @@ class SubmitTargetsStep:
                 expiry = advance_trading_minutes(start_ts_us=context.timing.ts_us,
                     minutes=self.order_window_minutes, windows=self.windows)
                 terms = {symbol: OrderTerms(context.timing.ts_us, expiry) for symbol in new_symbols}
-            self.execution.submit_targets(target=target, cancel_order_ids=context.cancel_order_ids,
+            self.execution_simulator.submit_targets(target=target, cancel_order_ids=context.cancel_order_ids,
                                           terms=terms, market=self.market)
         elif context.cancel_order_ids:
-            self.execution.cancel_orders(ts_us=context.timing.ts_us, order_ids=context.cancel_order_ids)
+            self.execution_simulator.cancel_orders(ts_us=context.timing.ts_us, order_ids=context.cancel_order_ids)
         context.requested_wakeup_ts_us.update(order.intent.expires_ts_us
                                               for order in context.state.pending_orders.values())
         context.execution_target = None
@@ -285,11 +285,10 @@ class RecordedOrdersStep:
     Example:
         commands = OrderCommandSchedule((order, cancel), start="2026-07-03", end="2026-07-03",
             market=market.source, start_ts_us=initial_account.ts_us, end_ts_us=execution_config.end_ts_us)
-        context = RecordedOrdersStep(execution, market, commands).run(context)
+        context = RecordedOrdersStep(execution_simulator, commands).run(context)
     """
 
-    execution: FakeExecution
-    market: ReplayMarket
+    execution_simulator: AccountExecutionSimulator
     commands: OrderCommandSchedule
 
     def run(self, context: BacktestContext) -> BacktestContext:
@@ -300,9 +299,9 @@ class RecordedOrdersStep:
         """
         for command in self.commands.at(context.timing.ts_us):
             if isinstance(command, OrderIntent):
-                self.execution.submit_orders(orders=(command,), market=self.market)
+                self.execution_simulator.submit_orders(orders=(command,))
             else:
-                self.execution.cancel_orders(ts_us=command.ts_us, order_ids=command.order_ids)
+                self.execution_simulator.cancel_orders(ts_us=command.ts_us, order_ids=command.order_ids)
         context.requested_wakeup_ts_us.update(order.intent.expires_ts_us
                                               for order in context.state.pending_orders.values())
         return context

@@ -16,17 +16,20 @@ from src.jobs.requests import (
 from src.trading.backtest.clock import ReplayClock
 from src.trading.backtest.commands import OrderCommandSchedule
 from src.trading.backtest.context import BacktestState
-from src.trading.backtest.execution.fake import FakeExecution
+from src.trading.backtest.execution.simulator import AccountExecutionSimulator
 from src.trading.backtest.execution.models.cost_a_share import AShareCostModel
 from src.trading.backtest.execution.models.slippage_fixed_bp import FixedBPSlippageModel
 from src.trading.backtest.execution.settlement import SettlementEngine
-from src.trading.backtest.execution.venue.fake import LimitPriceVenue, QuotedPriceVenue, ReferenceVenue
+from src.trading.backtest.execution.fill_models import (
+    ImmediateQuoteFillModel,
+    LimitPriceFillModel,
+)
 from src.trading.backtest.market.replay import ReplayMarket, ReplayMarketInput
 from src.trading.backtest.market.signals import ReplaySignal, prepare_signals
 from src.trading.backtest.reporting.metrics import BacktestMetrics
 from src.trading.core.equity import EquityCurve
 from src.trading.core.time import TradingWindow
-from src.trading.execution.policies.constraints import QuoteRule
+from src.trading.orders.constraints import QuoteRule
 from src.trading.portfolio.constructors.base import PortfolioConstructor
 from src.trading.portfolio.constructors.factory import build_portfolio_constructor
 from src.trading.portfolio.constructors.fixed_holding import FixedHoldingConstructor
@@ -43,7 +46,7 @@ class SignalAccountComponents:
 
     Example:
         components = SignalAccountComponents(
-            state=state, market=market, execution=execution, clock=clock,
+            state=state, market=market, execution_simulator=simulator, clock=clock,
             signal=signal, constructor=constructor, target_capacity=None, risk=None,
             quantity_steps={"600000": 100}, windows=windows, order_window_minutes=2,
             risk_config=None, annual_factor=252,
@@ -52,7 +55,7 @@ class SignalAccountComponents:
 
     state: BacktestState
     market: ReplayMarket
-    execution: FakeExecution
+    execution_simulator: AccountExecutionSimulator
     clock: ReplayClock
     signal: ReplaySignal
     constructor: PortfolioConstructor | FixedHoldingConstructor
@@ -74,14 +77,14 @@ class OrderAccountComponents:
 
     Example:
         components = OrderAccountComponents(
-            state=state, market=market, execution=execution, clock=clock,
+            state=state, market=market, execution_simulator=simulator, clock=clock,
             commands=commands, annual_factor=252,
         )
     """
 
     state: BacktestState
     market: ReplayMarket
-    execution: FakeExecution
+    execution_simulator: AccountExecutionSimulator
     clock: ReplayClock
     commands: OrderCommandSchedule
     annual_factor: float
@@ -100,6 +103,7 @@ def prepare_market_input(*, config: FakeExecutionConfig, initial: InitialAccount
         raise ValueError("prepared account sessions must exactly cover the formal trading calendar")
     if source.session_at(initial.ts_us).trade_date != initial.trade_date:
         raise ValueError("initial snapshot trade_date disagrees with replay start")
+
     source.session_at(config.end_ts_us)
     for ts_us in config.risk_check_ts_us:
         source.session_at(ts_us)
@@ -153,7 +157,11 @@ def build_signal_account_components(
     strategy = submission.strategy
     state = create_state(initial_account)
     market = ReplayMarket(market_source)
-    execution = create_execution(state=state, config=execution_config, quote_rule=strategy.quote)
+    simulator = build_account_execution_simulator(
+        state=state,
+        config=execution_config,
+        quote_rule=strategy.quote,
+    )
     clock = ReplayClock.from_iterable(
         (
             *market_source.timestamps(),
@@ -194,14 +202,13 @@ def build_signal_account_components(
     metrics.applied_risk = risk
     if risk is None:
         metrics.not_run["risk"] = "no_business_risk"
-    if execution_config.fill.type != "limit_price":
-        reason = f"{execution_config.fill.type}_fills"
-        metrics.not_run.update(price_feasibility=reason, market_liquidity=reason)
+    if execution_config.fill.type == "quoted":
+        metrics.not_run.update(price_feasibility="quoted_fills", market_liquidity="quoted_fills")
 
     return SignalAccountComponents(
         state=state,
         market=market,
-        execution=execution,
+        execution_simulator=simulator,
         clock=clock,
         signal=signal,
         constructor=constructor,
@@ -236,7 +243,11 @@ def build_order_account_components(
     )
     state = create_state(initial_account)
     market = ReplayMarket(market_source)
-    execution = create_execution(state=state, config=execution_config, quote_rule=None)
+    simulator = build_account_execution_simulator(
+        state=state,
+        config=execution_config,
+        quote_rule=None,
+    )
     clock = ReplayClock.from_iterable(
         (
             *market_source.timestamps(),
@@ -252,7 +263,7 @@ def build_order_account_components(
     return OrderAccountComponents(
         state=state,
         market=market,
-        execution=execution,
+        execution_simulator=simulator,
         clock=clock,
         commands=commands,
         annual_factor=execution_config.annual_factor,
@@ -272,22 +283,21 @@ def create_state(initial: InitialAccount) -> BacktestState:
     return BacktestState(account, equity_curve=EquityCurve(starting_peak_equity=initial.peak_equity))
 
 
-def create_execution(
+def build_account_execution_simulator(
     *, state: BacktestState, config: FakeExecutionConfig,
     quote_rule: QuoteRule | None,
-) -> FakeExecution:
-    """Bind the selected venue and explicit fees to this run's account and pending orders.
+) -> AccountExecutionSimulator:
+    """Bind the selected fill model and explicit fees to this run's account and pending orders.
 
     Example:
-        execution = create_execution(state=state, config=config, quote_rule=None)
+        simulator = build_account_execution_simulator(state=state, config=config, quote_rule=None)
+        events = simulator.submit_orders(orders=(order,))
     """
-    venue: ReferenceVenue | LimitPriceVenue | QuotedPriceVenue
+    fill_model: LimitPriceFillModel | ImmediateQuoteFillModel
     if config.fill.type == "quoted":
-        venue = QuotedPriceVenue()
-    elif config.fill.type == "reference":
-        venue = ReferenceVenue()
+        fill_model = ImmediateQuoteFillModel()
     else:
-        venue = LimitPriceVenue(FixedBPSlippageModel(config.fill.slippage_bp))
+        fill_model = LimitPriceFillModel(FixedBPSlippageModel(config.fill.slippage_bp))
     fees = config.fees
     cost_model = AShareCostModel(
         commission_rate=fees.commission_rate,
@@ -296,12 +306,12 @@ def create_execution(
         min_commission=fees.min_commission,
     )
     settlement = SettlementEngine(cost_model=cost_model)
-    return FakeExecution(
+    return AccountExecutionSimulator(
         portfolio=state.portfolio_state,
         ledger=state.execution_ledger,
         pending_orders=state.pending_orders,
         settlement=settlement,
-        venue=venue,
+        fill_model=fill_model,
         rules=config.quantity_rules,
         quote_rule=quote_rule,
     )

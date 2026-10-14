@@ -446,27 +446,26 @@ def test_full_facts_reproduce_independent_signal_risk_and_execution(
     assert "signal_eval" not in replay and "risk_eval" not in replay
 
 
-def test_reference_fills_are_account_constrained_and_ignore_quote_and_market_volume(
+def test_strategy_quoted_fills_respect_account_budget_without_market_volume_cap(
     scenario: tuple[PathManager, dict[str, object], Mock],
 ) -> None:
     pm, fields, _ = scenario
     fields.pop("risk")
-    fields["strategy"].pop("quote")
-    fields["execution"]["fill"] = {"type": "reference"}
+    fields["execution"]["fill"] = {"type": "quoted"}
     fields["execution"].pop("risk_check_ts_us")
     fields["initial_account"]["cash"] = "5000"
     fields["initial_account"]["peak_equity"] = 5000
     submission = create_backtest_submission(mode="strategy_eval", **fields)
     metrics = BacktestMetrics(mode=submission.mode, parameters=submission.model_dump(mode="json"), not_run={})
     run_backtest(submission=submission, path_manager=pm,
-        experiment_name='backtest_2026-10-11_reference', metrics=metrics)
-    metrics = _metrics(pm, "backtest_2026-10-11_reference")
+        experiment_name='backtest_2026-10-11_quoted-budget', metrics=metrics)
+    metrics = _metrics(pm, "backtest_2026-10-11_quoted-budget")
     assert metrics["mode"] == metrics["parameters"]["mode"] == "strategy_eval"
     assert metrics["final_account"]["positions"] == {"600000": 500}
     assert metrics["final_account"]["cash"] == "0"
     assert metrics["execution_eval"]["filled_qty"] == 500 and "risk_eval" not in metrics
     assert "signal_eval" in metrics
-    assert metrics["not_run"]["price_feasibility"] == "reference_fills"
+    assert metrics["not_run"]["price_feasibility"] == "quoted_fills"
 
 
 @pytest.mark.parametrize(('slippage_bp', 'buy_offset_bp', 'filled_qty', 'fill_price'), [
@@ -512,7 +511,7 @@ def test_strategy_price_model_limits_fills_and_replays_without_business_risk(
     assert 'risk_eval' not in result and not (run_dir / 'risk-cases.json').exists()
     assert result['prediction_refs'] == fields['signal']['prediction_refs']
     assert result['parameters'] == submission.model_dump(mode='json')
-    assert 'reference_fills' not in pm.experiment_backtest_report(experiment_name=name).read_text()
+    assert 'quoted_fills' not in pm.experiment_backtest_report(experiment_name=name).read_text()
 
     replay_submission = create_backtest_submission(mode='execution_eval', start=fields['start'], end=fields['end'],
         order_refs=[str(run_dir / 'orders.json')], initial_account=fields['initial_account'], execution=fields['execution'])
@@ -840,12 +839,10 @@ def test_single_account_modes_measure_the_complete_chain_before_success(
         run_backtest(submission=submission, path_manager=pm,
             experiment_name='backtest_2026-10-11_chain', metrics=metrics)
     elif mode == 'strategy_eval':
-        reference = deepcopy(fields)
-        reference.pop('risk')
-        reference['strategy'].pop('quote')
-        reference['execution']["fill"] = {"type": "reference"}
-        reference['execution'].pop('risk_check_ts_us')
-        submission = create_backtest_submission(mode=mode, **reference)
+        strategy_fields = deepcopy(fields)
+        strategy_fields.pop('risk')
+        strategy_fields['execution'].pop('risk_check_ts_us')
+        submission = create_backtest_submission(mode=mode, **strategy_fields)
         metrics = BacktestMetrics(mode=submission.mode, parameters=submission.model_dump(mode="json"), not_run={})
         run_backtest(submission=submission, path_manager=pm,
             experiment_name='backtest_2026-10-11_chain', metrics=metrics)
@@ -1008,9 +1005,7 @@ def test_strategy_and_cost_changes_affect_returns_without_changing_fixed_predict
     for name, quantity, fee in [('small', 100, 0), ('large', 200, 0), ('fee', 200, 5)]:
         fields = deepcopy(original)
         fields.pop('risk')
-        fields['strategy'].pop('quote')
         fields['strategy']['params']['target_quantity'] = quantity
-        fields['execution']["fill"] = {"type": "reference"}
         fields['execution'].pop('risk_check_ts_us')
         fields['execution']['fees']['min_commission'] = fee
         submission = create_backtest_submission(mode='strategy_eval', **fields)
@@ -1106,7 +1101,7 @@ def test_fake_live_batch_delivery_reproduces_full_signal_target_risk_and_account
         assert before[key] == after[key]
 
 
-@pytest.mark.parametrize('fill', ['quoted', 'reference', 'limit_price'])
+@pytest.mark.parametrize('fill', ['quoted', 'limit_price'])
 def test_risk_runs_one_account_and_reports_actual_control_outcomes(
     signal_scenario: tuple[PathManager, dict[str, object], Mock], fill: str,
     backtest_log: Path, mocker: MockerFixture,
@@ -1114,9 +1109,7 @@ def test_risk_runs_one_account_and_reports_actual_control_outcomes(
     pm, fields, _ = signal_scenario
     fields['risk'] = {'rules': [{'type': 'max_single_name', 'max_ratio': 0.1}]}
     fields['execution']['fill'] = {'type': fill}
-    if fill == 'reference':
-        fields['strategy'].pop('quote')
-    elif fill == 'limit_price':
+    if fill == 'limit_price':
         fields['execution']['fill']['slippage_bp'] = 0
     ref = Path(fields['execution']['market_ref'])
     market = json.loads(ref.read_text())

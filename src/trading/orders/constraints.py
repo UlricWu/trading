@@ -1,4 +1,4 @@
-# filepath: src/trading/execution/policies/constraints.py
+# filepath: src/trading/orders/constraints.py
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
@@ -87,11 +87,9 @@ def reconcile_target_orders(
     *, target: TargetEvent, positions: Mapping[str, int], pending: Sequence[PendingOrder],
     cancel_order_ids: Sequence[int], terms: Mapping[str, OrderTerms],
     prices: Mapping[str, Decimal], rules: Mapping[str, QuantityRules],
-    quote: QuoteRule | None, next_order_id: Callable[[], int],
+    quote: QuoteRule, next_order_id: Callable[[], int],
 ) -> TargetOrderPlan:
     """Keep covered targets, cancel conflicts, and inherit each reduced order's terms.
-
-    None quote declares reference execution; it is not a missing price-model fallback.
 
     Example:
         plan = reconcile_target_orders(target=target, positions=account.positions,
@@ -126,7 +124,7 @@ def reconcile_target_orders(
                 needed -= keep
         if needed:
             window = terms[symbol]
-            limit = None if quote is None else quote.price(
+            limit = quote.price(
                 side=side, reference=prices[symbol], tick=rules[symbol].price_tick,
             )
             orders.append(OrderIntent(target.ts_us, symbol, side, needed, next_order_id(),

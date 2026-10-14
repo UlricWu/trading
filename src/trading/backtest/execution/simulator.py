@@ -1,4 +1,4 @@
-# filepath: src/trading/backtest/execution/fake.py
+# filepath: src/trading/backtest/execution/simulator.py
 from __future__ import annotations
 
 from collections.abc import Mapping, MutableMapping, Sequence
@@ -12,34 +12,44 @@ from src.trading.core.events import (
     PendingOrder, Side, TargetEvent,
 )
 from src.trading.core.ledger import ExecutionLedger
-from src.trading.execution.policies.constraints import (
+from src.trading.orders.constraints import (
     QuantityRules, QuoteRule, reconcile_target_orders,
 )
 from src.trading.backtest.execution.settlement import SettlementEngine, affordable_quantity
-from src.trading.backtest.execution.venue.fake import LimitPriceVenue, QuotedPriceVenue, ReferenceVenue
+from src.trading.backtest.execution.fill_models import (
+    ImmediateQuoteFillModel,
+    LimitPriceFillModel,
+)
 from src.trading.backtest.market.data_view import ExecutionObservation, PriceView
 from src.trading.portfolio.state import PortfolioState
 
 
 @dataclass(slots=True)
-class FakeExecution:
-    """Run-scoped pending-order lifecycle with one shared settlement path.
+class AccountExecutionSimulator:
+    """Simulate one account's order lifecycle through a shared settlement path.
 
     The caller owns the account, ledger and pending container; this object is
     the sole pending-order writer. No method obtains data or writes external state.
 
     Example:
-        execution = FakeExecution(account, ledger, pending_orders, settlement,
-                                  venue, rules, quote_rule)
-        execution.submit_orders(orders=(order,), market=market)
-        fills = execution.advance(ts_us=minute_end_us, observations=(observation,))
+        simulator = AccountExecutionSimulator(
+            portfolio=account,
+            ledger=ledger,
+            pending_orders=pending_orders,
+            settlement=settlement,
+            fill_model=fill_model,
+            rules=rules,
+            quote_rule=quote_rule,
+        )
+        simulator.submit_orders(orders=(order,))
+        fills = simulator.advance(ts_us=minute_end_us, observations=(observation,))
     """
 
     portfolio: PortfolioState
     ledger: ExecutionLedger
     pending_orders: MutableMapping[int, PendingOrder]
     settlement: SettlementEngine
-    venue: LimitPriceVenue | QuotedPriceVenue | ReferenceVenue
+    fill_model: LimitPriceFillModel | ImmediateQuoteFillModel
     rules: Mapping[str, QuantityRules]
     quote_rule: QuoteRule | None
     _ts_us: int | None = field(default=None, init=False)
@@ -51,8 +61,6 @@ class FakeExecution:
         self.rules = dict(self.rules)
         if self.pending_orders:
             raise ValueError("H03 requires an initial account with no pending orders")
-        if not self.venue.requires_quote and self.quote_rule is not None:
-            raise ValueError("reference execution does not use quote parameters")
         account = self.portfolio
         if account.current_day is None:
             raise ValueError("initial account must declare its current trade_date")
@@ -70,12 +78,12 @@ class FakeExecution:
                 raise ValueError("initial bought-today quantity must be within the position")
 
     def submit_orders(
-        self, *, orders: Sequence[OrderIntent], market: PriceView,
+        self, *, orders: Sequence[OrderIntent],
     ) -> tuple[OrderEvent, ...]:
-        """Accept frozen quantities and settle active orders under the quote-fill assumption.
+        """Accept frozen quantities and reserve resources under the configured fill assumption.
 
         Example:
-            events = execution.submit_orders(orders=(order,), market=market)
+            events = simulator.submit_orders(orders=(order,))
         """
         events: list[OrderEvent] = []
         for order in orders:
@@ -83,31 +91,20 @@ class FakeExecution:
             if order.order_id in self.ledger.orders_by_id:
                 raise ValueError(f"duplicate order_id={order.order_id}")
             rule = self.rules[order.symbol]
-            if self.venue.requires_quote and order.limit_price is None:
-                raise ValueError("quoted execution requires a limit_price")
-            if not self.venue.requires_quote and order.limit_price is not None:
-                raise ValueError("reference orders require limit_price=None")
             self.ledger.orders_by_id[order.order_id] = order
             self.ledger.commands.append(order)
             self.ledger.record_order_submit(ts_us=order.ts_us, symbol=order.symbol,
                 side=order.side.value, qty=order.qty, order_id=order.order_id)
             step = rule.buy_step_qty if order.side == Side.BUY else rule.sell_step_qty
-            if isinstance(self.venue, QuotedPriceVenue):
+            if isinstance(self.fill_model, ImmediateQuoteFillModel):
                 step = lcm(step, rule.fill_step_qty)
             minimum = rule.buy_min_qty if order.side == Side.BUY else rule.sell_min_qty
             reason = ""
             reservation_price = order.limit_price
-            if reservation_price is None:
-                raw_price = market.get_price(order.symbol)
-                if raw_price is None:
-                    raise ValueError(f"missing funding reference price for {order.symbol}")
-                reservation_price = Decimal(str(raw_price))
-                if not reservation_price.is_finite() or reservation_price <= 0:
-                    raise ValueError("funding reference price must be finite and positive")
             reserved_cash = Decimal("0")
             if order.qty < minimum or order.qty % step:
                 reason = "quantity_rule"
-            elif order.limit_price is not None and order.limit_price % rule.price_tick:
+            elif order.limit_price % rule.price_tick:
                 reason = "price_tick"
             elif order.side == Side.BUY:
                 turnover = reservation_price * order.qty
@@ -125,7 +122,7 @@ class FakeExecution:
                                if item.intent.symbol == order.symbol)
                 if order.qty > sellable - reserved:
                     reason = "insufficient_sellable"
-                elif isinstance(self.venue, QuotedPriceVenue):
+                elif isinstance(self.fill_model, ImmediateQuoteFillModel):
                     turnover = reservation_price * order.qty
                     cost = self.settlement.incremental_cost(order_id=order.order_id, side=order.side,
                         symbol=order.symbol, turnover=turnover, ledger=self.ledger)
@@ -147,7 +144,7 @@ class FakeExecution:
                 )
                 events.append(self._event(order.ts_us, order.order_id, OrderStatus.PENDING,
                                           order.qty, "accepted"))
-                if isinstance(self.venue, QuotedPriceVenue):
+                if isinstance(self.fill_model, ImmediateQuoteFillModel):
                     first_event = len(self.ledger.order_events)
                     self._fill_at_quotes(order.ts_us)
                     events.extend(self.ledger.order_events[first_event:])
@@ -160,12 +157,12 @@ class FakeExecution:
         """Reconcile before cancelling, then create resource-constrained orders.
 
         Example:
-            events = execution.submit_targets(target=target, cancel_order_ids=(),
+            events = simulator.submit_targets(target=target, cancel_order_ids=(),
                                                terms=terms, market=market)
         """
         self._advance_time(target.ts_us)
-        if self.venue.requires_quote and self.quote_rule is None:
-            raise ValueError("quoted target execution requires quote_rule")
+        if self.quote_rule is None:
+            raise ValueError("target submission requires quote_rule")
         prices = {symbol: Decimal(str(price)) for symbol in target.targets
                   if (price := market.get_price(symbol)) is not None}
         plan = reconcile_target_orders(target=target, positions=self.portfolio.positions,
@@ -176,15 +173,14 @@ class FakeExecution:
         for order in plan.orders:
             rule = self.rules[order.symbol]
             step = rule.buy_step_qty if order.side == Side.BUY else rule.sell_step_qty
-            if isinstance(self.venue, QuotedPriceVenue):
+            if isinstance(self.fill_model, ImmediateQuoteFillModel):
                 step = lcm(step, rule.fill_step_qty)
             qty = order.qty // step * step
             if order.side == Side.BUY:
                 cash = self.portfolio.cash - sum(
                     (item.reserved_cash for item in self.pending_orders.values()), Decimal("0")
                 )
-                price = order.limit_price if order.limit_price is not None else prices[order.symbol]
-                qty = affordable_quantity(order=order, price=price, maximum=qty, step=step,
+                qty = affordable_quantity(order=order, price=order.limit_price, maximum=qty, step=step,
                     cash=cash, settlement=self.settlement, ledger=self.ledger)
             else:
                 sellable = self.portfolio.t1_sellable(order.symbol) if rule.enforce_t1 else self.portfolio.positions.get(order.symbol, 0)
@@ -193,14 +189,14 @@ class FakeExecution:
                 qty = min(qty, sellable - reserved) // step * step
             minimum = rule.buy_min_qty if order.side == Side.BUY else rule.sell_min_qty
             if qty >= minimum:
-                events.extend(self.submit_orders(orders=(replace(order, qty=qty),), market=market))
+                events.extend(self.submit_orders(orders=(replace(order, qty=qty),)))
         return tuple(events)
 
     def cancel_orders(self, *, ts_us: int, order_ids: Sequence[int]) -> tuple[OrderEvent, ...]:
         """Record cancellation commands, including requests for terminal orders.
 
         Example:
-            events = execution.cancel_orders(ts_us=deadline, order_ids=(1,))
+            events = simulator.cancel_orders(ts_us=deadline, order_ids=(1,))
         """
         self._advance_time(ts_us)
         if not order_ids:
@@ -226,15 +222,15 @@ class FakeExecution:
     ) -> tuple[FillEvent, ...]:
         """Settle active quote fills or complete eligible market intervals.
 
-        Under market-based venues, repeated identical observations are ignored;
+        Under LimitPriceFillModel, repeated identical observations are ignored;
         conflicts, late input and overlapping liquidity streams fail before settlement.
-        QuotedPriceVenue uses activation ticks without consuming observations.
+        ImmediateQuoteFillModel uses activation ticks without consuming observations.
 
         Example:
-            fills = execution.advance(ts_us=minute_end_us, observations=(observation,))
+            fills = simulator.advance(ts_us=minute_end_us, observations=(observation,))
         """
         self._advance_time(ts_us)
-        if isinstance(self.venue, QuotedPriceVenue):
+        if isinstance(self.fill_model, ImmediateQuoteFillModel):
             return self._fill_at_quotes(ts_us)
         fresh: dict[str, ExecutionObservation] = {}
         last_end = dict(self._last_interval_end)
@@ -247,7 +243,7 @@ class FakeExecution:
             time = observation.time
             if time.available_ts_us != time.end_ts_us or time.available_ts_us != ts_us:
                 raise ValueError("H03 requires complete observations available at the current interval end")
-            if self.venue.requires_quote and observation.volume_qty is None:
+            if observation.volume_qty is None:
                 raise ValueError("price-model execution requires volume_qty")
             if time.start_ts_us < last_end.get(observation.symbol, time.start_ts_us):
                 raise ValueError("overlapping execution observations would reuse liquidity")
@@ -273,16 +269,14 @@ class FakeExecution:
                 and observation.time.end_ts_us <= order.expires_ts_us
             ):
                 continue
-            match = self.venue.match(order=order, observation=observation)
+            match = self.fill_model.match(order=order, observation=observation)
             status = OrderStatus.PARTIAL if item.remaining_qty < order.qty else OrderStatus.PENDING
             if not match.matches:
                 self._event(ts_us, order.order_id, status, item.remaining_qty,
                             "price_not_matched", observation.observation_id, match.candidate_price)
                 continue
             rule = self.rules[order.symbol]
-            quantity = item.remaining_qty
-            if self.venue.requires_quote:
-                quantity = min(quantity, cast(int, volumes[observation.observation_id]))
+            quantity = min(item.remaining_qty, cast(int, volumes[observation.observation_id]))
             quantity = quantity // rule.fill_step_qty * rule.fill_step_qty
             reason = "volume_exhausted" if quantity == 0 else "resources_unavailable"
             if order.side == Side.BUY:
@@ -319,8 +313,7 @@ class FakeExecution:
             if order.side == Side.BUY:
                 spent += cash_at_fill - self.portfolio.cash
             remaining = item.remaining_qty - quantity
-            if self.venue.requires_quote:
-                volumes[observation.observation_id] = cast(int, volumes[observation.observation_id]) - quantity
+            volumes[observation.observation_id] = cast(int, volumes[observation.observation_id]) - quantity
             if remaining:
                 reserved_cash = Decimal("0")
                 if order.side == Side.BUY:
@@ -359,7 +352,7 @@ class FakeExecution:
             order = pending.intent
             if order.active_ts_us > ts_us:
                 continue
-            price = cast(Decimal, order.limit_price)
+            price = order.limit_price
             fill = FillEvent(ts_us, order.symbol, order.side, order.qty, price, order.order_id,
                 f"{order.order_id}:quote:{ts_us}", None, price)
             self.settlement.settle_fill(fill=fill, portfolio=self.portfolio, ledger=self.ledger)

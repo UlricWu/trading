@@ -242,7 +242,7 @@ order_refs 和 prediction_refs 是有序绝对路径数组；空事实可报告�
 | quantity_rules 每证券值 | buy_min_qty、buy_step_qty、sell_min_qty、sell_step_qty、fill_step_qty 都是正整数，price_tick 是正数有限 Decimal，enforce_t1 是显式 bool；不可用 bool 代替数量 |
 | fees | commission_rate、stamp_tax_rate、transfer_rate、min_commission，均为非负有限 Decimal；不使用隐含费率或最低佣金 |
 | risk | rules 非空数组，按声明顺序选具名规则；每项为 type=max_single_name 和非负有限 max_ratio，或 type=max_gross_exposure 和非负有限 max_gross_ratio，或 type=max_drawdown 和 [0,1] max_drawdown |
-| strategy | type、params、order_window_minutes；quoted/limit_price 须 quote，reference 不接受非 null quote。窗口分钟为正整数 |
+| strategy | type、params、order_window_minutes、quote；两种成交假设均须完整 quote。窗口分钟为正整数 |
 | quote | buy_offset_bp、sell_offset_bp，均为 [0,10000) 的有限 Decimal；不接受额外字段 |
 
 execution.fill 是必须显式提供的带 type 判别字段的对象，不根据 null 或缺失滑点推导成交行为：
@@ -250,12 +250,12 @@ execution.fill 是必须显式提供的带 type 判别字段的对象，不根�
 | execution.fill | 构造与适用范围 |
 | --- | --- |
 | `{"type":"quoted"}` | 生效时按申报价全额成交，不接受 slippage_bp；signal_eval 固定使用，strategy/risk 也可选择 |
-| `{"type":"reference"}` | 后续参考观察成交，不接受 slippage_bp；适用于 strategy/risk |
 | `{"type":"limit_price","slippage_bp":0}` | 滑点为必填 [0,10000) 有限数；价量约束，适用于 strategy/risk，execution/full 固定使用 |
 
-所有 fill 对象拒绝额外字段，旧的 execution.slippage_bp 不再接受。信号驱动路径使用
-quoted 或 limit_price 时必须提供完整 strategy.quote；reference 时 quote 只能省略或为 null。
-execution_eval 的报价取自冻结委托，不接受 strategy。
+所有 fill 对象拒绝额外字段，旧的 execution.slippage_bp 不再接受。信号驱动路径必须提供
+完整 strategy.quote，省略或 null 均拒绝。execution_eval 的报价取自冻结委托，不接受 strategy。
+成交配置仅包含表中两个选项；参考价研究的适用边界及原 reference 的移除理由由
+[Offline owner](../offline_workflow_contract.md#移除-reference-成交假设的原因) 定义。
 
 signal_eval/strategy_eval 不接受 risk；risk_rule_eval/full_backtest 必须提供非空 rules。
 只有 risk/full 可提供非空 risk_check_ts_us 整数数组，省略为空。risk 对一个场景执行一次

@@ -1,7 +1,6 @@
-# filepath: src/trading/backtest/execution/venue/fake.py
+# filepath: src/trading/backtest/execution/fill_models.py
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import ClassVar, cast
 
 from src.trading.core.events import OrderIntent, Side
 from src.trading.backtest.execution.models.slippage_fixed_bp import FixedBPSlippageModel
@@ -21,56 +20,32 @@ class PriceMatch:
 
 
 @dataclass(frozen=True, slots=True)
-class QuotedPriceVenue:
+class ImmediateQuoteFillModel:
     """Assume full fills at each accepted order's quote when it becomes active.
 
     Example:
-        venue = QuotedPriceVenue()
-        execution = FakeExecution(account, ledger, pending, settlement, venue, rules, quote)
+        fill_model = ImmediateQuoteFillModel()
     """
-
-    requires_quote: ClassVar[bool] = True
 
 
 @dataclass(frozen=True, slots=True)
-class ReferenceVenue:
-    """Use subsequent reference prices without quote or market-volume tests.
-
-    Example:
-        venue = ReferenceVenue()
-        match = venue.match(order=order, observation=observation)
-    """
-
-    requires_quote: ClassVar[bool] = False
-
-    def match(self, *, order: OrderIntent, observation: ExecutionObservation) -> PriceMatch:
-        """Assign the declared reference price; resources are handled separately.
-
-        Example:
-            match = venue.match(order=order, observation=observation)
-        """
-        return PriceMatch(observation.price, True)
-
-
-@dataclass(frozen=True, slots=True)
-class LimitPriceVenue:
+class LimitPriceFillModel:
     """Test the explicitly slipped observation price against the frozen quote.
 
     Example:
-        venue = LimitPriceVenue(slippage_model=FixedBPSlippageModel(bp=10))
-        match = venue.match(order=order, observation=observation)
+        fill_model = LimitPriceFillModel(slippage_model=FixedBPSlippageModel(bp=10))
+        match = fill_model.match(order=order, observation=observation)
     """
 
     slippage_model: FixedBPSlippageModel
-    requires_quote: ClassVar[bool] = True
 
     def match(self, *, order: OrderIntent, observation: ExecutionObservation) -> PriceMatch:
         """Retain an out-of-limit candidate price, without clamping it to the quote.
 
         Example:
-            match = venue.match(order=order, observation=observation)
+            match = fill_model.match(order=order, observation=observation)
         """
         candidate = self.slippage_model.apply(side=order.side.value, price=observation.price)
-        limit_price = cast(Decimal, order.limit_price)
+        limit_price = order.limit_price
         matches = candidate <= limit_price if order.side == Side.BUY else candidate >= limit_price
         return PriceMatch(candidate, matches)

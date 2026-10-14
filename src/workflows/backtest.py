@@ -85,7 +85,10 @@ def _run_account(
     evaluation_steps = _build_evaluation_steps(components=components, path_manager=path_manager)
 
     per_timing_steps: tuple[PipelineStep[BacktestContext], ...] = (
-        AdvanceExecutionStep(execution=components.execution, market=components.market),
+        AdvanceExecutionStep(
+            execution_simulator=components.execution_simulator,
+            market=components.market,
+        ),
         AccountingStep(market=components.market),
         *decision_steps,
         AccountingStep(market=components.market),
@@ -116,8 +119,7 @@ def _build_decision_steps(
     if isinstance(components, OrderAccountComponents):
         return (
             RecordedOrdersStep(
-                execution=components.execution,
-                market=components.market,
+                execution_simulator=components.execution_simulator,
                 commands=components.commands,
             ),
         )
@@ -137,7 +139,7 @@ def _build_decision_steps(
         _build_portfolio_step(components=components),
         *risk_steps,
         SubmitTargetsStep(
-            execution=components.execution,
+            execution_simulator=components.execution_simulator,
             market=components.market,
             windows=components.windows,
             order_window_minutes=components.order_window_minutes,

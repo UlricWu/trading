@@ -109,6 +109,20 @@ def test_schedule_from_files_preserves_file_and_same_time_order(tmp_path: Path, 
     assert commands.at(50) == (CancelOrders(50, (1,)),)
 
 
+@pytest.mark.parametrize('quote', [{}, {'limit_price': None}])
+def test_schedule_from_files_requires_an_order_quote(
+    tmp_path: Path, order_market_input: ReplayMarketInput, quote: dict[str, object],
+) -> None:
+    order = {'ts_us': 10, 'symbol': 'A', 'side': 'BUY', 'qty': 100, 'order_id': 1,
+             'active_ts_us': 10, 'expires_ts_us': 90, **quote}
+    ref = tmp_path / 'orders.json'
+    ref.write_text(json.dumps([order]))
+
+    with pytest.raises(ValidationError, match='limit_price'):
+        OrderCommandSchedule.from_files((ref,), start='2026-07-03', end='2026-07-03',
+            market=order_market_input, start_ts_us=10, end_ts_us=50)
+
+
 @pytest.mark.parametrize('with_file', [False, True])
 def test_schedule_from_files_accepts_empty_inputs(tmp_path: Path, order_market_input: ReplayMarketInput, with_file: bool) -> None:
     ref = tmp_path / 'empty.json'

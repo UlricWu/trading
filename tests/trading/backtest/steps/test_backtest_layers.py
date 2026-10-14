@@ -5,9 +5,10 @@ from unittest.mock import Mock, call
 
 from src.trading.backtest.commands import OrderCommandSchedule
 from src.trading.backtest.context import BacktestContext, BacktestState
-from src.trading.backtest.execution.fake import FakeExecution
+from src.trading.backtest.execution.simulator import AccountExecutionSimulator
 from src.trading.backtest.execution.settlement import SettlementEngine
-from src.trading.backtest.execution.venue.fake import ReferenceVenue
+from src.trading.backtest.execution.fill_models import LimitPriceFillModel
+from src.trading.backtest.execution.models.slippage_fixed_bp import FixedBPSlippageModel
 from src.trading.backtest.market.replay import ReplayMarket
 from src.trading.backtest.market.signals import RecordedSignalBatch, ReplaySignal
 from src.trading.backtest.steps.backtest_layers import (
@@ -16,7 +17,7 @@ from src.trading.backtest.steps.backtest_layers import (
 from src.trading.backtest.timing import BacktestTiming
 from src.trading.core.events import CancelOrders, OrderIntent, Side, SignalEvent, TargetEvent
 from src.trading.core.time import TradingWindow
-from src.trading.execution.policies.constraints import QuantityRules
+from src.trading.orders.constraints import QuantityRules, QuoteRule
 from src.trading.portfolio.constructors.threshold import ThresholdConstructor
 from src.trading.portfolio.state import PortfolioState
 from src.trading.risk.engine import RiskManager
@@ -72,17 +73,17 @@ def test_recorded_orders_step_uses_only_current_commands_in_original_order(order
     replacement = OrderIntent(10, 'A', Side.BUY, 100, 1, 10, 90, Decimal('10'))
     commands = OrderCommandSchedule((order, CancelOrders(10, (2,)), replacement),
         start='2026-07-03', end='2026-07-03', market=order_market.source, start_ts_us=10, end_ts_us=50)
-    execution = Mock(spec=FakeExecution)
+    simulator = Mock(spec=AccountExecutionSimulator)
     state = BacktestState(PortfolioState(2000, 2000, current_day='2026-07-03'))
-    step = RecordedOrdersStep(execution, order_market, commands)
+    step = RecordedOrdersStep(simulator, commands)
 
     for ts_us in (9, 10, 11):
         step.run(BacktestContext(BacktestTiming(ts_us, '2026-07-03'), state))
 
-    assert execution.method_calls == [
-        call.submit_orders(orders=(order,), market=order_market),
+    assert simulator.method_calls == [
+        call.submit_orders(orders=(order,)),
         call.cancel_orders(ts_us=10, order_ids=(2,)),
-        call.submit_orders(orders=(replacement,), market=order_market),
+        call.submit_orders(orders=(replacement,)),
     ]
 
 
@@ -109,9 +110,10 @@ def test_target_submission_owns_its_order_windows() -> None:
     market = Mock(spec=ReplayMarket)
     market.get_price.return_value = Decimal("10")
     rules = {"A": QuantityRules(100, 100, 1, 1, 1, Decimal("0.01"), True)}
-    execution = FakeExecution(state.portfolio_state, state.execution_ledger, state.pending_orders,
-                              SettlementEngine(), ReferenceVenue(), rules, None)
-    step = SubmitTargetsStep(execution, market, windows, 2)
+    simulator = AccountExecutionSimulator(state.portfolio_state, state.execution_ledger, state.pending_orders,
+                              SettlementEngine(), LimitPriceFillModel(FixedBPSlippageModel(0)),
+                              rules, QuoteRule(Decimal(0), Decimal(0)))
+    step = SubmitTargetsStep(simulator, market, windows, 2)
     context = BacktestContext(BacktestTiming(0, "2026-07-03"), state,
                               execution_target=TargetEvent(0, {"A": 100}))
 

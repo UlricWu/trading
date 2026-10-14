@@ -426,9 +426,12 @@ def test_strategy_backtest_validates_price_model_before_running(
     monkeypatch.setattr(cli, "run_backtest", run)
     fields = backtest_payload("strategy_eval")
     del fields["kind"], fields["mode"]
+    fields["execution"]["fill"] = {"type": "limit_price"}
     if missing != "slippage_bp":
-        fields["execution"]["fill"] = {"type": "limit_price", "slippage_bp": 0}
-    if missing != "quote":
+        fields["execution"]["fill"]["slippage_bp"] = 0
+    if missing == "quote":
+        fields["strategy"].pop("quote")
+    else:
         fields["strategy"]["quote"] = {"buy_offset_bp": 10, "sell_offset_bp": 0}
 
     result = CliRunner().invoke(cli.app, ["backtest", "--mode", "strategy_eval",
@@ -436,7 +439,7 @@ def test_strategy_backtest_validates_price_model_before_running(
 
     if missing is not None:
         assert result.exit_code == 2, result.output
-        assert "strategy.quote" in result.output
+        assert ("slippage_bp" if missing == "slippage_bp" else "strategy.quote") in result.output
         load_config.assert_not_called()
         run.assert_not_called()
         return

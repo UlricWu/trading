@@ -159,7 +159,7 @@ CLI-only 的 `data-calendar`、`data-standard-bootstrap`、`data-level2-minute-b
   - signal 和 strategy 使用 start/end/signal/strategy/initial_account/execution；
     risk/full 在这些字段基础上另须 risk；execution 使用 start/end/order_refs/initial_account/execution。
     四种含 signal 的请求必须在顶层提供 min_listing_calendar_days；execution 不接受该字段。
-    execution.fill 显式声明 quoted、reference 或 limit_price，构造约束沿用 CLI schema。
+    execution.fill 显式声明 quoted 或 limit_price，构造约束沿用 CLI schema。
     risk_rule_eval 在一个 Job 内执行一次带指定风控的账户回放，评价控制效果与剩余风险。
   - 日期使用规范 YYYY-MM-DD 且 start<=end；risk 的日期选择信号决策，不能用案例文件代替。
   - 每个请求只创建一个 Job；路径、数值和嵌套结构先由共享构造边界校验。
@@ -256,8 +256,8 @@ CLI-only 的 `data-calendar`、`data-standard-bootstrap`、`data-level2-minute-b
 }
 ```
 
-将此例的 execution.fill 改为 `{"type":"reference"}`，并移除 strategy.quote，可选择参考成交。
 将 fill 改为 `{"type":"quoted"}` 且保留 quote，可选择生效时按申报价全额成交。
+成交配置只提供上述两个选项，具体构造约束沿用 [CLI Backtest](cli_contract.md#backtest)。
 
 风控有效性评价沿用上面的完整策略请求，将 mode 改为 risk_rule_eval，添加：
 

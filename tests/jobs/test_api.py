@@ -68,20 +68,22 @@ def test_backtest_post_accepts_each_modes_actual_inputs(
     assert runtime.submitted[0].mode is mode
 
 
-@pytest.mark.parametrize(("slippage_bp", "quote", "status"), [
-    (None, False, 201), (0, True, 201), (10, True, 201),
-    (None, True, 400), (0, False, 400),
+@pytest.mark.parametrize(("fill", "quote", "status"), [
+    ({"type": "quoted"}, True, 201),
+    ({"type": "limit_price", "slippage_bp": 0}, True, 201),
+    ({"type": "limit_price", "slippage_bp": 10}, True, 201),
+    ({"type": "quoted"}, False, 400),
+    ({"type": "limit_price", "slippage_bp": 0}, False, 400),
 ])
 def test_strategy_post_validates_execution_selection_before_creating_a_job(
-    slippage_bp: int | None, quote: bool, status: int,
+    fill: dict[str, object], quote: bool, status: int,
     backtest_payload: Callable[[str], dict[str, object]],
 ) -> None:
     runtime = _StubRuntime()
     payload = backtest_payload("strategy_eval")
-    payload["execution"]["fill"] = ({"type": "reference"} if slippage_bp is None
-                                     else {"type": "limit_price", "slippage_bp": slippage_bp})
-    if quote:
-        payload["strategy"]["quote"] = {"buy_offset_bp": 0, "sell_offset_bp": 0}
+    payload["execution"]["fill"] = fill
+    if not quote:
+        payload["strategy"].pop("quote")
 
     response = create_app(cast(JobRuntime, runtime)).test_client().post("/jobs", json=payload)
 

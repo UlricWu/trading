@@ -9,7 +9,7 @@ from types import MappingProxyType
 
 from src.trading.core.events import PendingOrder, Side, TargetEvent
 from src.trading.core.time import trading_day_exit_ts
-from src.trading.execution.policies.constraints import QuantityRules
+from src.trading.orders.constraints import QuantityRules
 from src.trading.portfolio.state import PortfolioState
 from src.utils.datetime_utils import DateTimeUtils
 

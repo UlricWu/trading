@@ -203,13 +203,16 @@ def test_strategy_evaluation_rejects_incomplete_price_model(
     missing: str, backtest_payload: Callable[[str], dict[str, object]],
 ) -> None:
     payload = backtest_payload("strategy_eval")
+    payload["execution"]["fill"] = {"type": "limit_price"}
     if missing != "slippage_bp":
-        payload["execution"]["fill"] = {"type": "limit_price", "slippage_bp": 0}
-    if missing != "quote":
-        payload["strategy"]["quote"] = {"buy_offset_bp": 0, "sell_offset_bp": 0}
+        payload["execution"]["fill"]["slippage_bp"] = 0
+    if missing == "quote":
+        payload["strategy"].pop("quote")
 
-    with pytest.raises(InvalidJobRequest, match="strategy.quote"):
+    message = "Field required" if missing == "slippage_bp" else "strategy.quote"
+    with pytest.raises(InvalidJobRequest, match=message) as caught:
         parse_job_request(payload)
+    assert caught.value.field == ("execution.fill.slippage_bp" if missing == "slippage_bp" else "request")
 
 
 @pytest.mark.parametrize("price_model", [False, True])
@@ -524,7 +527,7 @@ def test_backtest_requires_an_explicit_fill_model(
 
 
 @pytest.mark.parametrize(('mode', 'fill'), [
-    ('signal_eval', {'type': 'reference'}),
+    ('strategy_eval', {'type': 'unknown'}),
     ('signal_eval', {'type': 'limit_price', 'slippage_bp': 0}),
     ('full_backtest', {'type': 'quoted'}),
     ('execution_eval', {'type': 'quoted'}),

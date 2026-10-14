@@ -13,7 +13,7 @@ from src.jobs.requests import RiskRuleEvalSubmission
 from src.trading.backtest.components import build_signal_account_components, prepare_market_input, prepare_signal
 from src.trading.backtest.market.replay import ReplayMarketInput
 from src.trading.backtest.reporting.metrics import BacktestMetrics
-from src.trading.execution.policies.constraints import QuantityRules
+from src.trading.orders.constraints import QuantityRules
 from src.utils.path import PathManager
 
 
@@ -114,7 +114,7 @@ def test_prepare_market_input_requires_rules_for_observed_and_held_symbols(
         prepare_market_input(config=config, initial=initial, access=access)
 
 
-@pytest.mark.parametrize('fill', ['limit_price', 'reference', 'quoted'])
+@pytest.mark.parametrize('fill', ['limit_price', 'quoted'])
 def test_prepare_market_input_requires_volume_only_for_price_model_execution(
     market_scenario: tuple[FakeExecutionConfig, InitialAccount, Mock], fill: str,
 ) -> None:
@@ -198,12 +198,12 @@ def test_signal_account_factory_shares_predictions_but_isolates_account_progress
     treatment = build_signal_account_components(submission=submission, market_source=source,
         signal=signal, risk=submission.risk, metrics=treatment_metrics)
 
-    baseline.execution.portfolio.cash -= 100
+    baseline.execution_simulator.portfolio.cash -= 100
     baseline.market.on_time(initial.ts_us)
     assert next(iter(baseline.clock)) == initial.ts_us
 
     assert baseline.state.portfolio_state.cash == 900
-    assert treatment.state.portfolio_state.cash == treatment.execution.portfolio.cash == initial.cash == 1000
+    assert treatment.state.portfolio_state.cash == treatment.execution_simulator.portfolio.cash == initial.cash == 1000
     assert baseline.market.prices == {"A": Decimal("10"), "B": Decimal("20")}
     assert treatment.market.prices == {}
     assert baseline.clock.first() == 60_000_000

@@ -3,7 +3,7 @@ from datetime import date, time
 from decimal import Decimal
 
 from src.trading.core.events import OrderIntent, PendingOrder, Side
-from src.trading.execution.policies.constraints import QuantityRules
+from src.trading.orders.constraints import QuantityRules
 from src.trading.portfolio.constructors.fixed_holding import FixedHoldingConstructor
 from src.trading.portfolio.state import PortfolioState
 from src.utils.datetime_utils import DateTimeUtils

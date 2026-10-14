@@ -1,2 +1,2 @@
 # filepath: src/trading/backtest/execution/__init__.py
-"""Simulated orders, matching, fees and settlement."""
+"""Account-level order simulation, fill assumptions and settlement."""

@@ -17,7 +17,8 @@ from src.trading.core.time import BarTime
 class ExecutionObservation:
     """A complete, unit-normalized execution observation.
 
-    None volume explicitly means no volume cap for reference execution only.
+    Volume may be None for quoted runs, which do not use observations for fills.
+    Limit-price runs require explicit volume before matching.
 
     Example:
         observation = ExecutionObservation("minute-1", "600000", bar_time, Decimal("10"), 300)

@@ -10,7 +10,7 @@ from typing import Annotated, Literal, Self, TypeAlias
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, model_validator
 
 
-from src.trading.execution.policies.constraints import QuantityRules, QuoteRule
+from src.trading.orders.constraints import QuantityRules, QuoteRule
 from src.utils.datetime_utils import DateTimeUtils
 
 NonnegativeQuantity = Annotated[int, Field(strict=True, ge=0)]
@@ -207,17 +207,6 @@ class QuotedFillConfig(BaseModel):
     type: Literal["quoted"]
 
 
-class ReferenceFillConfig(BaseModel):
-    """Fill from subsequent reference observations without price or volume limits.
-
-    Example:
-        fill = ReferenceFillConfig(type="reference")
-    """
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-    type: Literal["reference"]
-
-
 class LimitPriceFillConfig(BaseModel):
     """Apply explicit slippage, order quotes and available observation volume.
 
@@ -231,7 +220,7 @@ class LimitPriceFillConfig(BaseModel):
 
 
 FillConfig: TypeAlias = Annotated[
-    QuotedFillConfig | ReferenceFillConfig | LimitPriceFillConfig, Field(discriminator="type"),
+    QuotedFillConfig | LimitPriceFillConfig, Field(discriminator="type"),
 ]
 
 

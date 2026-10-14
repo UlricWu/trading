@@ -142,7 +142,7 @@ class ReplayMarket:
     Example:
         market = ReplayMarket(market_input)
         market.on_time(ts_us)
-        fills = execution.advance(ts_us=ts_us, observations=market.observations_at(ts_us))
+        fills = execution_simulator.advance(ts_us=ts_us, observations=market.observations_at(ts_us))
     """
 
     def __init__(self, source: ReplayMarketInput) -> None:
