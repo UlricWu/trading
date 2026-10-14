@@ -61,16 +61,16 @@ run_backtest(*, submission: BacktestSubmission, path_manager: PathManager,
 tuple 和 Instrumentation 作用域，不知道 data kind、日期 schedule、source、step 分类或具体
 step 类型；它必须严格按传入顺序把同一个 Context 交给每个 step，一次 `run` 中每个 step
 实例只调用一次。TrainingPipeline 拥有一个已解析的训练窗口及单一 Step 链，
-BacktestPipeline 拥有 timing schedule，并在回放结束后执行 workflow 明示的最终 Step 链。
+BacktestPipeline 拥有一个运行级 Context 和单一 Step 链，每个 Step 在一次运行中只调用一次。
 所有 Pipeline 都不得创建、发现、排序或按类型重排 step。
 
 Backtest 的一个 CLI 命令统一准备实验名称和初始 `BacktestMetrics`，将有类型的 submission
-交给 `run_backtest`；CLI 不组装 Step。公共入口准备输入，将 mode 转换为账户组件和参数，
-执行一次公共账户流水线。账户组件工厂负责依赖选择、
-装配和时钟准备，workflow 根据实际组件显式构造决策、评价 Step，插入唯一声明的公共逐时点
-及收尾流程。模式只影响组装和运行配置，Pipeline 与步骤本身不接收 mode。
-Workflow 不重新命名实验、重建请求参数快照或重复记录任务开始日志；预测生成由 SignalStep
-在当前决策时点触发，评价和报告由对应 Step 执行。
+交给 `run_backtest`；CLI 不组装 Step。Workflow 绑定请求、输入访问、账户/策略/风控/执行
+配置和输出路径，显式声明准备输入、账户回放、事实保存、结果评价、结果发布五个 Step。
+输入准备由 PrepareInputsStep 执行，账户对象和动态时钟在 ReplayAccountStep 内创建并推进。
+模式只影响声明的输入和运行配置，Pipeline 不接收 mode，Step 不按 mode 名称选择算法。
+Workflow 不重新命名实验、重建请求参数快照或重复记录任务开始日志；预测生成由
+ReplayAccountStep 在当前决策时点触发，评价和报告由对应 Step 执行。
 
 公共编排抽象只允许结构化 `PipelineStep[ContextT]` 协议和 `run_steps(...)` 保序执行器。
 `run_steps(...)` 自动以具体 step 类名调用 `Instrumentation.measure(...)`；该公共调用形式
@@ -117,10 +117,10 @@ Normalize 的公共入口按 source family 固定为
 
 `run_steps(...)` 是无状态的单段 Step 链执行原语，统一拥有四个不变量：严格使用调用方
 给定的顺序；把前一 Step 返回的 Context 交给后一 Step；默认且仅一次测量每次 Step 调用；
-原样传播异常。Data 与 Training 各用它执行一次完整 Step 链；Backtest 分别对每个 timing
-和最终 Step 链调用。各领域 Pipeline 仍拥有自身的日程、
-Context 创建、跨迭代状态和整个 workflow 的 Instrumentation 作用域，`run_steps(...)` 不拥有
-这些生命周期。
+原样传播异常。Data、Training 与 Backtest 各用它执行一次完整 Step 链。各领域 Pipeline
+拥有 Context 创建和整个 workflow 的 Instrumentation 作用域；已解析的训练窗口由
+TrainingPipeline 接收，账户时钟与跨时点交易状态由 ReplayAccountStep 拥有。
+`run_steps(...)` 不拥有这些生命周期。
 
 该公共规则必须表达为函数而不是公共 Pipeline 基类或执行器对象。单段 Step 链执行没有独立
 身份、状态或资源生命周期；把 `Instrumentation` 保存到公共对象并增加 `run_step(...)`，只会
@@ -130,24 +130,28 @@ window、timing、final phase 或是否管理 Instrumentation，则需要模式�
 schedule。因此不得新增 `BasePipeline`、`StepExecutor`、`PipelineRunner`、`StepChain` 或具有
 同等职责的包装对象。
 
-若未来不再要求跨领域统一的 Context 串联和默认测量，`run_steps(...)` 应直接删除，并把循环
-内联到各具体领域 Pipeline 的 `run()`；不得把执行移入 workflow、Step 或 Instrumentation，
+若未来不再要求跨领域统一的 Context 串联和默认测量，`run_steps(...)` 应直接删除，并把 Step 链循环
+内联到各具体领域 Pipeline 的 `run()`；不得把链执行移入 workflow、Step 或 Instrumentation，
 也不得以三个同构 private helper 代替。当前契约仍要求上述公共不变量，因此保留
 `run_steps(...)` 是满足语义的最小实现实体。
 
 Data、Training 与 Backtest 各自使用最小领域 Context，只保存相邻 step 必须传递的值；
 config、registry、Access、PathManager、Instrumentation 和 experiment identity 绑定到具体
 step 或 Pipeline，不进入 Context。Data Context 保存请求的 `start`、`end`，并由 calendar
-step 写入后续 step 所需的 `trade_dates`。Backtest Context 每个 timing 新建，Training
-Context 每次 `run()` 新建，训练值和逐日评价观察只在这次 Step 链内传递。只有确需跨 timing 延续的 backtest 值进入
-`BacktestState`。
+step 写入后续 step 所需的 `trade_dates`。Training 与 Backtest Context 每次 `run()` 新建。
+Training 的训练值和逐日评价观察只在这次 Step 链内传递。`BacktestContext` 保存初始
+metrics、PrepareInputsStep 产出的 `BacktestInputs` 和 ReplayAccountStep 产出的
+`BacktestState`；后两者的 None 只表示对应生产步骤尚未完成。已声明的顺序建立内部消费
+前置条件，下游不增加重复校验或兜底。Step 必须消费前一步返回的 Context，不能读取
+workflow 手持的旧 Context、旧 State 或旧 metrics。
 
-固定快照的风险评价使用 RiskCase 与 RiskObservation，不创建交易账户；交易结束后的
-`BacktestResultContext` 引用最终 State 并保存待发布指标，向共享评价 Step 提供实际预测
-引用、决策日期和风险观察。它在时点循环结束后创建，不进入交易决策，不复制账户或标签。
+`BacktestInputs` 只保存已校验行情与信号批次索引或冻结委托日程，不携带 Access、配置、
+时钟或策略对象；信号索引独立保存为只读映射。`BacktestState` 保存该账户的交易事实，
+包括实际预测引用、决策日期和风险观察。时点、当前信号、目标、撤单及待调度唤醒均为
+ReplayAccountStep 的局部值，不再为每个 tick 创建 Context，也不另建收尾 Context。
+固定快照的风险评价继续使用 RiskCase 与 RiskObservation，不创建交易账户。
 `BacktestMetrics` 的 mode、parameters 和 not_run 是输出记录，不是供 Step 选择算法或
-发现依赖的运行配置。指标在 Context 中依次传给持久化与报告，不能改用 workflow 手持的
-旧 Context 绕过前一步的返回值。
+发现依赖的运行配置；评价结果仅在回放并保存事实后填入，不进入交易决策。
 
 Data Context 是可信内部载体，构造时不执行日期校验。请求范围由
 [`CLI 契约`](engineering/cli_contract.md#通用边界)约定的 submission 构造边界保证；
@@ -185,24 +189,25 @@ Instrumentation 衡量 workflow 显式组装的 step，返回 `step.run(context)
 `run_steps(...)` 负责默认测量。同名 step 累计总耗时、次数和平均值；离开 Instrumentation
 作用域时只输出一个多行、等宽对齐的“步骤耗时”日志事件，首行以 `scope=...` 定位运行，
 依次列出每个 step 的总耗时，再列出“步骤耗时合计”。合计只累加被 measure 包围的步骤，
-不包含 workflow 准备或 Job 启动等耗时，必须注明“不代表任务总耗时”，不得称为端到端耗时。
+不包含 Step 之外的依赖组装或 CLI/Job 启动等耗时，必须注明“不代表任务总耗时”，不得称为端到端耗时。
+Backtest 的输入读取属于 PrepareInputsStep，因此包含在该步骤及合计中。
 Workflow 可通过 `descriptions` 提供 step 的中文含义，Instrumentation 独立保存该映射，
 展示时附在对应行后，不改用于累计的代码名称。训练 ReportStep 的含义为“诊断计算与报告
 输出”，包含材料读取和诊断计算，不能只称为 HTML 渲染。同名 step 在同一作用域内实际
 执行多次时，该行才额外列出平均耗时和 runs。正常退出以 `✅` 和 `INFO` 开头，异常退出
 以 `❌` 和 `ERROR` 开头；续行不重复
-时间、level、源码位置或状态符号。准备阶段或空 schedule/timing 在进入作用域前失败，
-因此不输出 timeline。现有 step label 固定为：
+时间、level、源码位置或状态符号。进入作用域前的入口或日程解析失败不输出 timeline；
+Backtest 输入准备和账户初始化已经位于五段链内，失败必须输出对应阶段的失败 timeline。
+Backtest 五个 Step 在一次成功运行中各计时一次，不再按 tick 累计内部交易动作。
+现有 step label 固定为：
 
 ```text
 CalendarMaterializeStep, FactMaterializeStep, FeatureBuildStep, LabelBuildStep,
 Level2FactMaterializeStep, Level2MinuteBuildStep, Stock1430MaterializeStep, Stock1430DailyMaterializeStep,
 Stock1430DailyL2MaterializeStep,
 DatasetBuildStep, PreprocessStep, ModelTrainStep, PredictionStep, ICEvaluateStep,
-ArtifactPersistStep, ReportStep, SignalEvaluationStep, RiskOutcomeStep,
-RiskMetricsStep, ExecutionEvaluationStep, PortfolioEvaluationStep, BacktestSummaryStep, MetricsPersistStep,
-AdvanceExecutionStep, AccountingStep, SignalStep, PortfolioStep, FixedHoldingStep,
-RiskDecisionStep, SubmitTargetsStep, RecordedOrdersStep, FactsPersistStep
+ArtifactPersistStep, MetricsPersistStep, ReportStep,
+PrepareInputsStep, ReplayAccountStep, FactsPersistStep, EvaluateResultsStep, PublishResultsStep
 ```
 
 Workflow 不统一包装异常，不把失败改成空制品或 success，也不重复记录 traceback。
@@ -824,12 +829,12 @@ signal/strategy/risk/full 使用其中的 `min_listing_calendar_days` 在模型�
 
 ### 五种任务与组装
 
-五种 mode 表达评价目的，通过业务组件、Step 组合和账户运行配置，共用一条 BacktestPipeline
-账户流水线。信号与冻结委托的区别是指令来源，risk 关注指定风控在账户路径上的控制效果；
-这些差异不定义三类工作流，也不需要按 mode 分派到不同的账户执行入口。输入具备什么事实，就计算相应指标，
-不因 mode 名称隐藏已有的信号、成交或收益评价。
+五种 mode 表达评价目的，通过输入和账户运行配置，共用一条五段 BacktestPipeline。
+信号与冻结委托的区别是指令来源，risk 关注指定风控在账户路径上的控制效果；这些差异
+不定义多条工作流，也不需要按 mode 分派到不同的账户执行入口。输入具备什么事实，
+就计算相应指标，不因 mode 名称隐藏已有的信号、成交或收益评价。
 
-| mode | 决策步骤 | 单账户配置 | 运行及评价 |
+| mode | 回放中的决策行为 | 单账户配置 | 运行及评价 |
 | --- | --- | --- | --- |
 | `signal_eval` | 信号、策略、目标提交 | 已保存预测，或给定模型产生的新预测；明确策略和账户；无业务风控；`quoted` 成交 | 一次；预测质量及按申报价成交的账户表现 |
 | `strategy_eval` | 信号、策略、目标提交 | 信号、所选策略和账户；无业务风控；明确 `quoted` 或 `limit_price` | 一次；信号、成交及组合指标 |
@@ -837,96 +842,80 @@ signal/strategy/risk/full 使用其中的 `min_listing_calendar_days` 在模型�
 | `execution_eval` | 固定委托/撤单提交 | 固定指令、账户及 `limit_price`；无业务风控 | 一次；成交、费用、收益、回撤及期末持仓 |
 | `full_backtest` | 信号、策略、风控、目标提交 | 信号、策略、非空风控、账户及 `limit_price` | 一次完整反馈回放；信号、风控、成交及组合指标 |
 
-`run_backtest` 公共返回值为 `None`，执行顺序统一为准备输入、创建账户组件、组装并运行
-公共流水线。每个请求声明一个场景，一次运行使用一个账户、一份指标和一个输出目录。
-risk/full 配置指定业务风控，其余模式无业务风控；不再为 risk 创建隐式基线、第二个账户
-或对照收尾链。输入准备与 Step 组装各自表达一个变化维度，不引入通用运行计划或注册表。
+`run_backtest` 公共返回值为 `None`。每个请求声明一个场景，一次运行使用一个账户、
+一份指标和一个输出目录。risk/full 配置指定业务风控，其余模式无业务风控；不为 risk
+创建隐式基线、第二个账户或对照收尾链。Workflow 仅绑定依赖并按下列顺序构造不可变
+Step tuple；BacktestPipeline 创建 Context，在同一次 Instrumentation 作用域内调用
+一次 `run_steps(...)`，并返回最后一个 Step 返回的 BacktestContext。
 
-`prepare_market_input` 严格读取一次行情，检查正式日历覆盖及与初始账户、风险检查时点、
-执行配置的一致性，返回共享的 `ReplayMarketInput`。
-输入对象提供不依赖推进状态的 `session_at()` 和 `timestamps()` 查询，准备、委托日程及
-时钟组装直接消费它，不为校验构造临时 `ReplayMarket`。每条账户路径再创建独立的
-`ReplayMarket`，保存该路径的可见价格、读取游标和当前观察批次；组合约束不在此重复校验。
-依赖准备按实际输入选择：信号输入需要策略及可选风控，固定委托输入直接提供指令。
-signal/strategy/risk/full 复用 `build_signal_account_components`，execution 使用
-`build_order_account_components`。工厂分别接收对应的 submission，返回具名的
-`SignalAccountComponents` 或 `OrderAccountComponents`；策略在信号路径中必选，委托
-路径不携带信号、策略或风控依赖，避免用彼此依赖的可空参数表达输入关系。
-每次调用工厂都创建独立账户、市场游标、执行器和时钟；信号工厂另建组合构造器和所需
-风控。工厂按实际组件填写 applied_risk 与 not_run。信号组件结果中的 `signal` 是共享的 `ReplaySignal`，
-`constructor`、`risk`、`execution` 是本账户的业务对象；委托组件结果保存冻结指令日程。
-固定持有策略的组装校验初始退出计划并将退出时点加入本账户时钟；workflow 不读取
-具体策略的内部计划，也不装配费率、成交模型和时钟来源。
+```text
+PrepareInputsStep → ReplayAccountStep → FactsPersistStep → EvaluateResultsStep → PublishResultsStep
+```
 
-Workflow 按账户的决策输入构建组件，再显式组装决策和评价步骤，插入公共逐时点及收尾流程。
-工厂只准备业务依赖及参数，不导入或创建 Step、Pipeline，也不发布回放制品；组件结果
-不包含 Step 实例或 Step 列表。统一的 `_run_account` 调用 workflow 内的具名组装函数：
-`_build_decision_steps` 选择冻结委托或信号驱动决策，并绑定目标提交；其中
-`_build_portfolio_step` 选择固定持有日程或普通组合构造。
-`_build_risk_outcome_steps` 为有风控决策的账户组装执行后观察；
-`_build_evaluation_steps` 组装输入所支持的信号与风控评价，以及全部账户共用的成交与组合评价。
-这些函数分别拥有步骤选择、依赖绑定及阶段内顺序，返回不可变 tuple（单个策略选择返回一个 Step）。
-读者通过函数名理解阶段职责，需要具体选择依据时再阅读对应函数；主流程不再同时展开
-输入类型、策略类型与风控配置的判断。信号输入仍显式构造 `SignalStep(signal=components.signal)`，
-组件工厂与 Pipeline 的职责不变。
+| Step | 必要输入与输出 | 职责与副作用 |
+| --- | --- | --- |
+| `PrepareInputsStep` | 已解析请求 → BacktestInputs | 读取并校验行情、正式日历、模型/预测/特征或冻结委托；不推理、不读评价标签、不创建账户 |
+| `ReplayAccountStep` | BacktestInputs 与绑定的账户/策略/风控/执行配置 → BacktestState | 创建独立运行状态并推进整个时钟；当前决策才生成和保存预测；记录交易与风控事实 |
+| `FactsPersistStep` | BacktestState → 原始事实文件 | 保存 execution/equity、orders、风控前 targets，存在风控观察时保存 risk-cases |
+| `EvaluateResultsStep` | 已保存的交易事实与实际预测引用 → 指标及期末账户 | 此时才读取评价标签；计算输入支持的信号、风控、成交与组合指标，不重放交易或风控规则 |
+| `PublishResultsStep` | 指标 → metrics.json、report.html 与摘要 | 先保存 metrics，再由 ReportingBundle 重读该文件生成 HTML 和日志摘要；报告成功才算整个链成功 |
 
-公共流程的声明只有一份，通过 `*decision_steps`、`*outcome_steps` 和 `*evaluation_steps` 接入差异部分，
-每次以新账户组件构造 BacktestPipeline 实例。读者先看到公共顺序，再看具体决策和评价
-组合；不必沿模式分派寻找重复的完整链，也不会因分别维护公共阶段而产生顺序偏离。
-需要了解依赖选择时再进入组件工厂。时钟推进、交易计算、指标公式和持久化仍由相同组件
-实现，不为各模式新增 Pipeline 子类或另一套计算逻辑。
+这五段分别建立输入可用、交易完成、事实已保存、评价完成和结果已发布的边界。读者可以
+直接看到标签何时可读、失败会留下哪些制品，以及报告是否属于成功条件；不再用逐时点
+Step 链和收尾 Step 链表达同一任务。Step 内直接使用现有领域能力，不嵌套旧 Step 或
+`run_steps(...)`，也不增加通用运行计划、组件集合、registry、空策略或 NoOpRiskManager。
+
+PrepareInputsStep 严格读取一次行情，检查正式日历覆盖及与初始账户、风险检查时点、
+执行配置的一致性，将 `ReplayMarketInput` 与决策输入写入 BacktestInputs。
+行情输入提供不依赖推进状态的 `session_at()`
+和 `timestamps()` 查询，准备、委托日程及后续时钟组装直接消费它，不为校验构造临时
+ReplayMarket。信号输入由 `prepare_signals` 一次准备；冻结委托由
+`OrderCommandSchedule.from_files()` 严格解析为 OrderIntent/CancelOrders，再调用该类
+构造函数。日程统一检查时间顺序、请求日期及模拟区间，成功后建立只读索引；市场、日期
+和时间边界不保存为日程状态。同刻指令保留文件与数组的原始顺序并保存为 tuple，不借用
+调用方的可变容器。`timestamps()` 返回唯一指令时点，`at(ts_us)` 返回该时点 tuple，
+无指令时为空；查询不消费指令。下游不重复校验或分组。
+
+ReplayAccountStep 每次运行创建独立 PortfolioState、ReplayMarket、执行器、时钟、挂单
+和 ledger；信号路径另建策略。ReplayMarket 保存该次回放的可见价格、读取游标及当前观察批次。
+固定持有策略在这里校验初始退出计划并将退出时点加入时钟；workflow 不读取策略内部
+计划，也不装配费率、成交模型或时钟来源。信号路径创建本次 ReplaySignal，委托路径直接
+消费已准备日程；无业务风控时不构造 RiskManager、不应用规则、不计算风控评价。
+Step 按实际配置填写 applied_risk 与 not_run。交易、风险、执行、唯一 SettlementEngine
+及指标公式继续使用共同的领域实现，不为各模式新增 Pipeline 子类或另一套公式。
 同一信号、策略、账户和成交参数下，signal_eval 与 strategy_eval 的账户结果及信号指标
 必须相同；名称只描述目的，不能暗中改变交易或指标公式。risk 与 full 在相同信号、策略、
 账户、风控及 limit_price 配置下也必须产生相同的账户事实和评价，仅 mode/请求标识不同。
 
-冻结委托可以理解为已完成策略决策后的指令输入，在订单提交边界接入公共流水线。
+冻结委托可以理解为已完成策略决策后的指令输入，在订单提交边界接入公共回放。
 它保留委托数量、提交时间、订单条件和撤单顺序，不重新执行组合构造。例如，已有 50 股时，
 “买入 100 股”与“目标持仓 100 股”分别意味着新增 100 股和新增 50 股；不能为了统一入口
-把固定委托转换成信号分数或目标仓位。冻结的是指令，成交和账户状态仍由公共执行与记账步骤计算。
+把固定委托转换成信号分数或目标仓位。冻结的是指令，成交和账户状态仍由公共执行与记账能力计算。
 
-委托组件工厂通过 `OrderCommandSchedule.from_files()` 读取冻结委托文件，严格解析为
-OrderIntent/CancelOrders，再调用该类的构造函数。时间表在构造时统一检查时间顺序、
-请求日期及模拟区间，非法输入失败，成功后建立只读索引；市场、日期和时间边界不保存为
-对象状态。同刻指令保留文件与数组的原始顺序并保存为 tuple，不借用调用方的可变容器。
-`timestamps()` 返回全部唯一指令时点，`at(ts_us)` 返回该时点 tuple，无指令时为空；
-查询不消费指令。工厂用它组装时钟，RecordedOrdersStep 只读取当前时点；下游不
-重复校验或分组。账户、挂单及成交事实由 BacktestState 和执行器维护。
-
-共用逐时点链为：
+ReplayAccountStep 内部每个时点的必要顺序为：
 
 ```text
-AdvanceExecutionStep → AccountingStep → 决策步骤 → AccountingStep → [RiskOutcomeStep]
-
-信号决策：SignalStep → PortfolioStep / FixedHoldingStep → [RiskDecisionStep] → SubmitTargetsStep
-委托决策：RecordedOrdersStep
+更新可见行情、切换交易日 → 推进旧订单与结算 → 决策前估值
+→ 信号/策略生成原始目标 → 记录原始目标 → 可选风控 → 提交目标/撤单
+  或按原顺序提交冻结委托/撤单
+→ 提交后估值 → 可选风控 outcome → 调度策略及订单到期唤醒
 ```
 
-选择 fixed_holding 时由 FixedHoldingStep 执行有状态日程。只有明确配置业务风控的路径
-插入 RiskDecisionStep。每条路径独占 PortfolioState、策略、ReplayMarket、执行器、挂单
-和 ledger；共用 ReplayClock、BacktestPipeline、执行和唯一 SettlementEngine 的实现。
-两种组件结果分别只包含该账户路径的依赖，不构造带无关可空字段的全模式容器、空策略、
-NoOpRiskManager 或模式专用公式。无业务风控时，`components.risk` 为 None，workflow
-不构造风控决策和评价步骤。
+普通策略仅在有本时点信号时生成目标；fixed_holding 每个时点推进其有状态日程，允许
+没有新信号时退出。配置业务风控后，每个回放时点都检查当前请求或承诺；当前信号、目标、
+撤单和唤醒都是局部值，不能残留到下一 tick。原始目标先记录，再应用风险调整。
+动态时钟保留策略退出和订单到期唤醒，并在明确终点停止。
 
 成交由显式 execution.fill 选择 venue。提交阶段可能立即结算，因此提交后统一再次估值；
 决策前估值服务于当前目标，决策后估值包含新成交及费用，针对的是不同账户状态。
 同刻 EquityCurve 保存最终快照，首次决策前权益与既有峰值仍保留为收益、回撤基准。
-有业务风控时，RiskOutcomeStep 在第二次 AccountingStep 后补齐本时点风控观察的账户结果；
-它只复制实际权益、现金、持仓及挂单，不重算规则或推断成交。下一时点的检查前快照已经
-包含期间成交和估值变化，两者共同描述动作与后续反馈。
+有业务风控时，第二次估值后补齐本时点风控观察的 outcome；只复制实际权益、现金、
+持仓及挂单，不重算规则或推断成交。下一时点的检查前快照已经包含期间成交和估值变化，
+两者共同描述动作与后续反馈。
 
-每条账户路径的收尾链为：
-
-```text
-FactsPersistStep → [SignalEvaluationStep] → [RiskMetricsStep]
-→ ExecutionEvaluationStep → PortfolioEvaluationStep → BacktestSummaryStep
-→ MetricsPersistStep → ReportStep
-```
-
-有信号输入才插入 SignalEvaluationStep；有实际业务风控才插入 RiskMetricsStep，它只汇总
-已经产生的观察。每条路径均计算成交与组合指标，不把 execution_eval 限制为订单统计。
-最终链消费循环中最后返回的 State，BacktestPipeline 返回最终 Step 返回的
-BacktestResultContext；不能读取预先绑定的旧 State 或旧 metrics。
+EvaluateResultsStep 只评价已完成并保存的交易事实。有信号输入才读取标签并计算信号评价；
+有实际业务风控才汇总已记录的观察。每条路径均计算成交与组合指标，不把 execution_eval
+限制为订单统计。最后从同一 State 提取期末账户与实际预测引用，再交给 PublishResultsStep。
 
 ### 风控有效性评价
 
@@ -1043,8 +1032,9 @@ strategy_eval、risk_rule_eval 和 full 的 `prepare_signals` 在返回前对每
 同一训练记录及成熟下界，
 并检查全部决策满足 `initial_account.ts_us <= decision_ts_us < execution.end_ts_us`。
 准备期间每份预测记录只读取一次，同一模型路径及内容摘要复用已加载模型；每份记录声明的
-模型身份仍须匹配，不能仅按路径复用而忽略不同摘要。Workflow 消费已准备批次，不追加
-模型使用或模拟区间校验；这些约束由准备边界建立，避免同一可信调用链重复读取和核验。
+模型身份仍须匹配，不能仅按路径复用而忽略不同摘要。PrepareInputsStep 消费该准备函数
+返回的批次，不追加模型使用或模拟区间校验；这些约束由同一准备边界建立，避免同一可信
+调用链重复读取和核验。
 预测缺失是合法无信号，非法数值或身份错误不是无信号。Threshold/TopK 对缺分数的已有
 持仓和有效委托保留承诺并占用容量；不因缺少评分自动平仓。
 
@@ -1265,11 +1255,13 @@ reference_price 与成交价均为申报价，滑点成本为零。它不伪造�
 
 交易完成后先由 FactsPersistStep 保存原始 execution/equity、orders.json、targets.json，
 运行业务风控的路径另由 `RiskCases.write()` 按原有 JSON 数组格式保存 risk-cases.json；写入只序列化
-当时记录的案例，不执行风险规则。随后评价、写 metrics.json、生成 report.html。五种模式
+当时记录的案例，不执行风险规则。随后由 EvaluateResultsStep 评价，PublishResultsStep
+写 metrics.json 并生成 report.html。五种模式
 均保存一个账户的制品，具体布局由存储 owner 定义。每个文件原子写入，但整体不是多文件事务；
 失败保留已写制品且阻止后续步骤。
 这些阶段全部由显式 Step 拥有，并处于同一次 Instrumentation 作用域内；完整链包括
-ReportStep 成功后才能正常结束作用域。准备阶段的身份或输入失败仍不创建成功制品。
+PublishResultsStep 中的报告成功后才能正常结束作用域。PrepareInputsStep 的身份或输入
+失败会输出失败时间线，但不创建成功制品。
 
 execution.parquet 保留 `ledger.records` 和 `ledger.order_events` 两个现有事实序列：
 
@@ -1340,8 +1332,8 @@ CLI 在分派前用 `submission.model_dump(mode="json")` 构造一次参数快�
 execution 不包含该字段，不额外嵌入 backtest_config。原始请求日期不被筛选后的日期替换。CLI 用该快照
 初始化 `BacktestMetrics(mode=submission.mode, parameters=parameters, not_run={})`，并在
 workflow 读取输入前，按模式、日期、信号/委托、策略、账户、风控、执行和最短上市天数
-逐项记录 JSON 开始日志。Workflow 接收初始 metrics，由账户组件工厂记录实际风控与未运行
-原因，再由评价 Step 填充结果；`MetricsPersistStep` 在评价完成后
+逐项记录 JSON 开始日志。Workflow 接收初始 metrics，由 ReplayAccountStep 记录实际风控
+与未运行原因，再由 EvaluateResultsStep 填充结果；PublishResultsStep 在评价完成后
 写入参数及结果，最终 HTML 复用已保存快照，不另生成参数制品。这样既能解释已保存结果，
 也能在输入失败、尚无 metrics 文件时定位请求；开始日志不是成功证据。
 not_run 由实际组件与输入决定：没有业务风控的账户路径记录 risk=no_business_risk；
@@ -1350,11 +1342,12 @@ price_feasibility=market_liquidity=quoted_fills。limit_price 不标记价量约
 未运行，有信号的路径不标记信号评价未运行。quoted 报告明确生效即申报价全额成交、保留的
 账户约束与期末估值口径；每条账户报告提供委托、成交费用与权益曲线链接。
 
-Pipeline 使用注入的单调时钟，处理后距上次进度至少 5 秒且仍有后续唤醒时输出当前交易日、
-时点及累计处理数；短任务没有逐时进度。所有 Step 异常保留原对象，并附加 scope 和
-Step 名；仅逐时点阶段另附 trade_date、ts_us，不能把事后评价或报告失败归因到最后交易时点。
-Instrumentation 测量预测、评价、持久化及报告等明确 Step；合计仍不包含 workflow
-准备和 Job 启动等时间，不能称为端到端耗时。报告失败时输出失败时间线，不提前输出成功时间线。
+ReplayAccountStep 使用注入的单调时钟，处理后距上次进度至少 5 秒且仍有后续唤醒时输出
+当前交易日、时点及累计处理数；短任务没有逐时进度。所有 Step 异常保留原对象，并附加
+scope 和 Step 名；回放中的交易处理失败另附 trade_date、ts_us，账户初始化、事后评价或报告
+失败不归因到最后交易时点。Instrumentation 只测量五个运行级 Step，输入准备包含在内；
+合计仍不包含 Step 之外的依赖组装和 CLI/Job 启动等时间，不能称为端到端耗时。
+报告失败时输出失败时间线，不提前输出成功时间线。
 报告成功后输出一条中文摘要，按实际模式展示 IC、规则覆盖、收益、订单及数量结果，
 不展开逐条观察或持仓字典。金额两位小数、收益/回撤四位百分比、IC 六位小数，null 显示
 “无值”；完整明细链接 metrics 和事实制品。metrics 存在不能证明随后的 report 已成功。

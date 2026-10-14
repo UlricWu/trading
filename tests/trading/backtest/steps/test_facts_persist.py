@@ -13,7 +13,7 @@ import pytest
 from pydantic import TypeAdapter
 
 from src.trading.portfolio.state import PortfolioState
-from src.trading.backtest.context import BacktestResultContext, BacktestState
+from src.trading.backtest.context import BacktestContext, BacktestState
 from src.trading.backtest.reporting.metrics import BacktestMetrics
 from src.trading.backtest.steps.facts_persist import FactsPersistStep
 from src.trading.core.events import FillEvent, OrderEvent, OrderStatus, Side
@@ -25,15 +25,15 @@ from src.utils.path import PathManager
 
 
 @pytest.fixture
-def context() -> BacktestResultContext:
-    return BacktestResultContext(
+def context() -> BacktestContext:
+    return BacktestContext(
         metrics=BacktestMetrics(mode='execution_eval', parameters={}, not_run={}),
         state=BacktestState(PortfolioState(20_000, 20_000)),
     )
 
 
 def test_risk_cases_preserve_original_facts_without_reapplying_rules(
-    tmp_path: Path, context: BacktestResultContext, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, context: BacktestContext, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     pm = PathManager(tmp_path)
     case = RiskCase('risk-1', '2026-07-03', {'A': 1000},
@@ -54,7 +54,7 @@ def test_risk_cases_preserve_original_facts_without_reapplying_rules(
 
 
 def test_execution_preserves_identities_exact_money_metadata_and_order_states(
-    tmp_path: Path, context: BacktestResultContext,
+    tmp_path: Path, context: BacktestContext,
 ) -> None:
     pm = PathManager(tmp_path)
     ledger = context.state.execution_ledger
@@ -122,7 +122,7 @@ def test_execution_preserves_identities_exact_money_metadata_and_order_states(
 
 
 def test_equity_keeps_actual_valuation_times_and_replaced_snapshot(
-    tmp_path: Path, context: BacktestResultContext,
+    tmp_path: Path, context: BacktestContext,
 ) -> None:
     pm = PathManager(tmp_path)
     curve = context.state.equity_curve
@@ -147,7 +147,7 @@ def test_equity_keeps_actual_valuation_times_and_replaced_snapshot(
 
 
 def test_empty_fact_collections_have_stable_typed_files(
-    tmp_path: Path, context: BacktestResultContext,
+    tmp_path: Path, context: BacktestContext,
 ) -> None:
     pm = PathManager(tmp_path)
     FactsPersistStep(output_dir=pm.experiment_dir(experiment_name="empty")).run(context)

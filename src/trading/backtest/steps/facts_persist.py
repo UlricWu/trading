@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 from dataclasses import asdict
 from pathlib import Path
+from typing import cast
 
 import pyarrow as pa
 from pydantic import TypeAdapter
@@ -14,7 +15,7 @@ from src.trading.core.events import OrderIntent, CancelOrders, TargetEvent
 from src.trading.risk.evaluation import RiskCases
 from src.utils.filesystem import FileSystem
 
-from src.trading.backtest.context import BacktestResultContext
+from src.trading.backtest.context import BacktestContext, BacktestState
 from src.utils.parquet_writer import write_parquet_atomic
 
 
@@ -71,13 +72,14 @@ class FactsPersistStep:
         """
         self._output_dir = output_dir
 
-    def run(self, context: BacktestResultContext) -> BacktestResultContext:
+    def run(self, context: BacktestContext) -> BacktestContext:
         """Serialize existing facts without changing the runtime state.
 
         Example:
             persisted_context = step.run(completed_context)
         """
-        ledger = context.state.execution_ledger
+        state = cast(BacktestState, context.state)
+        ledger = state.execution_ledger
         rows = [
             {
                 **record,
@@ -110,14 +112,14 @@ class FactsPersistStep:
         write_parquet_atomic(
             output_file=self._output_dir / "equity.parquet",
             table=pa.Table.from_pylist(
-                [asdict(point) for point in context.state.equity_curve.points], schema=_EQUITY_SCHEMA,
+                [asdict(point) for point in state.equity_curve.points], schema=_EQUITY_SCHEMA,
             ),
         )
         run_dir = self._output_dir
         FileSystem.write_bytes_atomic(run_dir / "orders.json",
             TypeAdapter(tuple[OrderIntent | CancelOrders, ...]).dump_json(tuple(ledger.commands)))
         FileSystem.write_bytes_atomic(run_dir / "targets.json",
-            TypeAdapter(tuple[TargetEvent, ...]).dump_json(tuple(context.state.target_tape.events)))
-        if context.state.risk_observations:
-            RiskCases(tuple(item.case for item in context.state.risk_observations)).write(run_dir / "risk-cases.json")
+            TypeAdapter(tuple[TargetEvent, ...]).dump_json(tuple(state.target_tape.events)))
+        if state.risk_observations:
+            RiskCases(tuple(item.case for item in state.risk_observations)).write(run_dir / "risk-cases.json")
         return context

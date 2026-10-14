@@ -1,15 +1,17 @@
 # filepath: src/trading/backtest/context.py
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import MappingProxyType
 
-from src.trading.backtest.market.signals import RecordedSignalBatch
+from src.trading.backtest.commands import OrderCommandSchedule
+from src.trading.backtest.market.replay import ReplayMarketInput
+from src.trading.backtest.market.signals import SignalBatch
 from src.trading.backtest.reporting.metrics import BacktestMetrics
-from src.trading.backtest.timing import BacktestTiming
 from src.trading.core.equity import EquityCurve, EquityPoint
-from src.trading.core.events import PendingOrder, TargetEvent
+from src.trading.core.events import PendingOrder
 from src.trading.core.ledger import ExecutionLedger
 from src.trading.core.tape import SignalTape, TargetTape
 from src.trading.portfolio.state import PortfolioState
@@ -38,56 +40,33 @@ class BacktestState:
     last_mark_prices: dict[str, float] = field(default_factory=dict)
 
 
+@dataclass(frozen=True, slots=True)
+class BacktestInputs:
+    """Validated market facts and signal batches or frozen commands, without labels.
+
+    Example:
+        inputs = BacktestInputs(market=market_source, decisions=signal_inputs_by_ts_us)
+    """
+
+    market: ReplayMarketInput
+    decisions: Mapping[int, SignalBatch] | OrderCommandSchedule
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.decisions, OrderCommandSchedule):
+            object.__setattr__(self, "decisions", MappingProxyType(dict(self.decisions)))
+
+
 @dataclass(slots=True)
 class BacktestContext:
-    """Current visible facts and explicit actions for a single clock tick.
+    """Carry one run's prepared inputs, completed trading facts and derived results.
+
+    None means the producing Step has not completed. Ordered consumers use the
+    corresponding producer's output; tick actions and runtime dependencies stay local.
 
     Example:
-        context = BacktestContext(timing=timing, state=state)
+        context = BacktestContext(metrics=metrics)
     """
 
-    timing: BacktestTiming
-    state: BacktestState
-    signal: RecordedSignalBatch | None = None
-    execution_target: TargetEvent | None = None
-    cancel_order_ids: tuple[int, ...] = ()
-    requested_wakeup_ts_us: set[int] = field(default_factory=set)
-
-
-@dataclass(slots=True)
-class BacktestResultContext:
-    """Completed trading facts and derived results, outside the decision loop.
-
-    Example:
-        context = BacktestResultContext(state=completed_state, metrics=metrics)
-    """
-
-    state: BacktestState
     metrics: BacktestMetrics
-
-    @property
-    def prediction_refs(self) -> Sequence[Path]:
-        """Expose only predictions actually used in this trading path.
-
-        Example:
-            observations = evaluate_prediction_records(context.prediction_refs, pm=pm)
-        """
-        return self.state.prediction_refs
-
-    @property
-    def decision_dates(self) -> Mapping[int, str]:
-        """Expose the trading dates recorded with actual decisions.
-
-        Example:
-            trade_date = context.decision_dates[decision_ts_us]
-        """
-        return self.state.decision_dates
-
-    @property
-    def risk_observations(self) -> Sequence[RiskObservation]:
-        """Expose rule observations without applying rules again.
-
-        Example:
-            result = evaluate_risk(context.risk_observations, configured_rules=rules)
-        """
-        return self.state.risk_observations
+    inputs: BacktestInputs | None = None
+    state: BacktestState | None = None

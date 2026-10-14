@@ -1,15 +1,15 @@
 # filepath: tests/trading/backtest/test_context.py
-from src.config.backtest_config import InitialAccount
-from src.trading.backtest.components import create_state
+from pathlib import Path
+
+from src.trading.backtest.context import BacktestInputs
+from src.trading.backtest.market.replay import ReplayMarketInput
+from src.trading.backtest.market.signals import RecordedSignalBatch
+from src.trading.core.events import SignalEvent
 
 
-def test_runs_own_account_and_collections_without_changing_the_initial_snapshot() -> None:
-    initial = InitialAccount(ts_us=1, trade_date='2026-07-03', cash='2000', positions={'A': 100},
-                             sellable={'A': 60}, average_cost={'A': '10'}, peak_equity=3000)
-    first, second = create_state(initial), create_state(initial)
-    first.portfolio_state.positions['A'] = 200
-    first.decision_dates[1] = '2026-07-03'
-    assert second.portfolio_state.positions == initial.positions == {'A': 100}
-    assert second.portfolio_state.t1_sellable('A') == 60
-    assert second.decision_dates == {}
-    assert second.equity_curve.starting_peak_equity == 3000
+def test_prepared_inputs_own_signal_index(order_market_input: ReplayMarketInput) -> None:
+    batch = RecordedSignalBatch('2026-07-03', SignalEvent(1, {'A': .8}), ('A',), Path('/prediction'))
+    decisions = {1: batch}
+    inputs = BacktestInputs(market=order_market_input, decisions=decisions)
+    decisions.clear()
+    assert inputs.decisions == {1: batch}

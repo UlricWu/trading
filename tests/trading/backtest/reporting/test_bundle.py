@@ -8,7 +8,6 @@ from src import logs
 from src.trading.backtest.evaluation import SignalEvaluation, evaluate_execution, evaluate_portfolio
 from src.trading.backtest.reporting.bundle import ReportingBundle
 from src.trading.backtest.reporting.metrics import BacktestMetrics
-from src.trading.backtest.steps.metrics_persist import persist_backtest_metrics
 from src.trading.core.equity import EquityCurve
 from src.trading.core.ledger import ExecutionLedger
 from src.training.evaluation import ICObservation
@@ -25,8 +24,9 @@ def test_report_summarizes_without_expanding_observations_and_preserves_metrics(
         not_run={'risk': 'signal_only'}, signal_eval=SignalEvaluation(observations=observations,
             decision_count=count, trade_day_count=1, defined_day_count=1, mean_ic=.06223456,
             daily_ic={'2026-07-03': .06223456}, undefined_reason_counts={}))
-    persist_backtest_metrics(metrics=metrics, output_dir=pm.experiment_dir(experiment_name='summary'))
     ref = pm.experiment_backtest_metrics(experiment_name='summary')
+    ref.parent.mkdir(parents=True)
+    ref.write_text(metrics.model_dump_json())
     original = ref.read_bytes()
     messages = []
     sink = logs.add(lambda message: messages.append(str(message)), format='{message}',
@@ -53,7 +53,9 @@ def test_report_distinguishes_undefined_values_no_orders_and_unrun_capabilities(
     metrics = BacktestMetrics(mode='full_backtest', parameters={}, not_run={'signal': 'no_selected_records'},
         execution_eval=evaluate_execution(ExecutionLedger()), portfolio=evaluate_portfolio(curve,
             initial_equity=100, daily_equity={'2026-07-03': curve.points[-1]}, ledger=ExecutionLedger(), annual_factor=252))
-    persist_backtest_metrics(metrics=metrics, output_dir=pm.experiment_dir(experiment_name='empty'))
+    ref = pm.experiment_backtest_metrics(experiment_name='empty')
+    ref.parent.mkdir(parents=True)
+    ref.write_text(metrics.model_dump_json())
     messages = []
     sink = logs.add(lambda message: messages.append(str(message)), format='{message}',
                     filter='src.trading.backtest.reporting.bundle')
@@ -66,4 +68,4 @@ def test_report_distinguishes_undefined_values_no_orders_and_unrun_capabilities(
     assert '夏普 无值' in text and 'insufficient_defined_daily_returns' in text
     persisted = json.loads(pm.experiment_backtest_metrics(experiment_name='empty').read_text())
     assert persisted['execution_eval']['order_completion_rate'] is None
-    assert persisted['portfolio']['sharpe'] is None and 'risk_eval' not in persisted
+    assert persisted['portfolio']['sharpe'] is None
