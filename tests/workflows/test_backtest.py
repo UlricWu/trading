@@ -805,7 +805,7 @@ def test_rule_and_report_errors_preserve_the_original_exception(
     assert not pm.experiment_backtest_report(experiment_name=name).exists()
     assert pm.experiment_backtest_metrics(experiment_name=name).exists() == (stage == 'report')
     assert pm.experiment_dir(experiment_name=name).exists() == (stage == 'report')
-    expected_step = 'ReplayAccountStep' if stage == 'risk' else 'PublishResultsStep'
+    expected_step = 'ApplyRiskStep' if stage == 'risk' else 'PublishResultsStep'
     assert f'Pipeline 执行; scope={name} step={expected_step}' in caught.value.__notes__
     assert f'❌ 步骤耗时; scope={name}' in backtest_log.read_text()
     assert f'✅ 步骤耗时; scope={name}' not in backtest_log.read_text()
@@ -830,7 +830,7 @@ def test_single_account_modes_measure_the_complete_chain_before_success(
     def measure[T](instrumentation: Instrumentation, operation_name: str,
                    operation: Callable[..., T], *args: object, **kwargs: object) -> T:
         measured.append(operation_name)
-        if operation_name in ('PrepareInputsStep', 'ReplayAccountStep', 'FactsPersistStep'):
+        if operation_name not in ('EvaluateResultsStep', 'PublishResultsStep'):
             assert not pm.experiment_dir(experiment_name=name).exists()
         if operation_name == 'EvaluateResultsStep':
             assert pm.experiment_backtest_execution(experiment_name=name).is_file()
@@ -872,9 +872,18 @@ def test_single_account_modes_measure_the_complete_chain_before_success(
         run_backtest(submission=submission, path_manager=pm,
             experiment_name='backtest_2026-10-11_chain', metrics=metrics)
 
-    assert measured == ['PrepareInputsStep', 'ReplayAccountStep', 'FactsPersistStep',
-                        'EvaluateResultsStep', 'PublishResultsStep']
-    assert pq.read_table(pm.experiment_backtest_equity(experiment_name=name)).num_rows > 1
+    tick_count = pq.read_table(pm.experiment_backtest_equity(experiment_name=name)).num_rows
+    assert tick_count > 1
+    decisions = (['SubmitFrozenCommandsStep'] if mode == 'execution_eval' else
+                 ['GenerateSignalStep', 'GenerateTargetsStep']
+                 + (['ApplyRiskStep'] if mode in ('full_backtest', 'risk_rule_eval') else [])
+                 + ['SubmitTargetsStep'])
+    tick_steps = (['UpdateMarketStep', 'AdvanceOrdersStep', 'ValueAccountStep'] + decisions
+                  + ['ValueAccountStep']
+                  + (['CompleteRiskObservationStep'] if mode in ('full_backtest', 'risk_rule_eval') else [])
+                  + ['ScheduleWakeupsStep'])
+    assert measured == (['PrepareInputsStep', 'InitializeAccountStep'] + tick_steps * tick_count
+                        + ['FactsPersistStep', 'EvaluateResultsStep', 'PublishResultsStep'])
     assert pm.experiment_backtest_report(experiment_name=name).is_file()
     log = backtest_log.read_text()
     assert log.count(f'✅ 步骤耗时; scope={name}') == 1
@@ -882,7 +891,7 @@ def test_single_account_modes_measure_the_complete_chain_before_success(
 
 
 @pytest.mark.parametrize(('failure', 'step_name'), [
-    ('prediction', 'ReplayAccountStep'), ('metrics', 'PublishResultsStep'),
+    ('prediction', 'GenerateSignalStep'), ('metrics', 'PublishResultsStep'),
 ])
 def test_signal_production_and_publication_failures_stop_the_measured_chain(
     signal_scenario: tuple[PathManager, dict[str, object], Mock], monkeypatch: pytest.MonkeyPatch,
@@ -912,7 +921,7 @@ def test_signal_production_and_publication_failures_stop_the_measured_chain(
     assert caught.value is error
     expected_notes = [f'Pipeline 执行; scope={name} step={step_name}']
     if failure == 'prediction':
-        expected_notes.insert(0, f"回测时点; trade_date=2026-07-03 ts_us={_ts('2026-07-03', 15)}")
+        expected_notes.append(f"回测时点; trade_date=2026-07-03 ts_us={_ts('2026-07-03', 15)}")
     assert error.__notes__ == expected_notes
     assert not pm.experiment_backtest_metrics(experiment_name=name).exists()
     assert not pm.experiment_backtest_report(experiment_name=name).exists()
@@ -1104,7 +1113,7 @@ def test_fake_live_batch_delivery_reproduces_full_signal_target_risk_and_account
         return produce_signal(batch, prediction_dir=prediction_dir)
 
     monkeypatch.setattr(ReplayMarket, 'on_time', advance)
-    monkeypatch.setattr('src.trading.backtest.market.signals.produce_signal', predict_at_availability)
+    monkeypatch.setattr('src.trading.backtest.steps.generate_signal.produce_signal', predict_at_availability)
     monkeypatch.setattr(ReplayMarket, 'observations_at', deliver)
     metrics = BacktestMetrics(mode=submission.mode, parameters=submission.model_dump(mode="json"), not_run={})
     run_backtest(submission=submission, path_manager=pm,
@@ -1306,7 +1315,7 @@ def test_risk_account_setup_failure_does_not_publish_account_results(
     root = pm.experiment_dir(experiment_name=name)
     assert not root.exists()
 
-    assert error.__notes__ == [f'Pipeline 执行; scope={name} step=ReplayAccountStep']
+    assert error.__notes__ == [f'Pipeline 执行; scope={name} step=InitializeAccountStep']
     assert f'❌ 步骤耗时; scope={name}' in backtest_log.read_text()
     assert f'✅ 步骤耗时; scope={name}' not in backtest_log.read_text()
 
@@ -1328,7 +1337,7 @@ def test_risk_decision_failure_propagates_without_publishing_success(
     assert caught.value is error
     root = pm.experiment_dir(experiment_name=name)
     assert not root.exists()
-    assert f'Pipeline 执行; scope={name} step=ReplayAccountStep' in error.__notes__
+    assert f'Pipeline 执行; scope={name} step=ApplyRiskStep' in error.__notes__
 
 
 @pytest.mark.parametrize(('fill', 'sellable', 'volumes', 'held', 'residual'), [

@@ -7,14 +7,19 @@ from pathlib import Path
 from types import MappingProxyType
 
 from src.trading.backtest.commands import OrderCommandSchedule
-from src.trading.backtest.market.replay import ReplayMarketInput
-from src.trading.backtest.market.signals import SignalBatch
+from src.trading.backtest.clock import ReplayClock
+from src.trading.backtest.execution.simulator import AccountExecutionSimulator
+from src.trading.backtest.market.replay import ReplayMarket, ReplayMarketInput, ReplaySession
+from src.trading.backtest.market.signals import RecordedSignalBatch, SignalBatch
 from src.trading.backtest.reporting.metrics import BacktestMetrics
 from src.trading.core.equity import EquityCurve, EquityPoint
-from src.trading.core.events import PendingOrder
+from src.trading.core.events import PendingOrder, TargetEvent
 from src.trading.core.ledger import ExecutionLedger
 from src.trading.core.tape import SignalTape, TargetTape
 from src.trading.portfolio.state import PortfolioState
+from src.trading.portfolio.constructors.base import PortfolioConstructor
+from src.trading.portfolio.constructors.fixed_holding import FixedHoldingConstructor
+from src.trading.risk import RiskManager
 from src.trading.risk.evaluation import RiskObservation
 
 
@@ -57,11 +62,32 @@ class BacktestInputs:
 
 
 @dataclass(slots=True)
-class BacktestContext:
-    """Carry one run's prepared inputs, completed trading facts and derived results.
+class TickState:
+    """Carry only the current tick's decisions between independently assembled Steps.
 
-    None means the producing Step has not completed. Ordered consumers use the
-    corresponding producer's output; tick actions and runtime dependencies stay local.
+    None targets mean no submission; explicit zero quantities mean liquidation.
+    A new instance on every tick prevents old targets or cancellations from recurring.
+
+    Example:
+        tick = TickState(ts_us=decision_us, session=market_input.session_at(decision_us))
+    """
+
+    ts_us: int
+    session: ReplaySession
+    signal: RecordedSignalBatch | None = None
+    original_target: TargetEvent | None = None
+    execution_target: TargetEvent | None = None
+    cancel_order_ids: tuple[int, ...] = ()
+    risk_observation: RiskObservation | None = None
+
+
+@dataclass(slots=True)
+class BacktestContext:
+    """Own prepared inputs, account runtime, current decisions and accumulated facts.
+
+    Inputs and runtime are absent until their startup Steps succeed. State accumulates
+    during replay; result Steps consume it only after the clock finishes. Tick is
+    present only during replay. Configuration and external services stay bound to Steps.
 
     Example:
         context = BacktestContext(metrics=metrics)
@@ -70,3 +96,9 @@ class BacktestContext:
     metrics: BacktestMetrics
     inputs: BacktestInputs | None = None
     state: BacktestState | None = None
+    market: ReplayMarket | None = None
+    executor: AccountExecutionSimulator | None = None
+    constructor: PortfolioConstructor | FixedHoldingConstructor | None = None
+    risk: RiskManager | None = None
+    clock: ReplayClock | None = None
+    tick: TickState | None = None

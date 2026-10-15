@@ -131,7 +131,7 @@ def evaluate_risk_effectiveness(
 ) -> RiskEffectiveness:
     """Evaluate completed replay snapshots without executing any risk decision again.
 
-    Every supplied observation must have the outcome recorded by ReplayAccountStep.
+    Every supplied observation must have the outcome recorded by CompleteRiskObservationStep.
     Pure frozen-case observations belong to evaluate_risk, not this account evaluation.
 
     Example:

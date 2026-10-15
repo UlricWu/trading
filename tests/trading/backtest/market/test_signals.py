@@ -246,38 +246,3 @@ def test_model_batch_owns_features_until_prediction_is_produced(
     assert produced.symbols == ("000001", "600000")
     persisted = pd.read_parquet(produced.prediction_ref)
     np.testing.assert_array_equal(persisted["prediction"].to_numpy(), [0.5, np.nan])
-
-
-@pytest.mark.usefixtures("prediction_refs")
-def test_replay_signal_owns_inputs_and_produces_each_prediction_only_at_its_decision(
-    tmp_path: Path, model_ref: Path, access: Mock, mocker: MockerFixture,
-) -> None:
-    inputs = signals.prepare_signals(ModelSignalInput(type="model", model_ref=model_ref),
-        start="2026-07-03", end="2026-07-06", access=access, pm=PathManager(tmp_path),
-        min_listing_calendar_days=120, start_ts_us=FIRST_DECISION_TS_US,
-        end_ts_us=LAST_DECISION_TS_US + 1)
-    prediction_dir = tmp_path / "produced"
-    signal = signals.ReplaySignal(inputs, prediction_dir)
-    predict = mocker.spy(InferenceModel, "predict")
-    inputs.clear()
-
-    assert signal.timestamps() == (FIRST_DECISION_TS_US, LAST_DECISION_TS_US)
-    assert signal.at(FIRST_DECISION_TS_US - 1) is None
-    assert not prediction_dir.exists()
-    predict.assert_not_called()
-
-    first = signal.at(FIRST_DECISION_TS_US)
-    assert first is not None
-    assert first.event.scores == {"000001": 0.5}
-    assert first.prediction_ref.is_file()
-    assert signal.at(FIRST_DECISION_TS_US) is first
-    assert signal.at(FIRST_DECISION_TS_US + 1) is None
-    assert predict.call_count == 1
-    assert not (prediction_dir / "2026-07-06").exists()
-
-    last = signal.at(LAST_DECISION_TS_US)
-    assert last is not None
-    assert last.prediction_ref.is_file()
-    assert signal.at(LAST_DECISION_TS_US) is last
-    assert signal.at(FIRST_DECISION_TS_US) is first
-    assert predict.call_count == 2
