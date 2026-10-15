@@ -9,7 +9,7 @@ from typing import Annotated, Literal, Self, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, model_validator
 
-
+from src.data_system.normalize.level2_security import SECURITY_TYPE_RANGES, SecurityType
 from src.trading.orders.constraints import QuantityRules, QuoteRule
 from src.utils.datetime_utils import DateTimeUtils
 
@@ -224,29 +224,58 @@ FillConfig: TypeAlias = Annotated[
 ]
 
 
-class FakeExecutionConfig(BaseModel):
-    """Prepare normalized observations, quantity rules and an explicit simulation end.
+class ReplayMarketSourceConfig(BaseModel):
+    """Select formal stock facts to prepare within the backtest startup Steps.
+
+    Coverage dates are independent of decisions and the simulation endpoint.
+    The replay consumes local facts prepared in memory.
 
     Example:
-        config = FakeExecutionConfig(market_ref="/data/market.json", end_ts_us=3,
-                                     quantity_rules=rules, fees=fees, annual_factor=252,
-                                     fill=LimitPriceFillConfig(type="limit_price", slippage_bp=0))
+        source = ReplayMarketSourceConfig(frequency="minute", start="2026-07-17",
+            end="2026-07-21", symbols=("000001", "600000"))
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
-    market_ref: Path
+    frequency: Literal["daily", "minute"]
+    start: str
+    end: str
+    symbols: tuple[str, ...] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _validate_source(self) -> Self:
+        DateTimeUtils.require_system_date(self.start, field_name="market_source.start")
+        DateTimeUtils.require_system_date(self.end, field_name="market_source.end")
+        if self.start > self.end:
+            raise ValueError("market_source.start must not follow market_source.end")
+        stock_ranges = tuple(rule for rule in SECURITY_TYPE_RANGES if rule.security_type == SecurityType.STOCK)
+        if any(len(symbol) != 6 or not symbol.isascii() or not symbol.isdigit()
+               or not any(f"{rule.start:06d}" <= symbol <= f"{rule.end:06d}" for rule in stock_ranges)
+               for symbol in self.symbols):
+            raise ValueError("market_source.symbols must be supported six-digit Shanghai/Shenzhen stock codes")
+        if len(self.symbols) != len(set(self.symbols)):
+            raise ValueError("market_source.symbols must be unique")
+        return self
+
+
+class FakeExecutionConfig(BaseModel):
+    """Select local market data, quantity rules and an explicit simulation end.
+
+    Example:
+        source = ReplayMarketSourceConfig(frequency="daily", start="2026-07-17",
+            end="2026-07-21", symbols=("600000",))
+        config = FakeExecutionConfig(market_source=source, end_ts_us=1784617200000000,
+            quantity_rules=rules, fees=fees, annual_factor=252,
+            fill=LimitPriceFillConfig(type="limit_price", slippage_bp=0))
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    market_source: ReplayMarketSourceConfig
     end_ts_us: int = Field(strict=True)
     quantity_rules: dict[str, QuantityRules]
     fees: FeeConfig
     annual_factor: float = Field(gt=0, allow_inf_nan=False, strict=True)
     fill: FillConfig
     risk_check_ts_us: tuple[StrictInt, ...] = ()
-
-    @model_validator(mode="after")
-    def _validate_market_ref(self) -> Self:
-        if not self.market_ref.is_absolute():
-            raise ValueError("market_ref must be an absolute file path")
-        return self
 
 
 class SingleNameRiskConfig(BaseModel):

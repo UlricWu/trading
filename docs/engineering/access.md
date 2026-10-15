@@ -2,7 +2,7 @@
 
 - **状态**：正式 owner
 - **适用范围**：`src/access/access.py::Access` 的正式 processed 市场数据读取、
-  可用交易日及下一正式交易日、日频行情/复权因子/换手率、日频 universe、Level-2
+  可用交易日及下一正式交易日、日频行情/复权因子/换手率、停复牌事件、日频 universe、Level-2
   universe、Level-2 symbol/trade 市场范围读取和两市股票分钟事实读取；以及 `src/access/feature_label.py` 的已提交 Feature/Label 日分区读取。
 
 ## 身份与职责
@@ -72,6 +72,8 @@ class Access:
         symbols: Sequence[str] | None = None,
     ) -> pd.DataFrame: ...
 
+    def suspensions(self, *, trade_date: str) -> pd.DataFrame: ...
+
     def adjustment_factors(
         self,
         *,
@@ -115,6 +117,22 @@ symbol, trade_date, turnover_rate
 `trade_date` 精确等于请求日期。Access 保证对象 identity 与请求选择已经可直接消费，
 不解释价格、因子或换手率数值的 feature/label 有效性。该数值语义由对应 producer owner
 拥有。
+
+<a id="suspension-events"></a>
+`suspensions(trade_date=T)` 读取正式 `suspend_d`，返回独立的
+`symbol, trade_date, suspend_type, suspend_timing` 四列表。非空对象的 symbol 必须是六位
+数字字符串，trade_date 必须等于 T。按 [Tushare 字段定义](https://tushare.pro/document/2?doc_id=214)，
+suspend_type 只能是 `S`（Suspend，停牌）或 `R`（Resume，复牌）；suspend_timing 表示日内
+停牌时间段，日内停牌才有值，否则为 null；非 null 值必须是非空字符串。
+正式空对象即使只有空 symbol 列，也返回同一四列空表；Meta/payload 缺失仍失败。
+
+S/R 描述停复牌事件类型。同一证券同一天同时出现 S 和 R，只表示源数据同时提供了停牌和
+复牌记录；仅凭类型代码或返回行顺序，无法确定事件先后、是否盘中恢复交易或当天实际
+可交易状态。源端字段说明没有定义同日事件的可靠顺序或 S/R 优先级，核实状态还需结合
+时段字段和当时可见的有效公告。Access 保留源记录顺序及全部事件，不按 symbol 去重、
+选择其中一条或推断事件先后，也不因同日 S/R 并存就判定源记录错误。
+Access 不将事件集合变成盘前可知的可交易名单；如何解释日线缺行和停牌估值，由
+[回放输入 owner](../offline_workflow_contract.md#真实行情到回放输入)定义。
 
 正式交易日只由指定 processed version 下按自然年分区的 `trade_calendar` 对象定义；其中
 `is_open=true` 表示正式交易日，`is_open=false` 表示休市。日历对象 schema、Tushare

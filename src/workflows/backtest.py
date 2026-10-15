@@ -13,7 +13,11 @@ from src.pipeline import PipelineStep
 from src.trading.backtest.context import BacktestContext
 from src.trading.backtest.pipeline import BacktestPipeline
 from src.trading.backtest.reporting.metrics import BacktestMetrics
+from src.trading.backtest.steps.build_daily_replay_input import BuildDailyReplayInputStep
+from src.trading.backtest.steps.build_minute_replay_input import BuildMinuteReplayInputStep
+from src.trading.backtest.steps.prepare_replay_sessions import PrepareReplaySessionsStep
 from src.trading.backtest.steps.prepare_inputs import PrepareInputsStep
+from src.trading.backtest.steps.prepare_initial_marks import PrepareInitialMarksStep
 from src.trading.backtest.steps.initialize_account import InitializeAccountStep
 from src.trading.backtest.steps.update_market import UpdateMarketStep
 from src.trading.backtest.steps.advance_orders import AdvanceOrdersStep
@@ -36,7 +40,7 @@ def run_backtest(
     *, submission: BacktestSubmission, path_manager: PathManager,
     experiment_name: str, metrics: BacktestMetrics,
 ) -> None:
-    """Select decision Steps and bind their parameters before the Pipeline executes them.
+    """Select market and decision Steps, then execute one complete backtest Pipeline.
 
     The caller owns the experiment name and submission parameter snapshot.
 
@@ -50,6 +54,13 @@ def run_backtest(
 
     risk = submission.risk if isinstance(submission, (RiskRuleEvalSubmission, FullBacktestSubmission)) else None
 
+    market_source = submission.execution.market_source
+    market_steps: tuple[PipelineStep[BacktestContext], ...] = (
+        PrepareReplaySessionsStep(access=access, start_date=market_source.start, end_date=market_source.end),
+        BuildDailyReplayInputStep(access, market_source.symbols, PROCESSED_VERSION)
+        if market_source.frequency == "daily"
+        else BuildMinuteReplayInputStep(access, market_source.symbols, PROCESSED_VERSION),
+    )
     decision_steps: tuple[PipelineStep[BacktestContext], ...] = (
         (SubmitFrozenCommandsStep(),) if isinstance(submission, ExecutionEvalSubmission) else (
             GenerateSignalStep(
@@ -62,7 +73,9 @@ def run_backtest(
     )
     pipeline = BacktestPipeline(
         startup_steps=(
+            *market_steps,
             PrepareInputsStep(submission=submission, access=access, pm=path_manager),
+            PrepareInitialMarksStep(access=access, initial_account=submission.initial_account),
             InitializeAccountStep(initial_account=submission.initial_account, execution=submission.execution,
                                   strategy=strategy, risk=risk),
         ),

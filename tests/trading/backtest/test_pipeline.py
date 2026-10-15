@@ -50,11 +50,12 @@ def market_input() -> ReplayMarketInput:
 
 
 @pytest.fixture
-def initialize_step(tmp_path: Path) -> InitializeAccountStep:
+def initialize_step() -> InitializeAccountStep:
     initial = InitialAccount(ts_us=1, trade_date='2026-07-03', cash='2000', positions={'B': 100},
         sellable={'B': 60}, average_cost={'B': '10'}, peak_equity=3000)
     config = FakeExecutionConfig(
-        market_ref=tmp_path / 'market.json', end_ts_us=180_000_000,
+        market_source={'frequency': 'minute', 'start': '2026-07-03', 'end': '2026-07-03',
+                       'symbols': ['600000', '000001']}, end_ts_us=180_000_000,
         quantity_rules={s: QuantityRules(1, 1, 1, 1, 1, Decimal('0.01'), True) for s in ('A', 'B')},
         fees=FeeConfig(commission_rate=0, stamp_tax_rate=0, transfer_rate=0, min_commission=0),
         annual_factor=252, fill=QuotedFillConfig(type='quoted'),
@@ -69,10 +70,11 @@ def _context(inputs: BacktestInputs) -> BacktestContext:
 
 
 def _run_account(
-    initial: InitializeAccountStep, context: BacktestContext, *, progress_clock: Callable[[], float] = lambda: 0,
+    initial: InitializeAccountStep, context: BacktestContext, *, prediction_dir: Path,
+    progress_clock: Callable[[], float] = lambda: 0,
 ) -> BacktestContext:
     decisions = ((SubmitFrozenCommandsStep(),) if initial.strategy is None else (
-        GenerateSignalStep(prediction_dir=initial.execution.market_ref.parent / 'predictions'),
+        GenerateSignalStep(prediction_dir=prediction_dir),
         GenerateTargetsStep(), *((ApplyRiskStep(),) if initial.risk is not None else ()),
         SubmitTargetsStep(order_window_minutes=initial.strategy.order_window_minutes),
     ))
@@ -87,12 +89,13 @@ def _run_account(
 
 def test_each_run_owns_account_progress_and_records_only_current_signals(
     initialize_step: InitializeAccountStep, market_input: ReplayMarketInput,
+    tmp_path: Path,
 ) -> None:
     batch = RecordedSignalBatch('2026-07-03', SignalEvent(1, {'A': .8}), ('A', 'B'), Path('/prediction'))
     inputs = BacktestInputs(market=market_input, decisions={1: batch})
     first, second = _context(inputs), _context(inputs)
-    assert _run_account(initialize_step, first) is first
-    _run_account(initialize_step, second)
+    assert _run_account(initialize_step, first, prediction_dir=tmp_path / 'predictions') is first
+    _run_account(initialize_step, second, prediction_dir=tmp_path / 'predictions')
 
     assert first.state is not second.state
     assert first.market is not second.market and first.executor is not second.executor
@@ -118,12 +121,13 @@ def test_each_run_owns_account_progress_and_records_only_current_signals(
 
 def test_dynamic_order_expiry_wakes_account_without_repeating_signal_or_target(
     initialize_step: InitializeAccountStep, market_input: ReplayMarketInput,
+    tmp_path: Path,
 ) -> None:
     config = initialize_step.execution.model_copy(update={'fill': LimitPriceFillConfig(type='limit_price', slippage_bp=0)})
     step = InitializeAccountStep(initial_account=initialize_step.initial_account, execution=config,
         strategy=initialize_step.strategy, risk=None)
     batch = RecordedSignalBatch('2026-07-03', SignalEvent(1, {'A': .8}), ('A', 'B'), Path('/prediction'))
-    context = _run_account(step, _context(BacktestInputs(market=market_input, decisions={1: batch})))
+    context = _run_account(step, _context(BacktestInputs(market=market_input, decisions={1: batch})), prediction_dir=tmp_path / 'predictions')
 
     assert [point.ts_us for point in context.state.equity_curve.points] == [1, 120_000_001, 180_000_000]
     assert len(context.state.target_tape.events) == len(context.state.prediction_refs) == 1
@@ -136,6 +140,7 @@ def test_dynamic_order_expiry_wakes_account_without_repeating_signal_or_target(
 
 def test_risk_keeps_original_target_pre_control_snapshot_and_post_settlement_outcome(
     initialize_step: InitializeAccountStep, market_input: ReplayMarketInput,
+    tmp_path: Path,
 ) -> None:
     initial = InitialAccount(ts_us=1, trade_date='2026-07-03', cash='6000', positions={'A': 400},
         sellable={'A': 400}, average_cost={'A': '10'}, peak_equity=10000)
@@ -146,7 +151,7 @@ def test_risk_keeps_original_target_pre_control_snapshot_and_post_settlement_out
     risk = RiskConfig(rules=({'type': 'max_single_name', 'max_ratio': .2},))
     step = InitializeAccountStep(initial_account=initial, execution=config, strategy=strategy, risk=risk)
     batch = RecordedSignalBatch('2026-07-03', SignalEvent(1, {'A': .8}), ('A',), Path('/prediction'))
-    context = _run_account(step, _context(BacktestInputs(market=market_input, decisions={1: batch})))
+    context = _run_account(step, _context(BacktestInputs(market=market_input, decisions={1: batch})), prediction_dir=tmp_path / 'predictions')
     state = context.state
     observation = state.risk_observations[0]
 
@@ -167,6 +172,7 @@ def test_risk_keeps_original_target_pre_control_snapshot_and_post_settlement_out
 
 def test_frozen_commands_keep_quantities_and_original_same_time_order(
     initialize_step: InitializeAccountStep, market_input: ReplayMarketInput,
+    tmp_path: Path,
 ) -> None:
     order = OrderIntent(10, 'A', Side.BUY, 100, 2, 10, 90, Decimal('10'))
     replacement = OrderIntent(10, 'A', Side.BUY, 100, 1, 10, 90, Decimal('10'))
@@ -175,7 +181,7 @@ def test_frozen_commands_keep_quantities_and_original_same_time_order(
     config = initialize_step.execution.model_copy(update={'end_ts_us': 50,
         'fill': LimitPriceFillConfig(type='limit_price', slippage_bp=0)})
     step = InitializeAccountStep(initial_account=initialize_step.initial_account, execution=config, strategy=None, risk=None)
-    context = _run_account(step, _context(BacktestInputs(market=market_input, decisions=commands)))
+    context = _run_account(step, _context(BacktestInputs(market=market_input, decisions=commands)), prediction_dir=tmp_path / 'predictions')
 
     assert context.state.execution_ledger.commands == [order, CancelOrders(10, (2,)), replacement]
     assert context.state.pending_orders[1].intent == replacement
@@ -187,6 +193,7 @@ def test_frozen_commands_keep_quantities_and_original_same_time_order(
 @pytest.mark.parametrize(('times', 'expected'), [([0, .1, .2, .3], []), ([0, 5, 10, 15], [1, 2])])
 def test_progress_is_throttled_and_omits_final_tick(
     initialize_step: InitializeAccountStep, market_input: ReplayMarketInput, times: list[float], expected: list[int],
+    tmp_path: Path,
 ) -> None:
     market = ReplayMarketInput.model_validate({**market_input.model_dump(), 'marks': [
         {'ts_us': ts, 'trade_date': '2026-07-03', 'prices': {'A': '10', 'B': '10'}, 'kind': 'mark'}
@@ -198,7 +205,7 @@ def test_progress_is_throttled_and_omits_final_tick(
     sink = logs.add(lambda message: messages.append(str(message)), format='{message}',
                     filter='src.trading.backtest.pipeline')
     try:
-        _run_account(step, _context(BacktestInputs(market=market, decisions={})), progress_clock=Mock(side_effect=times))
+        _run_account(step, _context(BacktestInputs(market=market, decisions={})), progress_clock=Mock(side_effect=times), prediction_dir=tmp_path / 'predictions')
     finally:
         logs.remove(sink)
 
@@ -209,12 +216,13 @@ def test_progress_is_throttled_and_omits_final_tick(
 
 def test_tick_failure_preserves_original_error_and_account_facts(
     initialize_step: InitializeAccountStep, market_input: ReplayMarketInput, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     error = RuntimeError('source unavailable')
     monkeypatch.setattr(AccountExecutionSimulator, 'advance', Mock(side_effect=error))
     context = _context(BacktestInputs(market=market_input, decisions={}))
     with pytest.raises(RuntimeError) as caught:
-        _run_account(initialize_step, context)
+        _run_account(initialize_step, context, prediction_dir=tmp_path / 'predictions')
     assert caught.value is error
     assert error.__notes__ == ['Pipeline 执行; scope=run step=AdvanceOrdersStep',
                                 '回测时点; trade_date=2026-07-03 ts_us=1']
@@ -322,6 +330,7 @@ def test_failure_stops_remaining_steps_ticks_and_result_publication(
 
 def test_old_fills_are_valued_before_risk_and_new_fills_before_outcome(
     initialize_step: InitializeAccountStep, market_input: ReplayMarketInput,
+    tmp_path: Path,
 ) -> None:
     decision_us = 60_000_000
     initial = InitialAccount(ts_us=1, trade_date='2026-07-03', cash='20000', positions={},
@@ -346,7 +355,7 @@ def test_old_fills_are_valued_before_risk_and_new_fills_before_outcome(
     pipeline = BacktestPipeline(
         startup_steps=(SimpleNamespace(run=lambda current: context), initializer, SimpleNamespace(run=seed_order)),
         tick_steps=(UpdateMarketStep(), AdvanceOrdersStep(), ValueAccountStep(),
-                    GenerateSignalStep(prediction_dir=config.market_ref.parent / 'predictions'),
+                    GenerateSignalStep(prediction_dir=tmp_path / 'predictions'),
                     GenerateTargetsStep(), ApplyRiskStep(), SubmitTargetsStep(order_window_minutes=2),
                     ValueAccountStep(), CompleteRiskObservationStep(), ScheduleWakeupsStep()),
         result_steps=(), instrumentation=Instrumentation('run'), progress_clock=lambda: 0,

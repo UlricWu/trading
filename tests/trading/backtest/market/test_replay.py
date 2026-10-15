@@ -3,7 +3,7 @@ from decimal import Decimal
 
 import pytest
 
-from src.trading.backtest.market.replay import ReplayMarket, ReplayMarketInput
+from src.trading.backtest.market.replay import MarketDataIssue, MarkObservation, ReplayMarket, ReplayMarketInput
 
 
 def market_input() -> ReplayMarketInput:
@@ -35,7 +35,7 @@ def test_shared_market_marks_cannot_change_between_account_replays() -> None:
 
     treatment.on_time(1)
     assert baseline.prices == treatment.prices == {"A": Decimal("10")}
-    restored = ReplayMarketInput.model_validate_json(source.model_dump_json(), strict=True)
+    restored = ReplayMarketInput.model_validate(source.model_dump())
     assert restored == source
 
 
@@ -97,3 +97,55 @@ def test_shared_input_preserves_schedule_and_independent_replay_progress() -> No
     assert source.timestamps() == (0, 1, 60_000_000, 180_000_000)
     assert source.session_at(0).trade_date == '2026-07-03'
     assert source.model_dump_json() == original
+
+
+def test_suspension_is_visible_at_close_without_changing_price_origin() -> None:
+    source = market_input().model_copy(update={"observations": (), "marks": (
+        MarkObservation(ts_us=180_000_000, trade_date="2026-07-03", prices={}, kind="daily_close",
+                        suspended_symbols=frozenset({"A"})),)})
+    seed = MarkObservation(ts_us=-1, trade_date="2026-07-02", prices={"A": "9"}, kind="daily_close")
+    market = ReplayMarket(source, initial_marks=(seed,))
+    assert market.get_price("A") is None
+    market.on_time(0)
+    assert market.get_price("A") == 9
+    assert market.suspended_close_symbols.get(180_000_000) is None
+    origin = market.price_marks["A"]
+    market.on_time(180_000_000)
+    assert market.suspended_close_symbols[180_000_000] == {"A"}
+    assert market.price_marks["A"] == origin
+    assert origin.ts_us == -1 and origin.trade_date == "2026-07-02"
+    assert not market.observations_at(180_000_000)
+
+
+@pytest.mark.parametrize("prices,kind", [({"A": "10"}, "daily_close"), ({}, "mark")])
+def test_suspension_mark_cannot_supply_a_fake_price_or_intraday_status(prices: dict[str, str], kind: str) -> None:
+    with pytest.raises(ValueError, match="suspended symbols belong only"):
+        MarkObservation(ts_us=1, trade_date="2026-07-03", prices=prices, kind=kind,
+                        suspended_symbols=frozenset({"A"}))
+
+
+def test_data_gap_is_visible_only_at_its_close_and_never_supplies_a_price() -> None:
+    issue = MarketDataIssue(ts_us=180_000_000, trade_date="2026-07-03", symbol="A", reason="missing_daily_close")
+    mark = MarkObservation(ts_us=issue.ts_us, trade_date=issue.trade_date, prices={},
+                           kind="daily_close", data_issues=(issue,))
+    source = market_input().model_copy(update={"marks": (mark,), "observations": ()})
+    assert ReplayMarketInput.model_validate_json(source.model_dump_json()) == source
+    market = ReplayMarket(source)
+    market.on_time(179_999_999)
+    assert market.daily_close_issues == {}
+    market.on_time(180_000_000)
+    market.on_time(180_000_000)
+    assert market.daily_close_issues == {180_000_000: (issue,)}
+    assert market.prices == {}
+    assert market.suspended_close_symbols[180_000_000] == frozenset()
+    assert market.observations_at(180_000_000) == ()
+
+
+@pytest.mark.parametrize("change", [{"prices": {"A": "10"}}, {"suspended_symbols": {"A"}},
+                                    {"kind": "mark"}, {"ts_us": 179_000_000}])
+def test_data_gap_cannot_conflict_with_a_price_suspension_or_visibility(change: dict[str, object]) -> None:
+    issue = MarketDataIssue(ts_us=180_000_000, trade_date="2026-07-03", symbol="A", reason="missing_daily_close")
+    values = {"ts_us": issue.ts_us, "trade_date": issue.trade_date, "prices": {}, "kind": "daily_close",
+              "data_issues": (issue,), **change}
+    with pytest.raises(ValueError, match="data issues require"):
+        MarkObservation.model_validate(values)

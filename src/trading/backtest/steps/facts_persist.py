@@ -51,6 +51,18 @@ _EQUITY_SCHEMA = pa.schema([
     pa.field("drawdown", pa.float64(), nullable=False),
 ])
 
+_VALUATION_MARK_SCHEMA = pa.schema([
+    pa.field("ts_us", pa.int64(), nullable=False),
+    pa.field("trade_date", pa.string(), nullable=False),
+    pa.field("symbol", pa.string(), nullable=False),
+    pa.field("qty", pa.int64(), nullable=False),
+    pa.field("price", pa.string(), nullable=False),
+    pa.field("price_ts_us", pa.int64(), nullable=False),
+    pa.field("price_trade_date", pa.string(), nullable=False),
+    pa.field("price_kind", pa.string(), nullable=False),
+    pa.field("reason", pa.string(), nullable=False),
+])
+
 
 class FactsPersistStep:
     """Publish execution and equity files before derived metrics and the report.
@@ -113,6 +125,13 @@ class FactsPersistStep:
             output_file=self._output_dir / "equity.parquet",
             table=pa.Table.from_pylist(
                 [asdict(point) for point in state.equity_curve.points], schema=_EQUITY_SCHEMA,
+            ),
+        )
+        write_parquet_atomic(
+            output_file=self._output_dir / "valuation-marks.parquet",
+            table=pa.Table.from_pylist(
+                [{**asdict(mark), "price": str(mark.price)} for marks in state.valuation_marks.values() for mark in marks],
+                schema=_VALUATION_MARK_SCHEMA,
             ),
         )
         run_dir = self._output_dir

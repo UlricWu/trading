@@ -51,7 +51,7 @@ class InitializeAccountStep:
         initial = self.initial_account
         config = self.execution
         state = _create_account_state(initial)
-        market = ReplayMarket(inputs.market)
+        market = ReplayMarket(inputs.market, initial_marks=context.initial_marks)
         executor = _create_execution_simulator(state=state, config=config, strategy=self.strategy)
         decisions = inputs.decisions
         decision_times = decisions.timestamps() if isinstance(decisions, OrderCommandSchedule) else tuple(decisions)

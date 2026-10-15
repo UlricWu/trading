@@ -319,6 +319,7 @@ experiments/<experiment_name>/
 ├── risk-cases.json                         # 实际运行业务风控时保存案例
 ├── execution.parquet                       # 执行与结算事实
 ├── equity.parquet                          # 事件估值
+├── valuation-marks.parquet                 # 初始与日终持仓的估值价格依据
 ├── metrics.json
 └── report.html
 ```
@@ -335,8 +336,9 @@ Asia/Shanghai 当天日期，格式为 `YYYY-MM-DD`；日期采样与唯一 ID �
 各模式只生成实际能力的制品，mode 和日期范围保存在 metrics 的 parameters 中。固定预测输入保留外部引用，不无条件复制。
 同日多次推理按 UTC epoch 微秒 ts_us 区分，预测 schema 与训练相同，不写回 training。
 
-metrics 同时保存实际评价、预测引用和运行参数；不另写 binding.json、run_meta.json、
-通用 replay metadata 或全部输入副本。orders.json、targets.json、risk-cases.json 是可复演
+metrics 同时保存实际评价、预测引用、运行参数及 data_quality 中的诊断标记和行情异常；
+估值沿用的价格来源仍保存于 valuation-marks.parquet，不另建异常制品。也不另写 binding.json、run_meta.json、
+通用 replay metadata 或全部输入副本。orders.json、targets.json、risk-cases.json、valuation-marks.parquet 是可复演
 业务事实，不是第二份运行元数据。各文件 schema、原始顺序、空值和发布时机归
 [Backtest workflow](../offline_workflow_contract.md#backtest-workflow)；本节唯一拥有布局和文件名。
 HTML 由 metrics 生成，不拥有另一份结果。模型目标评价保存在 metrics.signal_eval，

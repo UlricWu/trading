@@ -238,12 +238,22 @@ order_refs 和 prediction_refs 是有序绝对路径数组；空事实可报告�
 | 对象 | 字段及构造约束 |
 | --- | --- |
 | initial_account | ts_us 整数、trade_date、非负有限 Decimal cash、positions 非负整数映射、sellable 同键映射且不超过持仓、average_cost 同键非负有限 Decimal 映射、非负有限 peak_equity；ts_us 必须早于模拟终点 |
-| execution | market_ref 绝对 JSON 路径、end_ts_us 整数、quantity_rules 证券映射、fees、正数有限 annual_factor、fill；risk_check_ts_us 按模式约束如下 |
+| execution | market_source；end_ts_us 整数、quantity_rules 证券映射、fees、正数有限 annual_factor、fill；risk_check_ts_us 按模式约束如下 |
+| market_source | frequency 为 daily/minute；start、end 为规范日期且 start<=end；symbols 为非空、唯一的六位沪深股票代码数组，范围沿用 Level-2 股票分类 |
 | quantity_rules 每证券值 | buy_min_qty、buy_step_qty、sell_min_qty、sell_step_qty、fill_step_qty 都是正整数，price_tick 是正数有限 Decimal，enforce_t1 是显式 bool；不可用 bool 代替数量 |
 | fees | commission_rate、stamp_tax_rate、transfer_rate、min_commission，均为非负有限 Decimal；不使用隐含费率或最低佣金 |
 | risk | rules 非空数组，按声明顺序选具名规则；每项为 type=max_single_name 和非负有限 max_ratio，或 type=max_gross_exposure 和非负有限 max_gross_ratio，或 type=max_drawdown 和 [0,1] max_drawdown |
 | strategy | type、params、order_window_minutes、quote；两种成交假设均须完整 quote。窗口分钟为正整数 |
 | quote | buy_offset_bp、sell_offset_bp，均为 [0,10000) 的有限 Decimal；不接受额外字段 |
+
+execution.market_source 必填且不能为 null，在同一次 backtest 的启动组内读取本地正式
+日频或分钟行情。source 的日期是行情覆盖范围，独立于请求的决策日期和
+execution.end_ts_us；初始持仓缺少可见价格时，启动 Step 按需读取更早的正式日线。
+确认停牌及无法确认停牌的局部日线缺口按下述 owner 分别处理；后者在 limit_price 下继续
+并发布诊断结果，quoted 在输入准备时拒绝模拟终点内的该类缺口，不增加请求开关。
+行情在内存中交给后续 Steps，不读写中间行情 JSON；execution.market_ref
+和 market_source.output_ref 均作为额外字段拒绝，不保留兼容入口。时间、价格、单位及准备顺序由
+[真实行情到回放输入](../offline_workflow_contract.md#真实行情到回放输入)拥有。
 
 execution.fill 是必须显式提供的带 type 判别字段的对象，不根据 null 或缺失滑点推导成交行为：
 

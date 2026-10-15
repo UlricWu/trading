@@ -56,16 +56,43 @@ def test_train_post_creates_exactly_one_job() -> None:
 
 
 @pytest.mark.parametrize("mode", list(BacktestMode))
+@pytest.mark.parametrize("frequency", ["daily", "minute"])
 def test_backtest_post_accepts_each_modes_actual_inputs(
-    mode: BacktestMode, backtest_payload: Callable[[BacktestMode], dict[str, object]],
+    mode: BacktestMode, frequency: str, backtest_payload: Callable[[BacktestMode], dict[str, object]],
 ) -> None:
     runtime = _StubRuntime()
     payload = backtest_payload(mode)
+    payload["execution"]["market_source"]["frequency"] = frequency
     response = create_app(cast(JobRuntime, runtime)).test_client().post("/jobs", json=payload)
     assert response.status_code == 201
     assert len(response.get_json()["jobs"]) == len(runtime.submitted) == 1
     assert runtime.submitted == parse_job_request(payload)
     assert runtime.submitted[0].mode is mode
+
+
+@pytest.mark.parametrize("input_kind,field", [
+    ("missing", "execution.market_source"), ("null", "execution.market_source"),
+    ("market_ref", "execution.market_ref"), ("output_ref", "execution.market_source.output_ref"),
+])
+def test_backtest_post_rejects_market_json_and_missing_source_without_creating_a_job(
+    input_kind: str, field: str, backtest_payload: Callable[[str], dict[str, object]],
+) -> None:
+    runtime = _StubRuntime()
+    payload = backtest_payload("execution_eval")
+    if input_kind == "missing":
+        payload["execution"].pop("market_source")
+    elif input_kind == "null":
+        payload["execution"]["market_source"] = None
+    elif input_kind == "market_ref":
+        payload["execution"]["market_ref"] = "/data/market.json"
+    else:
+        payload["execution"]["market_source"]["output_ref"] = "/tmp/market.json"
+
+    response = create_app(cast(JobRuntime, runtime)).test_client().post("/jobs", json=payload)
+
+    assert response.status_code == 400
+    assert response.get_json()["error"]["field"] == field
+    assert runtime.jobs == {} and runtime.submitted == []
 
 
 @pytest.mark.parametrize(("fill", "quote", "status"), [

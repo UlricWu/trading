@@ -110,9 +110,15 @@ SH 的 `ExchangeID`、`TradeMoney`、`TradeBSFlag`、`MDSecurityStat`、
 [broker 字段字典](https://int4.tech/#fields)和
 [L2 接入文档](https://docs.qq.com/doc/DQ3FaQ3ZYSmRQdEVi)中的整数接口 `price`
 使用 ×10000 尺度；本系统接收的 CSV `Price/TradePrice` 已为十进制价格，继续只做
-数值转换，不再次除以 10000。数量沿用 CSV source 值，未定义证券类型单位换算；
+数值转换，不再次除以 10000。数量沿用 CSV source 值，不在 normalize 做单位换算；
 `TradeMoney` 不替代 `price * volume`。深圳撤单即使已由 broker 还原为正价格，也按
 `ExecType=4` 排除，不得凭正价格将其当作成交。
+
+对当前沪深 `security_type=stock`，broker 的成交 `volume` 单位为股，CSV
+`Volume/TradeVolume` 及 processed `volume` 保留该数量，`notional` 因而为元。
+[股票分钟事实](level2_minute_contract.md)的 `volume_sum` 直接为股、`notional_sum` 为元，
+消费方不得再将股票分钟量乘以 100。该解释只覆盖股票，不将债券、基金等其他证券的
+source-native 数量一概声明为股，也不改变既有 processed 数值或聚合公式。
 
 <a id="trade-cancel-filter"></a>
 

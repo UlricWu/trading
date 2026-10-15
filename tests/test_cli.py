@@ -11,6 +11,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+import pandas as pd
 import pytest
 from typer.testing import CliRunner
 
@@ -473,6 +474,43 @@ def test_backtest_rejects_missing_or_invalid_listing_age_before_loading_config(
     load_config.assert_not_called()
 
 
+@pytest.mark.parametrize("input_kind", ["daily", "minute", "missing", "null", "market_ref", "output_ref"])
+def test_backtest_requires_local_market_data_before_loading_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, input_kind: str,
+    backtest_payload: Callable[[str], dict[str, object]],
+) -> None:
+    load_config = Mock(return_value=SimpleNamespace(storage_root=tmp_path))
+    workflow = Mock()
+    monkeypatch.setattr(cli.AppConfig, "load", load_config)
+    monkeypatch.setattr(cli, "run_backtest", workflow)
+    fields = backtest_payload("execution_eval")
+    del fields["kind"], fields["mode"]
+    if input_kind in ("daily", "minute"):
+        fields["execution"]["market_source"]["frequency"] = input_kind
+    elif input_kind == "missing":
+        fields["execution"].pop("market_source")
+    elif input_kind == "null":
+        fields["execution"]["market_source"] = None
+    elif input_kind == "market_ref":
+        fields["execution"]["market_ref"] = "/data/market.json"
+    else:
+        fields["execution"]["market_source"]["output_ref"] = "/tmp/market.json"
+    result = CliRunner().invoke(cli.app, ["backtest", "--mode", "execution_eval",
+        "--experiment-id", "source", "--input-json", json.dumps(fields)])
+    if input_kind in ("daily", "minute"):
+        assert result.exit_code == 0, result.output
+        workflow.assert_called_once()
+        submission = workflow.call_args.kwargs["submission"]
+        assert submission.execution.market_source.frequency == input_kind
+        assert submission.execution.market_source.symbols == ("600000",)
+        assert workflow.call_args.kwargs["metrics"].parameters == submission.model_dump(mode="json")
+    else:
+        assert result.exit_code == 2, result.output
+        assert ("market_source" if input_kind in ("missing", "null") else input_kind) in result.output
+        load_config.assert_not_called()
+        workflow.assert_not_called()
+
+
 @pytest.mark.parametrize(("current_time", "run_date"), [
     (datetime(2026, 10, 10, 15, 59, tzinfo=UTC), "2026-10-10"),
     (datetime(2026, 10, 10, 16, 0, tzinfo=UTC), "2026-10-11"),
@@ -488,14 +526,14 @@ def test_backtest_preserves_run_date_and_logged_parameters_in_the_persisted_resu
     fields = backtest_payload("risk_rule_eval")
     del fields["kind"], fields["mode"]
     fields['signal'] = {'type': 'recorded', 'prediction_refs': []}
-    market_ref = tmp_path / 'market.json'
-    market_ref.write_text(json.dumps({'price_basis': 'raw', 'quantity_unit': 'shares',
-        'sessions': [{'trade_date': '2026-07-01', 'start_ts_us': 0, 'close_ts_us': 3,
-                      'windows': [{'trade_date': '2026-07-01', 'start_ts_us': 0, 'end_ts_us': 3}]}],
-        'marks': [], 'observations': []}))
-    fields['execution']['market_ref'] = str(market_ref)
+    initial_ts_us = int(datetime(2026, 7, 1, tzinfo=UTC).timestamp() * 1_000_000)
+    fields['initial_account']['ts_us'] = initial_ts_us
+    fields['execution']['end_ts_us'] = initial_ts_us + 1
+    fields['execution']['market_source']['end'] = '2026-07-01'
     monkeypatch.setattr('src.workflows.backtest.Access', Mock(return_value=Mock(
-        trade_dates=Mock(return_value=['2026-07-01']))))
+        trade_dates=Mock(return_value=['2026-07-01']),
+        daily_bars=Mock(return_value=pd.DataFrame({'symbol': ['600000'], 'close': [10.0], 'vol': [100.0]})),
+    )))
     result = CliRunner().invoke(cli.app, ["backtest", "--mode", "risk_rule_eval",
         "--experiment-id", experiment_id, "--input-json", json.dumps(fields)])
     assert result.exit_code == 0, result.output

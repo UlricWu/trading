@@ -1,7 +1,7 @@
 # Offline 工作流契约
 
 - **状态**：正式 owner
-- **适用范围**：offline data、CLI-only backfill、offline training 与五种 backtest 验证任务
+- **适用范围**：offline data、CLI-only backfill、offline training、回放行情准备与五种 backtest 验证任务
   的配置选择、日程、calendar bootstrap、执行编排、运行结果和实验命名。
 - **CLI owner**：[`docs/engineering/cli_contract.md`](engineering/cli_contract.md)
 
@@ -69,8 +69,10 @@ startup_steps、tick_steps、result_steps 三组不可变 Step tuple：启动与
 Backtest 的一个 CLI 命令统一准备实验名称和初始 `BacktestMetrics`，将有类型的 submission
 交给 `run_backtest`；CLI 不组装 Step。Workflow 绑定请求、输入访问、账户/策略/风控/执行
 配置和输出路径，显式声明启动、逐时点与结果三组 Step。准备输入、账户回放、事实保存、
-结果评价、结果发布仍是五段业务阶段，但不要求每段对应一个 Step。PrepareInputsStep
-准备输入，InitializeAccountStep 创建账户对象与时钟，BacktestPipeline 遍历时钟。
+结果评价、结果发布仍是五段业务阶段，但不要求每段对应一个 Step。行情来源通过启动组的
+market_steps 选择：准备日程后构建日线或分钟行情；PrepareInputsStep
+接收内存行情并准备决策输入，PrepareInitialMarksStep 补齐初始持仓必需的历史价格，
+InitializeAccountStep 创建账户对象与时钟，BacktestPipeline 遍历时钟。
 Workflow 通过选择 Step 和绑定参数表达信号/冻结委托、可选风控、策略及成交假设的区别；
 Pipeline 不接收 mode，也不按 Step 类型选择业务。Workflow 不重新命名实验、重建请求
 参数快照或重复记录任务开始日志；GenerateSignalStep 在当前决策时点生成预测。
@@ -143,7 +145,8 @@ config、registry、Access、PathManager、Instrumentation 和 experiment identi
 step 或 Pipeline，不进入 Context。Data Context 保存请求的 `start`、`end`，并由 calendar
 step 写入后续 step 所需的 `trade_dates`。Training 与 Backtest Context 每次 `run()` 新建。
 Training 的训练值和逐日评价观察只在这次 Step 链内传递。`BacktestContext` 保存 metrics、
-PrepareInputsStep 产出的 `BacktestInputs`、InitializeAccountStep 产出的 `BacktestState`、
+行情启动 Steps 传递的 sessions 与 market_input、PrepareInputsStep 产出的 `BacktestInputs`、
+PrepareInitialMarksStep 产出的 initial_marks、InitializeAccountStep 产出的 `BacktestState`、
 本次市场、执行器、策略构造器、RiskManager 和时钟，以及当前 TickState。运行对象是独立
 Step 必须共享的具名领域对象，不另建组件字典、依赖查找器或配置容器。每次初始化新建
 这些对象，不把可变账户或策略实例保存在可重复使用的 Step 上。输入与运行对象尚未创建时
@@ -200,7 +203,7 @@ Instrumentation 衡量 workflow 显式组装的 step，返回 `step.run(context)
 作用域时只输出一个多行、等宽对齐的“步骤耗时”日志事件，首行以 `scope=...` 定位运行，
 依次列出每个 step 的总耗时，再列出“步骤耗时合计”。合计只累加被 measure 包围的步骤，
 不包含 Step 之外的依赖组装或 CLI/Job 启动等耗时，必须注明“不代表任务总耗时”，不得称为端到端耗时。
-Backtest 的输入读取属于 PrepareInputsStep，因此包含在该步骤及合计中。
+Backtest 的行情读取计入日程/构建 Steps，决策输入读取计入 PrepareInputsStep；均包含在同一次运行的步骤合计中。
 Workflow 可通过 `descriptions` 提供 step 的中文含义，Instrumentation 独立保存该映射，
 展示时附在对应行后，不改用于累计的代码名称。训练 ReportStep 的含义为“诊断计算与报告
 输出”，包含材料读取和诊断计算，不能只称为 HTML 渲染。同名 step 在同一作用域内实际
@@ -218,7 +221,8 @@ Level2FactMaterializeStep, Level2MinuteBuildStep, Stock1430MaterializeStep, Stoc
 Stock1430DailyL2MaterializeStep,
 DatasetBuildStep, PreprocessStep, ModelTrainStep, PredictionStep, ICEvaluateStep,
 ArtifactPersistStep, MetricsPersistStep, ReportStep,
-PrepareInputsStep, InitializeAccountStep, UpdateMarketStep, AdvanceOrdersStep, ValueAccountStep,
+PrepareReplaySessionsStep, BuildDailyReplayInputStep, BuildMinuteReplayInputStep,
+PrepareInputsStep, PrepareInitialMarksStep, InitializeAccountStep, UpdateMarketStep, AdvanceOrdersStep, ValueAccountStep,
 GenerateSignalStep, GenerateTargetsStep, ApplyRiskStep, SubmitTargetsStep, SubmitFrozenCommandsStep,
 CompleteRiskObservationStep, ScheduleWakeupsStep, FactsPersistStep, EvaluateResultsStep, PublishResultsStep
 ```
@@ -864,7 +868,8 @@ startup_steps、tick_steps、result_steps 三组 Step tuple。BacktestPipeline �
 
 ```text
 startup_steps:
-  PrepareInputsStep → InitializeAccountStep
+  PrepareReplaySessionsStep → BuildDailyReplayInputStep / BuildMinuteReplayInputStep
+  → PrepareInputsStep → PrepareInitialMarksStep → InitializeAccountStep
 
 tick_steps，逐时点执行:
   UpdateMarketStep → AdvanceOrdersStep → ValueAccountStep
@@ -876,7 +881,7 @@ result_steps:
   FactsPersistStep → EvaluateResultsStep → PublishResultsStep
 ```
 
-方括号中的两个 Step 仅在配置业务风控时共同装配；冻结委托路径不装配信号、策略与风控
+行情构建 Step 按 frequency 选择；逐时点方括号中的两个 Step 仅在配置业务风控时共同装配。冻结委托路径不装配信号、策略与风控
 Step。分支由 workflow 构造 tuple 时确定，Pipeline 不在每个 tick 中检查 mode、输入类型
 或具体 Step 类型。策略、成交和费用配置绑定在 InitializeAccountStep；GenerateTargetsStep
 消费它创建的本次构造器，避免重复保存一份策略配置。GenerateSignalStep 绑定预测路径，
@@ -885,9 +890,9 @@ SubmitTargetsStep 绑定订单窗口，估值前后复用同一种 ValueAccountS
 
 | 业务阶段 | 实际 Step 与完成边界 |
 | --- | --- |
-| 准备输入 | PrepareInputsStep 读取并校验输入，写入 BacktestInputs；不推理、不读标签 |
+| 准备输入 | 行情 Steps 构建 market_input，PrepareInputsStep 校验覆盖并准备决策输入，PrepareInitialMarksStep 按需补齐初始持仓历史价格；不推理、不读标签 |
 | 账户回放 | InitializeAccountStep 创建本次运行对象；各 tick Step 逐项推进账户、决策和执行，时钟耗尽后结束 |
-| 保存事实 | FactsPersistStep 保存 execution/equity、orders、风控前 targets，以及存在的 risk-cases |
+| 保存事实 | FactsPersistStep 保存 execution/equity、valuation-marks、orders、风控前 targets，以及存在的 risk-cases |
 | 评价结果 | EvaluateResultsStep 此时才读取评价标签，汇总已保存的事实及实际预测引用，不重新交易或执行风控规则 |
 | 发布结果 | PublishResultsStep 先保存 metrics，再由 ReportingBundle 重读生成 HTML 与摘要；报告成功才算整个运行成功 |
 
@@ -896,8 +901,11 @@ SubmitTargetsStep 绑定订单窗口，估值前后复用同一种 ValueAccountS
 每个 Step 只完成一个业务动作，直接使用现有领域能力；Step 内不再运行另一条 Step 链，
 不增加通用运行计划、registry、空策略或 NoOpRiskManager。
 
-PrepareInputsStep 严格读取一次行情，检查正式日历覆盖及与初始账户、风险检查时点、
-执行配置的一致性，将 `ReplayMarketInput` 与决策输入写入 BacktestInputs。
+PrepareReplaySessionsStep 读取正式日历，构建 Step 读取本地行情并校验转换结果，直接写入
+同一 Context 的 market_input。
+PrepareInputsStep 消费该内存行情，检查初始账户、风险检查时点、执行配置与行情覆盖的
+一致性，将同一 `ReplayMarketInput` 对象与决策输入写入 BacktestInputs，不再次读取行情
+或核对已建立的正式日历契约。行情的显式证券集合必须覆盖初始持仓。
 行情输入提供不依赖推进状态的 `session_at()`
 和 `timestamps()` 查询，准备、委托日程及后续时钟组装直接消费它，不为校验构造临时
 ReplayMarket。信号输入由 `prepare_signals` 一次准备；冻结委托由
@@ -908,7 +916,8 @@ ReplayMarket。信号输入由 `prepare_signals` 一次准备；冻结委托由
 无指令时为空；查询不消费指令。下游不重复校验或分组。
 
 InitializeAccountStep 每次运行创建独立 PortfolioState、ReplayMarket、执行器、时钟、
-挂单和 ledger；信号路径另建策略，有风控时另建 RiskManager。账户保留初始可卖数量与
+挂单和 ledger；ReplayMarket 接收初始历史标记并遵循同一可见时间推进，价格来源时间不因沿用而改变。
+信号路径另建策略，有风控时另建 RiskManager。账户保留初始可卖数量与
 权益峰值，执行器装配费用和成交模型，固定持有策略初始化校验初始退出计划并登记时钟。
 ReplayMarket 保存本次可见价格、读取游标和观察批次；初始化不消费时钟、不生成预测。
 成功创建后才把这些对象交给 Context。workflow 不读取策略内部计划，不装配费率公式
@@ -1102,8 +1111,9 @@ strategy_eval、risk_rule_eval 和 full 的 `prepare_signals` 在返回前对每
 表中成交区间用于 `limit_price`；`quoted` 仍按订单生效时的原报价成交，不随输入频率
 改成等待后续区间。信号可用时刻遵循上节，具体撮合条件遵循下文账户级执行模拟。
 
-每个交易任务通过 `execution.market_ref` 提供规范化 JSON 市场引用，明确
-`price_basis="raw"`、`quantity_unit="shares"`：
+每个交易任务通过 `execution.market_source` 选择本地行情，在启动组内构建内存中的
+`ReplayMarketInput`。该对象表达回放时间、价格及数量语义，
+明确 `price_basis="raw"`、`quantity_unit="shares"`：
 
 - `sessions` 包含正式交易日、账户日起点、收盘时刻和有序不重叠的 `TradingWindow`。
   声明的日期序列必须与 Access 在该范围读到的正式日历完全一致，不从实际有行情的日期
@@ -1111,6 +1121,11 @@ strategy_eval、risk_rule_eval 和 full 的 `prepare_signals` 在返回前对每
 - `marks` 是按可见时间排序的估值价格，每条包含 ts_us、trade_date、prices 和
   kind（mark/daily_close）。同证券同刻只允许一个明确标记；正式 daily_close 必须在该日
   声明的收盘时刻可用。早先标记不能覆盖后来执行观察的价格；同刻显式 mark 拥有估值口径。
+  daily_close 另可携带 suspended_symbols，表示当日缺线且已确认全天停牌的证券；它们不能
+  同时出现在该条 prices 中。该集合仅在收盘时可见，不包含补造的价格，也不提供盘前停牌信号。
+  无法确认全天停牌的缺线则保存为 data_issues，每项包含同一收盘 ts_us、trade_date、
+  symbol 和 reason=missing_daily_close；同条中的异常证券不得重复，也不得与 prices 或
+  suspended_symbols 重叠。异常同样只在收盘可见，不作为此前决策的停牌信号。
 - `observations` 是按可用时间排序的 ExecutionObservation，包含稳定 observation_id、
   symbol、完整 BarTime、正数 Decimal price 和可选 volume_qty。BarTime 明确 minute 或
   trading_day、size、交易日、区间起止和可用时刻；minute 长度匹配 size，日线只支持完整
@@ -1120,10 +1135,10 @@ strategy_eval、risk_rule_eval 和 full 的 `prepare_signals` 在返回前对每
 
 来源准备必须已经根据数据 owner 完成数量单位与价格口径转换。这里不猜“股/手”、
 不把缺失 VWAP 当零价，也不从一条日线推断盘中触价先后。声明 raw/shares 不是独立的
-真实数据质量证明。PrepareInputsStep 当前将完整市场 JSON 一次读入内存，提供本地
-有界输入回放；从源端日线、分钟事实自动构建该输入的链路尚未接入。已有 Feature 读取
-不能替代执行行情准备。真实数据接入需要在输入准备侧完成上述转换，账户、策略、风控、
-成交和结果 Steps 继续共用。全市场、长周期分钟数据的内存与吞吐尚无规模验证；
+真实数据质量证明。下节启动 Steps 从正式日线或分钟事实在内存生成回放输入，提供本地
+有界回放。已有 Feature 供模型产生信号，行情供成交与估值，两者分别消费已有本地对象。
+账户、策略、风控、成交和结果 Steps 继续共用。
+全市场验证的具体区间、规模及资源消耗见下节，不能外推为任意长周期的容量保证；
 公司行动现金/股数事件、冲击、盘口排队和真实 broker 也不由此接口补造。
 
 初始账户显式给出快照时刻、账户交易日、现金、持仓、可卖数量、平均成本及既有峰值权益。
@@ -1150,10 +1165,180 @@ ReplayClock 合并账户日程、信号、命令、市场可用时间和显式�
   `test_incomplete_interval_cannot_fill_new_order_and_no_observation_still_expires`
   分别固定后续完整日线、分钟部分成交后到期、未覆盖完整区间不得成交的边界。
 
-这些测试使用 `scenario`/`daily_scenario` 构造的市场 JSON、本地模型与预测制品，以及
-执行器测试中的固定订单和观察；交易日历、股票资格等 Access 输入由测试提供。
+这些测试在行情构建 Step 的边界注入 `replay_input` 内存场景，配合 `scenario`/`daily_scenario`
+的本地模型与预测制品，以及执行器测试中的固定订单和观察；交易日历、股票资格等
+Access 输入由测试提供。
 证据覆盖声明成交假设下的流程与时间边界，不构成真实源数据质量、真实成交效果或
-大规模分钟回测容量的验证。
+大规模分钟回测容量的验证。真实源到规范化输入的确定性回归见下节。
+
+### 真实行情到回放输入
+
+行情准备属于 `run_backtest` 的启动组。调用方在原请求中用 `execution.market_source`
+指定 frequency、行情覆盖起止日期及有限的沪深股票集合；构造约束由
+[CLI 契约](engineering/cli_contract.md#backtest)拥有。数据准备只消费已有正式对象，不下载行情、
+不运行 Feature/Label，不要求先调用其他 workflow。本地正式行情已经是可读取的数据对象；
+额外保存规范化行情 JSON 不会增加回测所需的时间、价格或数量信息，却会增加一套输入
+协议和需要同步的副本，因此回测不提供行情 JSON 导入或归档入口。必要的可见时间和
+单位转换仍在内存构建时完成，不能因省略中间文件而省略这些规则。
+
+日期表示行情与日程覆盖，与策略决策范围、模拟终点分别指定；代码集合须包含可能持有或
+下单的证券，不随当日候选集合删除已有持仓。Workflow 显式组装：
+
+```python
+market_steps = (
+    PrepareReplaySessionsStep(access, market_source.start, market_source.end),
+    BuildDailyReplayInputStep(access, market_source.symbols, source_version)
+    if market_source.frequency == "daily"
+    else BuildMinuteReplayInputStep(access, market_source.symbols, source_version),
+)
+
+startup_steps = (
+    *market_steps,
+    PrepareInputsStep(...),
+    PrepareInitialMarksStep(...),
+    InitializeAccountStep(...),
+)
+```
+
+1. **准备日程**：Access 从正式日历返回范围内全部交易日，空日程失败。当前场景为沪深
+   股票常规账户日：上海时区 00:00 起、15:00 收盘；计入订单/持有分钟的窗口为
+   09:30–11:30、13:00–15:00。午休、周末不计分钟，日程不随实际行情行数变化。
+2. **构建行情**：Step 按日执行 Access IO，纯转换函数生成观察和估值标记。两种输入
+   都从当日完整 `daily_bar/v1` 中选取请求证券实际存在的行，在正式收盘发布 raw close。
+   对缺行读取 `Access.suspensions` 并按下述规则核实，保留固定股票集合；不放宽
+   `Access.daily_bars(symbols=...)` 的严格选择契约。构建结束校验完整时间轴，
+   将 `ReplayMarketInput` 放入 BacktestContext，供后续输入准备和账户初始化直接消费。
+3. **准备初始估值**：PrepareInitialMarksStep 在输入校验后，仅为初始正持仓中尚无可见价格
+   的证券沿正式交易日向前读取日线，找到各自最近的 raw close。保留原交易日和收盘时间，
+   不生成历史成交观察、不增加账户回放日期。历史对象/日历缺失、价格非法或历史不足时失败；
+   不用成本价或未来收盘替代。已有可见价格及无持仓的账户不额外读取历史对象。
+
+必需源对象缺失、损坏、非法数值或时间轴失败原样向外传播；输入准备失败不发布交易结果。
+局部证券缺行按以下分类处理，不将整日文件缺失改成合法空行情。
+
+固定股票集合是回测范围，不要求每天都有该证券日线。缺行只有在当日 `suspend_d` 对该证券
+存在 S 且 suspend_timing 为 null，并且没有 R 或日内时段记录时，才确认为全天停牌。
+日线缺行本身不能反向证明停牌，数据源的该项解释边界见 [Daily bar](data/source_contract.md#daily-bar)。
+[S/R 字段含义与事件解释边界](engineering/access.md#suspension-events)由 Access owner 定义。
+仅凭 S/R 混合、只有 R、日内停牌或没有事件，当前回放输入不足以自动确认全天停牌并解释
+整日日线缺失。这些缺行记录为 missing_daily_close，保留日期和证券；不改写为确认停牌，
+也不据此判定同日 S/R 记录必然错误。该分类不删除股票、缩短回放区间或修改源对象。
+分钟源若仍有已确认全天停牌证券任何 phase 的成交，报告事实冲突。
+日线存在时按真实行情消费，不因停复牌事件集合包含该证券而删除行情。
+
+确认停牌时不生成该证券日线或分钟成交观察、不补成交量。日终持仓沿用此前可见的最后
+真实 raw daily close，并保留价格原日期/时间；无持仓不要求为该证券补价，持仓却没有此前
+收盘依据时失败。
+
+无法确认全天停牌的日线缺口，在 limit_price 模型下继续诊断回放：没有真实执行观察的
+区间不成交；有真实分钟成交时，分钟版保留其原始完整区间、价格和成交量，仍受订单生效
+时间、限价和流动性约束。日频版不隐式读取分钟重建日线。日终正持仓沿用当时最近可见的
+有效 raw 价格，可以是此前日线，也可以是当天已可见的真实分钟标记；保存价格原日期、
+时间及来源，并以 missing_daily_close 解释沿价原因，不生成正式收盘价或补造执行量。
+无持仓不要求补价；正持仓没有可靠可见价格时直接失败，不用零值、成本价或删除持仓恢复
+运行。该处理没有新增请求开关；quoted 会绕过真实行情观察，因而遇到模拟终点内的上述
+缺口时在输入准备阶段拒绝，要求使用 limit_price，不静默改变成交假设。模拟终点之后的
+异常不影响本次 quoted 输入资格或结果质量标记。
+
+普通分钟无成交仍保持稀疏，不据此推断停牌或日线异常；没有显式缺口或确认停牌依据时，
+日终估值仍要求正式 raw close。局部缺口只放宽对应证券的估值资格，不吞掉其他失效模式。
+交易日、T+1、撤单、风控唤醒和订单期限继续按原时钟推进，停牌不延长订单。
+未成交卖单不提前释放卖出收入，未成交买单保留原有资金占用，持仓不因缺行而消失。
+恢复后的真实观察可见后才更新估值及参与后续区间撮合，不倒填缺口或停牌日。比如周一 raw close
+为 10 元、周二停牌，周二 100 股按 1,000 元计值，来源仍是周一，周二到期的订单撤余。
+这只改变行情准备、估值资格及结果质量说明；quoted 的生效即申报价成交假设不变，
+确认停牌时的无成交验证也使用 limit_price。
+
+输入准备可以预先构建完整行情，但缺口只有对应收盘到达 ReplayMarket 后才成为账户可见
+事实。评价收集本次时钟实际消费的缺口（包括已消费的历史覆盖），以 metrics.data_quality
+传递到报告；未来未消费的缺口不进入结果。任一已消费缺口都使整条账户路径标为仅供诊断，
+即使当时未持有该证券或后来恢复行情，也不自动清除。原因是缺失成交可能改变候选选择、
+持仓、风控及资金再分配，不能只删除一个证券日便把后续收益视为已验证。
+
+日线成交观察使用该账户日完整的 `[00:00, 15:00]` 区间，在 15:00 可见，价格为 raw close，
+量按 [Daily bar 单位](data/source_contract.md#daily-bar)转为整数股。选择完整账户日起点是
+保守边界：日线量包含开盘竞价等全天成交，不能用盘中提交订单消耗当天已经发生的量。
+因此盘中或收盘新单只能等待后续完整交易日，观察不声称还原日内触价顺序。
+日线存在也不证明全天每个时点都可交易。例如 10:00 才复牌时，日线 open 可能来自 10:00
+的第一笔成交，不能当作 09:30 的可成交价格；“开盘成交”或“14:30 成交”需要对应时段的数据
+和成交模型支持，当前日线收盘模型不提供这些结论。
+
+分钟版使用 Access 的 `stock_trade_minutes` 读取当日沪深两个 H02 对象，再选指定证券及
+`CONTINUOUS` 行；缺少任一对象失败，合法空对象或无分钟行保持为空。执行参考价为
+`notional_sum / volume_sum`，量按[股票源数量](data/level2_normalization.md#raw-到-processed-字段关系)
+直接取整数股；所选行数量、金额必须有限且为正。估值价格取分钟 `close`，与 VWAP 分开。
+完整一分钟在 `minute_start_ts_utc + 60_000_000` 才可见，按可用时间和 symbol 排序，
+同刻先聚合为一个批次；不补零、不前向填充执行观察。
+
+`AUCTION` 明确不在首版分钟成交范围，不能把 15:00–15:01 的竞价桶压缩为 15:00
+可见的连续成交。若存在源端合法的 11:30 连续成交桶，保留完整 11:30–11:31，
+在 11:31 可见，不截短、不移动，也不把该桶解释成延长交易分钟窗口。
+这两个处理分别是明确的 phase 范围选择和源桶保持，不宣称覆盖集合竞价撮合。
+
+观察 ID 由来源、版本、交易日、证券和完整区间组成；分钟再含 phase，`stock_trade_1m`
+表示 Access 合并的沪深两个同版本对象。更改输入顺序不更改事实和 ID。ID 不是内容摘要；
+精确复现取决于实际读取的源对象内容及其版本，不能仅凭路径或 observation_id 判断输入
+相同。源端修订后重新准备属于新的输入；当前回测不额外保存一份行情快照。
+
+例如为 7 月 20 日盘前初始持仓提供既有价格，同时覆盖后续订单日程，在原回测请求的
+execution 中提供以下字段；其他账户、决策和执行参数照常提供：
+
+```json
+{
+  "market_source": {
+    "frequency": "minute",
+    "start": "2026-07-17",
+    "end": "2026-07-21",
+    "symbols": ["000001", "600000"]
+  }
+}
+```
+
+调用一次 `run_backtest(...)` 或原 `backtest --input-json ...` 即可完成准备、账户回放与结果
+发布。改为 `frequency="daily"` 选择日线构建 Step。
+
+调用方可以前移覆盖起点以包含此前行情；初始持仓仍缺少可见价格时由 PrepareInitialMarksStep
+按需读取更早的真实收盘，不把当天收盘提前放到开盘。覆盖终点仍须满足订单窗口和退出计划；
+行情准备不自行延长模拟终点或推断最终应持仓多久。停牌或缺口沿价是估值假设，适用前提
+是不需要尚未建模的公司行动现金/股数调整；本输入没有公司行动事件，不能自动检测或处理
+除权、分红等账户变化。已知存在此类未处理事件的区间，沿价不能使其成为有效回测场景，
+不能把缺口回归通过声称为公司行动验证。
+
+这是使用历史行情构建的条件回测：区间结束可用是回放场景的声明，不证明 Tushare 或
+broker 在那个历史微秒已经交付该数据，也不证明当前存储未被事后修订。不能据此声明
+实盘可成交性或严格的历史发布时点复现。Access 仍整日读取沪深分钟对象，随后才筛选
+证券；转换结果驻留内存。限制证券集合不会消除整日源读取的内存成本。
+
+[回测工作流测试](../tests/workflows/test_backtest.py)通过固定本地 calendar、daily_bar
+和沪深 H02 对象验证：单位、时间和双价格口径、稀疏空日与竞价范围、缺失/非法源不发布，
+以及一次 `run_backtest` 完成准备到结果发布：旧单在后续完整日/分钟成交、区间中途新单
+不能使用该区间、正式收盘估值和交易事实落盘。冻结委托场景的测试验证未调用市场 JSON
+解析或序列化、行情区间日历只枚举一次；初始持仓缺价时的历史日历查询独立按需发生。
+停牌与缺口回归覆盖 S、S/R、只有 R、无事件，以及缺日线但有真实分钟成交；验证无虚构
+成交、订单到期、现金占用、恢复行情和历史价格来源。额外验证无价持仓失败、quoted
+拒绝缺口、异常按收盘可见、指标及报告保留诊断标记。同一本地源重复回测的成交、权益
+曲线、评价与期末账户一致。
+日频信号与分钟行情的组合继续由前述回测回归覆盖。
+
+2026 年 9 月真实输入的验证固定 21 个交易日、月初 5,206 只沪深股票（含 ST）和 10,412 条
+冻结委托。154 个日线缺行证券日中，153 个可由明确全天停牌解释；`601238@2026-09-15`
+同时存在无时段 S/R 事件且没有日线。修正前日频和分钟均在行情准备处报告冲突，表示当时
+输入不足以自动确认全天停牌，不能据此判定源记录错误。对同一冻结输入的复核确认该证券当天也无
+分钟记录，因此其输入质量应描述为“停复牌状态待核实、无可用成交行情”，不据缺行宣称
+真实市场全天无成交。验证未删除证券、缩短区间或修改源对象。该证据验证了停牌分类与失败
+边界，不构成整月账户回放、收益或完整分钟容量验证；修正前精确源码、请求、源对象摘要及两次失败保存在
+[原失败证据](/tmp/trading-suspension-validation-masok7w5/evidence.json)。
+继续诊断回放的决定依据及输入核实限制保存在
+[回测研究卷宗](../research/backtest/README.md#行情异常下的诊断回放)。
+
+按本节修正后的同范围重跑完成全部 21 个收盘：日频约 7.06 秒、峰值 RSS 536 MiB，分钟
+约 365.89 秒、峰值 RSS 22,145 MiB；冻结委托和 86 个源对象及其 Meta 摘要均未改变。
+两份结果都记录唯一的 missing_daily_close：`601238@2026-09-15`。当天没有该证券 fill，
+200 股持仓按 9 月 11 日的真实收盘价 5.09 元估值，原价格日期保留；后来恢复行情和成交
+没有清除整条路径的诊断标记。745 项相关回归通过，精确源码、请求、输入、输出摘要及
+核验脚本见[诊断回放证据](/tmp/trading-diagnostic-validation-3XMJZPed/evidence.json)。
+这证明该固定股票集合和冻结委托下的整月流程可完成，不证明原数据异常已修复、收益风险
+已验证或分钟容量可无限扩展；证据位于本机临时目录，后续复现需保留归档。
 
 ### 策略目标与退出计划
 
@@ -1175,8 +1360,8 @@ max_positions、decision_time、exit_time、初始持仓的 initial_exit_dates �
 选中证券的退出计划从信号/入场计划日算下一正式交易日，使用任务明确的 exit_time，
 不从首次成交重新起算。入场余量到期撤余，当轮不补选、不由风险定时检查重新买入。
 没有新信号也按策略日程提交退出；未完成持仓在下一正式交易日同一时刻继续尝试，
-直到模拟终点。期末不虚构强制成交，保留持仓和有效订单事实。日终持仓必须以当时可见、
-显式声明的正式不复权日收盘价估值；不能把后来收盘价倒写到更早盘中。
+直到模拟终点。期末不虚构强制成交，保留持仓和有效订单事实。日终持仓使用当日正式 raw close，
+确认停牌、诊断缺口的例外及历史价格依据遵循[回放输入](#真实行情到回放输入)，不能把后来收盘倒写到更早盘中。
 
 ### 风险规则与动作
 
@@ -1338,6 +1523,7 @@ reference_price 与成交价均为申报价，滑点成本为零。它不伪造�
 ### 评价、制品与日志
 
 交易完成后先由 FactsPersistStep 保存原始 execution/equity、orders.json、targets.json，
+以及 valuation-marks.parquet 中的初始与日终持仓估值依据；
 运行业务风控的路径另由 `RiskCases.write()` 按原有 JSON 数组格式保存 risk-cases.json；写入只序列化
 当时记录的案例，不执行风险规则。随后由 EvaluateResultsStep 评价，PublishResultsStep
 写 metrics.json 并生成 report.html。五种模式
@@ -1373,16 +1559,33 @@ equity.parquet 按 `EquityCurve.points` 的原有顺序保存六列：`ts_us` �
 各列均不为空。保留实际估值时点与计算精度，不重采样为每日结果，不在空日期插值。
 同一时点已由 EquityCurve 替换的值只保存最终快照；该文件不是账户状态变更日志。
 
+valuation-marks.parquet 按估值时点、初始/日终批次及 symbol 排序保存实际正持仓的依据：
+ts_us、trade_date、symbol、qty 为估值时间、账户日、证券和整数股数；price 为 Decimal
+原样字符串；price_ts_us、price_trade_date、price_kind 保留原价格时间、原日期及
+mark/daily_close/execution 来源种类；reason 为 initial、daily_close、suspension 或
+missing_daily_close。initial 标记初始批次，日终缺口沿价使用 missing_daily_close，
+不能因保留旧价而把 price_trade_date 改成估值当天。
+时间和数量列为 int64，其余为 string，全部非 null。初始批次保存首次决策前持仓，日终批次
+保留同刻最终估值，已卖完的证券不残留旧日终记录；无持仓时写固定 schema 的零行表。
+该文件解释估值依据，既不是补造的市场行情，也不参与成交。盘中完整权益序列仍由 equity.parquet 保存。
+
 orders.json 按原顺序保存完整 OrderIntent/CancelOrders，可直接用于 execution_eval；
 targets.json 保存风控前目标。risk-cases.json 保存账户与挂单快照，可通过 RiskCases.from_files().evaluate() 复演规则决定；
 它不替代 risk_rule_eval 的完整策略输入。
 预测引用、模型身份及模型/特征/标签摘要随指标/预测记录保存；
 行情原文件和运行环境没有自动复制归档，完整复演还需保留这些输入及准确源码版本。
 
-metrics.json 的稳定顶层结构是 mode、parameters、not_run、prediction_refs，
+metrics.json 的稳定顶层结构是 mode、parameters、not_run、prediction_refs、data_quality，
 以及实际执行的 signal_eval、risk_eval、risk_effectiveness、execution_eval、portfolio、final_account。
 applied_risk 记录本账户实际业务规则，无业务风控时为 null。risk_eval 保留案例、原始决定
-与 outcome 快照，rule_coverage 按规则类型累计检查/触发次数，同类多条规则会分别计数；
+与 outcome 快照，rule_coverage 按规则类型累计检查/触发次数，同类多条规则会分别计数。
+
+data_quality 包含 diagnostic_only 和 issues：每条 issue 保存 ts_us、trade_date、symbol
+及 reason=missing_daily_close；diagnostic_only 必须等于 issues 是否非空。无已消费缺口时
+保存 false 和空数组，这不等于所有数据或收益已经验证。诊断标记属于本次整条账户路径，
+后续恢复行情不清除；数值评价仍可计算，但收益和风险结果在修复输入并重新回放前仅供
+诊断。暂不成交可能避开亏损，不能宣称诊断收益更保守。不增加独立异常文件或发布通道。
+
 risk_effectiveness 按配置顺序保存 rules，
 每项含 rule、observations、sample_count、defined_count、observed_breach_count、
 residual_breach_count、max_required_reduction_notional、max_residual_reduction_notional、
@@ -1433,9 +1636,11 @@ scope 和 Step 名；回放中的交易处理失败另附 trade_date、ts_us，�
 耗时和次数，输入准备包含在内；
 合计仍不包含 Step 之外的依赖组装和 CLI/Job 启动等时间，不能称为端到端耗时。
 报告失败时输出失败时间线，不提前输出成功时间线。
-报告成功后输出一条中文摘要，按实际模式展示 IC、规则覆盖、收益、订单及数量结果，
+报告成功生成后输出一条中文摘要，按实际模式展示 IC、规则覆盖、收益、订单及数量结果，
 不展开逐条观察或持仓字典。金额两位小数、收益/回撤四位百分比、IC 六位小数，null 显示
-“无值”；完整明细链接 metrics 和事实制品。metrics 存在不能证明随后的 report 已成功。
+“无值”；完整明细链接 metrics 和事实制品。诊断结果在 HTML 全部评价之前显示“仅供诊断”
+及异常明细，摘要使用 warning 明示异常数量、修复重跑要求和收益风险限制，不输出普通
+成功摘要。metrics 存在不能证明随后的 report 已成功；成功生成报告也不代表数据质量通过。
 
 ## 失败现场
 

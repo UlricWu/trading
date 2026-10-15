@@ -8,7 +8,8 @@ from src.config.backtest_config import RiskConfig
 from src.trading.backtest.commands import OrderCommandSchedule
 from src.trading.backtest.context import BacktestContext, BacktestInputs, BacktestState
 from src.trading.backtest.evaluation import evaluate_execution, evaluate_portfolio, evaluate_risk, evaluate_signals
-from src.trading.backtest.reporting.metrics import AccountResult
+from src.trading.backtest.market.replay import ReplayMarket
+from src.trading.backtest.reporting.metrics import AccountResult, MarketDataQuality
 from src.trading.backtest.risk_effectiveness import evaluate_risk_effectiveness
 from src.training.evaluation import evaluate_prediction_records
 from src.utils.path import PathManager
@@ -34,6 +35,9 @@ class EvaluateResultsStep:
         """
         state = cast(BacktestState, context.state)
         metrics = context.metrics
+        market = cast(ReplayMarket, context.market)
+        issues = tuple(issue for batch in market.daily_close_issues.values() for issue in batch)
+        metrics.data_quality = MarketDataQuality(diagnostic_only=bool(issues), issues=issues)
         if not isinstance(cast(BacktestInputs, context.inputs).decisions, OrderCommandSchedule):
             observations = evaluate_prediction_records(state.prediction_refs, pm=self.pm)
             metrics.signal_eval = evaluate_signals(observations, decision_dates=state.decision_dates)

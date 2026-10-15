@@ -1,24 +1,52 @@
 # filepath: tests/trading/backtest/steps/test_prepare_inputs.py
-import json
+from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
-from pydantic import ValidationError
 
 from src.access import Access
-from src.config.backtest_config import FakeExecutionConfig, FeeConfig, InitialAccount, LimitPriceFillConfig
+from src.config.backtest_config import FakeExecutionConfig, FeeConfig, InitialAccount, LimitPriceFillConfig, QuotedFillConfig
 from src.jobs.requests import RiskRuleEvalSubmission
 from src.trading.backtest.context import BacktestContext
 from src.trading.backtest.steps.prepare_inputs import PrepareInputsStep
-from src.trading.backtest.market.replay import ReplayMarketInput
+from src.trading.backtest.market.replay import MarketDataIssue, MarkObservation, ReplayMarketInput
 from src.trading.backtest.reporting.metrics import BacktestMetrics
 from src.trading.orders.constraints import QuantityRules
 from src.utils.path import PathManager
 
 
-def _prepare_market(*, config: FakeExecutionConfig, initial: InitialAccount, access: Access) -> ReplayMarketInput:
+@pytest.fixture
+def market_scenario() -> tuple[FakeExecutionConfig, InitialAccount, Mock, ReplayMarketInput]:
+    market = ReplayMarketInput.model_validate({
+        'price_basis': 'raw', 'quantity_unit': 'shares',
+        'sessions': [{'trade_date': '2026-07-03', 'start_ts_us': 0, 'close_ts_us': 180_000_000,
+                      'windows': [{'trade_date': '2026-07-03', 'start_ts_us': 0, 'end_ts_us': 180_000_000}]}],
+        'marks': [{'ts_us': 1, 'trade_date': '2026-07-03', 'prices': {'600000': '10', '000001': '20'}, 'kind': 'mark'}],
+        'observations': [{'observation_id': 'bar', 'symbol': '600000', 'price': '11', 'volume_qty': 100,
+                          'time': {'unit': 'minute', 'size': 1, 'trade_date': '2026-07-03', 'start_ts_us': 0,
+                                   'end_ts_us': 60_000_000, 'available_ts_us': 60_000_000}}],
+    })
+    config = FakeExecutionConfig(
+        market_source={'frequency': 'minute', 'start': '2026-07-03', 'end': '2026-07-03',
+                       'symbols': ['600000', '000001']}, end_ts_us=120_000_000,
+        quantity_rules={symbol: QuantityRules(1, 1, 1, 1, 1, Decimal('0.01'), True) for symbol in ('600000', '000001')},
+        fees=FeeConfig(commission_rate=0, stamp_tax_rate=0, transfer_rate=0, min_commission=0),
+        annual_factor=252, fill=LimitPriceFillConfig(type='limit_price', slippage_bp=0),
+        risk_check_ts_us=(1, 120_000_000),
+    )
+    initial = InitialAccount(ts_us=1, trade_date='2026-07-03', cash=1000,
+        positions={'000001': 100}, sellable={'000001': 100}, average_cost={'000001': 20}, peak_equity=3000)
+    access = Mock(spec=Access)
+    access.trade_dates.return_value = ['2026-07-03']
+    return config, initial, access, market
+
+
+def _prepare_market(
+    *, config: FakeExecutionConfig, initial: InitialAccount, access: Access,
+    market: ReplayMarketInput, tmp_path: Path,
+) -> ReplayMarketInput:
     submission = RiskRuleEvalSubmission(
         mode="risk_rule_eval", start="2026-07-03", end="2026-07-03",
         signal={"type": "recorded", "prediction_refs": ()}, min_listing_calendar_days=0,
@@ -27,68 +55,45 @@ def _prepare_market(*, config: FakeExecutionConfig, initial: InitialAccount, acc
         initial_account=initial, execution=config,
         risk={"rules": [{"type": "max_single_name", "max_ratio": 0.2}]},
     )
-    context = BacktestContext(metrics=BacktestMetrics(mode=submission.mode, parameters={}, not_run={}))
-    returned = PrepareInputsStep(submission=submission, access=access, pm=PathManager(config.market_ref.parent)).run(context)
+    context = BacktestContext(metrics=BacktestMetrics(mode=submission.mode, parameters={}, not_run={}), market_input=market)
+    returned = PrepareInputsStep(submission=submission, access=access, pm=PathManager(tmp_path)).run(context)
     assert returned is context
     assert context.state is None
     assert context.inputs.decisions == {}
     return context.inputs.market
 
 
-@pytest.fixture
-def market_scenario(tmp_path: Path) -> tuple[FakeExecutionConfig, InitialAccount, Mock]:
-    market_ref = tmp_path / 'market.json'
-    market_ref.write_text(json.dumps({
-        'price_basis': 'raw', 'quantity_unit': 'shares',
-        'sessions': [{'trade_date': '2026-07-03', 'start_ts_us': 0, 'close_ts_us': 180_000_000,
-                      'windows': [{'trade_date': '2026-07-03', 'start_ts_us': 0, 'end_ts_us': 180_000_000}]}],
-        'marks': [{'ts_us': 1, 'trade_date': '2026-07-03', 'prices': {'A': '10', 'B': '20'}, 'kind': 'mark'}],
-        'observations': [{'observation_id': 'bar', 'symbol': 'A', 'price': '11', 'volume_qty': 100,
-                          'time': {'unit': 'minute', 'size': 1, 'trade_date': '2026-07-03', 'start_ts_us': 0,
-                                   'end_ts_us': 60_000_000, 'available_ts_us': 60_000_000}}],
-    }))
-    config = FakeExecutionConfig(
-        market_ref=market_ref, end_ts_us=120_000_000,
-        quantity_rules={symbol: QuantityRules(1, 1, 1, 1, 1, Decimal('0.01'), True) for symbol in ('A', 'B')},
-        fees=FeeConfig(commission_rate=0, stamp_tax_rate=0, transfer_rate=0, min_commission=0),
-        annual_factor=252, fill=LimitPriceFillConfig(type='limit_price', slippage_bp=0),
-        risk_check_ts_us=(1, 120_000_000),
-    )
-    initial = InitialAccount(ts_us=1, trade_date='2026-07-03', cash=1000,
-        positions={'B': 100}, sellable={'B': 100}, average_cost={'B': 20}, peak_equity=3000)
-    access = Mock(spec=Access)
-    access.trade_dates.return_value = ['2026-07-03']
-    return config, initial, access
-
-
 def test_prepare_inputs_returns_facts_and_accepts_risk_checks_at_both_simulation_endpoints(
-    market_scenario: tuple[FakeExecutionConfig, InitialAccount, Mock],
+    market_scenario: tuple[FakeExecutionConfig, InitialAccount, Mock, ReplayMarketInput], tmp_path: Path,
 ) -> None:
-    config, initial, access = market_scenario
-    source = _prepare_market(config=config, initial=initial, access=access)
+    config, initial, access, market = market_scenario
+    source = _prepare_market(config=config, initial=initial, access=access, market=market, tmp_path=tmp_path)
 
     assert isinstance(source, ReplayMarketInput)
-    assert json.loads(source.model_dump_json()) == json.loads(config.market_ref.read_text())
+    assert source is market
     assert source.timestamps() == (0, 1, 60_000_000, 180_000_000)
     assert source.session_at(initial.ts_us).trade_date == initial.trade_date
     assert source.session_at(config.end_ts_us).trade_date == '2026-07-03'
-    access.trade_dates.assert_called_once_with(start_date='2026-07-03', end_date='2026-07-03')
+    access.trade_dates.assert_not_called()
 
 
-def test_prepare_inputs_rejects_missing_formal_trading_days(
-    market_scenario: tuple[FakeExecutionConfig, InitialAccount, Mock],
+@pytest.mark.parametrize("end_ts_us", [120_000_000, 180_000_000])
+def test_quote_execution_cannot_bypass_a_gap_within_the_replay_horizon(
+    market_scenario: tuple[FakeExecutionConfig, InitialAccount, Mock, ReplayMarketInput],
+    tmp_path: Path, end_ts_us: int,
 ) -> None:
-    config, initial, access = market_scenario
-    payload = json.loads(config.market_ref.read_text())
-    payload['sessions'].append({'trade_date': '2026-07-07', 'start_ts_us': 360_000_000,
-        'close_ts_us': 540_000_000,
-        'windows': [{'trade_date': '2026-07-07', 'start_ts_us': 360_000_000, 'end_ts_us': 540_000_000}]})
-    config.market_ref.write_text(json.dumps(payload))
-    access.trade_dates.return_value = ['2026-07-03', '2026-07-06', '2026-07-07']
-
-    with pytest.raises(ValueError, match='exactly cover the formal trading calendar'):
-        _prepare_market(config=config, initial=initial, access=access)
-    access.trade_dates.assert_called_once_with(start_date='2026-07-03', end_date='2026-07-07')
+    config, initial, access, source = market_scenario
+    config = config.model_copy(update={"fill": QuotedFillConfig(type="quoted"), "end_ts_us": end_ts_us})
+    issue = MarketDataIssue(ts_us=180_000_000, trade_date="2026-07-03",
+                            symbol="600000", reason="missing_daily_close")
+    close = MarkObservation(ts_us=issue.ts_us, trade_date=issue.trade_date, prices={},
+                            kind="daily_close", data_issues=(issue,))
+    source = source.model_copy(update={"marks": (*source.marks, close)})
+    if end_ts_us == 180_000_000:
+        with pytest.raises(ValueError, match="requires limit_price"):
+            _prepare_market(config=config, initial=initial, access=access, market=source, tmp_path=tmp_path)
+    else:
+        assert _prepare_market(config=config, initial=initial, access=access, market=source, tmp_path=tmp_path) is source
 
 
 @pytest.mark.parametrize(('start_ts_us', 'trade_date', 'end_ts_us', 'error'), [
@@ -97,14 +102,14 @@ def test_prepare_inputs_rejects_missing_formal_trading_days(
     (1, '2026-07-03', 180_000_001, 'outside the prepared account sessions'),
 ])
 def test_prepare_inputs_rejects_account_and_end_outside_coverage(
-    market_scenario: tuple[FakeExecutionConfig, InitialAccount, Mock],
+    market_scenario: tuple[FakeExecutionConfig, InitialAccount, Mock, ReplayMarketInput], tmp_path: Path,
     start_ts_us: int, trade_date: str, end_ts_us: int, error: str,
 ) -> None:
-    config, initial, access = market_scenario
+    config, initial, access, market = market_scenario
     initial = initial.model_copy(update={'ts_us': start_ts_us, 'trade_date': trade_date})
     config = config.model_copy(update={'end_ts_us': end_ts_us})
     with pytest.raises(ValueError, match=error):
-        _prepare_market(config=config, initial=initial, access=access)
+        _prepare_market(config=config, initial=initial, access=access, market=market, tmp_path=tmp_path)
 
 
 @pytest.mark.parametrize(('ts_us', 'error'), [
@@ -113,81 +118,35 @@ def test_prepare_inputs_rejects_account_and_end_outside_coverage(
     (180_000_001, 'outside the prepared account sessions'),
 ])
 def test_prepare_inputs_rejects_risk_checks_outside_coverage(
-    market_scenario: tuple[FakeExecutionConfig, InitialAccount, Mock], ts_us: int, error: str,
+    market_scenario: tuple[FakeExecutionConfig, InitialAccount, Mock, ReplayMarketInput], tmp_path: Path, ts_us: int, error: str,
 ) -> None:
-    config, initial, access = market_scenario
+    config, initial, access, market = market_scenario
     config = config.model_copy(update={'risk_check_ts_us': (ts_us,)})
     with pytest.raises(ValueError, match=error):
-        _prepare_market(config=config, initial=initial, access=access)
+        _prepare_market(config=config, initial=initial, access=access, market=market, tmp_path=tmp_path)
 
 
-@pytest.mark.parametrize('symbol', ['A', 'B'])
+@pytest.mark.parametrize('symbol', ['600000', '000001'])
 def test_prepare_inputs_requires_rules_for_observed_and_held_symbols(
-    market_scenario: tuple[FakeExecutionConfig, InitialAccount, Mock], symbol: str,
+    market_scenario: tuple[FakeExecutionConfig, InitialAccount, Mock, ReplayMarketInput], tmp_path: Path, symbol: str,
 ) -> None:
-    config, initial, access = market_scenario
+    config, initial, access, market = market_scenario
     config = config.model_copy(update={'quantity_rules': {
         key: rule for key, rule in config.quantity_rules.items() if key != symbol}})
     with pytest.raises(ValueError, match='quantity rules must cover all observed and held symbols'):
-        _prepare_market(config=config, initial=initial, access=access)
+        _prepare_market(config=config, initial=initial, access=access, market=market, tmp_path=tmp_path)
 
 
 @pytest.mark.parametrize('fill', ['limit_price', 'quoted'])
 def test_prepare_inputs_requires_volume_only_for_price_model_execution(
-    market_scenario: tuple[FakeExecutionConfig, InitialAccount, Mock], fill: str,
+    market_scenario: tuple[FakeExecutionConfig, InitialAccount, Mock, ReplayMarketInput], tmp_path: Path, fill: str,
 ) -> None:
-    config, initial, access = market_scenario
-    payload = json.loads(config.market_ref.read_text())
-    payload['observations'][0]['volume_qty'] = None
-    config.market_ref.write_text(json.dumps(payload))
+    config, initial, access, market = market_scenario
+    market = market.model_copy(update={'observations': (replace(market.observations[0], volume_qty=None),)})
     if fill == 'limit_price':
         with pytest.raises(ValueError, match='requires explicit observed volume_qty'):
-            _prepare_market(config=config, initial=initial, access=access)
+            _prepare_market(config=config, initial=initial, access=access, market=market, tmp_path=tmp_path)
     else:
         config = FakeExecutionConfig.model_validate({**config.model_dump(), 'fill': {'type': fill}})
-        source = _prepare_market(config=config, initial=initial, access=access)
+        source = _prepare_market(config=config, initial=initial, access=access, market=market, tmp_path=tmp_path)
         assert source.observations[0].volume_qty is None
-
-
-@pytest.mark.parametrize('payload', ['{', '{"price_basis": "raw", "quantity_unit": "shares", "sessions": []}'])
-def test_prepare_inputs_rejects_invalid_files_before_reading_calendar(
-    market_scenario: tuple[FakeExecutionConfig, InitialAccount, Mock], payload: str,
-) -> None:
-    config, initial, access = market_scenario
-    config.market_ref.write_text(payload)
-    with pytest.raises(ValidationError):
-        _prepare_market(config=config, initial=initial, access=access)
-    access.trade_dates.assert_not_called()
-
-
-def test_prepare_inputs_preserves_file_read_failure(
-    market_scenario: tuple[FakeExecutionConfig, InitialAccount, Mock],
-) -> None:
-    config, initial, access = market_scenario
-    config.market_ref.unlink()
-    with pytest.raises(FileNotFoundError):
-        _prepare_market(config=config, initial=initial, access=access)
-    access.trade_dates.assert_not_called()
-
-
-def test_prepare_inputs_does_not_coerce_timestamp_strings(
-    market_scenario: tuple[FakeExecutionConfig, InitialAccount, Mock],
-) -> None:
-    config, initial, access = market_scenario
-    payload = json.loads(config.market_ref.read_text())
-    payload['sessions'][0]['start_ts_us'] = '0'
-    config.market_ref.write_text(json.dumps(payload))
-    with pytest.raises(ValidationError, match='start_ts_us'):
-        _prepare_market(config=config, initial=initial, access=access)
-    access.trade_dates.assert_not_called()
-
-
-def test_prepare_inputs_preserves_calendar_failure(
-    market_scenario: tuple[FakeExecutionConfig, InitialAccount, Mock],
-) -> None:
-    config, initial, access = market_scenario
-    error = RuntimeError('calendar unavailable')
-    access.trade_dates.side_effect = error
-    with pytest.raises(RuntimeError) as caught:
-        _prepare_market(config=config, initial=initial, access=access)
-    assert caught.value is error

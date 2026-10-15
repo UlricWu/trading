@@ -105,6 +105,33 @@ def test_daily_bars_rejects_missing_object_and_invalid_symbol_request(
         access.daily_bars(trade_date=trade_date, symbols=["600000"])
 
 
+def test_suspensions_preserve_mixed_events_and_distinguish_empty_from_missing(tmp_path: Path) -> None:
+    pm = PathManager(tmp_path)
+    access = Access(pm=pm, processed_version="v1")
+    day = "2026-09-15"
+    with pytest.raises(FileNotFoundError, match="required Meta"):
+        access.suspensions(trade_date=day)
+    _write_processed_frame(pm, day, "suspend_d", pd.DataFrame({"symbol": pd.Series(dtype="str")}))
+    empty = access.suspensions(trade_date=day)
+    assert empty.empty
+    assert empty.columns.tolist() == ["symbol", "trade_date", "suspend_type", "suspend_timing"]
+    events = pd.DataFrame({"symbol": ["601238", "601238", "600000"], "trade_date": [day] * 3,
+                           "suspend_type": ["R", "S", "S"], "suspend_timing": [None, None, "09:30-10:00"]})
+    _write_processed_frame(pm, day, "suspend_d", events)
+    pd.testing.assert_frame_equal(access.suspensions(trade_date=day), events)
+
+
+@pytest.mark.parametrize("column,value", [("symbol", "bad"), ("trade_date", "2026-09-14"),
+                                         ("suspend_type", "X"), ("suspend_timing", "")])
+def test_suspensions_reject_invalid_source_fields(tmp_path: Path, column: str, value: str) -> None:
+    pm = PathManager(tmp_path)
+    fields = {"symbol": ["600000"], "trade_date": ["2026-09-15"], "suspend_type": ["S"], "suspend_timing": [None]}
+    fields[column] = [value]
+    _write_processed_frame(pm, "2026-09-15", "suspend_d", pd.DataFrame(fields))
+    with pytest.raises(ValueError):
+        Access(pm=pm, processed_version="v1").suspensions(trade_date="2026-09-15")
+
+
 def test_named_daily_objects_validate_identity_and_project_owned_columns(
     tmp_path: Path,
 ) -> None:

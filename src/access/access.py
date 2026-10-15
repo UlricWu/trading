@@ -367,6 +367,32 @@ class Access:
             symbols=requested_symbols,
         )
 
+    def suspensions(self, *, trade_date: str) -> pd.DataFrame:
+        """Return daily suspension/resumption events without collapsing their order or types.
+
+        An empty formal object is an empty event set; a missing object is an error.
+
+        Example:
+            events = access.suspensions(trade_date="2026-09-02")
+        """
+        day = DateTimeUtils.require_system_date(trade_date, field_name="trade_date")
+        frame = self._read_processed_frame(trade_date=day, dataset_name="suspend_d")
+        table_ops.require_columns(frame, ("symbol",), who="suspend_d")
+        columns = ("symbol", "trade_date", "suspend_type", "suspend_timing")
+        if frame.empty:
+            return pd.DataFrame({column: pd.Series(dtype="str") for column in columns})
+        table_ops.require_columns(frame, columns, who="suspend_d")
+        table_ops.require_nonempty_strings(frame, ("symbol", "trade_date", "suspend_type"), who="suspend_d")
+        _validated_symbols(frame["symbol"].unique().tolist())
+        if not frame["trade_date"].eq(day).all():
+            raise ValueError(f"suspend_d.trade_date must equal requested date: trade_date={day}")
+        if not frame["suspend_type"].isin(("S", "R")).all():
+            raise ValueError("suspend_d.suspend_type must be S or R")
+        timings = frame.loc[frame["suspend_timing"].notna(), "suspend_timing"]
+        if not timings.map(lambda value: isinstance(value, str) and bool(value)).all():
+            raise ValueError("suspend_d.suspend_timing must be a nonempty string or null")
+        return frame.loc[:, columns].copy()
+
     def adjustment_factors(
         self,
         *,

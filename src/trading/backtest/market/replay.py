@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 from bisect import bisect_right
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from decimal import Decimal
 from types import MappingProxyType
 from typing import Annotated, Literal, Self
@@ -41,6 +42,21 @@ class ReplaySession(BaseModel):
         return self
 
 
+class MarketDataIssue(BaseModel):
+    """A dated source gap whose suspension status remains unresolved.
+
+    Example:
+        issue = MarketDataIssue(ts_us=close_us, trade_date="2026-09-15",
+                                symbol="601238", reason="missing_daily_close")
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    ts_us: StrictInt
+    trade_date: str
+    symbol: str
+    reason: Literal["missing_daily_close"]
+
+
 class MarkObservation(BaseModel):
     """Immutable raw valuation prices, separate from execution-volume observations.
 
@@ -57,12 +73,23 @@ class MarkObservation(BaseModel):
         PlainSerializer(lambda prices: dict(prices), return_type=dict[str, Decimal]),
     ]
     kind: Literal["mark", "daily_close"]
+    suspended_symbols: frozenset[str] = frozenset()
+    data_issues: tuple[MarketDataIssue, ...] = ()
 
     @model_validator(mode="after")
     def _validate_prices(self) -> Self:
         DateTimeUtils.require_system_date(self.trade_date, field_name="trade_date")
         if any(not price.is_finite() or price <= 0 for price in self.prices.values()):
             raise ValueError("raw marks must be finite and positive")
+        if self.suspended_symbols and (self.kind != "daily_close" or self.suspended_symbols & self.prices.keys()):
+            raise ValueError("suspended symbols belong only to a daily close without their prices")
+        missing = {issue.symbol for issue in self.data_issues}
+        if self.data_issues and (
+            self.kind != "daily_close" or len(missing) != len(self.data_issues)
+            or missing & (self.prices.keys() | self.suspended_symbols)
+            or any(issue.ts_us != self.ts_us or issue.trade_date != self.trade_date for issue in self.data_issues)
+        ):
+            raise ValueError("data issues require distinct missing closes at the same date and timestamp")
         object.__setattr__(self, "prices", MappingProxyType(dict(self.prices)))
         return self
 
@@ -73,7 +100,8 @@ class ReplayMarketInput(BaseModel):
     No source-unit inference is performed.
 
     Example:
-        source = ReplayMarketInput.model_validate_json(Path("/data/market.json").read_bytes(), strict=True)
+        source = ReplayMarketInput(price_basis="raw", quantity_unit="shares",
+            sessions=sessions, marks=marks, observations=observations)
         session = source.session_at(start_ts_us)
     """
 
@@ -136,6 +164,20 @@ class ReplayMarketInput(BaseModel):
             *(o.time.available_ts_us for o in self.observations)}))
 
 
+@dataclass(frozen=True, slots=True)
+class VisiblePrice:
+    """A raw valuation price with the original observation time and kind.
+
+    Example:
+        price = VisiblePrice(Decimal("10"), close_us, "2026-07-17", "daily_close")
+    """
+
+    price: Decimal
+    ts_us: int
+    trade_date: str
+    kind: Literal["mark", "daily_close", "execution"]
+
+
 class ReplayMarket:
     """Expose only facts delivered by the current timestamp and merge same-time batches.
 
@@ -145,7 +187,7 @@ class ReplayMarket:
         fills = execution_simulator.advance(ts_us=ts_us, observations=market.observations_at(ts_us))
     """
 
-    def __init__(self, source: ReplayMarketInput) -> None:
+    def __init__(self, source: ReplayMarketInput, *, initial_marks: Sequence[MarkObservation] = ()) -> None:
         """Bind immutable normalized inputs to one run's visible price state.
 
         Example:
@@ -153,10 +195,10 @@ class ReplayMarket:
         """
         self.source = source
         self.daily_close_symbols: dict[int, set[str]] = {}
-        for mark in source.marks:
-            if mark.kind == "daily_close":
-                self.daily_close_symbols.setdefault(mark.ts_us, set()).update(mark.prices)
-        self._prices: dict[str, Decimal] = {}
+        self.suspended_close_symbols: dict[int, frozenset[str]] = {}
+        self.daily_close_issues: dict[int, tuple[MarketDataIssue, ...]] = {}
+        self._marks = tuple(sorted((*initial_marks, *source.marks), key=lambda mark: mark.ts_us))
+        self._price_marks: dict[str, VisiblePrice] = {}
         self._mark_index = 0
         self._observation_index = 0
         self._ts_us: int | None = None
@@ -173,19 +215,31 @@ class ReplayMarket:
         self._ts_us = ts_us
         available: list[ExecutionObservation] = []
         while True:
-            mark = (self.source.marks[self._mark_index]
-                    if self._mark_index < len(self.source.marks) else None)
+            mark = (self._marks[self._mark_index]
+                    if self._mark_index < len(self._marks) else None)
             observation = (self.source.observations[self._observation_index]
                            if self._observation_index < len(self.source.observations) else None)
             if observation is not None and observation.time.available_ts_us <= ts_us and (
                 mark is None or observation.time.available_ts_us <= mark.ts_us
             ):
-                self._prices[observation.symbol] = observation.price
+                self._price_marks[observation.symbol] = VisiblePrice(
+                    observation.price, observation.time.available_ts_us, observation.time.trade_date, "execution",
+                )
                 if observation.time.available_ts_us == ts_us:
                     available.append(observation)
                 self._observation_index += 1
             elif mark is not None and mark.ts_us <= ts_us:
-                self._prices.update(mark.prices)
+                self._price_marks.update({symbol: VisiblePrice(price, mark.ts_us, mark.trade_date, mark.kind)
+                                          for symbol, price in mark.prices.items()})
+                if mark.kind == "daily_close":
+                    self.daily_close_symbols.setdefault(mark.ts_us, set()).update(mark.prices)
+                    self.suspended_close_symbols[mark.ts_us] = (
+                        self.suspended_close_symbols.get(mark.ts_us, frozenset()) | mark.suspended_symbols
+                    )
+                    if mark.data_issues:
+                        self.daily_close_issues[mark.ts_us] = (
+                            self.daily_close_issues.get(mark.ts_us, ()) + mark.data_issues
+                        )
                 self._mark_index += 1
             else:
                 break
@@ -197,7 +251,8 @@ class ReplayMarket:
         Example:
             price = market.get_price("600000")
         """
-        return self._prices.get(symbol)
+        mark = self._price_marks.get(symbol)
+        return None if mark is None else mark.price
 
     @property
     def prices(self) -> Mapping[str, Decimal]:
@@ -206,7 +261,16 @@ class ReplayMarket:
         Example:
             visible = market.prices
         """
-        return dict(self._prices)
+        return {symbol: mark.price for symbol, mark in self._price_marks.items()}
+
+    @property
+    def price_marks(self) -> Mapping[str, VisiblePrice]:
+        """Return visible price origins without changing their source timestamps.
+
+        Example:
+            mark = market.price_marks["600000"]
+        """
+        return dict(self._price_marks)
 
     def observations_at(self, ts_us: int) -> tuple[ExecutionObservation, ...]:
         """Return the complete same-time batch after advancing the view.

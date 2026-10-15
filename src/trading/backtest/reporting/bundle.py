@@ -78,7 +78,14 @@ class ReportingBundle:
         if metrics.final_account is not None:
             body += ('<p>交易明细：<a href="orders.json">委托</a> · '
                      '<a href="execution.parquet">成交与费用</a> · '
-                     '<a href="equity.parquet">权益曲线</a></p>')
+                     '<a href="equity.parquet">权益曲线</a> · '
+                     '<a href="valuation-marks.parquet">持仓估值依据</a></p>')
+        if metrics.data_quality.diagnostic_only:
+            issues = json.dumps(metrics.data_quality.model_dump(mode="json"), ensure_ascii=False, indent=2)
+            body = ('<section><h2>仅供诊断</h2><p>存在日线缺失且停复牌状态待核实的证券。'
+                    '持仓可能沿用历史价格；收益与风险指标尚未验证，暂不成交也不保证收益更保守。'
+                    '需核实并修复输入后重跑，后续恢复行情不会消除此前异常对账户路径的影响。</p>'
+                    f'<pre>{escape(issues)}</pre></section>' + body)
         html = (f'<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>回测报告</title>'
                 f'<body><h1>{escape(self.output_dir.name)}</h1><p>模式：{metrics.mode.value}</p>'
                 '<p>null 表示无定义，原因随指标保存；空样本及规则未触发不表示验证通过。'
@@ -87,6 +94,8 @@ class ReportingBundle:
         output = self.output_dir / "report.html"
         FileSystem.write_bytes_atomic(output, html.encode())
         lines = [f"模式：{metrics.mode.value}"]
+        if metrics.data_quality.diagnostic_only:
+            lines.append(f"仅供诊断：{len(metrics.data_quality.issues)} 个证券日缺少收盘价；收益与风险指标尚未验证，需修复输入后重跑。")
         if metrics.signal_eval is not None:
             signal = metrics.signal_eval
             value = "无值" if signal.mean_ic is None else f"{signal.mean_ic:.6f}"
@@ -125,5 +134,8 @@ class ReportingBundle:
             lines.append(f"未运行能力：{json.dumps(metrics.not_run, ensure_ascii=False)}")
         lines.append(f"制品目录：{output.parent}；详细观察：metrics.json；报告：report.html")
         summary = "\n".join(lines)
-        logs.info(f"✅ 回测报告; experiment={self.output_dir.name}\n{summary}")
+        if metrics.data_quality.diagnostic_only:
+            logs.warning(f"⚠️ 回测报告; experiment={self.output_dir.name}\n{summary}")
+        else:
+            logs.info(f"✅ 回测报告; experiment={self.output_dir.name}\n{summary}")
         return output

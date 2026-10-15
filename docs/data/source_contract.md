@@ -377,6 +377,15 @@ Workflow 不为 `is_open=false` 的日期请求 `daily_bar`。`is_open=true` 时
 `daily_bar` 是数据缺失并必须失败；feature、label、training 或 backtest 不得跳过该日并
 把后续日期当作替代交易日。
 
+该对象保留 [Tushare A 股日线](https://tushare.pro/document/2?doc_id=27) 的未复权价格和
+源端单位：OHLC 为元，`vol` 为手（1 手为 100 股），`amount` 为千元；不在 processed
+层改写为回测单位。消费方要求股数时使用 `Decimal(str(vol)) * 100`，结果必须为有限、
+非负整数，不截断或四舍五入。回放价格/时间映射由
+[offline 工作流契约](../offline_workflow_contract.md#真实行情到回放输入)拥有。
+Tushare 停牌期间不提供该证券日线，但不能反向推断每次日线缺失都属于停牌；缺行原因
+仍需核实。缺行不表示零成交的完整日线，也不得使用后续日线补齐。
+源端日线在盘后入库，其日标签不是精确的历史发布时刻证明。
+
 ## Source no-data 边界
 
 单日 Tushare source 成功返回 `DataFrame` 即表示已取得 payload；零行 `DataFrame` 是有效

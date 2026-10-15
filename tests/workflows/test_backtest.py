@@ -1,5 +1,5 @@
 # filepath: tests/workflows/test_backtest.py
-"""Fixed-model delivery through actual backtest composition and persisted replay."""
+"""Backtest composition with fixed in-memory scenarios and formal local market facts."""
 
 import json
 from collections.abc import Callable, Iterator
@@ -8,6 +8,7 @@ from dataclasses import replace
 from datetime import date, time
 from decimal import Decimal
 from pathlib import Path
+from typing import Literal
 from unittest.mock import Mock
 
 import numpy as np
@@ -16,9 +17,11 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 from pytest_mock import MockerFixture
+from pydantic import TypeAdapter
 
 from src import logs
 from src.access import Access, meta
+from src.data_system.builders.level2_stock_trade_1m import STOCK_TRADE_1M_SCHEMA
 from src.config.backtest_config import BacktestMode
 from src.config.model_config import FeatureGroupConfig, MissingConfig, ModelPreset, PreprocessingConfig
 from src.jobs.requests import create_backtest_submission, create_training_submission
@@ -32,13 +35,16 @@ from src.utils.path import PathManager
 from src.workflows.backtest import run_backtest
 from src.training.artifact import load
 from src.training.prediction import save_prediction_record
-from src.trading.backtest.market.replay import ReplayMarketInput
+from src.trading.backtest.market.replay import ReplayMarket, ReplayMarketInput
 from src.trading.backtest.market import signals
 from src.trading.backtest.context import BacktestContext
 from src.trading.backtest.reporting.metrics import BacktestMetrics
 from src.trading.backtest.steps.evaluate_results import EvaluateResultsStep
+from src.trading.backtest.steps.build_daily_replay_input import BuildDailyReplayInputStep
+from src.trading.backtest.steps.build_minute_replay_input import BuildMinuteReplayInputStep
 from src.trading.backtest.market.data_view import ExecutionObservation
 from src.trading.core.time import US_PER_MINUTE
+from src.trading.core.events import OrderIntent, Side
 from src.workflows.offline_training import run_offline_training
 
 
@@ -122,7 +128,40 @@ def _ts(day: str, hour: int, minute: int = 0) -> int:
 
 
 @pytest.fixture
-def scenario(delivery: tuple[PathManager, Path, Mock], tmp_path: Path) -> tuple[PathManager, dict[str, object], Mock]:
+def replay_input(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
+    day = "2026-07-03"
+    ts = _ts(day, 14, 30)
+    price = {"600000": "10", "000001": "10", "000002": "10"}
+    market = {
+        "price_basis": "raw", "quantity_unit": "shares",
+        "sessions": [{"trade_date": day, "start_ts_us": _ts(day, 0), "close_ts_us": _ts(day, 15),
+                      "windows": [{"trade_date": day, "start_ts_us": _ts(day, 9, 30), "end_ts_us": _ts(day, 11, 30)},
+                                  {"trade_date": day, "start_ts_us": _ts(day, 13), "end_ts_us": _ts(day, 15)}]}],
+        "marks": [{"ts_us": ts, "trade_date": day, "prices": dict(price), "kind": "mark"},
+                  {"ts_us": _ts(day, 15), "trade_date": day, "prices": dict(price), "kind": "daily_close"}],
+        "observations": [{"observation_id": f"minute-{index}", "symbol": "600000", "time": {
+            "unit": "minute", "size": 1, "trade_date": day,
+            "start_ts_us": ts + index * US_PER_MINUTE, "end_ts_us": ts + (index + 1) * US_PER_MINUTE,
+            "available_ts_us": ts + (index + 1) * US_PER_MINUTE,
+        }, "price": "10", "volume_qty": volume} for index, volume in enumerate((300, 60))],
+    }
+
+    def build_market(
+        step: BuildDailyReplayInputStep | BuildMinuteReplayInputStep, context: BacktestContext,
+    ) -> BacktestContext:
+        context.market_input = ReplayMarketInput.model_validate(market)
+        assert context.market_input.sessions == context.sessions
+        return context
+
+    monkeypatch.setattr(BuildDailyReplayInputStep, "run", build_market)
+    monkeypatch.setattr(BuildMinuteReplayInputStep, "run", build_market)
+    return market
+
+
+@pytest.fixture
+def scenario(
+    delivery: tuple[PathManager, Path, Mock], tmp_path: Path, replay_input: dict[str, object],
+) -> tuple[PathManager, dict[str, object], Mock]:
     pm, model_ref, access = delivery
     day = "2026-07-03"
     ts = _ts(day, 14, 30)
@@ -134,21 +173,6 @@ def scenario(delivery: tuple[PathManager, Path, Mock], tmp_path: Path) -> tuple[
     save_prediction_record(prediction_ref, model_ref=model_ref, trade_date=day, decision_ts_us=ts,
         features=features, feature_names=model.feature_names, predictions=predictions)
     price = {"600000": "10", "000001": "10", "000002": "10"}
-    market = {
-        "price_basis": "raw", "quantity_unit": "shares",
-        "sessions": [{"trade_date": day, "start_ts_us": _ts(day, 0), "close_ts_us": _ts(day, 15),
-                      "windows": [{"trade_date": day, "start_ts_us": _ts(day, 9, 30), "end_ts_us": _ts(day, 11, 30)},
-                                  {"trade_date": day, "start_ts_us": _ts(day, 13), "end_ts_us": _ts(day, 15)}]}],
-        "marks": [{"ts_us": ts, "trade_date": day, "prices": price, "kind": "mark"},
-                  {"ts_us": _ts(day, 15), "trade_date": day, "prices": price, "kind": "daily_close"}],
-        "observations": [{"observation_id": f"minute-{index}", "symbol": "600000", "time": {
-            "unit": "minute", "size": 1, "trade_date": day,
-            "start_ts_us": ts + index * US_PER_MINUTE, "end_ts_us": ts + (index + 1) * US_PER_MINUTE,
-            "available_ts_us": ts + (index + 1) * US_PER_MINUTE,
-        }, "price": "10", "volume_qty": volume} for index, volume in enumerate((300, 60))],
-    }
-    market_ref = tmp_path / "market.json"
-    market_ref.write_text(json.dumps(market))
     rule = {"buy_min_qty": 1, "buy_step_qty": 1, "sell_min_qty": 1, "sell_step_qty": 1,
             "fill_step_qty": 1, "price_tick": "0.01", "enforce_t1": True}
     fields = {
@@ -160,7 +184,8 @@ def scenario(delivery: tuple[PathManager, Path, Mock], tmp_path: Path) -> tuple[
         "risk": {"rules": [{"type": "max_single_name", "max_ratio": 0.2}]},
         "initial_account": {"ts_us": ts, "trade_date": day, "cash": "20000", "positions": {},
                             "sellable": {}, "average_cost": {}, "peak_equity": 20000},
-        "execution": {"market_ref": str(market_ref), "end_ts_us": _ts(day, 15),
+        "execution": {"market_source": {"frequency": "minute", "start": day, "end": day,
+                                        "symbols": list(price)}, "end_ts_us": _ts(day, 15),
                       "quantity_rules": {symbol: rule for symbol in price},
                       "fees": {"commission_rate": 0, "stamp_tax_rate": 0, "transfer_rate": 0, "min_commission": 0},
                       "annual_factor": 252, "fill": {"type": "limit_price", "slippage_bp": 0}, "risk_check_ts_us": [ts + 3 * US_PER_MINUTE]},
@@ -169,14 +194,17 @@ def scenario(delivery: tuple[PathManager, Path, Mock], tmp_path: Path) -> tuple[
 
 
 @pytest.fixture
-def signal_scenario(scenario: tuple[PathManager, dict[str, object], Mock]) -> tuple[PathManager, dict[str, object], Mock]:
+def signal_scenario(
+    scenario: tuple[PathManager, dict[str, object], Mock],
+    replay_input: dict[str, object],
+) -> tuple[PathManager, dict[str, object], Mock]:
     pm, fields, access = scenario
     fields.pop("risk")
     fields["execution"]["fill"] = {"type": "quoted"}
     fields["execution"].pop("risk_check_ts_us")
     fields["execution"]["end_ts_us"] = _ts("2026-07-06", 15)
-    ref = Path(fields["execution"]["market_ref"])
-    market = json.loads(ref.read_text())
+    fields["execution"]["market_source"]["end"] = "2026-07-06"
+    market = replay_input
     market["sessions"].append({"trade_date": "2026-07-06", "start_ts_us": _ts("2026-07-06", 0),
         "close_ts_us": _ts("2026-07-06", 15), "windows": [
             {"trade_date": "2026-07-06", "start_ts_us": _ts("2026-07-06", 9, 30), "end_ts_us": _ts("2026-07-06", 11, 30)},
@@ -184,7 +212,6 @@ def signal_scenario(scenario: tuple[PathManager, dict[str, object], Mock]) -> tu
         ]})
     market["marks"].append({"ts_us": _ts("2026-07-06", 15), "trade_date": "2026-07-06", "kind": "daily_close",
                             "prices": {"600000": "10", "000001": "10", "000002": "10"}})
-    ref.write_text(json.dumps(market))
     return pm, fields, access
 
 
@@ -195,6 +222,7 @@ def _metrics(pm: PathManager, name: str) -> dict[str, object]:
 @pytest.mark.parametrize("source", ["recorded", "model"])
 def test_signal_evaluation_reports_quote_fills_and_net_account_profit(
     signal_scenario: tuple[PathManager, dict[str, object], Mock], source: str,
+    replay_input: dict[str, object],
 ) -> None:
     pm, fields, _ = signal_scenario
     if source == "model":
@@ -203,11 +231,9 @@ def test_signal_evaluation_reports_quote_fills_and_net_account_profit(
         fields["initial_account"]["ts_us"] = _ts(fields["start"], 15)
     fields["strategy"]["quote"]["buy_offset_bp"] = "100"
     fields["execution"]["fees"]["min_commission"] = "5"
-    ref = Path(fields["execution"]["market_ref"])
-    market = json.loads(ref.read_text())
+    market = replay_input
     market["observations"] = []
     market["marks"][-1]["prices"]["600000"] = "11"
-    ref.write_text(json.dumps(market))
     submission = create_backtest_submission(mode="signal_eval", **fields)
     metrics = BacktestMetrics(mode=submission.mode, parameters=submission.model_dump(mode="json"), not_run={})
     name = f"backtest_2026-10-11_signal-profit-{source}"
@@ -242,18 +268,17 @@ def test_signal_evaluation_reports_quote_fills_and_net_account_profit(
 
 def test_signal_fixed_holding_settles_scheduled_exit_without_another_prediction(
     signal_scenario: tuple[PathManager, dict[str, object], Mock],
+    replay_input: dict[str, object],
 ) -> None:
     pm, fields, _ = signal_scenario
     fields["strategy"] = {"type": "fixed_holding", "params": {"max_positions": 1,
         "decision_time": "14:30:00", "exit_time": "14:00:00", "initial_exit_dates": {}},
         "order_window_minutes": 2, "quote": {"buy_offset_bp": 0, "sell_offset_bp": 0}}
     fields["execution"]["fees"]["min_commission"] = 5
-    market_ref = Path(fields["execution"]["market_ref"])
-    market = json.loads(market_ref.read_text())
+    market = replay_input
     market["observations"] = []
     market["marks"].insert(-1, {"ts_us": _ts("2026-07-06", 14), "trade_date": "2026-07-06",
                                "kind": "mark", "prices": {"600000": "11"}})
-    market_ref.write_text(json.dumps(market))
     submission = create_backtest_submission(mode="signal_eval", **fields)
     metrics = BacktestMetrics(mode=submission.mode, parameters=submission.model_dump(mode="json"), not_run={})
     name = "backtest_2026-10-11_signal-exit"
@@ -276,6 +301,7 @@ def test_signal_fixed_holding_settles_scheduled_exit_without_another_prediction(
 @pytest.mark.parametrize("exit_minute", [30, 33, 35, 40])
 def test_fixed_holding_initial_exit_respects_account_interval_without_signals_or_market_updates(
     signal_scenario: tuple[PathManager, dict[str, object], Mock], exit_minute: int,
+    replay_input: dict[str, object],
 ) -> None:
     pm, fields, _ = signal_scenario
     day = fields["start"]
@@ -287,10 +313,8 @@ def test_fixed_holding_initial_exit_respects_account_interval_without_signals_or
         "initial_exit_dates": {"600000": day}}, "order_window_minutes": 2,
         "quote": {"buy_offset_bp": 0, "sell_offset_bp": 0}}
     fields["execution"]["end_ts_us"] = _ts(day, 14, 35)
-    market_ref = Path(fields["execution"]["market_ref"])
-    market = json.loads(market_ref.read_text())
+    market = replay_input
     market["observations"] = []
-    market_ref.write_text(json.dumps(market))
     submission = create_backtest_submission(mode="signal_eval", **fields)
     metrics = BacktestMetrics(mode=submission.mode, parameters=submission.model_dump(mode="json"), not_run={})
     name = f"backtest_2026-10-12_initial-exit-{exit_minute}"
@@ -317,15 +341,14 @@ def test_fixed_holding_initial_exit_respects_account_interval_without_signals_or
 
 def test_signal_without_predictions_values_existing_holdings_without_trades(
     signal_scenario: tuple[PathManager, dict[str, object], Mock],
+    replay_input: dict[str, object],
 ) -> None:
     pm, fields, _ = signal_scenario
     fields["signal"]["prediction_refs"] = []
     fields["initial_account"].update(cash="0", positions={"600000": 100},
         sellable={"600000": 100}, average_cost={"600000": "8"}, peak_equity=1000)
-    ref = Path(fields["execution"]["market_ref"])
-    market = json.loads(ref.read_text())
+    market = replay_input
     market["marks"][-1]["prices"]["600000"] = "11"
-    ref.write_text(json.dumps(market))
     submission = create_backtest_submission(mode="signal_eval", **fields)
     metrics = BacktestMetrics(mode=submission.mode, parameters=submission.model_dump(mode="json"), not_run={})
     name = "backtest_2026-10-11_no-signal"
@@ -524,15 +547,14 @@ def test_strategy_price_model_limits_fills_and_replays_without_business_risk(
 
 def test_strategy_price_model_requires_observed_volume_before_publishing(
     scenario: tuple[PathManager, dict[str, object], Mock],
+    replay_input: dict[str, object],
 ) -> None:
     pm, fields, _ = scenario
     fields.pop('risk')
     fields['execution'].pop('risk_check_ts_us')
-    market_ref = Path(fields['execution']['market_ref'])
-    market = json.loads(market_ref.read_text())
+    market = replay_input
     for observation in market['observations']:
         observation['volume_qty'] = None
-    market_ref.write_text(json.dumps(market))
     submission = create_backtest_submission(mode='strategy_eval', **fields)
     metrics = BacktestMetrics(mode=submission.mode, parameters=submission.model_dump(mode='json'), not_run={})
     name = 'backtest_2026-10-11_missing-volume'
@@ -544,10 +566,10 @@ def test_strategy_price_model_requires_observed_volume_before_publishing(
 
 def test_fixed_holding_exits_without_signal_retries_and_retains_unfilled_end_position(
     scenario: tuple[PathManager, dict[str, object], Mock],
+    replay_input: dict[str, object],
 ) -> None:
     pm, fields, _ = scenario
-    ref = Path(fields['execution']['market_ref'])
-    market = json.loads(ref.read_text())
+    market = replay_input
     for day in ('2026-07-06', '2026-07-07'):
         market['sessions'].append({'trade_date': day, 'start_ts_us': _ts(day, 0), 'close_ts_us': _ts(day, 15),
             'windows': [{'trade_date': day, 'start_ts_us': _ts(day, 9, 30), 'end_ts_us': _ts(day, 11, 30)},
@@ -559,8 +581,8 @@ def test_fixed_holding_exits_without_signal_retries_and_retains_unfilled_end_pos
         'time': {'unit': 'minute', 'size': 1, 'trade_date': '2026-07-07', 'start_ts_us': ts,
                  'end_ts_us': ts + US_PER_MINUTE, 'available_ts_us': ts + US_PER_MINUTE},
         'price': '10', 'volume_qty': 100})
-    ref.write_text(json.dumps(market))
     fields['execution']['end_ts_us'] = _ts('2026-07-07', 15)
+    fields['execution']['market_source']['end'] = '2026-07-07'
     fields['strategy'] = {'type': 'fixed_holding', 'params': {'max_positions': 1,
         'decision_time': '14:30:00', 'exit_time': '14:00:00', 'initial_exit_dates': {}},
         'order_window_minutes': 2, 'quote': {'buy_offset_bp': 0, 'sell_offset_bp': 0}}
@@ -582,7 +604,10 @@ def test_fixed_holding_exits_without_signal_retries_and_retains_unfilled_end_pos
 
 
 @pytest.fixture
-def daily_scenario(scenario: tuple[PathManager, dict[str, object], Mock]) -> tuple[PathManager, dict[str, object], Mock]:
+def daily_scenario(
+    scenario: tuple[PathManager, dict[str, object], Mock],
+    replay_input: dict[str, object],
+) -> tuple[PathManager, dict[str, object], Mock]:
     pm, fields, access = scenario
     inputs, _ = read_prediction_record(Path(fields['signal']['prediction_refs'][0]))
     fields['signal'] = {'type': 'model', 'model_ref': str(inputs.model_ref)}
@@ -590,9 +615,9 @@ def daily_scenario(scenario: tuple[PathManager, dict[str, object], Mock]) -> tup
     fields['risk'] = {'rules': [{'type': 'max_single_name', 'max_ratio': 1.0}]}
     fields['strategy']['params'] = {'threshold': -1.123456789, 'target_quantity': 100}
     fields['execution']['end_ts_us'] = _ts('2026-07-07', 15)
+    fields['execution']['market_source']['end'] = '2026-07-07'
     fields['execution']['risk_check_ts_us'] = []
-    ref = Path(fields['execution']['market_ref'])
-    market = json.loads(ref.read_text())
+    market = replay_input
     for day in ('2026-07-06', '2026-07-07'):
         market['sessions'].append({'trade_date': day, 'start_ts_us': _ts(day, 0), 'close_ts_us': _ts(day, 15),
             'windows': [{'trade_date': day, 'start_ts_us': _ts(day, 9, 30), 'end_ts_us': _ts(day, 11, 30)},
@@ -605,7 +630,6 @@ def daily_scenario(scenario: tuple[PathManager, dict[str, object], Mock]) -> tup
                 'time': {'unit': 'minute', 'size': 1, 'trade_date': day, 'start_ts_us': ts,
                          'end_ts_us': ts + US_PER_MINUTE, 'available_ts_us': ts + US_PER_MINUTE},
                 'price': '10', 'volume_qty': 300})
-    ref.write_text(json.dumps(market))
     return pm, fields, access
 
 
@@ -724,7 +748,8 @@ def test_input_failure_does_not_publish_success_artifacts(daily_scenario: tuple[
     assert '✅ 回测报告' not in backtest_log.read_text()
     assert not pm.experiment_dir(experiment_name='backtest_2026-10-11_failure').exists()
 
-    assert caught.value.__notes__ == ['Pipeline 执行; scope=backtest_2026-10-11_failure step=PrepareInputsStep']
+    step = 'PrepareReplaySessionsStep' if failure == 'calendar' else 'PrepareInputsStep'
+    assert caught.value.__notes__ == [f'Pipeline 执行; scope=backtest_2026-10-11_failure step={step}']
     assert '❌ 步骤耗时; scope=backtest_2026-10-11_failure' in backtest_log.read_text()
     assert '✅ 步骤耗时; scope=backtest_2026-10-11_failure' not in backtest_log.read_text()
 
@@ -764,7 +789,7 @@ def test_label_read_failure_occurs_after_fact_publication_and_preserves_the_fact
     def read_labels(*, pm: PathManager, label_set: str, version: str,
                     trade_date: str, label_column: str) -> pd.DataFrame:
         saved.update({path.name: path.read_bytes() for path in root.iterdir()})
-        assert saved.keys() == {'execution.parquet', 'equity.parquet', 'orders.json', 'targets.json', 'risk-cases.json'}
+        assert saved.keys() == {'execution.parquet', 'equity.parquet', 'valuation-marks.parquet', 'orders.json', 'targets.json', 'risk-cases.json'}
         assert pq.read_table(root / 'equity.parquet')['ts_us'][-1].as_py() == fields['execution']['end_ts_us']
         raise error
 
@@ -882,7 +907,7 @@ def test_single_account_modes_measure_the_complete_chain_before_success(
                   + ['ValueAccountStep']
                   + (['CompleteRiskObservationStep'] if mode in ('full_backtest', 'risk_rule_eval') else [])
                   + ['ScheduleWakeupsStep'])
-    assert measured == (['PrepareInputsStep', 'InitializeAccountStep'] + tick_steps * tick_count
+    assert measured == (['PrepareReplaySessionsStep', 'BuildMinuteReplayInputStep', 'PrepareInputsStep', 'PrepareInitialMarksStep', 'InitializeAccountStep'] + tick_steps * tick_count
                         + ['FactsPersistStep', 'EvaluateResultsStep', 'PublishResultsStep'])
     assert pm.experiment_backtest_report(experiment_name=name).is_file()
     log = backtest_log.read_text()
@@ -960,6 +985,7 @@ def test_signal_workflow_publishes_the_returned_context_instead_of_initial_metri
 @pytest.mark.parametrize("mode", ["signal_eval", "full_backtest"])
 def test_future_labels_and_prices_cannot_change_prior_signal_target_or_order(
     scenario: tuple[PathManager, dict[str, object], Mock], mode: str,
+    replay_input: dict[str, object],
 ) -> None:
     pm, fields, _ = scenario
     workflow = run_backtest
@@ -976,11 +1002,9 @@ def test_future_labels_and_prices_cannot_change_prior_signal_target_or_order(
             labels['y_rank_return'] = [np.nan, np.nan, np.nan]
             labels.to_parquet(ref, index=False)
             meta.commit(pm=pm, payload_path=ref)
-            ref = Path(fields['execution']['market_ref'])
-            market = json.loads(ref.read_text())
+            market = replay_input
             for observation in market['observations']:
                 observation['price'] = '11'
-            ref.write_text(json.dumps(market))
         submission = create_backtest_submission(mode=mode, **fields)
         metrics = BacktestMetrics(mode=submission.mode, parameters=submission.model_dump(mode="json"), not_run={})
         workflow(submission=submission, path_manager=pm,
@@ -1050,19 +1074,21 @@ def test_strategy_and_cost_changes_affect_returns_without_changing_fixed_predict
     assert evaluate_prediction_record(prediction, pm=pm) == original_ic
 
 
-def test_full_with_daily_execution_waits_for_the_subsequent_complete_day(daily_scenario: tuple[PathManager, dict[str, object], Mock]) -> None:
+def test_full_with_daily_execution_waits_for_the_subsequent_complete_day(
+    daily_scenario: tuple[PathManager, dict[str, object], Mock],
+    replay_input: dict[str, object],
+) -> None:
     pm, fields, _ = daily_scenario
+    fields['execution']['market_source']['frequency'] = 'daily'
     fields['end'] = '2026-07-03'
     fields['strategy']['order_window_minutes'] = 240
-    ref = Path(fields['execution']['market_ref'])
-    market = json.loads(ref.read_text())
+    market = replay_input
     market['observations'] = []
     for day in ('2026-07-03', '2026-07-06'):
         for symbol in ('000001', '600000'):
             market['observations'].append({'observation_id': f'daily-{day}-{symbol}', 'symbol': symbol,
                 'time': {'unit': 'trading_day', 'size': 1, 'trade_date': day, 'start_ts_us': _ts(day, 9, 30),
                     'end_ts_us': _ts(day, 15), 'available_ts_us': _ts(day, 15)}, 'price': '10', 'volume_qty': 100})
-    ref.write_text(json.dumps(market))
     submission = create_backtest_submission(mode='full_backtest', **fields)
     metrics = BacktestMetrics(mode=submission.mode, parameters=submission.model_dump(mode="json"), not_run={})
     run_backtest(submission=submission, path_manager=pm,
@@ -1072,7 +1098,10 @@ def test_full_with_daily_execution_waits_for_the_subsequent_complete_day(daily_s
     assert len(fills) == 2 and all(row['ts_us'] == _ts('2026-07-06', 15) for row in fills)
 
 
-def test_fake_live_batch_delivery_reproduces_full_signal_target_risk_and_accounts(daily_scenario: tuple[PathManager, dict[str, object], Mock], monkeypatch: pytest.MonkeyPatch) -> None:
+def test_fake_live_batch_delivery_reproduces_full_signal_target_risk_and_accounts(
+    daily_scenario: tuple[PathManager, dict[str, object], Mock], monkeypatch: pytest.MonkeyPatch,
+    replay_input: dict[str, object],
+) -> None:
     from itertools import groupby
     from src.trading.backtest.market.replay import ReplayMarket
     from src.trading.backtest.market.signals import ModelSignalBatch, RecordedSignalBatch, SignalBatch, produce_signal
@@ -1081,7 +1110,7 @@ def test_fake_live_batch_delivery_reproduces_full_signal_target_risk_and_account
     metrics = BacktestMetrics(mode=submission.mode, parameters=submission.model_dump(mode="json"), not_run={})
     run_backtest(submission=submission, path_manager=pm,
         experiment_name='backtest_2026-10-11_offline', metrics=metrics)
-    source = ReplayMarketInput.model_validate_json(Path(fields['execution']['market_ref']).read_bytes())
+    source = ReplayMarketInput.model_validate(replay_input)
     # The local live driver knows the schedule but releases each delivery batch only at availability.
     deliveries = iter((ts, tuple(group)) for ts, group in groupby(source.observations,
                                                                 key=lambda o: o.time.available_ts_us))
@@ -1135,26 +1164,25 @@ def test_fake_live_batch_delivery_reproduces_full_signal_target_risk_and_account
 def test_risk_runs_one_account_and_reports_actual_control_outcomes(
     signal_scenario: tuple[PathManager, dict[str, object], Mock], fill: str,
     backtest_log: Path, mocker: MockerFixture,
+    replay_input: dict[str, object],
 ) -> None:
     pm, fields, _ = signal_scenario
     fields['risk'] = {'rules': [{'type': 'max_single_name', 'max_ratio': 0.1}]}
     fields['execution']['fill'] = {'type': fill}
     if fill == 'limit_price':
         fields['execution']['fill']['slippage_bp'] = 0
-    ref = Path(fields['execution']['market_ref'])
-    market = json.loads(ref.read_text())
+    market = replay_input
     for mark in market['marks'][1:]:
         mark['prices']['600000'] = '8'
-    ref.write_text(json.dumps(market))
     submission = create_backtest_submission(mode='risk_rule_eval', **fields)
     metrics = BacktestMetrics(mode=submission.mode, parameters=submission.model_dump(mode='json'), not_run={})
     read_record = mocker.spy(signals, 'read_prediction_record')
     name = f'backtest_2026-10-11_compare-{fill}'
-    read_bytes = mocker.spy(Path, 'read_bytes')
+    build_market = mocker.spy(BuildMinuteReplayInputStep, 'run')
 
     run_backtest(submission=submission, path_manager=pm, experiment_name=name, metrics=metrics)
 
-    assert sum(call.args == (ref,) for call in read_bytes.call_args_list) == 1
+    build_market.assert_called_once()
     root = pm.experiment_dir(experiment_name=name)
     result = _metrics(pm, name)
     assert result['final_account']['positions'] == {'600000': 200}
@@ -1349,6 +1377,7 @@ def test_risk_decision_failure_propagates_without_publishing_success(
 def test_risk_distinguishes_correct_reduction_targets_from_actual_unresolved_exposure(
     signal_scenario: tuple[PathManager, dict[str, object], Mock],
     fill: str, sellable: int, volumes: tuple[int, int], held: int, residual: float,
+    replay_input: dict[str, object],
 ) -> None:
     pm, fields, _ = signal_scenario
     fields['signal']['prediction_refs'] = []
@@ -1357,11 +1386,9 @@ def test_risk_distinguishes_correct_reduction_targets_from_actual_unresolved_exp
     fields['risk'] = {'rules': [{'type': 'max_single_name', 'max_ratio': 0.2}]}
     fields['execution']['fill'] = {'type': fill, **({'slippage_bp': 0} if fill == 'limit_price' else {})}
     fields['execution']['end_ts_us'] = _ts('2026-07-03', 14, 33)
-    ref = Path(fields['execution']['market_ref'])
-    market = json.loads(ref.read_text())
+    market = replay_input
     for observation, volume in zip(market['observations'], volumes, strict=True):
         observation['volume_qty'] = volume
-    ref.write_text(json.dumps(market))
     submission = create_backtest_submission(mode='risk_rule_eval', **fields)
     metrics = BacktestMetrics(mode=submission.mode, parameters=submission.model_dump(mode='json'), not_run={})
     run_backtest(submission=submission, path_manager=pm, experiment_name='risk-stress', metrics=metrics)
@@ -1409,3 +1436,414 @@ def test_drawdown_liquidation_reports_unfilled_holdings_without_claiming_a_loss_
     assert effectiveness['residual_breach_count'] == (0 if sellable else effectiveness['sample_count'])
     assert all(row['after']['value'] == 0.2 for row in effectiveness['observations'])
     assert result['execution_eval']['filled_qty'] == sellable
+
+
+_DAYS = ("2026-07-17", "2026-07-20", "2026-07-21")
+_SYMBOLS = ("000001", "600000")
+
+
+def _write_source(pm: PathManager, path: Path, table: pa.Table) -> None:
+    write_parquet_atomic(output_file=path, table=table)
+    meta.commit(pm=pm, payload_path=path)
+
+
+@pytest.fixture
+def market_sources(tmp_path: Path) -> PathManager:
+    pm = PathManager(tmp_path)
+    calendar = pa.table({"trade_date": ["2026-07-17", "2026-07-18", "2026-07-19", "2026-07-20", "2026-07-21"],
+                         "is_open": [True, False, False, True, True]})
+    _write_source(pm, pm.processed_year_object(
+        dataset_name="trade_calendar", version="v1", calendar_year=2026,
+    ).payload_path, calendar)
+    for index, day in enumerate(_DAYS):
+        _write_source(pm, pm.processed_object(dataset_name="suspend_d", version="v1", trade_date=day).payload_path,
+                      pa.table({"symbol": pa.array([], type=pa.string())}))
+        _write_source(pm, pm.processed_object(dataset_name="daily_bar", version="v1", trade_date=day).payload_path,
+                      pa.table({"symbol": _SYMBOLS, "trade_date": [day] * 2,
+                                "close": [20.0 + index * 2, 10.0 + index * 2], "vol": [123.45, 6.78]}))
+        for dataset, symbol in (("sh_stock_trade_1m", "600000"), ("sz_stock_trade_1m", "000001")):
+            rows = []
+            if day != "2026-07-21":
+                for hour, minute, phase in ((9, 25, 0), (9, 30, 2), (11, 30, 2), (14, 56, 2), (15, 0, 0)):
+                    rows.append({"symbol": symbol, "trade_date": day, "minute_start_ts_utc": _ts(day, hour, minute),
+                                 "phase": phase, "open": 9.0, "high": 11.0, "low": 9.0, "close": 11.0,
+                                 "volume_sum": 100, "notional_sum": 1000.0, "trade_count": 2,
+                                 "tick_signed_volume_sum": 0, "tick_signed_notional_sum": 0.0})
+            _write_source(pm, pm.processed_object(dataset_name=dataset, version="v1", trade_date=day).payload_path,
+                          pa.Table.from_pylist(rows, schema=STOCK_TRADE_1M_SCHEMA))
+    return pm
+
+
+@pytest.mark.parametrize("frequency", ["daily", "minute"])
+@pytest.mark.parametrize("event_types,has_trades", [(("S",), False), (("S", "R"), False),
+                                                  (("R",), False), ((), False), (("S", "R"), True)])
+def test_suspension_keeps_holdings_valued_and_orders_expire_before_resumption(
+    market_sources: PathManager, tmp_path: Path, frequency: str, event_types: tuple[str, ...], has_trades: bool,
+) -> None:
+    pm = market_sources
+    suspended_day = _DAYS[1]
+    path = pm.processed_object(dataset_name="daily_bar", version="v1", trade_date=suspended_day).payload_path
+    bars = pq.ParquetFile(path).read().to_pandas()
+    _write_source(pm, path, pa.Table.from_pandas(bars.loc[bars["symbol"] != "600000"], preserve_index=False))
+    _write_source(pm, pm.processed_object(dataset_name="suspend_d", version="v1", trade_date=suspended_day).payload_path,
+                  pa.table({"symbol": pa.array(["600000"] * len(event_types), type=pa.string()),
+                            "trade_date": pa.array([suspended_day] * len(event_types), type=pa.string()),
+                            "suspend_type": pa.array(event_types, type=pa.string()),
+                            "suspend_timing": pa.array([None] * len(event_types), type=pa.string())}))
+    minute_path = pm.processed_object(dataset_name="sh_stock_trade_1m", version="v1", trade_date=suspended_day).payload_path
+    rows = pq.ParquetFile(minute_path).read().to_pylist()
+    if not has_trades:
+        _write_source(pm, minute_path, pa.Table.from_pylist([], schema=STOCK_TRADE_1M_SCHEMA))
+    for row in rows:
+        row["minute_start_ts_utc"] += _ts(_DAYS[2], 0) - _ts(suspended_day, 0)
+        row["trade_date"] = _DAYS[2]
+    _write_source(pm, pm.processed_object(dataset_name="sh_stock_trade_1m", version="v1", trade_date=_DAYS[2]).payload_path,
+                  pa.Table.from_pylist(rows, schema=STOCK_TRADE_1M_SCHEMA))
+    initial, halt_close, end = (_ts(day, 15) for day in _DAYS)
+    orders = (OrderIntent(initial, "600000", Side.SELL, 100, 1, initial, halt_close, Decimal("1")),
+              OrderIntent(halt_close, "600000", Side.SELL, 100, 2, halt_close, end, Decimal("1")))
+    orders_ref = tmp_path / "suspension-orders.json"
+    orders_ref.write_bytes(TypeAdapter(tuple[OrderIntent, ...]).dump_json(orders))
+    submission = create_backtest_submission(
+        mode="execution_eval", start=_DAYS[0], end=_DAYS[-1], order_refs=[str(orders_ref)],
+        initial_account={"ts_us": initial, "trade_date": _DAYS[0], "cash": "20000",
+                         "positions": {"600000": 200}, "sellable": {"600000": 200},
+                         "average_cost": {"600000": "8"}, "peak_equity": 22000},
+        execution={"market_source": {"frequency": frequency, "start": _DAYS[0], "end": _DAYS[-1], "symbols": _SYMBOLS},
+                   "end_ts_us": end,
+                   "quantity_rules": {symbol: {"buy_min_qty": 100, "buy_step_qty": 100,
+                                              "sell_min_qty": 100, "sell_step_qty": 100,
+                                              "fill_step_qty": 1, "price_tick": "0.01", "enforce_t1": True}
+                                      for symbol in _SYMBOLS},
+                   "fees": {"commission_rate": 0, "stamp_tax_rate": 0, "transfer_rate": 0, "min_commission": 0},
+                   "annual_factor": 252, "fill": {"type": "limit_price", "slippage_bp": 0}},
+    )
+    metrics = BacktestMetrics(mode=submission.mode, parameters=submission.model_dump(mode="json"), not_run={})
+    run_backtest(submission=submission, path_manager=pm, experiment_name="suspension", metrics=metrics)
+    output = pm.experiment_dir(experiment_name="suspension")
+    execution = pq.read_table(output / "execution.parquet").to_pylist()
+    fills = [row for row in execution if row["event"] == "FILL"]
+    traded_during_gap = frequency == "minute" and has_trades
+    expected_fills = ([(1, 100, _ts(suspended_day, 9, 31))] if traded_during_gap else []) + [
+        (2, 100, end if frequency == "daily" else _ts(_DAYS[2], 9, 31))]
+    assert [(row["order_id"], row["qty"], row["ts_us"]) for row in fills] == expected_fills
+    assert any(row["order_id"] == 1 and row["status"] == "expired" and row["ts_us"] == halt_close
+               for row in execution) is not traded_during_gap
+    equity = pq.read_table(output / "equity.parquet").to_pylist()
+    close_equity = next(row for row in equity if row["ts_us"] == halt_close)
+    assert close_equity["equity"] == (22100 if traded_during_gap else 22000)
+    assert close_equity["cash"] == (21000 if traded_during_gap else 20000)
+    assert metrics.final_account.positions == ({} if traded_during_gap else {"600000": 100})
+    marks = pq.read_table(output / "valuation-marks.parquet").to_pylist()
+    carried = next(row for row in marks if row["ts_us"] == halt_close and row["symbol"] == "600000")
+    assert carried["reason"] == ("suspension" if event_types == ("S",) else "missing_daily_close")
+    assert carried["price_ts_us"] == (_ts(suspended_day, 14, 57) if traded_during_gap else initial)
+    assert carried["price_trade_date"] == (suspended_day if traded_during_gap else _DAYS[0])
+    assert Decimal(carried["price"]) == (11 if traded_during_gap else 10)
+    quality = json.loads((output / "metrics.json").read_text())["data_quality"]
+    assert quality["diagnostic_only"] is (event_types != ("S",))
+    assert quality["issues"] == ([] if event_types == ("S",) else [{
+        "symbol": "600000", "trade_date": suspended_day, "ts_us": halt_close,
+        "reason": "missing_daily_close",
+    }])
+    assert ("仅供诊断" in (output / "report.html").read_text()) is (event_types != ("S",))
+
+
+@pytest.mark.parametrize("frequency", ["daily", "minute"])
+def test_initial_suspended_holdings_use_history_and_unlock_on_the_calendar(
+    market_sources: PathManager, frequency: str, backtest_payload: Callable[[str], dict[str, object]],
+) -> None:
+    pm = market_sources
+    _write_source(pm, pm.processed_year_object(dataset_name="trade_calendar", version="v1", calendar_year=2026).payload_path,
+                  pa.table({"trade_date": ["2026-07-16", *_DAYS], "is_open": [True] * 4}))
+    _write_source(pm, pm.processed_object(dataset_name="daily_bar", version="v1", trade_date="2026-07-16").payload_path,
+                  pa.table({"symbol": ["600000"], "trade_date": ["2026-07-16"], "close": [8.0], "vol": [1.0]}))
+    for day in _DAYS[:2]:
+        daily = pm.processed_object(dataset_name="daily_bar", version="v1", trade_date=day).payload_path
+        bars = pq.ParquetFile(daily).read().to_pandas()
+        _write_source(pm, daily, pa.Table.from_pandas(bars.loc[bars["symbol"] != "600000"], preserve_index=False))
+        _write_source(pm, pm.processed_object(dataset_name="suspend_d", version="v1", trade_date=day).payload_path,
+                      pa.table({"symbol": ["600000"], "trade_date": [day], "suspend_type": ["S"],
+                                "suspend_timing": pa.array([None], type=pa.string())}))
+        _write_source(pm, pm.processed_object(dataset_name="sh_stock_trade_1m", version="v1", trade_date=day).payload_path,
+                      pa.Table.from_pylist([], schema=STOCK_TRADE_1M_SCHEMA))
+    fields = backtest_payload("execution_eval")
+    fields.pop("kind")
+    fields.update(start=_DAYS[0], end=_DAYS[-1], order_refs=[])
+    fields["initial_account"].update(ts_us=_ts(_DAYS[0], 9, 30), trade_date=_DAYS[0],
+        positions={"600000": 100}, sellable={"600000": 0}, average_cost={"600000": "5"}, peak_equity=20800)
+    fields["execution"].update(end_ts_us=_ts(_DAYS[-1], 15), market_source={
+        "frequency": frequency, "start": _DAYS[0], "end": _DAYS[-1], "symbols": ["600000"]})
+    submission = create_backtest_submission(**fields)
+    metrics = BacktestMetrics(mode=submission.mode, parameters=submission.model_dump(mode="json"), not_run={})
+    run_backtest(submission=submission, path_manager=pm, experiment_name="initial-suspension", metrics=metrics)
+    assert metrics.final_account.positions == {"600000": 100}
+    assert metrics.final_account.sellable == {"600000": 100}
+    assert metrics.portfolio.initial_equity == 20800
+    assert metrics.portfolio.final_equity == 21400
+    output = pm.experiment_dir(experiment_name="initial-suspension")
+    marks = pq.read_table(output / "valuation-marks.parquet").to_pylist()
+    carried = [row for row in marks if row["reason"] in ("initial", "suspension")]
+    assert len(carried) == 3
+    assert all(row["price_trade_date"] == "2026-07-16" and Decimal(row["price"]) == 8 for row in carried)
+    assert all(row["price_ts_us"] < row["ts_us"] for row in carried)
+    assert pq.read_table(output / "execution.parquet").num_rows == 0
+    assert 'href="valuation-marks.parquet"' in (output / "report.html").read_text()
+
+
+def _run_source_backtest(
+    *, path_manager: PathManager, start_date: str, end_date: str,
+    symbols: tuple[str, ...], frequency: Literal["daily", "minute"],
+    experiment_name: str = "backtest_source",
+) -> BacktestMetrics:
+    submission = create_backtest_submission(
+        mode="execution_eval", start=_DAYS[0], end=_DAYS[-1], order_refs=[],
+        initial_account={"ts_us": _ts(_DAYS[0], 15), "trade_date": _DAYS[0], "cash": "20000",
+                         "positions": {}, "sellable": {}, "average_cost": {}, "peak_equity": 20000},
+        execution={"market_source": {"frequency": frequency, "start": start_date, "end": end_date,
+                                     "symbols": symbols},
+                   "end_ts_us": _ts(_DAYS[-1], 15),
+                   "quantity_rules": {symbol: {"buy_min_qty": 100, "buy_step_qty": 100,
+                                              "sell_min_qty": 100, "sell_step_qty": 100,
+                                              "fill_step_qty": 1, "price_tick": "0.01", "enforce_t1": True}
+                                      for symbol in symbols},
+                   "fees": {"commission_rate": 0, "stamp_tax_rate": 0, "transfer_rate": 0, "min_commission": 0},
+                   "annual_factor": 252, "fill": {"type": "limit_price", "slippage_bp": 0}},
+    )
+    metrics = BacktestMetrics(mode=submission.mode, parameters=submission.model_dump(mode="json"), not_run={})
+    run_backtest(submission=submission, path_manager=path_manager, experiment_name=experiment_name, metrics=metrics)
+    return metrics
+
+
+@pytest.mark.parametrize("frequency", ["daily", "minute"])
+def test_preparation_is_deterministic_and_preserves_calendar_price_time_and_units(
+    market_sources: PathManager, frequency: Literal["daily", "minute"], mocker: MockerFixture,
+) -> None:
+    measured = mocker.spy(Instrumentation, "measure")
+    _run_source_backtest(
+        path_manager=market_sources, start_date=_DAYS[0], end_date=_DAYS[-1],
+        symbols=_SYMBOLS, frequency=frequency,
+    )
+    source = measured.call_args_list[0].args[3].market_input
+    measured.reset_mock()
+    _run_source_backtest(
+        path_manager=market_sources, start_date=_DAYS[0], end_date=_DAYS[-1],
+        symbols=tuple(reversed(_SYMBOLS)), frequency=frequency, experiment_name="backtest_source_repeat",
+    )
+    # Symbol request order must not change the facts, including explicit mark order.
+    again = measured.call_args_list[0].args[3].market_input
+    assert source == again
+    assert [tuple(mark.prices) for mark in source.marks] == [tuple(mark.prices) for mark in again.marks]
+    assert [session.trade_date for session in source.sessions] == list(_DAYS)
+    assert [len(session.windows) for session in source.sessions] == [2, 2, 2]
+    market = ReplayMarket(source)
+    market.on_time(_ts("2026-07-20", 9, 30))
+    assert market.get_price("600000") == Decimal("10")
+    assert not market.observations_at(_ts("2026-07-20", 9, 30))
+    if frequency == "daily":
+        assert len(source.observations) == 6
+        assert [(o.symbol, o.price, o.volume_qty) for o in source.observations[:2]] == [
+            ("000001", Decimal("20"), 12345), ("600000", Decimal("10"), 678),
+        ]
+        assert source.observations[0].time.start_ts_us == _ts(_DAYS[0], 0)
+        assert all(o.time.unit == "trading_day" for o in source.observations)
+    else:
+        assert len(source.observations) == 12
+        assert all(o.time.unit == "minute" and o.volume_qty == 100 for o in source.observations)
+        market.on_time(_ts("2026-07-20", 9, 31))
+        batch = market.observations_at(_ts("2026-07-20", 9, 31))
+        assert [(o.symbol, o.price) for o in batch] == [(symbol, Decimal("10")) for symbol in _SYMBOLS]
+        assert market.get_price("600000") == Decimal("11")  # Mark is close, not execution VWAP.
+        assert any(o.time.start_ts_us == _ts("2026-07-20", 11, 30)
+                   and o.time.end_ts_us == _ts("2026-07-20", 11, 31) for o in source.observations)
+        assert not any(o.time.trade_date == "2026-07-21" for o in source.observations)
+        assert not any(o.time.start_ts_us == _ts("2026-07-20", 15) for o in source.observations)
+    market.on_time(_ts("2026-07-20", 15))
+    assert market.get_price("600000") == Decimal("12")
+    assert source.price_basis == "raw" and source.quantity_unit == "shares"
+    assert len({o.observation_id for o in source.observations}) == len(source.observations)
+
+
+@pytest.mark.parametrize("frequency,fill_hour,fill_minute,fill_price", [
+    ("daily", 15, 0, "12"), ("minute", 9, 31, "10"),
+])
+def test_prepared_input_runs_existing_backtest_and_preserves_frozen_order_timing(
+    market_sources: PathManager, tmp_path: Path, frequency: Literal["daily", "minute"],
+    fill_hour: int, fill_minute: int, fill_price: str, mocker: MockerFixture,
+) -> None:
+    initial = _ts("2026-07-17", 15)
+    end = _ts("2026-07-20", 15)
+    commands = (
+        OrderIntent(initial, "600000", Side.BUY, 100, 1, initial, end, Decimal("30")),
+        OrderIntent(_ts("2026-07-20", 9, 30) + 30_000_000, "600000", Side.BUY, 100, 2,
+                    _ts("2026-07-20", 9, 30) + 30_000_000, _ts("2026-07-20", 9, 31), Decimal("30")),
+    )
+    orders_ref = tmp_path / "orders.json"
+    orders_ref.write_bytes(TypeAdapter(tuple[OrderIntent, ...]).dump_json(commands))
+    submission = create_backtest_submission(
+        mode="execution_eval", start=_DAYS[0], end="2026-07-20", order_refs=[str(orders_ref)],
+        initial_account={"ts_us": initial, "trade_date": _DAYS[0], "cash": "20000",
+                         "positions": {"600000": 100}, "sellable": {"600000": 100},
+                         "average_cost": {"600000": "10"}, "peak_equity": 21000},
+        execution={"market_source": {"frequency": frequency, "start": _DAYS[0], "end": _DAYS[-1],
+                                     "symbols": _SYMBOLS}, "end_ts_us": end,
+                   "quantity_rules": {symbol: {"buy_min_qty": 100, "buy_step_qty": 100,
+                                              "sell_min_qty": 100, "sell_step_qty": 100,
+                                              "fill_step_qty": 1, "price_tick": "0.01", "enforce_t1": True}
+                                      for symbol in _SYMBOLS},
+                   "fees": {"commission_rate": 0, "stamp_tax_rate": 0, "transfer_rate": 0, "min_commission": 0},
+                   "annual_factor": 252, "fill": {"type": "limit_price", "slippage_bp": 0}},
+    )
+    metrics = BacktestMetrics(mode=submission.mode, parameters=submission.model_dump(mode="json"), not_run={})
+    name = f"backtest_2026-07-20_prepared-{frequency}"
+    measured = mocker.spy(Instrumentation, "measure")
+    calendar = mocker.spy(Access, "trade_dates")
+    json_reader = mocker.spy(ReplayMarketInput, "model_validate_json")
+    run_backtest(submission=submission, path_manager=market_sources, experiment_name=name, metrics=metrics)
+    json_reader.assert_not_called()
+    assert calendar.call_count == 1
+    startup = [call.args[1] for call in measured.call_args_list[:5]]
+    builder = "BuildDailyReplayInputStep" if frequency == "daily" else "BuildMinuteReplayInputStep"
+    assert startup == ["PrepareReplaySessionsStep", builder, "PrepareInputsStep", "PrepareInitialMarksStep", "InitializeAccountStep"]
+    contexts = [call.args[3] for call in measured.call_args_list]
+    assert all(context is contexts[0] for context in contexts)
+    assert contexts[0].inputs.market is contexts[0].market_input
+    output = market_sources.experiment_dir(experiment_name=name)
+    fills = [row for row in pq.read_table(output / "execution.parquet").to_pylist() if row["event"] == "FILL"]
+    assert len(fills) == 1
+    assert fills[0]["ts_us"] == _ts("2026-07-20", fill_hour, fill_minute)
+    assert fills[0]["order_id"] == 1
+    assert Decimal(str(fills[0]["price"])) == Decimal(fill_price)
+    result = json.loads((output / "metrics.json").read_text())
+    assert result["final_account"]["positions"] == {"600000": 200}
+    assert result["execution_eval"]["filled_qty"] == 100
+
+    replay_metrics = BacktestMetrics(mode=submission.mode, parameters=submission.model_dump(mode="json"), not_run={})
+    run_backtest(submission=submission, path_manager=market_sources,
+                 experiment_name=f"{name}-repeat", metrics=replay_metrics)
+    saved = market_sources.experiment_dir(experiment_name=f"{name}-repeat")
+    replay_result = json.loads((saved / "metrics.json").read_text())
+    for key in ("final_account", "execution_eval", "portfolio"):
+        assert replay_result[key] == result[key]
+    for filename in ("execution.parquet", "equity.parquet"):
+        assert pq.read_table(output / filename).equals(pq.read_table(saved / filename))
+    json_reader.assert_not_called()
+
+
+@pytest.mark.parametrize("broken_source,frequency", [
+    ("daily_bar", "daily"), ("daily_bar", "minute"),
+    ("sh_stock_trade_1m", "minute"), ("sz_stock_trade_1m", "minute"),
+])
+def test_missing_source_propagates_without_replacing_existing_results(
+    market_sources: PathManager, broken_source: str, frequency: Literal["daily", "minute"],
+) -> None:
+    market_sources.processed_object(dataset_name=broken_source, version="v1", trade_date="2026-07-20").payload_path.unlink()
+    output = market_sources.experiment_backtest_metrics(experiment_name="backtest_source")
+    output.parent.mkdir(parents=True)
+    output.write_bytes(b"previous complete artifact")
+    with pytest.raises(FileNotFoundError):
+        _run_source_backtest(
+            path_manager=market_sources, start_date=_DAYS[0], end_date=_DAYS[-1],
+            symbols=_SYMBOLS, frequency=frequency,
+        )
+    assert output.read_bytes() == b"previous complete artifact"
+
+
+@pytest.mark.parametrize("volume", [-1.0, float("nan"), float("inf"), 0.001])
+def test_daily_volume_cannot_be_rounded_or_replaced_by_unlimited_liquidity(
+    market_sources: PathManager, volume: float,
+) -> None:
+    path = market_sources.processed_object(dataset_name="daily_bar", version="v1", trade_date=_DAYS[0]).payload_path
+    frame = pd.read_parquet(path)
+    frame.loc[frame["symbol"] == "600000", "vol"] = volume
+    _write_source(market_sources, path, pa.Table.from_pandas(frame, preserve_index=False))
+    output = market_sources.experiment_dir(experiment_name="backtest_source")
+    with pytest.raises(ValueError, match="vol \\* 100"):
+        _run_source_backtest(
+            path_manager=market_sources, start_date=_DAYS[0], end_date=_DAYS[-1],
+            symbols=_SYMBOLS, frequency="daily",
+        )
+    assert not output.exists()
+
+
+@pytest.mark.parametrize("column,value", [
+    ("volume_sum", 0), ("volume_sum", -1), ("notional_sum", float("nan")),
+    ("notional_sum", float("inf")), ("notional_sum", 0.0), ("close", 0.0),
+])
+def test_invalid_minute_numbers_fail_before_publication(
+    market_sources: PathManager, column: str, value: float,
+) -> None:
+    path = market_sources.processed_object(dataset_name="sh_stock_trade_1m", version="v1", trade_date=_DAYS[0]).payload_path
+    table = pq.ParquetFile(path).read()
+    rows = table.to_pylist()
+    rows[1][column] = value
+    _write_source(market_sources, path, pa.Table.from_pylist(rows, schema=STOCK_TRADE_1M_SCHEMA))
+    output = market_sources.experiment_dir(experiment_name="backtest_source")
+    with pytest.raises(ValueError):
+        _run_source_backtest(
+            path_manager=market_sources, start_date=_DAYS[0], end_date=_DAYS[-1],
+            symbols=_SYMBOLS, frequency="minute",
+        )
+    assert not output.exists()
+
+
+def test_unheld_missing_symbol_is_diagnostic_and_closed_only_range_still_fails(market_sources: PathManager) -> None:
+    result = _run_source_backtest(
+        path_manager=market_sources, start_date=_DAYS[0], end_date=_DAYS[-1],
+        symbols=("000002",), frequency="minute",
+    )
+    assert result.final_account.positions == {}
+    assert result.final_account.equity == 20000
+    assert result.data_quality.diagnostic_only
+    assert [(issue.symbol, issue.trade_date) for issue in result.data_quality.issues] == [
+        ("000002", day) for day in _DAYS]
+    with pytest.raises(ValueError, match="formal trading day"):
+        _run_source_backtest(
+            path_manager=market_sources, start_date="2026-07-18", end_date="2026-07-19",
+            symbols=_SYMBOLS, frequency="daily",
+        )
+
+
+def test_minute_past_session_close_is_rejected_without_clipping(market_sources: PathManager) -> None:
+    path = market_sources.processed_object(dataset_name="sh_stock_trade_1m", version="v1", trade_date=_DAYS[0]).payload_path
+    rows = pq.ParquetFile(path).read().to_pylist()
+    rows[-1]["phase"] = 2
+    _write_source(market_sources, path, pa.Table.from_pylist(rows, schema=STOCK_TRADE_1M_SCHEMA))
+    with pytest.raises(ValueError, match="chronological order"):
+        _run_source_backtest(
+            path_manager=market_sources, start_date=_DAYS[0], end_date=_DAYS[-1],
+            symbols=_SYMBOLS, frequency="minute",
+        )
+    assert not market_sources.experiment_dir(experiment_name="backtest_source").exists()
+
+
+@pytest.mark.parametrize("frequency", ["daily", "minute"])
+def test_source_backtest_needs_no_market_json(market_sources: PathManager, frequency: Literal["daily", "minute"],
+                                             mocker: MockerFixture) -> None:
+    reader = mocker.spy(ReplayMarketInput, "model_validate_json")
+    writer = mocker.spy(ReplayMarketInput, "model_dump_json")
+    result = _run_source_backtest(path_manager=market_sources, start_date=_DAYS[0], end_date=_DAYS[-1],
+                                  symbols=_SYMBOLS, frequency=frequency)
+    reader.assert_not_called()
+    writer.assert_not_called()
+    assert result.final_account is not None
+
+
+def test_source_symbols_must_cover_initial_holdings_before_replay(
+    market_sources: PathManager, backtest_payload: Callable[[str], dict[str, object]],
+) -> None:
+    fields = backtest_payload("execution_eval")
+    del fields["kind"], fields["mode"]
+    fields.update(start=_DAYS[0], end=_DAYS[-1], order_refs=[])
+    fields["initial_account"].update(ts_us=_ts(_DAYS[0], 15), trade_date=_DAYS[0],
+        positions={"600000": 100}, sellable={"600000": 100}, average_cost={"600000": "10"})
+    fields["execution"].update(end_ts_us=_ts(_DAYS[-1], 15), market_source={
+        "frequency": "daily", "start": _DAYS[0], "end": _DAYS[-1],
+        "symbols": ["000001"],
+    })
+    submission = create_backtest_submission(mode="execution_eval", **fields)
+    metrics = BacktestMetrics(mode=submission.mode, parameters=submission.model_dump(mode="json"), not_run={})
+    with pytest.raises(ValueError, match="market_source.symbols must cover initial holdings"):
+        run_backtest(submission=submission, path_manager=market_sources,
+                     experiment_name="backtest_uncovered_holdings", metrics=metrics)
+    assert not market_sources.experiment_dir(experiment_name="backtest_uncovered_holdings").exists()
