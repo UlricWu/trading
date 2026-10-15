@@ -47,12 +47,11 @@ def run_backtest(
     output_dir = path_manager.experiment_dir(experiment_name=experiment_name)
     access = Access(pm=path_manager, processed_version=PROCESSED_VERSION)
     strategy = None if isinstance(submission, ExecutionEvalSubmission) else submission.strategy
+
     risk = submission.risk if isinstance(submission, (RiskRuleEvalSubmission, FullBacktestSubmission)) else None
-    decision_steps: tuple[PipelineStep[BacktestContext], ...]
-    if isinstance(submission, ExecutionEvalSubmission):
-        decision_steps = (SubmitFrozenCommandsStep(),)
-    else:
-        decision_steps = (
+
+    decision_steps: tuple[PipelineStep[BacktestContext], ...] = (
+        (SubmitFrozenCommandsStep(),) if isinstance(submission, ExecutionEvalSubmission) else (
             GenerateSignalStep(
                 prediction_dir=path_manager.experiment_backtest_predictions_dir(experiment_name=experiment_name),
             ),
@@ -60,6 +59,7 @@ def run_backtest(
             *((ApplyRiskStep(),) if risk is not None else ()),
             SubmitTargetsStep(order_window_minutes=cast(int, submission.strategy.order_window_minutes)),
         )
+    )
     pipeline = BacktestPipeline(
         startup_steps=(
             PrepareInputsStep(submission=submission, access=access, pm=path_manager),

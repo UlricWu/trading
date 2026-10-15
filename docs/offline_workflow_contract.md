@@ -1090,7 +1090,20 @@ strategy_eval、risk_rule_eval 和 full 的 `prepare_signals` 在返回前对每
 
 ### 时间、市场与账户
 
-每个交易任务提供规范化 JSON 市场引用，明确 `price_basis="raw"`、`quantity_unit="shares"`：
+日频、分钟级和混合频率回测共用上述三组 Step。信号的决策日程与执行行情的区间粒度
+分别由输入声明，不要求相同，也不需要按频率另建 Pipeline 或交易 Step：
+
+| 场景 | 信号与执行行情 |
+| --- | --- |
+| 日频信号＋日线成交 | 按日生成目标，使用 `BarTime(unit="trading_day", size=1)` 的完整单日观察推进成交 |
+| 分钟信号＋分钟成交 | 已保存预测或带 `decision_ts_utc` 的特征明确逐次决策时间，使用 `unit="minute"` 的完整区间观察；同日允许多次决策 |
+| 日频信号＋分钟成交 | 按日生成目标，随后用分钟观察推进挂单与账户；行情更新不自动重复生成日频目标 |
+
+表中成交区间用于 `limit_price`；`quoted` 仍按订单生效时的原报价成交，不随输入频率
+改成等待后续区间。信号可用时刻遵循上节，具体撮合条件遵循下文账户级执行模拟。
+
+每个交易任务通过 `execution.market_ref` 提供规范化 JSON 市场引用，明确
+`price_basis="raw"`、`quantity_unit="shares"`：
 
 - `sessions` 包含正式交易日、账户日起点、收盘时刻和有序不重叠的 `TradingWindow`。
   声明的日期序列必须与 Access 在该范围读到的正式日历完全一致，不从实际有行情的日期
@@ -1107,8 +1120,11 @@ strategy_eval、risk_rule_eval 和 full 的 `prepare_signals` 在返回前对每
 
 来源准备必须已经根据数据 owner 完成数量单位与价格口径转换。这里不猜“股/手”、
 不把缺失 VWAP 当零价，也不从一条日线推断盘中触价先后。声明 raw/shares 不是独立的
-真实数据质量证明。当前提供本地有界输入回放；源端分钟读取、公司行动现金/股数事件、
-冲击、盘口排队和真实 broker 不由此接口补造。
+真实数据质量证明。PrepareInputsStep 当前将完整市场 JSON 一次读入内存，提供本地
+有界输入回放；从源端日线、分钟事实自动构建该输入的链路尚未接入。已有 Feature 读取
+不能替代执行行情准备。真实数据接入需要在输入准备侧完成上述转换，账户、策略、风控、
+成交和结果 Steps 继续共用。全市场、长周期分钟数据的内存与吞吐尚无规模验证；
+公司行动现金/股数事件、冲击、盘口排队和真实 broker 也不由此接口补造。
 
 初始账户显式给出快照时刻、账户交易日、现金、持仓、可卖数量、平均成本及既有峰值权益。
 持仓、可卖和成本的证券键一致，可卖不超过持仓；空账户明确传空字典。本轮从无挂单
@@ -1120,6 +1136,24 @@ ReplayClock 合并账户日程、信号、命令、市场可用时间和显式�
 仍处理日切、风险、退出和到期。动态时钟去重、严格递增、受显式终点裁切。
 交易分钟沿 TradingWindow 累加，跳过午休和休市并保留微秒；覆盖不足失败，不能缩短
 窗口。交易日持有的入场日为 0，由正式日期序列及显式退出时刻求下一日。
+
+频率支持的回归边界由同版本测试及其输入固定：
+
+- [工作流测试](../tests/workflows/test_backtest.py) 的
+  `test_full_with_daily_execution_waits_for_the_subsequent_complete_day` 验证日频信号配日线成交，
+  `test_two_minute_decisions_are_distinct_and_extra_wakeups_do_not_change_returns` 验证同日分钟决策
+  保持独立且额外空唤醒不改变收益，`test_daily_model_inference_preserves_rows_and_all_skipped_holdings`
+  验证日频模型信号配分钟成交，并保留缺失预测行及已有持仓。
+- [执行模拟测试](../tests/trading/backtest/execution/test_simulator.py) 的
+  `test_daily_observation_uses_same_lifecycle_and_only_a_subsequent_complete_day`、
+  `test_partial_fills_last_minute_then_expiry_and_no_automatic_reentry` 和
+  `test_incomplete_interval_cannot_fill_new_order_and_no_observation_still_expires`
+  分别固定后续完整日线、分钟部分成交后到期、未覆盖完整区间不得成交的边界。
+
+这些测试使用 `scenario`/`daily_scenario` 构造的市场 JSON、本地模型与预测制品，以及
+执行器测试中的固定订单和观察；交易日历、股票资格等 Access 输入由测试提供。
+证据覆盖声明成交假设下的流程与时间边界，不构成真实源数据质量、真实成交效果或
+大规模分钟回测容量的验证。
 
 ### 策略目标与退出计划
 
@@ -1204,6 +1238,10 @@ limit_price 配置在 fill 中显式提供 slippage_bp，零滑点也检查报�
 
 LimitPriceFillModel 只有在
 `active <= observation.start < observation.end <= expires` 的完整后续区间可成交。
+因此 T 日收盘生成的目标不能用当天已经结束的日线成交；使用下一正式交易日的完整
+日线时，只能在该区间结束并可用后撮合，订单期限必须覆盖到该区间结束。分钟路径同理：
+14:30 生效的订单可以在 14:30–14:31 的完整区间于 14:31 可用时参与撮合，不能使用
+14:29–14:30 的已结束区间。满足时间条件仍需满足价格、数量和账户约束，不保证成交。
 该假设下提交时不成交；最后可执行区间先撮合后到期撤余。价格模型的数量预算同时受余量、
 该观察量、fill_step_qty、实际现金及可卖量约束。竞争同一观察量或资金时按生效时间、原提交顺序分配，
 不按输入证券顺序改变全局优先级。同一完整区间不能证明卖先于买，买入不得预用本批
