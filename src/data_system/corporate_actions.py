@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from datetime import date
 from decimal import Decimal
 from hashlib import sha256
-from typing import Literal, Self
+from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -69,6 +69,7 @@ class CorporateActionReview(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     candidate_id: str = Field(min_length=1)
     source_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
+    related_sources: dict[str, Annotated[str, Field(pattern=r"^[a-f0-9]{64}$")]] = Field(default_factory=dict)
     action_id: str = Field(min_length=1)
     shareholder_scope: Literal["ordinary_shareholder"]
     record_date: date
@@ -81,6 +82,8 @@ class CorporateActionReview(BaseModel):
 
     @model_validator(mode="after")
     def _validate_timeline(self) -> Self:
+        if self.candidate_id in self.related_sources:
+            raise ValueError("primary source must not be repeated in related_sources")
         dates = [terms.published_date for terms in self.terms]
         if dates != sorted(set(dates)):
             raise ValueError("review terms must have unique, increasing publication dates")
@@ -120,7 +123,8 @@ class CorporateActionResolution(BaseModel):
         if (self.status == "unresolved") != (self.review is None):
             raise ValueError("only unresolved candidates may lack an announcement review")
         if self.review is not None:
-            if (self.review.candidate_id != self.candidate_id or self.review.source_digest != self.source_digest
+            bindings = {self.review.candidate_id: self.review.source_digest, **self.review.related_sources}
+            if (bindings.get(self.candidate_id) != self.source_digest
                 or self.review.record_date != self.record_date):
                 raise ValueError("resolution review does not identify its source group")
             no_right = not any(t.cash_per_share or t.shares_per_share for t in self.review.terms)
@@ -141,13 +145,21 @@ def resolve_corporate_actions(
     for row in records:
         if row.div_proc == "实施":
             grouped.setdefault(row.candidate_id, []).append(row)
-    by_candidate = {review.candidate_id: review for review in reviews}
-    if len(by_candidate) != len(reviews):
-        raise ValueError("corporate-action reviews must have unique candidate_id")
+    by_candidate: dict[str, CorporateActionReview] = {}
+    for review in reviews:
+        for candidate in (review.candidate_id, *review.related_sources):
+            if candidate in by_candidate:
+                raise ValueError("corporate-action reviews must have unique candidate_id bindings")
+            by_candidate[candidate] = review
     if by_candidate.keys() - grouped.keys():
         raise ValueError("corporate-action review has no matching implemented source group")
     if len({review.action_id for review in reviews}) != len(reviews):
         raise ValueError("corporate-action reviews must have unique action_id")
+    for review in reviews:
+        identities = {(grouped[key][0].ts_code, grouped[key][0].record_date)
+                      for key in (review.candidate_id, *review.related_sources)}
+        if len(identities) != 1:
+            raise ValueError("related sources must identify the same security and registration date")
     resolutions: list[CorporateActionResolution] = []
     for candidate_id, rows in sorted(grouped.items()):
         source_ids = tuple(sorted(row.source_row_id for row in rows))
@@ -156,7 +168,8 @@ def resolve_corporate_actions(
         reason = _unresolved_reason(rows)
         status: Literal["resolved", "not_entitled", "unresolved"] = "unresolved"
         if review is not None:
-            if review.source_digest != digest:
+            bindings = {review.candidate_id: review.source_digest, **review.related_sources}
+            if bindings[candidate_id] != digest:
                 raise ValueError(f"corporate-action review source digest changed: {candidate_id}")
             reason = review.reason
             status = "resolved" if any(t.cash_per_share or t.shares_per_share for t in review.terms) else "not_entitled"

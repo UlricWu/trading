@@ -42,7 +42,7 @@ def test_unreviewed_rows_never_grant_guessed_rights(index: int) -> None:
 
 
 def test_original_and_revised_terms_remain_distinct_versions() -> None:
-    review = CorporateActionReview.model_validate(_read_cases()[-1]["review"])
+    review = CorporateActionReview.model_validate(_read_cases()[4]["review"])
     assert review.terms[0].published_date.isoformat() == "2025-06-30"
     assert str(review.terms[0].cash_per_share) == "0.2816137"
     assert review.terms[1].published_date.isoformat() == "2025-07-05"
@@ -69,11 +69,28 @@ def test_null_cash_cannot_be_inferred_as_zero_from_a_stock_ratio() -> None:
 
 
 def test_review_requires_explicit_ex_reference_and_pre_ex_revision_dates() -> None:
-    payload = deepcopy(_read_cases()[-1]["review"])
+    payload = deepcopy(_read_cases()[4]["review"])
     del payload["terms"][0]["reference_cash_per_share"]
     with pytest.raises(ValidationError, match="reference_cash_per_share"):
         CorporateActionReview.model_validate(payload)
-    payload = deepcopy(_read_cases()[-1]["review"])
+    payload = deepcopy(_read_cases()[4]["review"])
     payload["terms"][-1]["published_date"] = payload["ex_date"]
     with pytest.raises(ValidationError, match="revisions before ex date"):
         CorporateActionReview.model_validate(payload)
+
+
+def test_one_announced_event_can_bind_distinct_source_candidates_without_double_counting() -> None:
+    case = _read_cases()[1]
+    first = DividendRecord.model_validate(case["records"][0])
+    second = first.model_copy(update={"end_date": first.end_date.replace(month=3), "source_row_id": "3" * 64})
+    review = CorporateActionReview.model_validate(case["review"]).model_copy(update={
+        "source_digest": sha256(first.source_row_id.encode()).hexdigest(),
+        "related_sources": {second.candidate_id: sha256(second.source_row_id.encode()).hexdigest()},
+    })
+    resolved = resolve_corporate_actions((first, second), (review,))
+    assert len(resolved) == 2
+    assert all(item.review == review and item.status == "resolved" for item in resolved)
+    assert len({item.review.action_id for item in resolved}) == 1
+    changed = second.model_copy(update={"source_row_id": "4" * 64})
+    with pytest.raises(ValueError, match="source digest changed"):
+        resolve_corporate_actions((first, changed), (review,))

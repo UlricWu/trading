@@ -78,3 +78,27 @@ def test_committed_empty_source_is_not_missing_coverage(source: tuple[PathManage
     source_paths.payload_path.unlink()
     with pytest.raises((FileNotFoundError, RuntimeError)):
         access.corporate_actions(record_date=context.start)
+
+
+def test_access_requires_all_candidates_of_an_associated_event(tmp_path: Path) -> None:
+    cases = json.loads((Path(__file__).parents[2] / "fixtures/corporate_actions/verified_distributions.json").read_text())
+    case = next(item for item in cases if item["records"][0]["symbol"] == "000550")
+    pm = PathManager(tmp_path)
+    day = case["review"]["record_date"]
+    source = pm.processed_object(dataset_name="dividend", version="v1", trade_date=day)
+    write_parquet_atomic(output_file=source.payload_path, table=pa.Table.from_pylist(case["records"]))
+    meta.commit(pm=pm, payload_path=source.payload_path)
+    review_path = pm.raw_payload(broker="announcements", source_name="corporate_action_reviews",
+        trade_date=day, payload_file="reviews.json")
+    FileSystem.write_bytes_atomic(review_path, json.dumps([case["review"]]).encode())
+    meta.commit(pm=pm, payload_path=review_path)
+    ResolveCorporateActionsStep(pm).run(DataContext(start=day, end=day, trade_dates=(day,)))
+    access = Access(pm=pm, processed_version="v1")
+    assert len(access.corporate_actions(record_date=day)) == 2
+    paths = pm.processed_object(dataset_name="corporate_actions", version="v1", trade_date=day)
+    with pq.ParquetFile(paths.payload_path) as parquet:
+        incomplete = parquet.read().slice(0, 1)
+    write_parquet_atomic(output_file=paths.payload_path, table=incomplete)
+    meta.commit(pm=pm, payload_path=paths.payload_path)
+    with pytest.raises(ValueError, match="association is incomplete"):
+        access.corporate_actions(record_date=day)

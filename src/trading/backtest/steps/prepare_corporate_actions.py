@@ -65,7 +65,9 @@ class PrepareCorporateActionsStep:
                         continue
                     review = item.review
                     if review.action_id in actions:
-                        raise ValueError(f"distribution action identity spans source groups: {review.action_id}")
+                        if actions[review.action_id].record_ts_us != record_ts_us:
+                            raise ValueError(f"distribution action spans registration dates: {review.action_id}")
+                        continue
                     for event_date in (review.ex_date, review.pay_date, review.div_listdate):
                         if (event_date is not None and context.sessions[0].trade_date <= event_date.isoformat()
                             <= context.sessions[-1].trade_date and event_date.isoformat() not in sessions):

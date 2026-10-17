@@ -17,7 +17,8 @@ from src.trading.portfolio.corporate_actions import DistributionEntitlement
 
 
 def test_prepare_keeps_original_terms_and_later_revision() -> None:
-    case = json.loads((Path(__file__).parents[3] / "fixtures/corporate_actions/verified_distributions.json").read_text())[-1]
+    cases = json.loads((Path(__file__).parents[3] / "fixtures/corporate_actions/verified_distributions.json").read_text())
+    case = next(item for item in cases if item["records"][0]["symbol"] == "003001")
     records = TypeAdapter(tuple[DividendRecord, ...]).validate_python(case["records"])
     review = CorporateActionReview.model_validate(case["review"])
     prepared = resolve_corporate_actions(records, (review,))

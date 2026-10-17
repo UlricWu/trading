@@ -171,8 +171,9 @@ response 必须生成上述列齐全的空对象，明确区别于尚未采集�
 解析事实不变，原始输入及公告核验输入未改写，重复执行复用全部分区。木林森与中岩大地的
 真实历史回放也验证了登记、派现与送转结果。已替换的派生对象移出正式存储并归档，
 精确源码、输入摘要、回归测试及回放结果见[V1 修正证据](/tmp/trading-dividend-v1-20261017-s57bz_hg/evidence.json)。
-五组公告核验分别形成 4 个 resolved 和 1 个 not_entitled，其他 33,111 组为
-unresolved，其中包含 911 个重复组。核验状态不能由“已入库”代替。精确代码、全部输入摘要、
+该次 V1 修正验收时，五组公告核验形成 4 个 resolved 和 1 个 not_entitled，其他 33,111 组为
+unresolved，其中包含 911 个重复组。这是该次精确输入的统计；后续发布情况见下方公告流程验收。核验状态
+不能由“已入库”代替。精确代码、全部输入摘要、
 逐重复组处置及重跑核对见[解析与回放证据](/tmp/trading-corporate-action-resolution-_6lgzo9e/evidence.json)。
 
 #### 从来源记录到业务事件
@@ -185,11 +186,17 @@ ann_date 把重复记录变成多次到账，也不以数值一致证明分配�
 
 可回放的条款必须有公告核验事实。核验输入是
 `raw/announcements/corporate_action_reviews/trade_date=<登记日>/reviews.json` 及其 Meta；
-JSON 为 `CorporateActionReview` 数组。每项包含 candidate_id、source_digest、独立 action_id、
+JSON 为 `CorporateActionReview` 数组。每项包含 candidate_id、source_digest、related_sources、独立 action_id、
 shareholder_scope、record_date、ex_date、pay_date、div_listdate、terms、evidence_refs、reason。
+related_sources 是其他候选关联键到其来源摘要的映射；空映射表示该事件只绑定主候选。
+主候选不得再次出现在映射中，同一候选不能绑定到两个核验事件；关联候选必须属于同一证券和登记日。
+必须由公告证明它们属于同一计划，不能仅凭相同证券、登记日、金额或不同报告期自动归并。
+每个候选仍发布自己的 resolution，保存同一份完整 review；账户按 action_id 只登记、派发一次。
 source_digest 是组内按字典序排序的全部 source_row_id（保留重复项）用换行连接后的 SHA-256。
 核验事实必须绑定这个摘要；来源变化、核验身份重复、孤立核验或非法条款直接失败，不能继续
 使用过期核验。公告链接及解释属于输入事实，不允许在回测代码里写股票代码特例。
+`CollectAnnouncementsStep → ExtractDistributionTermsStep → ResolveCorporateActionsStep` 生产这些核验与解析事实；
+采集边界、原文证据、人工复核输入及未覆盖能力见[公告流程](#announcement-verification-todo)。
 
 当前账户口径明确为 `ordinary_shareholder`：二级市场普通流通股持有人，不模拟公告单列的
 大股东、回购专户、重整投资人或债权人身份。税前/税后与股东资格是不同维度；税前记账
@@ -198,16 +205,22 @@ shares_per_share、reference_cash_per_share、reference_shares_per_share，金�
 后两项仅用于普通除权参考公式，必须由公告确认，不能默认复制账户分配金额。
 
 首次有权益的计划必须在登记日前公开；条款修订可以在登记后、除权前公开。版本日期严格
-递增，金额的零值必须明确提供。当前已确认案例的登记、除权、支付和上市日不随版本变化；
-需要变更这些阶段日、处理除权后更正或其他特殊公式时，须补齐相应业务事实，不能塞入
-现有金额修订路径。已确认普通股东没有权益的事件可在登记日公开，但必须在除权日前公开。
+递增，金额的零值必须明确提供。可执行版本的登记、除权、支付和上市日固定；
+阶段日冲突不能通过自动选择最新公告消除。若原公告的支付日早于除权、尚不能形成合法的
+可执行计划，且更正在任何账户阶段之前公开，复核输入可以从更正公告公开日开始提供首个
+完整计划，并保留原文及冲突说明；不伪造更正前的可执行版本。本次 `002986`、`002727`
+即属于这一范围，原公告、09-19 更正和更正后实施公告均保留。该处理不模拟更正前对错误
+公告的交易反应。涉及已执行阶段的日期变更、除权后更正、同日冲突版本先后或特殊公式，
+仍须先确定对应账户语义，不能塞入现有金额修订路径。已确认普通股东没有权益的事件可在登记日公开，但必须在除权日前公开。
 
 每个候选组发布一个 resolution，保留 candidate_id、symbol、record_date、source_digest、
 全部 source_row_ids、status、reason、review。状态为 resolved、not_entitled 或 unresolved；
 后者 review 为 null，前两者必须保存核验内容。Parquet 的物理列为 symbol、record_date、
 resolution（上述命名模型的 JSON），空集合仍发布列完整对象。Meta 的直接上游是同日
 `dividend/v1`，Parquet metadata 的 corporate_action_inputs 另保存来源及核验 Meta 相对路径
-对应的 payload SHA-256。生产者重跑比较这些摘要；新增或修改核验时重建解析对象，不复用
+对应的 payload SHA-256。自动生成核验的 `extraction.json` 还绑定 dividend payload、公告集合、显式复核输入、
+生成代码和 PDF 解析依赖的摘要，保存逐候选失败原因及 reviews 内容摘要；其摘要进入
+corporate_action_inputs。生产者重跑比较这些摘要；新增或修改输入时重建解析对象，不复用
 旧的未解决结论。回测制品保存解析输入摘要和完整 disposition，以便复现。
 
 缺少核验时保留待核实状态，不凭“只有一条”“重复字段相同”“取最新”“取最大”“null 补零”
@@ -235,6 +248,147 @@ resolution（上述命名模型的 JSON），空集合仍发布列完整对象�
 字段和查询依据：[Tushare 分红送股接口](https://tushare.pro/document/2?doc_id=103)。接口只有
 日期，不能提供券商到账微秒、零碎股最终分配、持仓批次红利税、受益人类别或完整修订链。
 当前下载结果也不证明历史时点版本未被修订；采集时间不得充当历史公开时间。
+
+<a id="announcement-verification-todo"></a>
+
+#### 公开公告采集、核验与历史覆盖
+
+公告数据生产归 `src/data_system`，继续使用 `dividend/v1`、`corporate_actions/v1`；
+账户回放复用既有 Steps，不联网查公告。`anns_d` 权限接入保留为可选 TODO，公开巨潮索引
+及发行人 PDF 是当前可执行来源。采集、条款核验、候选归并是三个独立责任：取得公告接口
+只解决访问，不能将原文自动等同于有效账户事件，也不将“未核验”误称为“源值错误”。
+
+[Tushare 公告接口](https://tushare.pro/document/2?doc_id=176)需要单独开通，
+[权限说明](https://tushare.pro/document/1?doc_id=290)将公告权限与积分权限分开。
+2026-10-17 对 `003001.SZ`、2025-06-27 至 07-06 的只读查询被当前配置端点拒绝；
+这不能进一步区分官方账户与中转服务的权限。精确参数、脱敏错误、被审计源码摘要、
+来源原行与统计范围见[核查证据](/tmp/trading-announcement-gap-20261017-_1hmzbtg/evidence.json)
+及[核查笔记](/tmp/trading-announcement-gap-20261017-_1hmzbtg/announcement-review.ipynb)，
+临时证据需随既有历史证据保留归档。
+
+初次独立核查使用巨潮公开公告索引及发行人 PDF：固定原回放的 454 个沪深候选，按证券查询
+2026-08-20 至 2026-10-17 的公告，取得 8,699 条公司公告索引，保存 1,019 份相关 PDF。
+454 个候选均匹配实施公告；443 个完成确定性字段比对，11 个文本提取歧义经全文或渲染
+页面复核。普通 A 股股东的税前金额、送转比例、登记、除权、支付和股份上市日期与保存
+源值均一致；该次核查没有覆盖完整参考参数，后续流程验收补齐了本批参数，仍不证明全部历史源值正确。
+
+核查包含更正公告：`002986` 的支付日由 09-22 更正为 09-23，`002727` 由 09-23 更正为
+09-24，两份更正均在 09-19 披露，保存的源值已经采用更正后的日期。
+[宇新更正公告](https://static.cninfo.com.cn/finalpage/2026-09-19/1225572338.PDF)与
+[一心堂更正公告](https://static.cninfo.com.cn/finalpage/2026-09-19/1225572157.PDF)说明即使
+期末源值正确，生产流程仍需保留更正证据及历史可见时间，不能将最终日期倒写进原公告。
+完整的[字段核查](/tmp/trading-dividend-public-audit-20261017-pos0_7fq/verified-entitlements.json)、
+[公告索引](/tmp/trading-dividend-public-audit-20261017-pos0_7fq/company-index.json)和
+[原文清单](/tmp/trading-dividend-public-audit-20261017-pos0_7fq/pdf-manifest.json)保留来源及摘要；
+账户金额及方法限制由[权益对账证据](../offline_workflow_contract.md#corporate-action-impact-evidence)拥有。
+
+这个结果证明公开来源能够覆盖本次候选所需的权益公告，不证明 2018—2026 年全部公司
+行动已被收集。查询按自然日覆盖周末，范围早于回测起点并追溯原计划；本次索引的起止日
+是具体输入，不能写成所有历史任务的固定回看窗口。公开索引的当前证券映射仅用于定位
+公告，不能替换回测的历史股票成员集合。HTTP 成功、空结果或零散搜索命中都不足以证明
+覆盖完整；本次还处理了分页数量与实际返回量不一致、跨页重复的问题，以证券、日期切分
+及公告 ID 去重核对范围内的唯一记录数。
+
+生产入口为 `src.workflows.corporate_action_data.run_corporate_action_preparation`，要求已提交
+日历和 dividend/v1，显式传入登记日范围、公告自然日范围和可选的复核文件。公告范围
+包括周末，不能隐式固定为回测区间或某个统一回看天数。只查询已实施候选的沪深证券；
+当前证券组织映射仅用于定位来源，不定义历史股票池。当前不对北交所候选生成批准核验。
+
+```python
+run_corporate_action_preparation(
+    path_manager=pm,
+    registration_interval=TrainingDateRange(start="2026-09-01", end="2026-09-30"),
+    announcement_interval=TrainingDateRange(start="2026-08-20", end="2026-10-17"),
+    review_refs=(Path("/inputs/reviewed-distributions.json"),),
+)
+```
+
+流程按以下责任组装：
+
+```text
+DataPipeline
+├─ CollectAnnouncementsStep       公告索引、原始 PDF、查询及采集证据
+├─ ExtractDistributionTermsStep   明确条款提取、显式复核输入、具体缺口
+└─ ResolveCorporateActionsStep    候选处置、关联事件，发布 corporate_actions/v1
+
+Standard DataPipeline
+├─ FactMaterializeStep            dividend/v1 等来源事实
+├─ ExtractDistributionTermsStep   消费已提交的本地公告，不隐式发起网络采集
+├─ ResolveCorporateActionsStep
+└─ Feature / Label Steps
+
+BacktestPipeline
+└─ 消费本地 corporate_actions/v1，复用条款更新、登记、除权、派现和红股上市 Steps
+```
+
+**采集与完整性。** `CninfoBroker` 使用公开公司索引和 `static.cninfo.com.cn` 原文路径；
+每页按 30 条请求，以 totalAnnouncement 和唯一公告 ID 数量验证。跨页重叠时按自然日
+二分；单日仍重叠时补查反向排序。数量变化、同 ID 字段冲突、范围外记录、无法补齐的
+截断、HTTP/PDF 错误均失败，不提交成功集合。已实施候选查到空索引不能证明公告不存在，
+同样失败；无候选的登记日则发布明确空集合。保存原始请求参数、响应、数量、来源 URL、
+公告 ID、证券身份、源公开日期、独立采集时间、内容 SHA-256。公开日期取索引时间按
+Asia/Shanghai 转换；没有经过验证的盘中发布时间不进入回放。PDF 缓存保留首次采集时间，
+复用前校验字节摘要。已提交集合的复用同时检查 PDF 与查询证据，不依赖临时核查路径。
+条款提取还核对索引所覆盖证券恰好覆盖该登记日全部沪深已实施候选，不能把部分证券采集
+冒充整个来源分区的完整集合。
+
+**条款及异常。** `pypdf` 按锁定依赖解析原始页；规范化排版不改动数值，每十股转每股
+使用 Decimal。自动批准限定于证券、报告期、登记日、普通股东范围、税前金额、送转、
+结算日期及除权参考参数均能唯一解释的实施公告。对全股本等比例分配，须有完整分配基数
+或明确的非差异化声明；差异化方案按公告参考公式取值。实收金额和参考价参数仍分开。
+重整、缺少明确零值、A/B 表格歧义、阶段日期变更、独立调整/更正/取消通知及非标准身份
+交给显式复核，不以置信度、源金额或最近公告兜底。自动核验保留不同公开日期的金额版本；
+同日相互冲突不推测先后。仅调整回购或转股价格的公告不会直接变成分红条款修订。
+
+`review_refs` 是按上述模型提供的完整复核结果；原文 URL 与 SHA-256 必须已在公告集合中。
+来源候选摘要、受益范围、金额、阶段日和关联关系在发布前整体验证。输入保存在
+`raw/announcements/corporate_action_review_inputs`，同时用 `collection.sha256` 绑定本次
+核查的整个公告集合；集合变化后不得自动沿用旧复核，须重新提供对应核验。已有显式
+reviews 不能被新提取器静默覆盖，必须先作为 review_refs 明确导入。没有登记日持仓是
+某次账户的结果，不是 `not_entitled` 的含义；本次 14 个零持仓候选仍保留真实条款。
+
+**发布与重跑。** 原始公告集合、显式复核和生成 reviews 分开保存；具体 raw 路径由
+[存储 owner](storage_layout.md)定义。`extraction.json` 的 inputs、producer_sha256、
+reviews_sha256、issues 共同绑定精确输入、代码/解析依赖、结果和逐候选未解决原因。
+缺少本地集合时 Standard 流程报告未采集并继续解析已有显式核验；损坏、摘要变化或过期
+复核不降级为成功。缺口区分原文未匹配、受益范围不明、条款/日期/参考价不完整、独立修订、
+跨候选关系待核实及未支持交易所。同输入复用制品；新截止日用于扩展公告范围，修订影响
+的登记日分区重新核验和发布。该入口不自动安排定时任务。旧回放仍绑定旧输入摘要；
+输入改变后需重跑，原始 Tushare dividend 不被公告修正覆盖。
+
+**月度和关联事件验收。** 2026-10-17 对上述 454 个沪深候选补齐可执行条款，420 项通过
+确定性提取，34 项经过原文例外及独立调整通知复核；生成 454 个 resolved，另外 23 个
+北交所候选保留 `unsupported_announcement_exchange`。核验输入中，`300980` 的每股
+实得转增为 0.4，除权参考比例为 0.3901769；`002605` 的参考现金由 0.1994343 在
+09-08 修订为 0.1994344，版本按公开日期保留，税前每股派现始终为 0.2。
+金额、日期等已有独立核查结果不是被覆盖的基线；新增原文证据和修订用于解释完整路径。
+账户回放及独立对账由[回放验收](../offline_workflow_contract.md#corporate-action-impact-evidence)记录。
+
+跨报告期的历史线索仍有 51 个关联集合、106 个候选、113 条源记录，不能与重复组统计相加。
+其中江铃 `000550.SZ` 的 2017-09-30、2018-01-16 两个候选指向同一
+[2018-03-20 实施公告](https://static.cninfo.com.cn/finalpage/2018-03-20/1204488117.PDF)：
+A 股 03-26 登记、03-27 支付每股税前 2.317 元。现有 related_sources 表达该关联；真实
+历史回放的 100 股只登记一次、到账 231.7 元，保留两份来源处置，不混用 B 股日期或港币金额。
+数据、源码、原文、失败记录、输入/输出摘要和重复执行结果见
+[公开公告流程证据](/tmp/trading-announcement-workflow-20261017-i1ony73e/evidence.json)。
+
+**仍需完成的覆盖。** 2018-01-02 至 2026-09-30 的源数据和候选处置已经齐全，但这不代表
+全历史公告已批量采集和核验；本次月度结果与一个跨候选反例不能自动批准其余候选。
+上述 22 个登记日发布后，全历史 33,116 个候选的处置为 460 个 resolved、1 个
+not_entitled、32,655 个 unresolved；resolved 中江铃两组来源属于同一个事件，不是两次派息。
+剩余 unresolved 包含沪市 14,443、深市 17,038、北交所 1,174 个候选，该统计绑定上述
+流程证据的精确历史输入，不用本次月度验收掩盖全历史未完成的工作。
+继续逐批扩展公告时间范围，覆盖全历史所有实施来源；逐候选保留明确结果，优先级不得
+缩小最终范围。阶段日实际变化、除权后更正、同日冲突顺序、特殊受益人或非普通参考
+公式等能力须有明确事实与账户语义后再实现；不能用最终条款回填以前时点。北交所及
+其他非分红公司行动不混入当前沪深分配验收。`anns_d` 可选接入仍是 TODO，未来按公开
+渠道的历史覆盖、稳定性和维护成本决定；其 2,000 条上限仍需按日期、证券拆分核对。
+
+验收至少同时覆盖来源完整性、全部候选处置、来源摘要失效、重复执行、关联事件只到账
+一次、修订时点、登记股数、应收/现金/股份/可卖数量与逐笔交易。现有回归包括木林森、
+顺丰、宝丰、正邦、中岩大地、江铃、差异化参考、独立更正、A/B 日期、每十股换算及
+分页重叠/截断。影响账户的未知公司行动仍须进入诊断；公司行动测试通过不会消除行情
+缺口、上市状态或其他账户行为限制，全部分区生成也不能证明全部历史公告已核实。
 
 ## Level-2 source identity
 

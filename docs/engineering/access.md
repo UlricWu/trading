@@ -168,8 +168,10 @@ Access 不将事件集合变成盘前可知的可交易名单；如何解释日�
 记录所属登记日，返回独立 DataFrame，不筛选实施状态或改变金额。
 
 `corporate_actions(record_date=...)` 读取 `corporate_actions/v1`，返回不可变的
-`CorporateActionResolution` tuple。校验持久化模型、登记分区、内外证券身份及事件唯一性；
-不在 Access 里执行核验、去重或选择公告版本。未解决 disposition 与已核实事件一同返回。
+`CorporateActionResolution` tuple。校验持久化模型、登记分区、内外证券身份及候选唯一性；
+同 action_id 的多个处置必须保存完全相同的 review、同一证券及完整 source 关联集合，
+缺失关联候选或冲突核验直接失败。Access 保留所有候选处置，不去掉重复事件所关联的来源，
+也不在读取时核验公告或选择版本；账户消费方按已验证的事件身份执行一次。未解决 disposition 与已核实事件一同返回。
 
 `corporate_action_notices(trade_date=...)` 读取同名 processed 数据集的补充公告，按事件生效
 所属账户日分区。每行包含 action_id、symbol、available_ts_us、effective_ts_us、kind、source_ref；

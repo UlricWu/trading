@@ -15,6 +15,7 @@ from src.access import meta
 from src.data_system.context import DataContext
 from src.data_system.corporate_actions import CorporateActionReview, DividendRecord, resolve_corporate_actions
 from src.data_system.steps._partition import _publish_parquet_object
+from src.data_system.distribution_announcements import ReviewExtractionManifest
 from src.utils.path import PathManager
 
 
@@ -44,6 +45,15 @@ class ResolveCorporateActionsStep:
             inputs = {str(source.meta_path.relative_to(self.pm.storage_root)): sha256(loaded.payload_path.read_bytes()).hexdigest()}
             if reviewed is not None:
                 inputs[str(review_meta.relative_to(self.pm.storage_root))] = sha256(reviewed.payload_path.read_bytes()).hexdigest()
+            extraction = None
+            if reviewed is not None and (extraction_path := reviewed.payload_path.parent / "extraction.json").exists():
+                extraction = ReviewExtractionManifest.model_validate_json(extraction_path.read_bytes())
+                if extraction.reviews_sha256 != sha256(reviewed.payload_path.read_bytes()).hexdigest():
+                    raise ValueError(f"extraction reviews digest changed: {day}")
+                for relative, digest in extraction.inputs.items():
+                    if sha256((self.pm.storage_root / relative).read_bytes()).hexdigest() != digest:
+                        raise ValueError(f"extraction input digest changed: {relative}")
+                inputs[str(extraction_path.relative_to(self.pm.storage_root))] = sha256(extraction_path.read_bytes()).hexdigest()
             paths = self.pm.processed_object(dataset_name="corporate_actions", version="v1", trade_date=day)
             existing = meta.find(pm=self.pm, meta_path=paths.meta_path, expected_payload_path=paths.payload_path)
             if existing is not None:
@@ -57,6 +67,9 @@ class ResolveCorporateActionsStep:
             if any(row.record_date.isoformat() != day for row in records):
                 raise ValueError(f"dividend source registration does not match partition: {day}")
             resolutions = resolve_corporate_actions(records, reviews)
+            if extraction is not None:
+                resolutions = tuple(item.model_copy(update={"reason": extraction.issues[item.candidate_id]})
+                    if item.review is None and item.candidate_id in extraction.issues else item for item in resolutions)
             schema = pa.schema([("symbol", pa.string()), ("record_date", pa.string()), ("resolution", pa.string())],
                 metadata={b"corporate_action_inputs": json.dumps(inputs, sort_keys=True).encode()})
             table = pa.Table.from_pylist([{"symbol": item.symbol, "record_date": day,

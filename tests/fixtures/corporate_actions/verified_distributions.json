@@ -292,5 +292,65 @@
       ],
       "reason": "post_registration_terms_revision"
     }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "000550.SZ",
+        "symbol": "000550",
+        "end_date": "2017-09-30",
+        "ann_date": "2018-01-16",
+        "div_proc": "实施",
+        "imp_ann_date": "2018-03-20",
+        "record_date": "2018-03-26",
+        "ex_date": "2018-03-27",
+        "pay_date": "2018-03-27",
+        "div_listdate": null,
+        "cash_div_tax": "2.317",
+        "stk_div": "0.0",
+        "source_row_id": "c9612454b7e540bd049ebe828a8b8b76db4a0eac2fe783afff45bbe2af12e61f"
+      },
+      {
+        "ts_code": "000550.SZ",
+        "symbol": "000550",
+        "end_date": "2018-01-16",
+        "ann_date": "2018-02-07",
+        "div_proc": "实施",
+        "imp_ann_date": "2018-03-20",
+        "record_date": "2018-03-26",
+        "ex_date": "2018-03-27",
+        "pay_date": "2018-03-27",
+        "div_listdate": null,
+        "cash_div_tax": "2.317",
+        "stk_div": "0.0",
+        "source_row_id": "6b20c8feb901873fcc1121d7f1fb0f90bc10746943339fa021be01cfe97b77c9"
+      }
+    ],
+    "review": {
+      "candidate_id": "000550.SZ/2017-09-30/2018-03-26",
+      "source_digest": "35cd14221306ac78683221ea918d0d097010e3ec751536a872988aefdef7eaa8",
+      "related_sources": {
+        "000550.SZ/2018-01-16/2018-03-26": "4c98b3af7a45ff044b77806274517d27132f7bb4763b89761529cb6d57d4c7de"
+      },
+      "action_id": "cninfo:1204488117:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2018-03-26",
+      "ex_date": "2018-03-27",
+      "pay_date": "2018-03-27",
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2018-03-20",
+          "cash_per_share": "2.317",
+          "shares_per_share": "0",
+          "reference_cash_per_share": "2.317",
+          "reference_shares_per_share": "0"
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2018-03-20/1204488117.PDF#sha256=5900a39998a95c39d34f549bb62adca2f0b37af7ec60911b7faae8dd55944d5a"
+      ],
+      "reason": "p1 one special dividend RMB 23.17 per 10 shares on all capital; p2 A-share registration/payment dates and unchanged capital; both source reporting periods identify this one plan"
+    }
   }
 ]

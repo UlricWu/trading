@@ -494,8 +494,20 @@ class Access:
             if row.symbol != resolution.symbol or row.record_date != day or resolution.record_date.isoformat() != day:
                 raise ValueError(f"corporate-action identity does not match partition: {day}")
         ids = [item.candidate_id for item in resolutions]
-        actions = [item.review.action_id for item in resolutions if item.review is not None]
-        if len(set(ids)) != len(ids) or len(set(actions)) != len(actions):
+        if len(set(ids)) != len(ids):
+            raise ValueError(f"corporate-action identities must be unique: {day}")
+        by_candidate = {item.candidate_id: item for item in resolutions}
+        for item in resolutions:
+            if item.review is None:
+                continue
+            review = item.review
+            bindings = {review.candidate_id: review.source_digest, **review.related_sources}
+            for candidate in bindings:
+                related = by_candidate.get(candidate)
+                if related is None or related.review != review or related.symbol != item.symbol:
+                    raise ValueError(f"corporate-action source association is incomplete or inconsistent: {day}")
+        actions = {item.review.action_id: item.review for item in resolutions if item.review is not None}
+        if any(item.review is not None and actions[item.review.action_id] != item.review for item in resolutions):
             raise ValueError(f"corporate-action identities must be unique: {day}")
         return resolutions
 

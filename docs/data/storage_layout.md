@@ -131,9 +131,17 @@ labels/<label_set>/<version>/trade_date=<date>/meta.json
 已有派生分区需要同步重建，不能通过另开版本目录绕过，也不增加多版本读取或回退。
 
 `dividend/v1` 为保留来源公告与原始行摘要的分配记录；`corporate_actions/v1` 为同登记日的
-解析结果。公告核验输入使用 `raw/announcements/corporate_action_reviews/trade_date=<date>/reviews.json`
-及同目录 Meta；核验内容、来源摘要与多输入 lineage 由[数据源 owner](source_contract.md#dividend)
-定义。它们继续使用上述单对象路径与原子发布；重建不改写已入库 Tushare raw。
+解析结果。公开公告和核验使用下列 raw 对象，均按来源候选的股权登记日分区；公告查询
+范围单独存于集合中，不把自然日公告误标成登记日披露：
+
+- `raw/cninfo/corporate_action_announcements/trade_date=<date>/announcements.json` 及 Meta；
+  同目录保存 `<announcement_id>.pdf`、下载回执和原始查询请求/响应，集合保存各自摘要。
+- `raw/announcements/corporate_action_review_inputs/trade_date=<date>/reviews.json` 及 Meta；
+  显式复核输入以同目录 `collection.sha256` 绑定所核查的公告集合。
+- `raw/announcements/corporate_action_reviews/trade_date=<date>/reviews.json` 及 Meta；
+  自动提取流程另保存 `extraction.json`，绑定精确输入、生成代码、核验输出及未解决原因。
+
+核验内容、来源摘要与多输入 lineage 由[数据源 owner](source_contract.md#dividend)定义。它们继续使用上述单对象路径与原子发布；重建不改写已入库 Tushare raw。
 需要留存被替换的派生对象时，将其与精确输入、源码一同归档为验证证据，不作为另一正式版本供运行时读取。
 
 `trade_calendar` 不使用单日 processed 分区，固定为：

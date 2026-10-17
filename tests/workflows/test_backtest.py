@@ -2145,6 +2145,7 @@ def test_source_symbols_must_cover_initial_holdings_before_replay(
 @pytest.mark.parametrize("case_index,quantity,cash,added", [
     (0, 100, "24.7", 100), (1, 100, "31.58", 0), (2, 100, "140", 0),
     (3, 100, "0", 0), (4, 10_000_000, "2814904", 3_992_772),
+    (5, 100, "231.7", 0),
 ])
 def test_verified_real_announcements_drive_one_account_event_and_separate_reference_prices(
     tmp_path: Path, backtest_payload: Callable[[str], dict[str, object]], frequency: str,
@@ -2203,7 +2204,7 @@ def test_verified_real_announcements_drive_one_account_event_and_separate_refere
     assert metrics.corporate_actions.registered_count == (0 if case_index == 3 else 1)
     assert not metrics.data_quality.diagnostic_only
     facts = json.loads((pm.experiment_dir(experiment_name="announcement") / "corporate-actions.json").read_text())
-    assert len(facts["source_resolutions"]) == 1
+    assert len(facts["source_resolutions"]) == 1 + len(review.related_sources)
     records = facts["records"]
     assert sum(row["event"] == "cash_paid" for row in records) == (0 if case_index == 3 else 1)
     equity = pq.read_table(pm.experiment_dir(experiment_name="announcement") / "equity.parquet").to_pylist()
