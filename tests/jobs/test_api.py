@@ -70,6 +70,24 @@ def test_backtest_post_accepts_each_modes_actual_inputs(
     assert runtime.submitted[0].mode is mode
 
 
+@pytest.mark.parametrize("selection", [{}, {"symbols": []}])
+def test_backtest_post_accepts_compact_full_market_selection(
+    backtest_payload: Callable[[str], dict[str, object]], selection: dict[str, object],
+) -> None:
+    runtime = _StubRuntime()
+    payload = backtest_payload("execution_eval")
+    payload["execution"]["market_source"].pop("symbols")
+    payload["execution"]["market_source"].update(selection)
+
+    response = create_app(cast(JobRuntime, runtime)).test_client().post("/jobs", json=payload)
+
+    assert response.status_code == 201
+    assert len(runtime.submitted) == 1
+    assert runtime.submitted[0].execution.market_source.symbols == ()
+    assert runtime.submitted[0].execution.quantity_rules.default.buy_min_qty == 100
+    assert runtime.submitted[0].execution.quantity_rules.overrides == {}
+
+
 @pytest.mark.parametrize("input_kind,field", [
     ("missing", "execution.market_source"), ("null", "execution.market_source"),
     ("market_ref", "execution.market_ref"), ("output_ref", "execution.market_source.output_ref"),

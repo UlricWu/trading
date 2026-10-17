@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictInt, model_validator
 
 from src.data_system.normalize.level2_security import SECURITY_TYPE_RANGES, SecurityType
 from src.trading.orders.constraints import QuantityRules, QuoteRule
+from src.trading.portfolio.corporate_actions import DistributionEntitlement
 from src.utils.datetime_utils import DateTimeUtils
 
 NonnegativeQuantity = Annotated[int, Field(strict=True, ge=0)]
@@ -171,6 +172,7 @@ class InitialAccount(BaseModel):
     sellable: dict[str, NonnegativeQuantity]
     average_cost: dict[str, NonnegativeMoney]
     peak_equity: float = Field(ge=0, allow_inf_nan=False, strict=True)
+    distribution_entitlements: tuple[DistributionEntitlement, ...] = ()
 
     @model_validator(mode="after")
     def _validate_snapshot(self) -> Self:
@@ -179,6 +181,30 @@ class InitialAccount(BaseModel):
             raise ValueError("positions, sellable and average_cost must cover the same symbols")
         if any(self.sellable[symbol] > qty for symbol, qty in self.positions.items()):
             raise ValueError("sellable must not exceed positions")
+        ids = [item.distribution.action_id for item in self.distribution_entitlements]
+        if len(ids) != len(set(ids)):
+            raise ValueError("initial distribution entitlements must have unique action_id")
+        for item in self.distribution_entitlements:
+            action = item.distribution
+            if max(action.record_ts_us, action.announced_ts_us) > self.ts_us:
+                raise ValueError("initial entitlement cannot precede its registration or current terms")
+            if item.recognition_issue is not None and action.ex_ts_us > self.ts_us:
+                raise ValueError("initial recognition issue cannot precede the ex date")
+            if item.recognized != (action.ex_ts_us <= self.ts_us and item.recognition_issue is None):
+                raise ValueError("initial entitlement recognition must match the snapshot time")
+            if item.recognition_issue is not None:
+                continue
+            if action.pay_ts_us is not None and item.cash_paid != (action.pay_ts_us <= self.ts_us):
+                raise ValueError("initial dividend payment must match the snapshot time")
+            if action.shares_available_ts_us is not None and item.shares_released != (action.shares_available_ts_us <= self.ts_us):
+                raise ValueError("initial distributed-share release must match the snapshot time")
+        locked: dict[str, int] = {}
+        for item in self.distribution_entitlements:
+            if item.recognized and not item.shares_released:
+                symbol = item.distribution.symbol
+                locked[symbol] = locked.get(symbol, 0) + item.shares_qty
+        if any(qty > self.positions.get(symbol, 0) - self.sellable.get(symbol, 0) for symbol, qty in locked.items()):
+            raise ValueError("initial sellable must exclude all unlisted distributed shares")
         return self
 
 
@@ -239,7 +265,7 @@ class ReplayMarketSourceConfig(BaseModel):
     frequency: Literal["daily", "minute"]
     start: str
     end: str
-    symbols: tuple[str, ...] = Field(min_length=1)
+    symbols: tuple[str, ...] = ()
 
     @model_validator(mode="after")
     def _validate_source(self) -> Self:
@@ -257,6 +283,18 @@ class ReplayMarketSourceConfig(BaseModel):
         return self
 
 
+class QuantityRulesConfig(BaseModel):
+    """Declare common execution rules and complete replacements for selected symbols.
+
+    Example:
+        rules = QuantityRulesConfig(default=common_rule, overrides={"688001": star_rule})
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    default: QuantityRules
+    overrides: dict[str, QuantityRules] = Field(default_factory=dict)
+
+
 class FakeExecutionConfig(BaseModel):
     """Select local market data, quantity rules and an explicit simulation end.
 
@@ -271,7 +309,7 @@ class FakeExecutionConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     market_source: ReplayMarketSourceConfig
     end_ts_us: int = Field(strict=True)
-    quantity_rules: dict[str, QuantityRules]
+    quantity_rules: QuantityRulesConfig
     fees: FeeConfig
     annual_factor: float = Field(gt=0, allow_inf_nan=False, strict=True)
     fill: FillConfig

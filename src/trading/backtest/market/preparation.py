@@ -45,7 +45,7 @@ def confirmed_suspended_symbols(
 
 def _daily_close_mark(
     bars: pd.DataFrame, session: ReplaySession, suspended_symbols: frozenset[str],
-    missing_symbols: Collection[str],
+    missing_symbols: Collection[str], unknown_listing_symbols: Collection[str],
 ) -> MarkObservation:
     return MarkObservation(
         ts_us=session.close_ts_us, trade_date=session.trade_date, kind="daily_close",
@@ -54,7 +54,9 @@ def _daily_close_mark(
         suspended_symbols=suspended_symbols,
         data_issues=tuple(MarketDataIssue(
             ts_us=session.close_ts_us, trade_date=session.trade_date, symbol=symbol, reason="missing_daily_close",
-        ) for symbol in sorted(missing_symbols)),
+        ) for symbol in sorted(missing_symbols)) + tuple(MarketDataIssue(
+            ts_us=session.close_ts_us, trade_date=session.trade_date, symbol=symbol, reason="unknown_listing_status",
+        ) for symbol in sorted(unknown_listing_symbols)),
     )
 
 
@@ -62,6 +64,7 @@ def daily_replay_facts(
     *, bars: pd.DataFrame, session: ReplaySession, source_version: str,
     suspended_symbols: frozenset[str] = frozenset(),
     missing_symbols: Collection[str] = (),
+    unknown_listing_symbols: Collection[str] = (),
 ) -> ReplayFacts:
     """Use raw close and exact lot-to-share conversion for one complete account day.
 
@@ -71,7 +74,7 @@ def daily_replay_facts(
     Example:
         facts = daily_replay_facts(bars=bars, session=session, source_version="v1")
     """
-    close_mark = _daily_close_mark(bars, session, suspended_symbols, missing_symbols)
+    close_mark = _daily_close_mark(bars, session, suspended_symbols, missing_symbols, unknown_listing_symbols)
     bar_time = BarTime(
         unit="trading_day", size=1, trade_date=session.trade_date,
         start_ts_us=session.start_ts_us, end_ts_us=session.close_ts_us,
@@ -96,6 +99,7 @@ def minute_replay_facts(
     symbols: Sequence[str], source_version: str,
     suspended_symbols: frozenset[str] = frozenset(),
     missing_symbols: Collection[str] = (),
+    unknown_listing_symbols: Collection[str] = (),
 ) -> ReplayFacts:
     """Map sparse continuous-trade minutes to VWAP fills, close marks and daily close.
 
@@ -140,4 +144,6 @@ def minute_replay_facts(
         prices_by_time.setdefault(end_us, {})[symbol] = Decimal(str(row["close"]))
     marks = tuple(MarkObservation(ts_us=ts_us, trade_date=session.trade_date, prices=prices, kind="mark")
                   for ts_us, prices in prices_by_time.items())
-    return ReplayFacts((*marks, _daily_close_mark(daily_bars, session, suspended_symbols, missing_symbols)), tuple(observations))
+    return ReplayFacts((*marks, _daily_close_mark(
+        daily_bars, session, suspended_symbols, missing_symbols, unknown_listing_symbols,
+    )), tuple(observations))

@@ -395,6 +395,7 @@ def backtest(
         submission = create_backtest_submission(mode=mode, **fields)
     except InvalidJobRequest as exc:
         raise typer.BadParameter(f"{exc.field}: {exc}", param_hint="--input-json") from exc
+
     app_config = AppConfig.load()
     pm = PathManager(app_config.storage_root)
     today = DateTimeUtils.today()
@@ -408,6 +409,7 @@ def backtest(
     summary = "\n".join(f"{label} {key}={json.dumps(metrics.parameters[key], ensure_ascii=False)}"
                         for key, label in labels if key in metrics.parameters)
     logs.info(f"▶️ 回测任务; experiment={name}\n{summary}")
+
     run_backtest(submission=submission, path_manager=pm, experiment_name=name, metrics=metrics)
 
 

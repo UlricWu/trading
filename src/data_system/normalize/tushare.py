@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from hashlib import sha256
+import json
 from pathlib import Path
 from types import MappingProxyType
 
@@ -112,10 +114,28 @@ def normalize_tushare(
 
     if (
         len(normalized_frame) == 0
-        and target_name in ("stock_basic", "stock_st", "suspend_d")
+        and target_name in ("stock_basic", "stock_st", "suspend_d", "dividend")
         and "symbol" not in normalized_frame.columns
     ):
         normalized_frame["symbol"] = pd.Series(dtype="string")
+
+    if target_name == "dividend":
+        columns = ("ts_code", "symbol", "end_date", "ann_date", "div_proc", "imp_ann_date", "record_date", "ex_date",
+                   "pay_date", "div_listdate", "cash_div_tax", "stk_div", "source_row_id")
+        if normalized_frame.empty:
+            normalized_frame = pd.DataFrame({column: pd.Series(dtype="string") for column in columns})
+        else:
+            source_rows = json.loads(raw_frame.to_json(orient="records", double_precision=15))
+            normalized_frame["source_row_id"] = [sha256(json.dumps(row, sort_keys=True,
+                separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode()).hexdigest() for row in source_rows]
+            table_ops.require_columns(normalized_frame, columns, who="dividend")
+            normalized_frame = normalized_frame.loc[:, columns].copy()
+            normalized_frame["div_proc"] = normalized_frame["div_proc"].str.strip()
+            for column in ("end_date", "ann_date", "imp_ann_date", "record_date", "ex_date", "pay_date", "div_listdate"):
+                normalized_frame[column] = normalized_frame[column].map(
+                    lambda value: None if pd.isna(value) else DateTimeUtils.normalize_source_date(value, field_name=column))
+            for column in ("cash_div_tax", "stk_div"):
+                normalized_frame[column] = normalized_frame[column].map(lambda value: None if pd.isna(value) else str(value))
 
     if target_name == "stock_basic":
         if len(normalized_frame) == 0:

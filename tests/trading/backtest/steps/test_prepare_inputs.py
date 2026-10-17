@@ -31,7 +31,7 @@ def market_scenario() -> tuple[FakeExecutionConfig, InitialAccount, Mock, Replay
     config = FakeExecutionConfig(
         market_source={'frequency': 'minute', 'start': '2026-07-03', 'end': '2026-07-03',
                        'symbols': ['600000', '000001']}, end_ts_us=120_000_000,
-        quantity_rules={symbol: QuantityRules(1, 1, 1, 1, 1, Decimal('0.01'), True) for symbol in ('600000', '000001')},
+        quantity_rules={"default": QuantityRules(1, 1, 1, 1, 1, Decimal('0.01'), True)},
         fees=FeeConfig(commission_rate=0, stamp_tax_rate=0, transfer_rate=0, min_commission=0),
         annual_factor=252, fill=LimitPriceFillConfig(type='limit_price', slippage_bp=0),
         risk_check_ts_us=(1, 120_000_000),
@@ -78,14 +78,15 @@ def test_prepare_inputs_returns_facts_and_accepts_risk_checks_at_both_simulation
 
 
 @pytest.mark.parametrize("end_ts_us", [120_000_000, 180_000_000])
+@pytest.mark.parametrize("reason", ["missing_daily_close", "unknown_listing_status"])
 def test_quote_execution_cannot_bypass_a_gap_within_the_replay_horizon(
     market_scenario: tuple[FakeExecutionConfig, InitialAccount, Mock, ReplayMarketInput],
-    tmp_path: Path, end_ts_us: int,
+    tmp_path: Path, end_ts_us: int, reason: str,
 ) -> None:
     config, initial, access, source = market_scenario
     config = config.model_copy(update={"fill": QuotedFillConfig(type="quoted"), "end_ts_us": end_ts_us})
     issue = MarketDataIssue(ts_us=180_000_000, trade_date="2026-07-03",
-                            symbol="600000", reason="missing_daily_close")
+                            symbol="600000", reason=reason)
     close = MarkObservation(ts_us=issue.ts_us, trade_date=issue.trade_date, prices={},
                             kind="daily_close", data_issues=(issue,))
     source = source.model_copy(update={"marks": (*source.marks, close)})
@@ -126,15 +127,13 @@ def test_prepare_inputs_rejects_risk_checks_outside_coverage(
         _prepare_market(config=config, initial=initial, access=access, market=market, tmp_path=tmp_path)
 
 
-@pytest.mark.parametrize('symbol', ['600000', '000001'])
-def test_prepare_inputs_requires_rules_for_observed_and_held_symbols(
-    market_scenario: tuple[FakeExecutionConfig, InitialAccount, Mock, ReplayMarketInput], tmp_path: Path, symbol: str,
+def test_prepare_inputs_accepts_full_market_with_initial_holdings(
+    market_scenario: tuple[FakeExecutionConfig, InitialAccount, Mock, ReplayMarketInput], tmp_path: Path,
 ) -> None:
     config, initial, access, market = market_scenario
-    config = config.model_copy(update={'quantity_rules': {
-        key: rule for key, rule in config.quantity_rules.items() if key != symbol}})
-    with pytest.raises(ValueError, match='quantity rules must cover all observed and held symbols'):
-        _prepare_market(config=config, initial=initial, access=access, market=market, tmp_path=tmp_path)
+    config = config.model_copy(update={'market_source': config.market_source.model_copy(update={'symbols': ()})})
+
+    assert _prepare_market(config=config, initial=initial, access=access, market=market, tmp_path=tmp_path) is market
 
 
 @pytest.mark.parametrize('fill', ['limit_price', 'quoted'])

@@ -27,7 +27,7 @@ def test_publish_omits_unrun_evaluations_but_preserves_undefined_values_and_rend
 
     saved = json.loads((output_dir / 'metrics.json').read_text())
     assert saved.keys() == {'mode', 'parameters', 'not_run', 'prediction_refs', 'applied_risk', 'execution_eval', 'data_quality'}
-    assert saved['data_quality'] == {'diagnostic_only': False, 'issues': []}
+    assert saved['data_quality'] == {'diagnostic_only': False, 'issues': [], 'corporate_action_issues': []}
     assert saved['applied_risk'] is None
     assert saved['execution_eval']['order_completion_rate'] is None
     assert saved['parameters'] == metrics.parameters and saved['not_run'] == metrics.not_run

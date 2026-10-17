@@ -28,6 +28,27 @@ class _TushareClient:
         return self._response
 
 
+@pytest.mark.parametrize("count", [0, 1, 2000])
+def test_dividends_query_registration_date_and_reject_possible_truncation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, count: int,
+) -> None:
+    response = pd.DataFrame({"ts_code": ["600000.SH"] * count})
+    client = _TushareClient(response)
+    monkeypatch.setattr(tushare_module.ts, "set_token", lambda token: None)
+    monkeypatch.setattr(tushare_module.ts, "pro_api", lambda: client)
+    app_config = SimpleNamespace(secret=SimpleNamespace(tushare_token="token", tushare_gateway=None))
+    pm = PathManager(tmp_path)
+    broker = TushareBroker(app_cfg=cast(AppConfig, app_config))
+    if count == 2000:
+        with pytest.raises(ValueError, match="completeness is unconfirmed"):
+            broker.fetch(source_name="dividend", raw_object="dividend", trade_date="2026-09-01", pm=pm)
+        assert not list(tmp_path.rglob("*.parquet"))
+    else:
+        path = broker.fetch(source_name="dividend", raw_object="dividend", trade_date="2026-09-01", pm=pm)
+        assert pq.ParquetFile(path).read().num_rows == count
+    assert client.queries == [("dividend", {"record_date": "20260901"})]
+
+
 def test_tushare_active_manifest_is_the_single_execution_source_list() -> None:
     assert TushareBroker.active_source_names() == (
         "trade_calendar",
@@ -38,6 +59,7 @@ def test_tushare_active_manifest_is_the_single_execution_source_list() -> None:
         "stock_st",
         "stk_limit",
         "suspend_d",
+        "dividend",
         "cyq_perf",
         "margin",
         "margin_detail",

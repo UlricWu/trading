@@ -10,6 +10,7 @@ from src.config.backtest_config import FakeExecutionConfig, FixedHoldingStrategy
 from src.trading.backtest.clock import ReplayClock
 from src.trading.backtest.commands import OrderCommandSchedule
 from src.trading.backtest.context import BacktestContext, BacktestInputs, BacktestState
+from src.trading.backtest.corporate_actions import CorporateActionIssue
 from src.trading.backtest.execution.fill_models import ImmediateQuoteFillModel, LimitPriceFillModel
 from src.trading.backtest.execution.models.cost_a_share import AShareCostModel
 from src.trading.backtest.execution.models.slippage_fixed_bp import FixedBPSlippageModel
@@ -17,6 +18,7 @@ from src.trading.backtest.execution.settlement import SettlementEngine
 from src.trading.backtest.execution.simulator import AccountExecutionSimulator
 from src.trading.backtest.market.replay import ReplayMarket, ReplayMarketInput
 from src.trading.core.equity import EquityCurve
+from src.trading.core.events import OrderIntent
 from src.trading.orders.constraints import QuantityRules
 from src.trading.portfolio.constructors.base import PortfolioConstructor
 from src.trading.portfolio.constructors.factory import build_portfolio_constructor
@@ -50,19 +52,27 @@ class InitializeAccountStep:
         inputs = cast(BacktestInputs, context.inputs)
         initial = self.initial_account
         config = self.execution
+        decisions = inputs.decisions
+        symbols = {o.symbol for o in inputs.market.observations} | initial.positions.keys()
+        symbols.update(symbol for mark in inputs.market.marks for symbol in mark.prices)
+        if isinstance(decisions, OrderCommandSchedule):
+            symbols.update(command.symbol for ts_us in decisions.timestamps() for command in decisions.at(ts_us)
+                           if isinstance(command, OrderIntent))
+        rules = {symbol: config.quantity_rules.overrides.get(symbol, config.quantity_rules.default)
+                 for symbol in sorted(symbols)}
         state = _create_account_state(initial)
         market = ReplayMarket(inputs.market, initial_marks=context.initial_marks)
-        executor = _create_execution_simulator(state=state, config=config, strategy=self.strategy)
-        decisions = inputs.decisions
+        executor = _create_execution_simulator(state=state, config=config, strategy=self.strategy, rules=rules)
         decision_times = decisions.timestamps() if isinstance(decisions, OrderCommandSchedule) else tuple(decisions)
         clock = ReplayClock.from_iterable(
-            (*inputs.market.timestamps(), *decision_times, *config.risk_check_ts_us, initial.ts_us, config.end_ts_us),
+            (*inputs.market.timestamps(), *decision_times, *config.risk_check_ts_us,
+             *context.corporate_actions.timestamps(context.sessions), initial.ts_us, config.end_ts_us),
             start_us=initial.ts_us, end_us=config.end_ts_us,
         )
         constructor = None
         if self.strategy is not None:
             constructor = _initialize_strategy(strategy=self.strategy, initial=initial,
-                market=inputs.market, quantity_rules=config.quantity_rules, clock=clock)
+                market=inputs.market, quantity_rules=rules, clock=clock)
         else:
             context.metrics.not_run.update(signal="frozen_commands", strategy="frozen_commands")
         context.metrics.applied_risk = self.risk
@@ -81,17 +91,34 @@ class InitializeAccountStep:
 
 
 def _create_account_state(initial: InitialAccount) -> BacktestState:
+    entitlements = {item.distribution.action_id: item for item in initial.distribution_entitlements}
+    locked: dict[str, int] = {}
+    for item in entitlements.values():
+        if item.recognized and not item.shares_released:
+            symbol = item.distribution.symbol
+            locked[symbol] = locked.get(symbol, 0) + item.shares_qty
     account = PortfolioState(
         initial_cash=initial.cash, cash=initial.cash,
         positions=initial.positions, avg_cost=initial.average_cost,
-        buy_qty_today={symbol: qty - initial.sellable[symbol] for symbol, qty in initial.positions.items()},
+        buy_qty_today={symbol: qty - initial.sellable[symbol] - locked.get(symbol, 0)
+                       for symbol, qty in initial.positions.items()},
         current_day=initial.trade_date,
+        distribution_entitlements=entitlements,
     )
-    return BacktestState(account, equity_curve=EquityCurve(starting_peak_equity=initial.peak_equity))
+    state = BacktestState(account, equity_curve=EquityCurve(starting_peak_equity=initial.peak_equity),
+        distribution_terms={key: item.distribution for key, item in entitlements.items()})
+    for item in entitlements.values():
+        if item.recognition_issue is not None:
+            action = item.distribution
+            issue = CorporateActionIssue(ts_us=initial.ts_us, symbol=action.symbol,
+                action_id=action.action_id, reason=item.recognition_issue, source_ref=action.source_ref)
+            state.corporate_action_issues[(issue.source_ref, issue.action_id, issue.reason)] = issue
+    return state
 
 
 def _create_execution_simulator(
     *, state: BacktestState, config: FakeExecutionConfig, strategy: StrategyConfig | None,
+    rules: Mapping[str, QuantityRules],
 ) -> AccountExecutionSimulator:
     fill_model = (ImmediateQuoteFillModel() if config.fill.type == "quoted"
                   else LimitPriceFillModel(FixedBPSlippageModel(config.fill.slippage_bp)))
@@ -102,7 +129,7 @@ def _create_execution_simulator(
             commission_rate=fees.commission_rate, stamp_tax_rate=fees.stamp_tax_rate,
             transfer_rate=fees.transfer_rate, min_commission=fees.min_commission,
         )),
-        fill_model=fill_model, rules=config.quantity_rules,
+        fill_model=fill_model, rules=rules,
         quote_rule=strategy.quote if strategy is not None else None,
     )
 

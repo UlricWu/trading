@@ -54,6 +54,23 @@ def test_old_price_does_not_hide_an_unexplained_missing_close(tick_context: Back
         ValueAccountStep().run(context)
 
 
+def test_unknown_listing_status_does_not_authorize_held_price_carry(tick_context: BacktestContext) -> None:
+    context = tick_context
+    session = context.inputs.market.sessions[0]
+    issue = MarketDataIssue(ts_us=session.close_ts_us, trade_date=session.trade_date,
+                            symbol="A", reason="unknown_listing_status")
+    mark = MarkObservation(ts_us=issue.ts_us, trade_date=issue.trade_date, prices={},
+                           kind="daily_close", data_issues=(issue,))
+    source = context.inputs.market.model_copy(update={"marks": (mark,), "observations": ()})
+    seed = MarkObservation(ts_us=-1, trade_date="2026-07-02", prices={"A": "9"}, kind="daily_close")
+    context.market = ReplayMarket(source, initial_marks=(seed,))
+    context.market.on_time(session.close_ts_us)
+    context.tick = TickState(session.close_ts_us, session)
+    context.state.portfolio_state.positions = {"A": 100}
+    with pytest.raises(ValueError, match="declared raw daily-close marks"):
+        ValueAccountStep().run(context)
+
+
 @pytest.mark.parametrize("has_price", [True, False])
 def test_declared_gap_carries_visible_price_but_never_values_an_unpriced_holding(
     tick_context: BacktestContext, has_price: bool,

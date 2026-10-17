@@ -5,8 +5,9 @@ from src.trading.backtest.market.replay import MarketDataIssue
 from src.trading.backtest.reporting.metrics import BacktestMetrics, MarketDataQuality
 
 
-def test_diagnostic_status_and_issues_survive_metrics_serialization() -> None:
-    issue = MarketDataIssue(ts_us=1, trade_date="2026-09-15", symbol="601238", reason="missing_daily_close")
+@pytest.mark.parametrize("reason", ["missing_daily_close", "unknown_listing_status"])
+def test_diagnostic_status_and_issues_survive_metrics_serialization(reason: str) -> None:
+    issue = MarketDataIssue(ts_us=1, trade_date="2026-09-15", symbol="601238", reason=reason)
     metrics = BacktestMetrics(mode="execution_eval", parameters={}, not_run={},
                               data_quality=MarketDataQuality(diagnostic_only=True, issues=(issue,)))
     restored = BacktestMetrics.model_validate_json(metrics.model_dump_json())

@@ -117,7 +117,8 @@ class AccountExecutionSimulator:
                 if reserved_cash > available:
                     reason = "insufficient_cash"
             else:
-                sellable = self.portfolio.t1_sellable(order.symbol) if rule.enforce_t1 else self.portfolio.positions.get(order.symbol, 0)
+                sellable = (self.portfolio.t1_sellable(order.symbol) if rule.enforce_t1 else
+                            self.portfolio.positions.get(order.symbol, 0) - self.portfolio.unlisted_shares(order.symbol))
                 reserved = sum(item.reserved_sell_qty for item in self.pending_orders.values()
                                if item.intent.symbol == order.symbol)
                 if order.qty > sellable - reserved:
@@ -183,7 +184,8 @@ class AccountExecutionSimulator:
                 qty = affordable_quantity(order=order, price=order.limit_price, maximum=qty, step=step,
                     cash=cash, settlement=self.settlement, ledger=self.ledger)
             else:
-                sellable = self.portfolio.t1_sellable(order.symbol) if rule.enforce_t1 else self.portfolio.positions.get(order.symbol, 0)
+                sellable = (self.portfolio.t1_sellable(order.symbol) if rule.enforce_t1 else
+                            self.portfolio.positions.get(order.symbol, 0) - self.portfolio.unlisted_shares(order.symbol))
                 reserved = sum(item.reserved_sell_qty for item in self.pending_orders.values()
                                if item.intent.symbol == order.symbol)
                 qty = min(qty, sellable - reserved) // step * step
@@ -287,7 +289,8 @@ class AccountExecutionSimulator:
                     maximum=quantity, step=rule.fill_step_qty, cash=budget,
                     settlement=self.settlement, ledger=self.ledger)
             else:
-                sellable = self.portfolio.t1_sellable(order.symbol) if rule.enforce_t1 else self.portfolio.positions.get(order.symbol, 0)
+                sellable = (self.portfolio.t1_sellable(order.symbol) if rule.enforce_t1 else
+                            self.portfolio.positions.get(order.symbol, 0) - self.portfolio.unlisted_shares(order.symbol))
                 reserved_elsewhere = sum(other.reserved_sell_qty
                     for order_id, other in self.pending_orders.items()
                     if order_id != order.order_id and other.intent.symbol == order.symbol)

@@ -29,7 +29,19 @@ class ReportingBundle:
         """
         ref = self.output_dir / "metrics.json"
         metrics = BacktestMetrics.model_validate_json(ref.read_bytes())
+        missing_closes = sum(issue.reason == "missing_daily_close" for issue in metrics.data_quality.issues)
+        unknown_listings = sum(issue.reason == "unknown_listing_status" for issue in metrics.data_quality.issues)
+        corporate_issues = len(metrics.data_quality.corporate_action_issues)
+        quality_summary = (f"{missing_closes} 个证券日缺少收盘价；{unknown_listings} 个证券日上市状态未确认；"
+                           f"{corporate_issues} 项公司行动数据或处理未解决；"
+                           "收益与风险指标尚未验证，需核实输入后重跑。")
         sections: list[tuple[str, object]] = []
+        if metrics.corporate_actions is not None:
+            sections.append(("公司行动：税前分红", metrics.corporate_actions.model_dump(mode="json")))
+            sections.append(("公司行动覆盖", "分红按税前记账，未扣红利税；支付日收盘后现金才可用。"
+                             "普通流通股账户仅消费有公告依据的分配条款及已提供的补充公告；"
+                             "Tushare 快照中未核实的受益人、版本和除权参数不会自动生成权益。"
+                             "现金选择权、换股和退市清偿尚未自动执行；普通卖单不代表行权。"))
         execution_config = metrics.parameters.get("execution", {})
         if execution_config.get("fill", {}).get("type") == "quoted":
             sections.append(("成交假设", "合法接纳的订单在生效时按申报价全额成交，保留资金、数量、费用和 T+1 约束。"
@@ -79,10 +91,12 @@ class ReportingBundle:
             body += ('<p>交易明细：<a href="orders.json">委托</a> · '
                      '<a href="execution.parquet">成交与费用</a> · '
                      '<a href="equity.parquet">权益曲线</a> · '
+                     '<a href="corporate-actions.json">公司行动与权益</a> · '
                      '<a href="valuation-marks.parquet">持仓估值依据</a></p>')
         if metrics.data_quality.diagnostic_only:
             issues = json.dumps(metrics.data_quality.model_dump(mode="json"), ensure_ascii=False, indent=2)
-            body = ('<section><h2>仅供诊断</h2><p>存在日线缺失且停复牌状态待核实的证券。'
+            body = (f'<section><h2>仅供诊断</h2><p>{quality_summary}'
+                    '上市状态未确认不等于已确认未上市，也不计入收盘价缺口。'
                     '持仓可能沿用历史价格；收益与风险指标尚未验证，暂不成交也不保证收益更保守。'
                     '需核实并修复输入后重跑，后续恢复行情不会消除此前异常对账户路径的影响。</p>'
                     f'<pre>{escape(issues)}</pre></section>' + body)
@@ -94,8 +108,13 @@ class ReportingBundle:
         output = self.output_dir / "report.html"
         FileSystem.write_bytes_atomic(output, html.encode())
         lines = [f"模式：{metrics.mode.value}"]
+        if metrics.corporate_actions is not None:
+            actions = metrics.corporate_actions
+            lines.append(f"公司行动：登记 {actions.registered_count} 项；税前红利到账 {actions.gross_cash_paid:,.2f} 元；"
+                         f"送转到账 {sum(actions.shares_received.values()):,} 股；未扣红利税。")
+            lines.append("公司行动覆盖：已核实的普通股东分配条款及已提供公告；其他记录仍需核验。")
         if metrics.data_quality.diagnostic_only:
-            lines.append(f"仅供诊断：{len(metrics.data_quality.issues)} 个证券日缺少收盘价；收益与风险指标尚未验证，需修复输入后重跑。")
+            lines.append(f"仅供诊断：{quality_summary}")
         if metrics.signal_eval is not None:
             signal = metrics.signal_eval
             value = "无值" if signal.mean_ic is None else f"{signal.mean_ic:.6f}"

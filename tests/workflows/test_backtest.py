@@ -20,6 +20,7 @@ from pytest_mock import MockerFixture
 from pydantic import TypeAdapter
 
 from src import logs
+from src.data_system.corporate_actions import CorporateActionReview, CorporateActionResolution
 from src.access import Access, meta
 from src.data_system.builders.level2_stock_trade_1m import STOCK_TRADE_1M_SCHEMA
 from src.config.backtest_config import BacktestMode
@@ -74,6 +75,8 @@ def delivery(
     pm = PathManager(tmp_path)
     days = ("2026-07-01", "2026-07-02", "2026-07-03", "2026-07-06", "2026-07-07")
     access = Mock(spec=Access)
+    access.corporate_actions.return_value = ()
+    access.corporate_action_notices.return_value = None
     access.trade_dates.side_effect = lambda *, start_date, end_date: [
         day for day in days if start_date <= day <= end_date
     ]
@@ -186,7 +189,7 @@ def scenario(
                             "sellable": {}, "average_cost": {}, "peak_equity": 20000},
         "execution": {"market_source": {"frequency": "minute", "start": day, "end": day,
                                         "symbols": list(price)}, "end_ts_us": _ts(day, 15),
-                      "quantity_rules": {symbol: rule for symbol in price},
+                      "quantity_rules": {"default": rule},
                       "fees": {"commission_rate": 0, "stamp_tax_rate": 0, "transfer_rate": 0, "min_commission": 0},
                       "annual_factor": 252, "fill": {"type": "limit_price", "slippage_bp": 0}, "risk_check_ts_us": [ts + 3 * US_PER_MINUTE]},
     }
@@ -789,7 +792,8 @@ def test_label_read_failure_occurs_after_fact_publication_and_preserves_the_fact
     def read_labels(*, pm: PathManager, label_set: str, version: str,
                     trade_date: str, label_column: str) -> pd.DataFrame:
         saved.update({path.name: path.read_bytes() for path in root.iterdir()})
-        assert saved.keys() == {'execution.parquet', 'equity.parquet', 'valuation-marks.parquet', 'orders.json', 'targets.json', 'risk-cases.json'}
+        assert saved.keys() == {'execution.parquet', 'equity.parquet', 'valuation-marks.parquet', 'orders.json',
+                                'targets.json', 'risk-cases.json', 'corporate-actions.json'}
         assert pq.read_table(root / 'equity.parquet')['ts_us'][-1].as_py() == fields['execution']['end_ts_us']
         raise error
 
@@ -903,11 +907,11 @@ def test_single_account_modes_measure_the_complete_chain_before_success(
                  ['GenerateSignalStep', 'GenerateTargetsStep']
                  + (['ApplyRiskStep'] if mode in ('full_backtest', 'risk_rule_eval') else [])
                  + ['SubmitTargetsStep'])
-    tick_steps = (['UpdateMarketStep', 'AdvanceOrdersStep', 'ValueAccountStep'] + decisions
-                  + ['ValueAccountStep']
+    tick_steps = (['UpdateMarketStep', 'UpdateDistributionTermsStep', 'ApplyDistributionsStep', 'ReleaseDistributedSharesStep', 'ObserveCorporateActionIssuesStep', 'AdvanceOrdersStep', 'ValueAccountStep'] + decisions
+                  + ['RecordEntitlementsStep', 'PayDividendsStep', 'ObserveCorporateActionIssuesStep', 'ValueAccountStep']
                   + (['CompleteRiskObservationStep'] if mode in ('full_backtest', 'risk_rule_eval') else [])
                   + ['ScheduleWakeupsStep'])
-    assert measured == (['PrepareReplaySessionsStep', 'BuildMinuteReplayInputStep', 'PrepareInputsStep', 'PrepareInitialMarksStep', 'InitializeAccountStep'] + tick_steps * tick_count
+    assert measured == (['PrepareReplaySessionsStep', 'PrepareReplaySymbolsStep', 'BuildMinuteReplayInputStep', 'PrepareInputsStep', 'PrepareCorporateActionsStep', 'PrepareInitialMarksStep', 'InitializeAccountStep'] + tick_steps * tick_count
                         + ['FactsPersistStep', 'EvaluateResultsStep', 'PublishResultsStep'])
     assert pm.experiment_backtest_report(experiment_name=name).is_file()
     log = backtest_log.read_text()
@@ -1456,6 +1460,8 @@ def market_sources(tmp_path: Path) -> PathManager:
         dataset_name="trade_calendar", version="v1", calendar_year=2026,
     ).payload_path, calendar)
     for index, day in enumerate(_DAYS):
+        _write_source(pm, pm.processed_object(dataset_name="corporate_actions", version="v1", trade_date=day).payload_path,
+                      pa.table({column: pa.array([], type=pa.string()) for column in ("symbol", "record_date", "resolution")}))
         _write_source(pm, pm.processed_object(dataset_name="suspend_d", version="v1", trade_date=day).payload_path,
                       pa.table({"symbol": pa.array([], type=pa.string())}))
         _write_source(pm, pm.processed_object(dataset_name="daily_bar", version="v1", trade_date=day).payload_path,
@@ -1474,13 +1480,157 @@ def market_sources(tmp_path: Path) -> PathManager:
     return pm
 
 
+def _distribution_case(
+    pm: PathManager, payload_factory: Callable[[str], dict[str, object]], *, frequency: str,
+    cash_per_share: str = "1", shares_per_share: str = "0.5", orders: tuple[OrderIntent, ...] = (),
+    end: int | None = None, initial_account: dict[str, object] | None = None, name: str = "distribution",
+) -> BacktestMetrics:
+    distribution = {"symbol": "600000", "end_date": "2026-06-30", "div_proc": "实施",
+        "imp_ann_date": "2026-07-16", "record_date": _DAYS[0], "ex_date": _DAYS[1],
+        "pay_date": _DAYS[2] if Decimal(cash_per_share) else None,
+        "div_listdate": _DAYS[2] if Decimal(shares_per_share) else None,
+        "cash_div_tax": cash_per_share, "stk_div": shares_per_share}
+    review = CorporateActionReview(candidate_id="600000.SH/2026-06-30/2026-07-17", source_digest="0" * 64,
+        action_id="dividend/600000/2026-06-30/2026-07-17", shareholder_scope="ordinary_shareholder",
+        record_date=_DAYS[0], ex_date=_DAYS[1], pay_date=distribution["pay_date"], div_listdate=distribution["div_listdate"],
+        terms=[dict(published_date="2026-07-16", cash_per_share=cash_per_share, shares_per_share=shares_per_share,
+                    reference_cash_per_share=cash_per_share, reference_shares_per_share=shares_per_share)],
+        evidence_refs=["fixture://ordinary-distribution"], reason="explicit_test_terms")
+    resolution = CorporateActionResolution(candidate_id=review.candidate_id, symbol="600000", record_date=_DAYS[0],
+        source_digest=review.source_digest, source_row_ids=("0" * 64,), status="resolved", reason=review.reason, review=review)
+    _write_source(pm, pm.processed_object(dataset_name="corporate_actions", version="v1", trade_date=_DAYS[0]).payload_path,
+                  pa.Table.from_pylist([dict(symbol="600000", record_date=_DAYS[0], resolution=resolution.model_dump_json())]))
+    ex_price = float((Decimal(10) - Decimal(cash_per_share)) / (1 + Decimal(shares_per_share)))
+    for index, day in enumerate(_DAYS):
+        price = 10.0 if not index else ex_price
+        _write_source(pm, pm.processed_object(dataset_name="daily_bar", version="v1", trade_date=day).payload_path,
+                      pa.table({"symbol": _SYMBOLS, "trade_date": [day] * 2, "close": [10.0, price], "vol": [1000.0] * 2}))
+        minute_path = pm.processed_object(dataset_name="sh_stock_trade_1m", version="v1", trade_date=day).payload_path
+        rows = pq.ParquetFile(minute_path).read().to_pylist()
+        for row in rows:
+            row.update(open=price, high=price, low=price, close=price, notional_sum=row["volume_sum"] * price)
+        _write_source(pm, minute_path, pa.Table.from_pylist(rows, schema=STOCK_TRADE_1M_SCHEMA))
+    order_ref = pm.storage_root / f"{name}-orders.json"
+    order_ref.write_bytes(TypeAdapter(tuple[OrderIntent, ...]).dump_json(orders))
+    fields = payload_factory("execution_eval")
+    fields.update(start=_DAYS[0], end=_DAYS[-1], order_refs=[str(order_ref)])
+    fields["initial_account"] = initial_account or {"ts_us": _ts(_DAYS[0], 15), "trade_date": _DAYS[0],
+        "cash": "0", "positions": {"600000": 200}, "sellable": {"600000": 200},
+        "average_cost": {"600000": "10"}, "peak_equity": 2000}
+    fields["execution"].update(market_source={"frequency": frequency, "start": _DAYS[0], "end": _DAYS[-1], "symbols": _SYMBOLS},
+                              end_ts_us=end or _ts(_DAYS[-1], 15))
+    fields["execution"]["quantity_rules"]["default"].update(enforce_t1=False)
+    fields.pop("kind")
+    submission = create_backtest_submission(**fields)
+    metrics = BacktestMetrics(mode=submission.mode, parameters=submission.model_dump(mode="json"), not_run={})
+    run_backtest(submission=submission, path_manager=pm, experiment_name=name, metrics=metrics)
+    return metrics
+
+
 @pytest.mark.parametrize("frequency", ["daily", "minute"])
+def test_distributions_preserve_nav_and_separate_registration_payment_and_listing(
+    market_sources: PathManager, backtest_payload: Callable[[str], dict[str, object]], frequency: str,
+) -> None:
+    pm = market_sources
+    orders = (
+        OrderIntent(_ts(_DAYS[1], 9, 30), "600000", Side.SELL, 201, 1,
+                    _ts(_DAYS[1], 9, 30), _ts(_DAYS[1], 15), Decimal("1")),
+        OrderIntent(_ts(_DAYS[2], 9, 30), "000001", Side.BUY, 100, 2,
+                    _ts(_DAYS[2], 9, 30), _ts(_DAYS[2], 15), Decimal("1")),
+    )
+    metrics = _distribution_case(pm, backtest_payload, frequency=frequency, orders=orders)
+    assert metrics.final_account.positions == {"600000": 300}
+    assert metrics.final_account.sellable == {"600000": 300}
+    assert metrics.final_account.average_cost["600000"] * 300 == Decimal(2000)
+    assert metrics.final_account.cash == 200
+    assert metrics.final_account.dividend_receivable == 0
+    assert metrics.final_account.distribution_entitlements == ()
+    assert metrics.corporate_actions.gross_cash_paid == 200
+    assert metrics.corporate_actions.shares_received == {"600000": 100}
+    assert not metrics.data_quality.diagnostic_only
+    output = pm.experiment_dir(experiment_name="distribution")
+    equity = pq.read_table(output / "equity.parquet").to_pylist()
+    assert all(row["equity"] == 2000 for row in equity)
+    assert all(row["cash"] == 0 for row in equity[:-1])
+    assert next(row for row in equity if row["ts_us"] == _ts(_DAYS[1], 0))["dividend_receivable"] == 200
+    events = pq.read_table(output / "execution.parquet").to_pylist()
+    assert [(row["order_id"], row["reason"]) for row in events if row["event"] == "ORDER_REJECT"] == [
+        (1, "insufficient_sellable"), (2, "insufficient_cash")]
+    assert not [row for row in events if row["event"] == "FILL"]
+    facts = json.loads((output / "corporate-actions.json").read_text())
+    assert [row["event"] for row in facts["records"]] == ["terms_updated", "registered", "recognized", "shares_released", "cash_paid"]
+    assert facts["tax_basis"] == "gross"
+    assert "未扣红利税" in (output / "report.html").read_text()
+
+
+@pytest.mark.parametrize("frequency", ["daily", "minute"])
+def test_registered_dividend_survives_sale_and_is_not_spent_early(
+    market_sources: PathManager, backtest_payload: Callable[[str], dict[str, object]], frequency: str,
+) -> None:
+    order = OrderIntent(_ts(_DAYS[0], 15), "600000", Side.SELL, 200, 1,
+                        _ts(_DAYS[0], 15), _ts(_DAYS[1], 15), Decimal("1"))
+    metrics = _distribution_case(market_sources, backtest_payload, frequency=frequency,
+                                shares_per_share="0", orders=(order,))
+    assert metrics.final_account.positions == {}
+    assert metrics.final_account.cash == 2000
+    assert metrics.corporate_actions.gross_cash_paid == 200
+    assert metrics.execution_eval.completed_count == 1
+    assert metrics.execution_eval.filled_qty == 200
+
+
+def test_pending_entitlements_resume_without_double_counting(
+    market_sources: PathManager, backtest_payload: Callable[[str], dict[str, object]],
+) -> None:
+    first = _distribution_case(market_sources, backtest_payload, frequency="daily", end=_ts(_DAYS[1], 15))
+    assert first.final_account.dividend_receivable == 200
+    assert first.final_account.sellable == {"600000": 200}
+    initial = {name: getattr(first.final_account, name) for name in ("cash", "positions", "sellable", "average_cost", "trade_date")}
+    initial.update(ts_us=_ts(_DAYS[1], 15), peak_equity=2000,
+                   distribution_entitlements=first.final_account.distribution_entitlements)
+    resumed = _distribution_case(market_sources, backtest_payload, frequency="daily", initial_account=initial, name="resumed")
+    assert resumed.final_account.cash == 200
+    assert resumed.final_account.positions == {"600000": 300}
+    assert resumed.final_account.sellable == {"600000": 300}
+    assert resumed.corporate_actions.registered_count == 0
+    assert resumed.corporate_actions.shares_received == {}
+    assert resumed.final_account.equity == 2000
+
+
+@pytest.mark.parametrize("available", [_ts(_DAYS[2], 9, 30), _ts(_DAYS[1], 18)])
+def test_fractional_distribution_and_visible_unsupported_notice_are_diagnostic(
+    market_sources: PathManager, backtest_payload: Callable[[str], dict[str, object]], available: int,
+) -> None:
+    notice = {"action_id": "600000/merger", "symbol": "600000", "available_ts_us": available,
+              "effective_ts_us": _ts(_DAYS[0], 15), "kind": "merger", "source_ref": "https://example.com/merger"}
+    _write_source(market_sources, market_sources.processed_object(dataset_name="corporate_action_notices", version="v1",
+                  trade_date=_DAYS[0]).payload_path, pa.Table.from_pylist([notice]))
+    early = _distribution_case(market_sources, backtest_payload, frequency="daily", shares_per_share="0.001",
+                               end=_ts(_DAYS[1], 15), name="early")
+    assert [issue.reason for issue in early.data_quality.corporate_action_issues] == ["fractional_shares"]
+    result = _distribution_case(market_sources, backtest_payload, frequency="daily", shares_per_share="0.001")
+    assert result.data_quality.diagnostic_only
+    assert [issue.reason for issue in result.data_quality.corporate_action_issues] == ["fractional_shares", "unsupported_merger"]
+    assert result.data_quality.corporate_action_issues[-1].ts_us == max(available, _ts(_DAYS[2], 0))
+    assert result.final_account.positions == {"600000": 200}
+    assert result.corporate_actions.gross_cash_paid == 0
+    assert result.execution_eval.order_count == 0
+
+
+@pytest.mark.parametrize("frequency", ["daily", "minute"])
+@pytest.mark.parametrize("symbols", [_SYMBOLS, ()])
 @pytest.mark.parametrize("event_types,has_trades", [(("S",), False), (("S", "R"), False),
                                                   (("R",), False), ((), False), (("S", "R"), True)])
 def test_suspension_keeps_holdings_valued_and_orders_expire_before_resumption(
     market_sources: PathManager, tmp_path: Path, frequency: str, event_types: tuple[str, ...], has_trades: bool,
+    symbols: tuple[str, ...],
 ) -> None:
     pm = market_sources
+    if not symbols:
+        for index, day in enumerate(_DAYS):
+            members = ["000001", "600000"] if index == 0 else ["000001"]
+            dates = ["1991-04-03", None] if index == 0 else ["1991-04-03"]
+            _write_source(pm, pm.processed_object(dataset_name="stock_basic", version="v1", trade_date=day).payload_path,
+                          pa.table({"symbol": members, "list_date": dates}))
     suspended_day = _DAYS[1]
     path = pm.processed_object(dataset_name="daily_bar", version="v1", trade_date=suspended_day).payload_path
     bars = pq.ParquetFile(path).read().to_pandas()
@@ -1509,12 +1659,11 @@ def test_suspension_keeps_holdings_valued_and_orders_expire_before_resumption(
         initial_account={"ts_us": initial, "trade_date": _DAYS[0], "cash": "20000",
                          "positions": {"600000": 200}, "sellable": {"600000": 200},
                          "average_cost": {"600000": "8"}, "peak_equity": 22000},
-        execution={"market_source": {"frequency": frequency, "start": _DAYS[0], "end": _DAYS[-1], "symbols": _SYMBOLS},
+        execution={"market_source": {"frequency": frequency, "start": _DAYS[0], "end": _DAYS[-1], "symbols": symbols},
                    "end_ts_us": end,
-                   "quantity_rules": {symbol: {"buy_min_qty": 100, "buy_step_qty": 100,
+                   "quantity_rules": {"default": {"buy_min_qty": 100, "buy_step_qty": 100,
                                               "sell_min_qty": 100, "sell_step_qty": 100,
-                                              "fill_step_qty": 1, "price_tick": "0.01", "enforce_t1": True}
-                                      for symbol in _SYMBOLS},
+                                              "fill_step_qty": 1, "price_tick": "0.01", "enforce_t1": True}},
                    "fees": {"commission_rate": 0, "stamp_tax_rate": 0, "transfer_rate": 0, "min_commission": 0},
                    "annual_factor": 252, "fill": {"type": "limit_price", "slippage_bp": 0}},
     )
@@ -1603,16 +1752,159 @@ def _run_source_backtest(
         execution={"market_source": {"frequency": frequency, "start": start_date, "end": end_date,
                                      "symbols": symbols},
                    "end_ts_us": _ts(_DAYS[-1], 15),
-                   "quantity_rules": {symbol: {"buy_min_qty": 100, "buy_step_qty": 100,
+                   "quantity_rules": {"default": {"buy_min_qty": 100, "buy_step_qty": 100,
                                               "sell_min_qty": 100, "sell_step_qty": 100,
-                                              "fill_step_qty": 1, "price_tick": "0.01", "enforce_t1": True}
-                                      for symbol in symbols},
+                                              "fill_step_qty": 1, "price_tick": "0.01", "enforce_t1": True}},
                    "fees": {"commission_rate": 0, "stamp_tax_rate": 0, "transfer_rate": 0, "min_commission": 0},
                    "annual_factor": 252, "fill": {"type": "limit_price", "slippage_bp": 0}},
     )
     metrics = BacktestMetrics(mode=submission.mode, parameters=submission.model_dump(mode="json"), not_run={})
     run_backtest(submission=submission, path_manager=path_manager, experiment_name=experiment_name, metrics=metrics)
     return metrics
+
+
+@pytest.mark.parametrize("frequency", ["daily", "minute"])
+def test_full_market_distinguishes_prelisting_unknown_and_confirmed_members(
+    market_sources: PathManager, frequency: Literal["daily", "minute"], mocker: MockerFixture,
+) -> None:
+    pm = market_sources
+    for index, day in enumerate(_DAYS):
+        members = ["000001", "000002", "001246", "603448"]
+        dates = [None, _DAYS[1], None, "2026-07-22"]
+        if index < 2:
+            members.append("600000")
+            dates.append("1999-11-10" if index == 0 else None)
+        _write_source(pm, pm.processed_object(dataset_name="stock_basic", version="v1", trade_date=day).payload_path,
+                      pa.table({"symbol": members, "list_date": dates}))
+        if index > 0:
+            path = pm.processed_object(dataset_name="daily_bar", version="v1", trade_date=day).payload_path
+            bars = pq.ParquetFile(path).read().to_pylist()
+            bars.append({"symbol": "000002", "trade_date": day, "close": 8.0, "vol": 100.0})
+            _write_source(pm, path, pa.Table.from_pylist(bars))
+    measured = mocker.spy(Instrumentation, "measure")
+
+    metrics = _run_source_backtest(path_manager=pm, start_date=_DAYS[0], end_date=_DAYS[-1],
+                                  symbols=(), frequency=frequency)
+
+    assert not [issue for issue in metrics.data_quality.issues if issue.reason == "missing_daily_close"]
+    assert [(issue.symbol, issue.trade_date, issue.reason) for issue in metrics.data_quality.issues] == [
+        ("001246", day, "unknown_listing_status") for day in _DAYS
+    ]
+    context = measured.call_args_list[0].args[3]
+    assert context.symbols_by_date[_DAYS[0]] == ("000001", "600000")
+    assert context.symbols_by_date[_DAYS[1]] == ("000001", "000002", "600000")
+    assert context.symbols_by_date[_DAYS[2]] == ("000001", "000002", "600000")
+    closes = [mark for mark in context.inputs.market.marks if mark.kind == "daily_close"]
+    assert "000002" not in closes[0].prices
+    assert closes[1].prices["000002"] == 8
+    assert all("600000" in mark.prices for mark in closes)
+    assert metrics.data_quality.diagnostic_only
+
+
+@pytest.mark.parametrize("frequency", ["daily", "minute"])
+def test_real_prices_confirm_unknown_members_without_rewriting_prior_days(
+    market_sources: PathManager, frequency: Literal["daily", "minute"], mocker: MockerFixture,
+) -> None:
+    pm = market_sources
+    for index, day in enumerate(_DAYS):
+        _write_source(pm, pm.processed_object(dataset_name="stock_basic", version="v1", trade_date=day).payload_path,
+                      pa.table({"symbol": ["000001", "600000"] if index == 0 else ["600000"],
+                                "list_date": [None, "1999-11-10"] if index == 0 else ["1999-11-10"]}))
+        if index != 1:
+            path = pm.processed_object(dataset_name="daily_bar", version="v1", trade_date=day).payload_path
+            bars = pq.ParquetFile(path).read().to_pandas()
+            _write_source(pm, path, pa.Table.from_pandas(bars.loc[bars["symbol"] != "000001"], preserve_index=False))
+    measured = mocker.spy(Instrumentation, "measure")
+
+    metrics = _run_source_backtest(path_manager=pm, start_date=_DAYS[0], end_date=_DAYS[-1],
+                                  symbols=(), frequency=frequency)
+
+    assert [(issue.symbol, issue.trade_date, issue.reason) for issue in metrics.data_quality.issues] == [
+        ("000001", _DAYS[0], "missing_daily_close" if frequency == "minute" else "unknown_listing_status"),
+        ("000001", _DAYS[2], "missing_daily_close"),
+    ]
+    context = measured.call_args_list[0].args[3]
+    assert "000001" in context.symbols_by_date[_DAYS[2]]
+    observations = [o for o in context.inputs.market.observations if o.symbol == "000001"]
+    assert {o.time.trade_date for o in observations} == (set(_DAYS[:2]) if frequency == "minute" else {_DAYS[1]})
+    market = ReplayMarket(context.inputs.market)
+    market.on_time(_ts(_DAYS[0], 9, 30))
+    assert not market.daily_close_issues
+    assert market.get_price("000001") is None
+    market.on_time(_ts(_DAYS[0], 15))
+    assert list(market.daily_close_issues.values())[0][0] == metrics.data_quality.issues[0]
+
+
+@pytest.mark.parametrize("frequency", ["daily", "minute"])
+def test_full_market_resolves_history_before_selecting_available_bars(
+    market_sources: PathManager, frequency: Literal["daily", "minute"], mocker: MockerFixture,
+) -> None:
+    pm = market_sources
+    for index, day in enumerate(_DAYS):
+        members = ["600000", "000002"] if index == 0 else ["000001", "000002"]
+        _write_source(pm, pm.processed_object(dataset_name="stock_basic", version="v1", trade_date=day).payload_path,
+                      pa.table({"symbol": members, "list_date": [day, "1991-01-29"]}))
+        _write_source(pm, pm.processed_object(dataset_name="suspend_d", version="v1", trade_date=day).payload_path,
+                      pa.table({"symbol": ["000002"], "trade_date": [day], "suspend_type": ["S"],
+                                "suspend_timing": pa.array([None], type=pa.string())}))
+    measured = mocker.spy(Instrumentation, "measure")
+
+    metrics = _run_source_backtest(path_manager=pm, start_date=_DAYS[0], end_date=_DAYS[-1],
+                                  symbols=(), frequency=frequency)
+
+    context = measured.call_args_list[0].args[3]
+    source = context.inputs.market
+    assert context.symbols_by_date[_DAYS[0]] == ("000002", "600000")
+    assert context.symbols_by_date[_DAYS[-1]] == ("000001", "000002", "600000")
+    assert all("000001" not in mark.prices for mark in source.marks if mark.trade_date == _DAYS[0])
+    assert not any(o.symbol == "000001" and o.time.trade_date == _DAYS[0] for o in source.observations)
+    closes = [mark for mark in source.marks if mark.kind == "daily_close"]
+    assert all("600000" in mark.prices for mark in closes)
+    assert all(mark.suspended_symbols == frozenset({"000002"}) for mark in closes)
+    assert all(not mark.data_issues for mark in closes)
+    assert metrics.parameters["execution"]["market_source"]["symbols"] == []
+    assert set(metrics.parameters["execution"]["quantity_rules"]) == {"default", "overrides"}
+
+
+@pytest.mark.parametrize("minimum,step,min_commission,rejection", [
+    (100, 50, 0, None), (100, 100, 0, "quantity_rule"), (100, 50, 5, "insufficient_cash"),
+])
+def test_execution_applies_overrides_and_fees_without_rewriting_frozen_orders(
+    scenario: tuple[PathManager, dict[str, object], Mock], tmp_path: Path,
+    minimum: int, step: int, min_commission: int, rejection: str | None,
+) -> None:
+    pm, fields, _ = scenario
+    initial = fields["initial_account"]["ts_us"]
+    end = fields["execution"]["end_ts_us"]
+    command = OrderIntent(initial, "600000", Side.BUY, 150, 1, initial, end, Decimal("10"))
+    ref = tmp_path / "frozen-rules.json"
+    frozen = TypeAdapter(tuple[OrderIntent, ...]).dump_json((command,))
+    ref.write_bytes(frozen)
+    fields["initial_account"].update(cash="1500", peak_equity=1500)
+    config = fields["execution"]
+    config["quantity_rules"]["overrides"] = {"600000": {
+        **config["quantity_rules"]["default"], "buy_min_qty": minimum, "buy_step_qty": step,
+    }}
+    config["fees"]["min_commission"] = min_commission
+    config["fill"] = {"type": "limit_price", "slippage_bp": 0}
+    config["risk_check_ts_us"] = []
+    submission = create_backtest_submission(mode="execution_eval", start=fields["start"], end=fields["end"],
+        order_refs=[str(ref)], initial_account=fields["initial_account"], execution=config)
+    metrics = BacktestMetrics(mode=submission.mode, parameters=submission.model_dump(mode="json"), not_run={})
+
+    run_backtest(submission=submission, path_manager=pm, experiment_name="execution-rules", metrics=metrics)
+
+    rows = pq.read_table(pm.experiment_backtest_execution(experiment_name="execution-rules")).to_pylist()
+    assert ref.read_bytes() == frozen
+    assert [(row["symbol"], row["qty"]) for row in rows if row["event"] == "ORDER_SUBMIT"] == [("600000", 150)]
+    rejected = [row for row in rows if row["event"] == "ORDER_REJECT"]
+    fills = [row for row in rows if row["event"] == "FILL"]
+    if rejection is None:
+        assert rejected == []
+        assert sum(row["qty"] for row in fills) == 150
+    else:
+        assert [row["reason"] for row in rejected] == [rejection]
+        assert fills == []
 
 
 @pytest.mark.parametrize("frequency", ["daily", "minute"])
@@ -1687,10 +1979,9 @@ def test_prepared_input_runs_existing_backtest_and_preserves_frozen_order_timing
                          "average_cost": {"600000": "10"}, "peak_equity": 21000},
         execution={"market_source": {"frequency": frequency, "start": _DAYS[0], "end": _DAYS[-1],
                                      "symbols": _SYMBOLS}, "end_ts_us": end,
-                   "quantity_rules": {symbol: {"buy_min_qty": 100, "buy_step_qty": 100,
+                   "quantity_rules": {"default": {"buy_min_qty": 100, "buy_step_qty": 100,
                                               "sell_min_qty": 100, "sell_step_qty": 100,
-                                              "fill_step_qty": 1, "price_tick": "0.01", "enforce_t1": True}
-                                      for symbol in _SYMBOLS},
+                                              "fill_step_qty": 1, "price_tick": "0.01", "enforce_t1": True}},
                    "fees": {"commission_rate": 0, "stamp_tax_rate": 0, "transfer_rate": 0, "min_commission": 0},
                    "annual_factor": 252, "fill": {"type": "limit_price", "slippage_bp": 0}},
     )
@@ -1702,9 +1993,10 @@ def test_prepared_input_runs_existing_backtest_and_preserves_frozen_order_timing
     run_backtest(submission=submission, path_manager=market_sources, experiment_name=name, metrics=metrics)
     json_reader.assert_not_called()
     assert calendar.call_count == 1
-    startup = [call.args[1] for call in measured.call_args_list[:5]]
+    startup = [call.args[1] for call in measured.call_args_list[:7]]
     builder = "BuildDailyReplayInputStep" if frequency == "daily" else "BuildMinuteReplayInputStep"
-    assert startup == ["PrepareReplaySessionsStep", builder, "PrepareInputsStep", "PrepareInitialMarksStep", "InitializeAccountStep"]
+    assert startup == ["PrepareReplaySessionsStep", "PrepareReplaySymbolsStep", builder, "PrepareInputsStep",
+                       "PrepareCorporateActionsStep", "PrepareInitialMarksStep", "InitializeAccountStep"]
     contexts = [call.args[3] for call in measured.call_args_list]
     assert all(context is contexts[0] for context in contexts)
     assert contexts[0].inputs.market is contexts[0].market_input
@@ -1847,3 +2139,104 @@ def test_source_symbols_must_cover_initial_holdings_before_replay(
         run_backtest(submission=submission, path_manager=market_sources,
                      experiment_name="backtest_uncovered_holdings", metrics=metrics)
     assert not market_sources.experiment_dir(experiment_name="backtest_uncovered_holdings").exists()
+
+
+@pytest.mark.parametrize("frequency", ["daily", "minute"])
+@pytest.mark.parametrize("case_index,quantity,cash,added", [
+    (0, 100, "24.7", 100), (1, 100, "31.58", 0), (2, 100, "140", 0),
+    (3, 100, "0", 0), (4, 10_000_000, "2814904", 3_992_772),
+])
+def test_verified_real_announcements_drive_one_account_event_and_separate_reference_prices(
+    tmp_path: Path, backtest_payload: Callable[[str], dict[str, object]], frequency: str,
+    case_index: int, quantity: int, cash: str, added: int,
+) -> None:
+    from src.data_system.context import DataContext
+    from src.data_system.steps.resolve_corporate_actions import ResolveCorporateActionsStep
+
+    case = json.loads((Path(__file__).parents[1] / "fixtures/corporate_actions/verified_distributions.json").read_text())[case_index]
+    review = CorporateActionReview.model_validate(case["review"])
+    day, ex_day = str(review.record_date), str(review.ex_date)
+    symbol = case["records"][0]["symbol"]
+    pm = PathManager(tmp_path)
+    sessions = (day, ex_day)
+    _write_source(pm, pm.processed_year_object(dataset_name="trade_calendar", version="v1",
+        calendar_year=review.record_date.year).payload_path, pa.table({"trade_date": sessions, "is_open": [True, True]}))
+    for session in sessions:
+        records = case["records"] if session == day else []
+        source_table = pa.Table.from_pylist(case["records"])
+        _write_source(pm, pm.processed_object(dataset_name="dividend", version="v1", trade_date=session).payload_path,
+            source_table if records else source_table.slice(0, 0))
+        _write_source(pm, pm.processed_object(dataset_name="suspend_d", version="v1", trade_date=session).payload_path,
+            pa.table({"symbol": pa.array([], type=pa.string())}))
+        terms = review.terms[-1]
+        price = (Decimal(10) if session == day else
+                 (Decimal(10) - terms.reference_cash_per_share) / (1 + terms.reference_shares_per_share))
+        _write_source(pm, pm.processed_object(dataset_name="daily_bar", version="v1", trade_date=session).payload_path,
+            pa.table({"symbol": [symbol], "trade_date": [session], "close": [float(price)], "vol": [1000000.0]}))
+        rows = [{"symbol": symbol, "trade_date": session, "minute_start_ts_utc": _ts(session, 9, 30),
+            "phase": 2, "open": float(price), "high": float(price), "low": float(price), "close": float(price),
+            "volume_sum": 1000000, "notional_sum": float(price) * 1000000, "trade_count": 1,
+            "tick_signed_volume_sum": 0, "tick_signed_notional_sum": 0.0}]
+        for dataset in ("sh_stock_trade_1m", "sz_stock_trade_1m"):
+            selected = rows if (dataset.startswith("sh") == symbol.startswith("6")) else []
+            _write_source(pm, pm.processed_object(dataset_name=dataset, version="v1", trade_date=session).payload_path,
+                pa.Table.from_pylist(selected, schema=STOCK_TRADE_1M_SCHEMA))
+    review_path = pm.raw_payload(broker="announcements", source_name="corporate_action_reviews",
+        trade_date=day, payload_file="reviews.json")
+    FileSystem.write_bytes_atomic(review_path, json.dumps([case["review"]]).encode())
+    meta.commit(pm=pm, payload_path=review_path)
+    ResolveCorporateActionsStep(pm).run(DataContext(start=day, end=ex_day, trade_dates=sessions))
+    order_ref = tmp_path / "orders.json"
+    order_ref.write_text("[]")
+    payload = backtest_payload("execution_eval")
+    payload.update(start=day, end=ex_day, order_refs=[str(order_ref)],
+        initial_account={"ts_us": _ts(day, 15), "trade_date": day, "cash": "0", "positions": {symbol: quantity},
+                         "sellable": {symbol: quantity}, "average_cost": {symbol: "10"}, "peak_equity": float(quantity * 10)})
+    payload["execution"].update(market_source={"frequency": frequency, "start": day, "end": ex_day, "symbols": [symbol]},
+                                end_ts_us=_ts(ex_day, 15))
+    payload.pop("kind")
+    submission = create_backtest_submission(**payload)
+    metrics = BacktestMetrics(mode=submission.mode, parameters=submission.model_dump(mode="json"), not_run={})
+    run_backtest(submission=submission, path_manager=pm, experiment_name="announcement", metrics=metrics)
+    assert metrics.final_account.cash == Decimal(cash)
+    assert metrics.final_account.positions == {symbol: quantity + added}
+    assert metrics.corporate_actions.registered_count == (0 if case_index == 3 else 1)
+    assert not metrics.data_quality.diagnostic_only
+    facts = json.loads((pm.experiment_dir(experiment_name="announcement") / "corporate-actions.json").read_text())
+    assert len(facts["source_resolutions"]) == 1
+    records = facts["records"]
+    assert sum(row["event"] == "cash_paid" for row in records) == (0 if case_index == 3 else 1)
+    equity = pq.read_table(pm.experiment_dir(experiment_name="announcement") / "equity.parquet").to_pylist()
+    at_ex = next(row for row in equity if row["ts_us"] == _ts(ex_day, 0))
+    expected_market_value = float((Decimal(10) - review.terms[-1].reference_cash_per_share)
+                                 / (1 + review.terms[-1].reference_shares_per_share) * (quantity + added))
+    assert at_ex["market_value"] == pytest.approx(expected_market_value)
+    if case_index == 4:
+        assert len(facts["revisions"]) == 1
+        changes = [row for row in records if row["event"] == "terms_updated"]
+        assert changes[0]["ts_us"] == _ts(day, 15)
+        assert changes[1]["ts_us"] == _ts(ex_day, 0)
+        assert changes[1]["eligible_qty"] == quantity
+        assert sum(row["event"] == "registered" for row in records) == 1
+
+
+def test_unresolved_registered_allocation_survives_resume_without_cash_or_stock_credit(
+    market_sources: PathManager, backtest_payload: Callable[[str], dict[str, object]],
+) -> None:
+    first = _distribution_case(market_sources, backtest_payload, frequency="daily", shares_per_share="0.001",
+                                end=_ts(_DAYS[1], 15), name="fractional-first")
+    entitlement, = first.final_account.distribution_entitlements
+    assert entitlement.eligible_qty == 200
+    assert entitlement.recognition_issue == "fractional_shares"
+    initial = {name: getattr(first.final_account, name) for name in ("cash", "positions", "sellable", "average_cost", "trade_date")}
+    initial.update(ts_us=_ts(_DAYS[1], 15), peak_equity=2000,
+                   distribution_entitlements=first.final_account.distribution_entitlements)
+    resumed = _distribution_case(market_sources, backtest_payload, frequency="daily", shares_per_share="0.001",
+                                  initial_account=initial, name="fractional-resumed")
+    assert resumed.final_account.positions == {"600000": 200}
+    assert resumed.final_account.cash == 0
+    assert resumed.corporate_actions.registered_count == 0
+    assert resumed.corporate_actions.gross_cash_paid == 0
+    assert resumed.data_quality.diagnostic_only
+    assert [issue.reason for issue in resumed.data_quality.corporate_action_issues] == ["fractional_shares"]
+    assert resumed.final_account.distribution_entitlements[0].eligible_qty == 200

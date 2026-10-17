@@ -12,6 +12,7 @@ import pyarrow as pa
 from pydantic import TypeAdapter
 
 from src.trading.core.events import OrderIntent, CancelOrders, TargetEvent
+from src.trading.portfolio.corporate_actions import CorporateActionRecord
 from src.trading.risk.evaluation import RiskCases
 from src.utils.filesystem import FileSystem
 
@@ -49,6 +50,7 @@ _EQUITY_SCHEMA = pa.schema([
     pa.field("equity", pa.float64(), nullable=False),
     pa.field("peak_equity", pa.float64(), nullable=False),
     pa.field("drawdown", pa.float64(), nullable=False),
+    pa.field("dividend_receivable", pa.float64(), nullable=False),
 ])
 
 _VALUATION_MARK_SCHEMA = pa.schema([
@@ -135,6 +137,21 @@ class FactsPersistStep:
             ),
         )
         run_dir = self._output_dir
+        actions = context.corporate_actions
+        action_facts = {
+            "tax_basis": "gross",
+            "coverage": "distributions_and_supplied_notices",
+            "input_digests": actions.input_digests,
+            "distributions": [action.model_dump(mode="json") for action in actions.distributions],
+            "revisions": [action.model_dump(mode="json") for action in actions.revisions],
+            "source_resolutions": [item.model_dump(mode="json") for item in actions.resolutions],
+            "notices": [notice.model_dump(mode="json") for notice in actions.notices],
+            "records": TypeAdapter(list[CorporateActionRecord]).dump_python(state.corporate_action_records, mode="json"),
+            "unresolved": [issue.model_dump(mode="json") for issue in state.corporate_action_issues.values()],
+            "outstanding_entitlements": [item.model_dump(mode="json") for item in state.portfolio_state.distribution_entitlements.values()],
+        }
+        FileSystem.write_bytes_atomic(run_dir / "corporate-actions.json",
+            json.dumps(action_facts, ensure_ascii=False, allow_nan=False, indent=2).encode())
         FileSystem.write_bytes_atomic(run_dir / "orders.json",
             TypeAdapter(tuple[OrderIntent | CancelOrders, ...]).dump_json(tuple(ledger.commands)))
         FileSystem.write_bytes_atomic(run_dir / "targets.json",

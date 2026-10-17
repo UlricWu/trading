@@ -20,7 +20,7 @@ def backtest_payload() -> Callable[[BacktestMode | str], dict[str, object]]:
                 "fill_step_qty": 1, "price_tick": "0.01", "enforce_t1": True}
         execution = {"market_source": {"frequency": "daily", "start": "2026-07-01",
                                        "end": "2026-07-20", "symbols": ["600000"]}, "end_ts_us": 2,
-                     "quantity_rules": {"600000": rule}, "annual_factor": 252, "fill": {"type": "quoted"},
+                     "quantity_rules": {"default": rule}, "annual_factor": 252, "fill": {"type": "quoted"},
                      "fees": {"commission_rate": 0, "stamp_tax_rate": 0, "transfer_rate": 0, "min_commission": 0}}
         payload.update(initial_account={"ts_us": 1, "trade_date": "2026-07-01", "cash": "20000",
             "positions": {}, "sellable": {}, "average_cost": {}, "peak_equity": 20000}, execution=execution)

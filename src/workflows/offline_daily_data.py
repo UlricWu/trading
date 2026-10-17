@@ -19,6 +19,7 @@ from src.data_system.normalize.tushare import normalize_tushare
 from src.data_system.pipeline import DataPipeline
 from src.data_system.steps.calendar_materialize import CalendarMaterializeStep
 from src.data_system.steps.fact_materialize import FactMaterializeStep
+from src.data_system.steps.resolve_corporate_actions import ResolveCorporateActionsStep
 from src.data_system.steps.feature_build import FeatureBuildStep
 from src.data_system.steps.label_build import LabelBuildStep
 from src.data_system.steps.previous_day_materialize import PreviousDayMaterializeStep
@@ -175,6 +176,7 @@ def run_offline_data(
                 normalize_operation=normalize_tushare,
                 processed_version=PROCESSED_VERSION,
             ),
+            *((ResolveCorporateActionsStep(pm=path_manager),) if "dividend" in fact_sources else ()),
             FeatureBuildStep(
                 pm=path_manager,
                 access=access,
@@ -265,6 +267,7 @@ def run_standard_fact_bootstrap(
             normalize_operation=normalize_tushare,
             processed_version=PROCESSED_VERSION,
         ),
+        *((ResolveCorporateActionsStep(pm=path_manager),) if "dividend" in fact_sources else ()),
     )
     pipeline = DataPipeline(
         steps=steps,

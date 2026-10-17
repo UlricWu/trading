@@ -533,6 +533,8 @@ def test_backtest_preserves_run_date_and_logged_parameters_in_the_persisted_resu
     monkeypatch.setattr('src.workflows.backtest.Access', Mock(return_value=Mock(
         trade_dates=Mock(return_value=['2026-07-01']),
         daily_bars=Mock(return_value=pd.DataFrame({'symbol': ['600000'], 'close': [10.0], 'vol': [100.0]})),
+        corporate_actions=Mock(return_value=()),
+        corporate_action_notices=Mock(return_value=None),
     )))
     result = CliRunner().invoke(cli.app, ["backtest", "--mode", "risk_rule_eval",
         "--experiment-id", experiment_id, "--input-json", json.dumps(fields)])

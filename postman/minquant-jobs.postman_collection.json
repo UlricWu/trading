@@ -769,7 +769,7 @@
     },
     {
       "key": "backtestExecutionJson",
-      "value": "{\"market_source\": {\"frequency\": \"minute\", \"start\": \"2026-07-02\", \"end\": \"2026-07-03\", \"symbols\": [\"600000\"]}, \"end_ts_us\": 1783062000000000, \"quantity_rules\": {\"600000\": {\"buy_min_qty\": 100, \"buy_step_qty\": 100, \"sell_min_qty\": 1, \"sell_step_qty\": 1, \"fill_step_qty\": 1, \"price_tick\": \"0.01\", \"enforce_t1\": true}}, \"fees\": {\"commission_rate\": 0, \"stamp_tax_rate\": 0, \"transfer_rate\": 0, \"min_commission\": 0}, \"annual_factor\": 252, \"fill\": {\"type\": \"quoted\"}}",
+      "value": "{\"market_source\": {\"frequency\": \"minute\", \"start\": \"2026-07-02\", \"end\": \"2026-07-03\", \"symbols\": [\"600000\"]}, \"end_ts_us\": 1783062000000000, \"quantity_rules\": {\"default\": {\"buy_min_qty\": 100, \"buy_step_qty\": 100, \"sell_min_qty\": 1, \"sell_step_qty\": 1, \"fill_step_qty\": 1, \"price_tick\": \"0.01\", \"enforce_t1\": true}}, \"fees\": {\"commission_rate\": 0, \"stamp_tax_rate\": 0, \"transfer_rate\": 0, \"min_commission\": 0}, \"annual_factor\": 252, \"fill\": {\"type\": \"quoted\"}}",
       "type": "string"
     }
   ]

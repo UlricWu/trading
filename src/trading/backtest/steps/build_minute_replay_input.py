@@ -12,14 +12,13 @@ from src.trading.backtest.market.replay import MarkObservation, ReplayMarketInpu
 
 @dataclass(frozen=True, slots=True)
 class BuildMinuteReplayInputStep:
-    """Read sparse stock minutes and official closes for a fixed symbol set.
+    """Read sparse stock minutes and official closes for each day's resolved coverage.
 
     Example:
-        context = BuildMinuteReplayInputStep(access, ("000001", "600000"), "v1").run(context)
+        context = BuildMinuteReplayInputStep(access, "v1").run(context)
     """
 
     access: Access
-    symbols: tuple[str, ...]
     source_version: str
 
     def run(self, context: BacktestContext) -> BacktestContext:
@@ -30,18 +29,24 @@ class BuildMinuteReplayInputStep:
         """
         marks: list[MarkObservation] = []
         observations: list[ExecutionObservation] = []
+        observed_symbols: set[str] = set()
         for session in context.sessions:
             bars = self.access.daily_bars(trade_date=session.trade_date)
-            bars = bars.loc[bars["symbol"].isin(self.symbols)].copy()
-            missing = set(self.symbols) - set(bars["symbol"])
+            minutes = self.access.stock_trade_minutes(trade_date=session.trade_date)
+            unknown = set(context.unknown_listing_symbols_by_date.get(session.trade_date, ()))
+            observed_symbols.update(unknown & (set(bars["symbol"]) | set(minutes["symbol"].unique().to_pylist())))
+            symbols = tuple(sorted(set(context.symbols_by_date[session.trade_date]) | observed_symbols))
+            unknown -= set(symbols)
+            context.symbols_by_date[session.trade_date] = symbols
+            bars = bars.loc[bars["symbol"].isin(symbols)].copy()
+            missing = set(symbols) - set(bars["symbol"])
             suspended = confirmed_suspended_symbols(
                 missing_symbols=missing, suspensions=self.access.suspensions(trade_date=session.trade_date),
             ) if missing else frozenset()
-            minutes = self.access.stock_trade_minutes(trade_date=session.trade_date)
             facts = minute_replay_facts(
                 minutes=minutes, daily_bars=bars, session=session,
-                symbols=self.symbols, source_version=self.source_version, suspended_symbols=suspended,
-                missing_symbols=missing - suspended,
+                symbols=symbols, source_version=self.source_version, suspended_symbols=suspended,
+                missing_symbols=missing - suspended, unknown_listing_symbols=unknown,
             )
             marks.extend(facts.marks)
             observations.extend(facts.observations)

@@ -15,9 +15,12 @@ class EquityPoint:
     Immutable valuation snapshot.
 
     Invariants:
-        equity = cash + market_value
+        equity = cash + market_value + dividend_receivable
         peak_equity >= equity
         drawdown <= 0
+
+    Example:
+        point = EquityPoint(1, 0.0, 900.0, 1000.0, 1000.0, 0.0, 100.0)
     """
 
     ts_us: int
@@ -26,6 +29,7 @@ class EquityPoint:
     equity: float
     peak_equity: float
     drawdown: float
+    dividend_receivable: float = 0.0
 
 
 # ==========================================================
@@ -37,7 +41,7 @@ class EquityCurve:
     """Maintain a timestamp-ordered equity and drawdown history.
 
     Guarantees:
-        - equity = cash + market_value
+        - equity = cash + market_value + dividend_receivable
         - monotonic time
         - same ts_us -> replace
         - O(1) peak tracking
@@ -67,7 +71,7 @@ class EquityCurve:
     # Write Interface
     # ---------------------------------------------------------
 
-    def append(self, *, ts_us: int, cash: float, market_value: float) -> None:
+    def append(self, *, ts_us: int, cash: float, market_value: float, dividend_receivable: float = 0.0) -> None:
         """Append or replace a valuation with constant-time rolling statistics.
 
         Example:
@@ -76,10 +80,10 @@ class EquityCurve:
         ts_us = int(ts_us)
         cash = float(cash)
         market_value = float(market_value)
-        if not math.isfinite(cash) or not math.isfinite(market_value):
-            raise ValueError("cash and market_value must be finite")
+        if not all(math.isfinite(value) for value in (cash, market_value, dividend_receivable)):
+            raise ValueError("cash, market_value and dividend_receivable must be finite")
 
-        equity = cash + market_value
+        equity = cash + market_value + dividend_receivable
 
         if self.points:
             last_ts = int(self.points[-1].ts_us)
@@ -115,6 +119,7 @@ class EquityCurve:
             equity=equity,
             peak_equity=peak,
             drawdown=drawdown,
+            dividend_receivable=dividend_receivable,
         )
 
         if replacing:

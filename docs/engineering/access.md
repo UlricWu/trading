@@ -2,7 +2,7 @@
 
 - **状态**：正式 owner
 - **适用范围**：`src/access/access.py::Access` 的正式 processed 市场数据读取、
-  可用交易日及下一正式交易日、日频行情/复权因子/换手率、停复牌事件、日频 universe、Level-2
+  可用交易日及下一正式交易日、历史沪深股票成员、日频行情/复权因子/换手率、停复牌事件、日频 universe、Level-2
   universe、Level-2 symbol/trade 市场范围读取和两市股票分钟事实读取；以及 `src/access/feature_label.py` 的已提交 Feature/Label 日分区读取。
 
 ## 身份与职责
@@ -44,6 +44,8 @@ class Access:
 
     def next_trade_date(self, *, trade_date: str) -> str: ...
 
+    def historical_stock_listings(self, *, trade_date: str) -> dict[str, str | None]: ...
+
     def universe(
         self,
         *,
@@ -73,6 +75,12 @@ class Access:
     ) -> pd.DataFrame: ...
 
     def suspensions(self, *, trade_date: str) -> pd.DataFrame: ...
+
+    def dividends(self, *, record_date: str) -> pd.DataFrame | None: ...
+
+    def corporate_actions(self, *, record_date: str) -> tuple[CorporateActionResolution, ...] | None: ...
+
+    def corporate_action_notices(self, *, trade_date: str) -> pd.DataFrame | None: ...
 
     def adjustment_factors(
         self,
@@ -151,6 +159,29 @@ Access 不将事件集合变成盘前可知的可交易名单；如何解释日�
 从 `T` 所在年度开始按需向后读取连续年度对象；`T` 休市、所需年度对象断档或没有可表示的
 后续 session 时整体失败。它只解析已提交日历，不预测未来开市安排。
 
+<a id="corporate-actions"></a>
+
+## 公司行动对象读取
+
+`dividends(record_date=...)` 读取 `processed/dividend/v1/trade_date=<record_date>`，与 composition root 提供的 processed version 一致。
+字段含义归[数据源 owner](../data/source_contract.md#dividend)；本边界检查完整列、证券代码和
+记录所属登记日，返回独立 DataFrame，不筛选实施状态或改变金额。
+
+`corporate_actions(record_date=...)` 读取 `corporate_actions/v1`，返回不可变的
+`CorporateActionResolution` tuple。校验持久化模型、登记分区、内外证券身份及事件唯一性；
+不在 Access 里执行核验、去重或选择公告版本。未解决 disposition 与已核实事件一同返回。
+
+`corporate_action_notices(trade_date=...)` 读取同名 processed 数据集的补充公告，按事件生效
+所属账户日分区。每行包含 action_id、symbol、available_ts_us、effective_ts_us、kind、source_ref；
+kind 为 cash_option、merger、delisting 或 other。两种时间分别表示本条事实允许被回放消费
+的时间和事件开始影响账户的时间，均为 UTC 微秒；source_ref 保存公告来源。这个数据集只
+接受有依据的显式补充，不由 suspend_d 或日线缺口推断。它不是覆盖全市场公司行动的
+自动采集源；事件模型与是否影响账户由 workflow 校验和判断。
+
+上述接口只有 Meta 不存在时返回 None；已提交空表表示该对象没有返回记录。缺失的
+corporate_actions 覆盖必须进入回测诊断，补充公告 None 则表示没有提供补充，不证明无其他事件。
+Meta、上游、payload 损坏及字段错误继续失败，不能捕获后改成空表。回测不触发网络补取。
+
 ## Universe
 
 当日正式 `stock_basic` 是源端 `bak_basic(T)` 产生的历史日股票列表，其唯一 symbol 定义
@@ -163,6 +194,16 @@ historical_base(T) = symbols(valid stock_basic at T)
 有效空 `stock_basic(T)` 定义空 `historical_base(T)`；Access 不使用 daily bars 或其他日期
 补充成员。两种 universe 仍要求当日正式 `stock_st` 与 `suspend_d`，这些对象有效时直接返回
 空 tuple。
+
+`historical_stock_listings(T)` 仅从当日正式 stock_basic 读取历史成员及 list_date，按现有
+Level-2 股票代码分类保留沪深 STOCK，按代码升序返回 symbol → list_date 的调用方独有
+dict；有效空对象返回空 dict。非空日期必须为合法 YYYY-MM-DD，null 返回 None，表示
+未知，不能单凭它认定未上市；非空未来日期原样保留，由调用方按当时时点解释。历史名单
+可能提前包含待上市证券，所以名单成员不等于已上市证券。它不要求 daily_bar、stock_st
+或 suspend_d，不过滤 ST、停牌、缺日线或上市天数，不包含北交所、B 股、基金等其他证券。
+对象或 Meta 缺失、必要列缺失、symbol 非法或重复、非空 list_date 非法时失败，不改用今天
+或其他日期的名单。该日快照同样不证明盘前可见性；全市场行情覆盖的按日确认与保留规则由
+[回放输入 owner](../offline_workflow_contract.md#真实行情到回放输入)定义。
 
 `universe(T, N)` 的基础集合是当日正式 daily bars 与历史股票成员集合的交集：
 

@@ -27,7 +27,7 @@ class PublishResultsStep:
             context = step.run(context)
         """
         payload = context.metrics.model_dump(mode="json")
-        for name in ("signal_eval", "risk_eval", "execution_eval", "portfolio", "final_account", "risk_effectiveness"):
+        for name in ("signal_eval", "risk_eval", "execution_eval", "portfolio", "final_account", "risk_effectiveness", "corporate_actions"):
             if payload[name] is None:
                 del payload[name]
         FileSystem.write_bytes_atomic(self.output_dir / "metrics.json",

@@ -70,7 +70,7 @@ Backtest 的一个 CLI 命令统一准备实验名称和初始 `BacktestMetrics`
 交给 `run_backtest`；CLI 不组装 Step。Workflow 绑定请求、输入访问、账户/策略/风控/执行
 配置和输出路径，显式声明启动、逐时点与结果三组 Step。准备输入、账户回放、事实保存、
 结果评价、结果发布仍是五段业务阶段，但不要求每段对应一个 Step。行情来源通过启动组的
-market_steps 选择：准备日程后构建日线或分钟行情；PrepareInputsStep
+market_steps 选择：准备日程、解析证券覆盖后构建日线或分钟行情；PrepareInputsStep
 接收内存行情并准备决策输入，PrepareInitialMarksStep 补齐初始持仓必需的历史价格，
 InitializeAccountStep 创建账户对象与时钟，BacktestPipeline 遍历时钟。
 Workflow 通过选择 Step 和绑定参数表达信号/冻结委托、可选风控、策略及成交假设的区别；
@@ -146,6 +146,7 @@ step 或 Pipeline，不进入 Context。Data Context 保存请求的 `start`、`
 step 写入后续 step 所需的 `trade_dates`。Training 与 Backtest Context 每次 `run()` 新建。
 Training 的训练值和逐日评价观察只在这次 Step 链内传递。`BacktestContext` 保存 metrics、
 行情启动 Steps 传递的 sessions 与 market_input、PrepareInputsStep 产出的 `BacktestInputs`、
+PrepareCorporateActionsStep 产出的公司行动日程及来源问题、
 PrepareInitialMarksStep 产出的 initial_marks、InitializeAccountStep 产出的 `BacktestState`、
 本次市场、执行器、策略构造器、RiskManager 和时钟，以及当前 TickState。运行对象是独立
 Step 必须共享的具名领域对象，不另建组件字典、依赖查找器或配置容器。每次初始化新建
@@ -216,13 +217,15 @@ Backtest 输入准备和账户初始化位于启动组内，失败必须输出�
 现有 step label 固定为：
 
 ```text
-CalendarMaterializeStep, FactMaterializeStep, FeatureBuildStep, LabelBuildStep,
+CalendarMaterializeStep, FactMaterializeStep, ResolveCorporateActionsStep, FeatureBuildStep, LabelBuildStep,
 Level2FactMaterializeStep, Level2MinuteBuildStep, Stock1430MaterializeStep, Stock1430DailyMaterializeStep,
 Stock1430DailyL2MaterializeStep,
 DatasetBuildStep, PreprocessStep, ModelTrainStep, PredictionStep, ICEvaluateStep,
 ArtifactPersistStep, MetricsPersistStep, ReportStep,
-PrepareReplaySessionsStep, BuildDailyReplayInputStep, BuildMinuteReplayInputStep,
-PrepareInputsStep, PrepareInitialMarksStep, InitializeAccountStep, UpdateMarketStep, AdvanceOrdersStep, ValueAccountStep,
+PrepareReplaySessionsStep, PrepareReplaySymbolsStep, BuildDailyReplayInputStep, BuildMinuteReplayInputStep,
+PrepareInputsStep, PrepareCorporateActionsStep, PrepareInitialMarksStep, InitializeAccountStep,
+UpdateMarketStep, UpdateDistributionTermsStep, ApplyDistributionsStep, ReleaseDistributedSharesStep, ObserveCorporateActionIssuesStep,
+AdvanceOrdersStep, ValueAccountStep, RecordEntitlementsStep, PayDividendsStep,
 GenerateSignalStep, GenerateTargetsStep, ApplyRiskStep, SubmitTargetsStep, SubmitFrozenCommandsStep,
 CompleteRiskObservationStep, ScheduleWakeupsStep, FactsPersistStep, EvaluateResultsStep, PublishResultsStep
 ```
@@ -280,7 +283,9 @@ Tushare manifest 是受代码审查的执行清单，不通过配置、Broker �
 动态展开。Level-2 配置则只表达文件 identity、启停和输出映射。除 calendar 外的所选
 source 在 workflow 准备阶段转换为完整 `SourceConfig`，Standard 绑定到
 `FactMaterializeStep`，Level-2 绑定到 `Level2FactMaterializeStep`；固定的 Tushare calendar 由 `CalendarMaterializeStep` 按年度对象
-直接承担。
+直接承担。Standard 选中 dividend 时，在 Fact 之后组装 `ResolveCorporateActionsStep`，消费本地
+dividend/v1 和已提交公告核验，发布 corporate_actions/v1，再继续 Feature/Label；解析规则
+与核验事实由[数据源 owner](data/source_contract.md#dividend)定义。
 
 每个 Fact Step 的所选 source 属于同一个 broker。Workflow 拥有 source 非空、source family
 选择和具体执行依赖的绑定。Workflow 在对应 source family 分支直接引用具体 broker class
@@ -377,7 +382,8 @@ Feature/label builder、Access 和 private 发布函数不记录运行日志。�
 Calendar 的 `_materialize_year` 无返回值；各 Step 的 `run` 返回原 `DataContext`。
 调度、计算或发布错误原样传播，失败分区不输出结果日志，也不追加重复错误日志。
 
-Standard 的显式 step 顺序固定为 calendar materialize → fact materialize → feature build →
+Standard 的显式 step 顺序固定为 calendar materialize → fact materialize → corporate actions resolve
+（选中 dividend 时）→ feature build →
 label build，derived operation 来自 enabled 配置。Level-2 固定为 calendar materialize →
 `Level2FactMaterializeStep` → `Level2MinuteBuildStep` → `Stock1430DailyMaterializeStep`。每个 Step
 完成整个请求范围后才进入下一 Step，Pipeline 只执行 workflow 传入的单一 tuple，不知道
@@ -397,7 +403,7 @@ Label Meta miss 时缺少必要对象必须失败。当前日 Feature 成功后 
 日期，之后有效 Meta hit 不再读取该对象的分钟、factor 或 Feature 输入。休市日没有到达
 session，不执行分钟或 H03 输入读取。该日常链不生成 H04 融合 Feature。
 
-`stock_basic`、`stock_st` 和 `suspend_d` normalize 产生零行时必须
+`stock_basic`、`stock_st`、`suspend_d` 和 `dividend` normalize 产生零行时必须
 把它作为有效空集合发布 payload 并提交 Meta；其他 normalize、feature 或 label 产生零行
 必须失败。
 `stock_basic` 的 `2019-04-01` 是无记录且源 DataFrame 不携带列的正式案例：normalize 必须
@@ -422,10 +428,10 @@ calendar 与 Standard facts，不表示 Feature 目标范围。Workflow 不读�
 
 Workflow 与 Standard data workflow 使用同一个 Tushare active manifest 解析规则、同一个
 固定 calendar source、相同 broker/normalize 绑定和相同 lazy adapter cache 语义。它从收到
-的 `PathManager` 创建唯一 Access，只显式组装 calendar materialize → fact materialize 两个
-Step，并调用一次 `DataPipeline.run()`。Calendar、fact、Meta reuse、缺失日期、空正式 session
+的 `PathManager` 创建唯一 Access，显式组装 calendar materialize → fact materialize，选中
+dividend 时再组装 resolve corporate actions，并调用一次 `DataPipeline.run()`。Calendar、fact、Meta reuse、缺失日期、空正式 session
 集、日志与部分提交后的重跑语义和 Standard data workflow 完全相同；不组装 Feature 或 Label
-Step，不写 derived、experiment 或 Job 状态。
+Step，不写 Feature/Label、experiment 或 Job 状态。
 
 Workflow 的 Instrumentation identity 固定为
 `data-standard-bootstrap_{start}_{end}`。进入执行时记录 `▶️ workflow`，成功返回后记录
@@ -868,13 +874,16 @@ startup_steps、tick_steps、result_steps 三组 Step tuple。BacktestPipeline �
 
 ```text
 startup_steps:
-  PrepareReplaySessionsStep → BuildDailyReplayInputStep / BuildMinuteReplayInputStep
-  → PrepareInputsStep → PrepareInitialMarksStep → InitializeAccountStep
+  PrepareReplaySessionsStep → PrepareReplaySymbolsStep
+  → BuildDailyReplayInputStep / BuildMinuteReplayInputStep
+  → PrepareInputsStep → PrepareCorporateActionsStep → PrepareInitialMarksStep → InitializeAccountStep
 
 tick_steps，逐时点执行:
-  UpdateMarketStep → AdvanceOrdersStep → ValueAccountStep
+  UpdateMarketStep → UpdateDistributionTermsStep → ApplyDistributionsStep → ReleaseDistributedSharesStep
+  → ObserveCorporateActionIssuesStep → AdvanceOrdersStep → ValueAccountStep
   → 信号路径：GenerateSignalStep → GenerateTargetsStep → [ApplyRiskStep] → SubmitTargetsStep
     或冻结委托路径：SubmitFrozenCommandsStep
+  → RecordEntitlementsStep → PayDividendsStep → ObserveCorporateActionIssuesStep
   → ValueAccountStep → [CompleteRiskObservationStep] → ScheduleWakeupsStep
 
 result_steps:
@@ -890,9 +899,9 @@ SubmitTargetsStep 绑定订单窗口，估值前后复用同一种 ValueAccountS
 
 | 业务阶段 | 实际 Step 与完成边界 |
 | --- | --- |
-| 准备输入 | 行情 Steps 构建 market_input，PrepareInputsStep 校验覆盖并准备决策输入，PrepareInitialMarksStep 按需补齐初始持仓历史价格；不推理、不读标签 |
+| 准备输入 | 行情 Steps 构建 market_input，PrepareInputsStep 校验覆盖并准备决策输入，PrepareCorporateActionsStep 准备独立账户事件，PrepareInitialMarksStep 按需补齐初始持仓历史价格；不推理、不读标签 |
 | 账户回放 | InitializeAccountStep 创建本次运行对象；各 tick Step 逐项推进账户、决策和执行，时钟耗尽后结束 |
-| 保存事实 | FactsPersistStep 保存 execution/equity、valuation-marks、orders、风控前 targets，以及存在的 risk-cases |
+| 保存事实 | FactsPersistStep 保存 execution/equity、valuation-marks、corporate-actions、orders、风控前 targets，以及存在的 risk-cases |
 | 评价结果 | EvaluateResultsStep 此时才读取评价标签，汇总已保存的事实及实际预测引用，不重新交易或执行风控规则 |
 | 发布结果 | PublishResultsStep 先保存 metrics，再由 ReportingBundle 重读生成 HTML 与摘要；报告成功才算整个运行成功 |
 
@@ -901,7 +910,7 @@ SubmitTargetsStep 绑定订单窗口，估值前后复用同一种 ValueAccountS
 每个 Step 只完成一个业务动作，直接使用现有领域能力；Step 内不再运行另一条 Step 链，
 不增加通用运行计划、registry、空策略或 NoOpRiskManager。
 
-PrepareReplaySessionsStep 读取正式日历，构建 Step 读取本地行情并校验转换结果，直接写入
+PrepareReplaySessionsStep 读取正式日历，PrepareReplaySymbolsStep 解析证券覆盖，构建 Step 读取本地行情并校验转换结果，直接写入
 同一 Context 的 market_input。
 PrepareInputsStep 消费该内存行情，检查初始账户、风险检查时点、执行配置与行情覆盖的
 一致性，将同一 `ReplayMarketInput` 对象与决策输入写入 BacktestInputs，不再次读取行情
@@ -937,10 +946,12 @@ BacktestPipeline 只负责三组执行顺序、动态时钟循环、每刻新建
 异常上下文；不创建或筛选业务 Step。单时点的必要先后关系由 tick_steps tuple 表达：
 
 ```text
-更新可见行情、切换交易日 → 推进旧订单与结算 → 决策前估值
+更新可见行情、切换交易日 → 更新当前可见分配条款 → 除权权益生效与红股上市 → 观察未解决公司行动
+→ 推进旧订单与结算 → 决策前估值
 → 信号/策略生成并记录原始目标 → 可选风控 → 提交目标/撤单
   或按原顺序提交冻结委托/撤单
-→ 提交后估值 → 可选风控 outcome → 登记策略及订单到期唤醒
+→ 登记权益、红利到账、观察新增暴露 → 提交后估值
+→ 可选风控 outcome → 登记策略及订单到期唤醒
 ```
 
 GenerateSignalStep 从准备好的只读索引取当前批次，调用共享 produce_signal；模型输入
@@ -1124,8 +1135,10 @@ strategy_eval、risk_rule_eval 和 full 的 `prepare_signals` 在返回前对每
   daily_close 另可携带 suspended_symbols，表示当日缺线且已确认全天停牌的证券；它们不能
   同时出现在该条 prices 中。该集合仅在收盘时可见，不包含补造的价格，也不提供盘前停牌信号。
   无法确认全天停牌的缺线则保存为 data_issues，每项包含同一收盘 ts_us、trade_date、
-  symbol 和 reason=missing_daily_close；同条中的异常证券不得重复，也不得与 prices 或
-  suspended_symbols 重叠。异常同样只在收盘可见，不作为此前决策的停牌信号。
+  symbol 和 reason=missing_daily_close；上市状态尚未确认且没有真实行情依据的历史成员
+  使用 reason=unknown_listing_status，不计为收盘价缺口。分类依据见下述回放输入规则。
+  同条中的异常证券不得重复，也不得与 prices 或 suspended_symbols 重叠。异常同样只在
+  收盘可见，不作为此前决策的停牌或上市信号。
 - `observations` 是按可用时间排序的 ExecutionObservation，包含稳定 observation_id、
   symbol、完整 BarTime、正数 Decimal price 和可选 volume_qty。BarTime 明确 minute 或
   trading_day、size、交易日、区间起止和可用时刻；minute 长度匹配 size，日线只支持完整
@@ -1139,7 +1152,8 @@ strategy_eval、risk_rule_eval 和 full 的 `prepare_signals` 在返回前对每
 有界回放。已有 Feature 供模型产生信号，行情供成交与估值，两者分别消费已有本地对象。
 账户、策略、风控、成交和结果 Steps 继续共用。
 全市场验证的具体区间、规模及资源消耗见下节，不能外推为任意长周期的容量保证；
-公司行动现金/股数事件、冲击、盘口排队和真实 broker 也不由此接口补造。
+公司行动由下述独立账户事件 Steps 消费，不由行情接口补造；冲击、盘口排队和真实 broker
+仍不在本接口范围。
 
 初始账户显式给出快照时刻、账户交易日、现金、持仓、可卖数量、平均成本及既有峰值权益。
 持仓、可卖和成本的证券键一致，可卖不超过持仓；空账户明确传空字典。本轮从无挂单
@@ -1174,27 +1188,30 @@ Access 输入由测试提供。
 ### 真实行情到回放输入
 
 行情准备属于 `run_backtest` 的启动组。调用方在原请求中用 `execution.market_source`
-指定 frequency、行情覆盖起止日期及有限的沪深股票集合；构造约束由
+指定 frequency、行情覆盖起止日期及可选的沪深股票集合；symbols 省略或为 [] 表示全市场，
+非空数组表示指定证券。构造约束由
 [CLI 契约](engineering/cli_contract.md#backtest)拥有。数据准备只消费已有正式对象，不下载行情、
 不运行 Feature/Label，不要求先调用其他 workflow。本地正式行情已经是可读取的数据对象；
 额外保存规范化行情 JSON 不会增加回测所需的时间、价格或数量信息，却会增加一套输入
 协议和需要同步的副本，因此回测不提供行情 JSON 导入或归档入口。必要的可见时间和
 单位转换仍在内存构建时完成，不能因省略中间文件而省略这些规则。
 
-日期表示行情与日程覆盖，与策略决策范围、模拟终点分别指定；代码集合须包含可能持有或
-下单的证券，不随当日候选集合删除已有持仓。Workflow 显式组装：
+日期表示行情与日程覆盖，与策略决策范围、模拟终点分别指定；显式代码集合须包含可能持有或
+下单的证券，初始持仓未包含时失败。全市场解析独立于策略候选筛选。Workflow 显式组装：
 
 ```python
 market_steps = (
     PrepareReplaySessionsStep(access, market_source.start, market_source.end),
-    BuildDailyReplayInputStep(access, market_source.symbols, source_version)
+    PrepareReplaySymbolsStep(access, market_source.symbols, tuple(initial_account.positions)),
+    BuildDailyReplayInputStep(access, source_version)
     if market_source.frequency == "daily"
-    else BuildMinuteReplayInputStep(access, market_source.symbols, source_version),
+    else BuildMinuteReplayInputStep(access, source_version),
 )
 
 startup_steps = (
     *market_steps,
     PrepareInputsStep(...),
+    PrepareCorporateActionsStep(...),
     PrepareInitialMarksStep(...),
     InitializeAccountStep(...),
 )
@@ -1203,12 +1220,27 @@ startup_steps = (
 1. **准备日程**：Access 从正式日历返回范围内全部交易日，空日程失败。当前场景为沪深
    股票常规账户日：上海时区 00:00 起、15:00 收盘；计入订单/持有分钟的窗口为
    09:30–11:30、13:00–15:00。午休、周末不计分钟，日程不随实际行情行数变化。
-2. **构建行情**：Step 按日执行 Access IO，纯转换函数生成观察和估值标记。两种输入
-   都从当日完整 `daily_bar/v1` 中选取请求证券实际存在的行，在正式收盘发布 raw close。
-   对缺行读取 `Access.suspensions` 并按下述规则核实，保留固定股票集合；不放宽
+2. **解析证券覆盖**：显式 symbols 在每个交易日保持相同，不额外读取历史名单。全市场按日
+   调用 Access.historical_stock_listings，保留历史沪深股票成员及上市日期。只有当时已知
+   的非空 list_date <= 当日，才据此纳入已确认覆盖；上市当天立即纳入，不另加上市年龄
+   门槛。非空未来日期在上市前不产生收盘价缺口。名单可能提前收录待上市证券，不能把
+   首次出现在名单中的日期当成上市日；也不能用期末、今天的名单或后来公告回填过去。
+   初始账户证券从首日保留，已确认覆盖不会因后来日期变空、停牌、ST、缺日线或名单退出
+   而缩减，避免丢失持仓/挂单的后续行情；不因此自动卖出、撤单或释放资金。
+   空 list_date 表示状态未知：没有已确认覆盖依据时单独保留待核实成员，名单退出不抹去
+   该状态；后来取得有效上市日期时按该日重新判断，不修改此前记录。
+   集合只决定行情读取与核实范围，不授予买入资格，也不证明名单在当日盘前已可见；
+   策略资格继续由原信号输入边界负责。
+3. **构建行情**：Step 按日执行 Access IO，纯转换函数生成观察和估值标记。两种输入
+   都从当日完整 `daily_bar/v1` 中选取覆盖证券实际存在的行，在正式收盘发布 raw close。
+   空上市日期的待核实成员若已有当日真实日线，或分钟模式下已有真实分钟成交，则从该日
+   纳入并保留覆盖；价格和成交仍到原始可见时间才发布，不能把当日后来的成交提前使用。
+   没有已确认覆盖或真实行情依据的成员在收盘记录 unknown_listing_status，不断言已上市
+   缺行情，也不断言未上市。日频不为判定状态额外读取分钟，后续真实行情不能回填此前状态。
+   对覆盖内缺行读取 `Access.suspensions` 并按下述规则核实，保留证券覆盖；不放宽
    `Access.daily_bars(symbols=...)` 的严格选择契约。构建结束校验完整时间轴，
    将 `ReplayMarketInput` 放入 BacktestContext，供后续输入准备和账户初始化直接消费。
-3. **准备初始估值**：PrepareInitialMarksStep 在输入校验后，仅为初始正持仓中尚无可见价格
+4. **准备初始估值**：PrepareInitialMarksStep 在输入校验后，仅为初始正持仓中尚无可见价格
    的证券沿正式交易日向前读取日线，找到各自最近的 raw close。保留原交易日和收盘时间，
    不生成历史成交观察、不增加账户回放日期。历史对象/日历缺失、价格非法或历史不足时失败；
    不用成本价或未来收盘替代。已有可见价格及无持仓的账户不额外读取历史对象。
@@ -1216,7 +1248,11 @@ startup_steps = (
 必需源对象缺失、损坏、非法数值或时间轴失败原样向外传播；输入准备失败不发布交易结果。
 局部证券缺行按以下分类处理，不将整日文件缺失改成合法空行情。
 
-固定股票集合是回测范围，不要求每天都有该证券日线。缺行只有在当日 `suspend_d` 对该证券
+当日解析的证券覆盖是行情与缺口核实范围，不要求每天都有该证券日线。退出名单后继续
+缺行且不能确认为全天停牌时，也按缺口处理，不凭名单退出制造价格或抹去异常。
+上市状态未知的成员与该类缺口分别统计；unknown_listing_status 不授予持仓沿价估值资格，
+初始持仓和已确认的真实行情已有独立覆盖依据，仍按下述收盘价与停牌规则处理。
+缺行只有在当日 `suspend_d` 对该证券
 存在 S 且 suspend_timing 为 null，并且没有 R 或日内时段记录时，才确认为全天停牌。
 日线缺行本身不能反向证明停牌，数据源的该项解释边界见 [Daily bar](data/source_contract.md#daily-bar)。
 [S/R 字段含义与事件解释边界](engineering/access.md#suspension-events)由 Access owner 定义。
@@ -1236,8 +1272,8 @@ startup_steps = (
 有效 raw 价格，可以是此前日线，也可以是当天已可见的真实分钟标记；保存价格原日期、
 时间及来源，并以 missing_daily_close 解释沿价原因，不生成正式收盘价或补造执行量。
 无持仓不要求补价；正持仓没有可靠可见价格时直接失败，不用零值、成本价或删除持仓恢复
-运行。该处理没有新增请求开关；quoted 会绕过真实行情观察，因而遇到模拟终点内的上述
-缺口时在输入准备阶段拒绝，要求使用 limit_price，不静默改变成交假设。模拟终点之后的
+运行。该处理没有新增请求开关；quoted 会绕过真实行情观察，因而遇到模拟终点内的收盘价
+缺口或上市状态未确认时在输入准备阶段拒绝，要求使用 limit_price，不静默改变成交假设。模拟终点之后的
 异常不影响本次 quoted 输入资格或结果质量标记。
 
 普通分钟无成交仍保持稀疏，不据此推断停牌或日线异常；没有显式缺口或确认停牌依据时，
@@ -1249,11 +1285,14 @@ startup_steps = (
 这只改变行情准备、估值资格及结果质量说明；quoted 的生效即申报价成交假设不变，
 确认停牌时的无成交验证也使用 limit_price。
 
-输入准备可以预先构建完整行情，但缺口只有对应收盘到达 ReplayMarket 后才成为账户可见
-事实。评价收集本次时钟实际消费的缺口（包括已消费的历史覆盖），以 metrics.data_quality
-传递到报告；未来未消费的缺口不进入结果。任一已消费缺口都使整条账户路径标为仅供诊断，
+输入准备可以预先构建完整行情，但收盘价缺口与上市状态未确认只有对应收盘到达 ReplayMarket
+后才成为账户可见事实。评价收集本次时钟实际消费的两类异常（包括已消费的历史覆盖），
+以 metrics.data_quality 传递到报告；未来未消费的异常不进入结果。任一已消费异常都使整条账户路径标为仅供诊断，
 即使当时未持有该证券或后来恢复行情，也不自动清除。原因是缺失成交可能改变候选选择、
-持仓、风控及资金再分配，不能只删除一个证券日便把后续收益视为已验证。
+持仓、风控及资金再分配，上市状态未确认也不足以证明全市场覆盖完整，不能只删除一个证券日
+便把后续收益视为已验证。报告必须分别给出缺收盘价、上市状态未确认的证券日数量，不能把
+后者相加到“缺少收盘价”。例如历史名单已含某新股但当日 list_date 为空、无行情，只能记录
+未知；后来上市日期明确为 9 月 22 日，则当天开始正式覆盖，不能回写 9 月 21 日为已确认未上市。
 
 日线成交观察使用该账户日完整的 `[00:00, 15:00]` 区间，在 15:00 可见，价格为 raw close，
 量按 [Daily bar 单位](data/source_contract.md#daily-bar)转为整数股。选择完整账户日起点是
@@ -1299,10 +1338,85 @@ execution 中提供以下字段；其他账户、决策和执行参数照常提�
 
 调用方可以前移覆盖起点以包含此前行情；初始持仓仍缺少可见价格时由 PrepareInitialMarksStep
 按需读取更早的真实收盘，不把当天收盘提前放到开盘。覆盖终点仍须满足订单窗口和退出计划；
-行情准备不自行延长模拟终点或推断最终应持仓多久。停牌或缺口沿价是估值假设，适用前提
-是不需要尚未建模的公司行动现金/股数调整；本输入没有公司行动事件，不能自动检测或处理
-除权、分红等账户变化。已知存在此类未处理事件的区间，沿价不能使其成为有效回测场景，
-不能把缺口回归通过声称为公司行动验证。
+行情准备不自行延长模拟终点或推断最终应持仓多久。停牌或缺口沿价是估值假设；遇到公司
+行动必须同时处理相应权益，不能用沿价代替账户调整。支持范围与未覆盖事件见下节。
+
+### 公司行动与非交易账户事件
+
+公司行动不会产生模拟买卖成交。2026-10-16 用户确认按税前分红记账并在报告明确标注，
+本轮直接采用以下分红送转回放语义；红利税不混入交易佣金，也不宣称真实税后收益。
+输入使用本地已解析的 `corporate_actions/v1`，由 Access 按股权登记日读取；
+原始来源、公告核验、事件归并和数据版本归
+[数据源 owner](data/source_contract.md#dividend)，已提交对象读取归
+[Access owner](engineering/access.md#corporate-actions)。
+
+准备、条款更新、权益登记、除权生效、现金到账分别由独立 Step 承担，日频和分钟复用同一账户计算。
+账户适用范围为二级市场普通流通股持有人，不默认取得指定大股东、回购专户或重整投资人资格：
+
+- `PrepareCorporateActionsStep` 读取已解析事件及未解决 disposition，只编译登记、生效、支付、
+  上市和公告修订日程，不再按源行创建权益或在此选择最新源行。数据覆盖缺失与明确空对象
+  不同，缺失记入诊断；损坏对象和非法字段仍失败。输入摘要和全部解析 disposition 随制品保存。
+  续跑还读取初始未结清权益所引用的登记日分区，只纳入已有权益对应的事件，确保跨区间
+  修订仍按公开时间应用，不因登记日早于行情起点而丢失修订，也不据此补登记其他权益。
+- `UpdateDistributionTermsStep` 在除权处理之前，将当前已公开版本放入本次运行的账户状态；
+  同一事件的修订只更新条款，保留已登记股数，不重新登记或重新到账。未来版本只存在于
+  准备日程，不进入此前的账户状态或决策。每次实际更新保留 terms_updated 事实。
+- `RecordEntitlementsStep` 在登记日收盘全部成交及当前提交完成后固定权益数量。登记不
+  立即增加净值；含权价格仍包含这份权利。卖出后已登记的红利不会消失。登记只固定股数，
+  不把本次已知分配比例冻结成不可修订的事实；明确普通股东不获分配的事件不登记权益。
+- `ApplyDistributionsStep` 在除权日账户日起点确认应收税前红利、增加送转股份并分摊原
+  持仓总成本。`ReleaseDistributedSharesStep` 在来源声明的上市日首个交易窗口起点解锁
+  新股份，与普通买入 T+1 分开，关闭 T+1 也不能提前解锁。到除权时才按当时可见的最终
+  条款检查送转数量；非整数结果没有可靠零碎股分配事实时不猜取整，该项分配暂不确认、
+  不支付也不解锁，并保留已登记股数和诊断；不凭本账户推断全市场随机派股。
+- `PayDividendsStep` 在支付日收盘、交易与决策完成后，将应收红利转入可用现金。数据只
+  有支付日期，没有券商实际入账时刻，因此采用这个明确、偏晚的可用时间假设，不能
+  宣称还原当日盘中资金可用性。净值在除息时已确认应收，到账不重复增加收益。
+  权益金额使用每股税前红利乘以登记股数的 Decimal 精确结果，不另模拟券商到分取整。
+
+只有公告日期时，以该日期结束后的下一自然日 00:00 作为明确的延后可见假设；若此时
+没有账户 session，在下一个已准备账户日开始应用。它不是对真实披露微秒的声明，不能
+用文件落款或本次采集时间伪造盘中可见性。首次产生权益的计划需要先于登记可见；
+后续修订允许登记后可见，但必须在除权前已披露。登记数量与条款版本分别保存。
+`ObserveCorporateActionIssuesStep` 在旧单执行前和当前提交后观察一次暴露，既保留当前
+时点卖出前已受影响的持仓，也包含新委托和未结清权益；重复观察不重复记录。
+有证券身份的未解决事项只在账户存在上述暴露时进入诊断；分区缺失继续作为覆盖缺口报告。补充公告的可见时点
+晚于当日账户收盘时，在下一已准备账户日开始观察，不倒写此前异常。
+
+除权生效时尚无新行情，上一含权价格不能直接乘以增加后的股数。仅用于临时估值与决策
+参考的除权基准为 `(上一可见价格 - reference_cash_per_share) / (1 + reference_shares_per_share)`，保留
+`corporate_action` 来源和事件记录；下一真实价格覆盖它。这不是新成交行情，不产生量，
+不修改执行观察或冻结委托。使用 raw 价格及显式账户权益，不叠加复权价格计算同一收益。
+账户分配使用 cash_per_share、shares_per_share；除权参数必须来自公告核验。宝丰实际普通
+股东红利 0.3158 元、参考扣减 0.28 元，顺丰合计红利 1.4 元、参考扣减 1.3939620 元，
+证明两种金额不能复用。特殊分配口径不能由此通式恢复时必须提供确定事实；若计算得到非正参考价格，无法建立
+可靠估值，直接失败，不补造价格。
+
+初始账户需要包含已登记、尚未完成的分配权益；默认空集合明确表示没有这类历史权益，
+不得从初始持仓反推过去登记日的持有人。跨回测终点尚未到账或上市的权益继续保留，
+不为了结清权益延长回测。账户权益为现金、证券市值和已确认应收红利之和。
+`initial_account.distribution_entitlements` 每项包含 distribution、eligible_qty、recognized、
+cash_paid、shares_released、可空 recognition_issue。非整数分配在除权后仍未确认时，
+recognition_issue=fractional_shares 与登记数量一同保存；续跑恢复诊断，不伪造已确认、已支付
+或已上市阶段，也不丢弃未来修复所需的登记数量。distribution 保存 action_id、symbol、source_ref、announced_ts_us、
+record_ts_us、ex_ts_us、pay_ts_us、shares_available_ts_us、cash_per_share、shares_per_share、
+reference_cash_per_share、reference_shares_per_share；announced_ts_us 表示该快照当前条款版本的可见时刻，
+可以晚于登记，但不得晚于除权，也不得晚于初始账户快照。
+不含现金或股份时对应结算时间为 null。eligible_qty 为登记时正整数股数，三个布尔阶段字段
+默认 false。初始权益身份不能重复，阶段必须与快照时点匹配，sellable 必须扣除未上市股份；
+不接受通过修改阶段跳过尚未发生的除权、支付或上市。期末同结构保存未结清权益供续跑。
+
+换股、现金选择权及退市清偿不是分红送转接口能够完整交付的事实。已核实的其他事件可
+通过本地补充公告输入保存事件身份、生效时点、证券和来源；影响持仓或委托但尚无完整
+处理规则的事件进入诊断。普通卖单不表示行使现金选择权，未显式提供行权决定不得自动
+行权。报告必须同时声明分红送转以外的覆盖限制，不能把未提供补充公告当作全市场没有
+其他公司行动；不能在未知时清零退市持仓、假定现金已回收或提前换股。
+
+公司行动输入、原条款及 revisions、全部 source_resolutions、登记数量、应收、股份和现金变化
+保存在 `corporate-actions.json`；费用、
+成交率仍只从交易事实计算。报告呈现税务口径、已处理事件和未解决事项。已知未处理事件、
+数据缺失或不能确定权益的场景仅供诊断，修复后重跑；停牌和订单到期正确不等于这些
+账户变化已被验证。
 
 这是使用历史行情构建的条件回测：区间结束可用是回放场景的声明，不证明 Tushare 或
 broker 在那个历史微秒已经交付该数据，也不证明当前存储未被事后修订。不能据此声明
@@ -1318,6 +1432,9 @@ broker 在那个历史微秒已经交付该数据，也不证明当前存储未�
 成交、订单到期、现金占用、恢复行情和历史价格来源。额外验证无价持仓失败、quoted
 拒绝缺口、异常按收盘可见、指标及报告保留诊断标记。同一本地源重复回测的成交、权益
 曲线、评价与期末账户一致。
+上市状态回归覆盖提前出现在历史名单、已知未来上市日、上市当天立即纳入、空日期下的真实
+日线/分钟成交、名单退出及初始持仓保留。后来有行情不改写此前未知记录；未知上市状态
+不授予持仓沿价资格，报告按原因分项计数。
 日频信号与分钟行情的组合继续由前述回测回归覆盖。
 
 2026 年 9 月真实输入的验证固定 21 个交易日、月初 5,206 只沪深股票（含 ST）和 10,412 条
@@ -1339,6 +1456,62 @@ broker 在那个历史微秒已经交付该数据，也不证明当前存储未�
 核验脚本见[诊断回放证据](/tmp/trading-diagnostic-validation-3XMJZPed/evidence.json)。
 这证明该固定股票集合和冻结委托下的整月流程可完成，不证明原数据异常已修复、收益风险
 已验证或分钟容量可无限扩展；证据位于本机临时目录，后续复现需保留归档。
+
+上述结果限于原先显式指定的 5,206 只股票。symbols=[] 的历史全市场覆盖与真实
+POST → Job → CLI 子进程验证另见[完整链路证据](/tmp/trading-full-market-api-JfEaVoxA/evidence.json)：
+当时实现按名单首次出现累积 5,226 只，日频/分钟均完成 21 个收盘，但报告的 109 个缺口
+包含 108 个尚无上市确认依据的误报。名单中的空 list_date 被错误等同于已经上市，因此这份旧证据只
+证明接口与账户链路贯通，不能证明缺口分类正确。该验证保留原 10,412 条委托，新增历史
+成员用于验证行情覆盖，不构成新增策略决策。修正依据、输入、代码状态及重跑结果见
+[研究卷宗](../research/backtest/README.md#全市场紧凑请求与真实-post-验证)。
+
+2026-10-16 早先基于 dividend/v1 源行直接准备权益的分红送转验证，使用同一 9 月区间、symbols=[]、1e12 初始现金、零费用/
+滑点和原 10,412 条冻结委托，在隔离存储加入逐登记日下载的 485 条源记录，其中 477 条
+为实施记录；沪深覆盖内准备 454 项分配，账户实际登记 440 项。日频和分钟均完成 21 个
+收盘，按源比例独立对账得到税前红利 21,189.61102 元、6 只股票共 532 股送转股份，后者
+期末市值为 160,071.88 元。与各自无公司行动基线相比，现金只增加红利，持仓只增加送转，
+权益增加 181,261.49102 元；1e12 基数上的 float64 净值差存在小于 0.0002 元的表示误差，
+现金 Decimal 对账和股份数量则精确相等。
+
+每笔订单的状态、原因、成交时间、数量和价格与各自基线逐字段一致，仍为 10,400 笔完成、
+11 笔到期、1 笔拒绝；送转不擅自修改原来的 200 股卖单，增加的股份留在期末账户。
+这只能证明当时源行假设下的记账和交易分离；后续公告核验发现源行不等于普通股东权益，
+该金额不作为当前解析契约下的已验证分红。原 1 个收盘缺口、108 个上市状态未确认
+证券日仍在；补充公告使 000016 的现金选择权、601059/601198 的合并和 688496 的退市
+相关事项进入公司行动诊断，未自动行权、换股或清零，结果仍非已验证收益。固定回归另
+覆盖到账前不可花用、登记后卖出仍收款、未上市股份独立锁定、权益续跑、零碎股诊断、
+预案不执行和盘后公告不提前影响账户。精确源码、输入、独立对账脚本、测试记录及两份
+报告见[隔离公司行动验证证据](/tmp/trading-corporate-actions-202609-6ae52bs4/evidence.json)。
+
+同日通过 `src/data_system` 现有的 CalendarMaterializeStep → FactMaterializeStep，仅选择
+`dividend`，按登记日向 Tushare 重新查询，向共享库 `/home/wsw/app/data` 提交 21 个 raw
+分区、21 个 processed 分区及各自 Meta。485 条原始记录和标准化内容均与隔离输入一致；
+再次执行全部复用 Meta，已提交文件摘要不变。正式库日频和分钟回放分别耗时约 7.91 秒和
+349.53 秒，均完成 21 个收盘；上述红利、送转、期末账户和逐订单对账结果保持一致。
+精确代码状态、请求、正式输入摘要、报告及独立对账见
+[正式源下载与回放证据](/tmp/trading-tushare-dividend-202609-ofgs9sci/evidence.json)；两份证据
+的临时目录均需保留归档。该接口不提供换股、现金选择权或退市公告，前述 4 条人工公告
+仍仅保留在隔离证据中；正式库报告中的零项公告异常不表示公司行动已完整核验。原有
+行情、上市状态、税务及历史源修订的限制继续适用。
+
+公告解析替代源行直接记账后的验证，使用本地公告案例覆盖木林森、宝丰、顺丰、正邦及
+中岩大地；每例分别运行日频、分钟回归，行情为固定可核算输入，公告条款来自
+[数据源核验](data/source_contract.md#从来源记录到业务事件)。另外使用正式库真实日线
+回放木林森 2018-04-10 至 04-11：登记 100 股只取得一次 24.7 元与 100 股转增；
+中岩大地 2025-07-04 至 07-07：登记 10,000,000 股，按后续公开修订取得 2,814,904 元与
+3,992,772 股，登记数量未重算、权益未重复到账。该大股数用于得到可独立核算的整数
+分配，不表示策略资金规模或零碎股问题已解决。续跑回归还覆盖登记早于行情起点时读取
+历史登记分区，以及未确认零碎股权益继续保留诊断。
+
+相同 9 月全市场委托在新解析输入下，日频约 7.89 秒、分钟约 344.52 秒，均完成 21 个
+收盘；逐笔交易事实与各自无分配基线一致，仍为 10,400 笔完成、11 笔到期、1 笔拒绝。
+该月沪深范围的 454 个候选尚无公告核验输入，模拟账本没有据此派发现金或股份；这不
+表示真实没有分红。日频记录 453 项暴露相关未解决事项，分钟为 447 项：相差的六只股票
+在 09-30 登记，分钟在收盘前已卖完，日频在同一收盘 tick 执行卖出，按既定规则保留
+结算前的暴露诊断。原 1 个缺收盘价与 108 个上市状态未知证券日保持不变，收益风险仍未
+验证。两份请求、代码快照、输入和结果摘要、逐笔比对及六项差异依据见
+[解析与整月回放证据](/tmp/trading-corporate-action-resolution-_6lgzo9e/evidence.json)。该证据
+区分机制验证与历史公告覆盖，不能用测试通过或制品存在声称全部公司行动已经核实。
 
 ### 策略目标与退出计划
 
@@ -1402,10 +1575,47 @@ buy/sell_step_qty 量化。允许、缩减、拒绝及清仓分别记录；RiskD
 
 ### 账户级执行模拟与唯一结算
 
-五种任务的账户路径使用同一提交、挂单、撤单、成交、费用、账户和账本路径。目标路径可以
-根据已有持仓/挂单差量与现金/可卖预算生成合法数量；冻结具体订单保持其原数量，
-不满足接纳条件时明确拒绝，不能暗中缩量冒充原订单成交。策略输入只生成原始目标；
-买卖方向、报价和数量合法化在最终目标进入订单边界后完成。
+五种任务的账户路径使用同一提交、挂单、撤单、成交、费用、账户和账本路径。
+
+<a id="orders-and-execution-parameters"></a>
+
+**委托、执行规则与费用的职责。** order_refs 只引用待执行的原始委托和撤单序列；
+execution.quantity_rules 和 execution.fees 分别提供本次回放统一采用的交易约束与费用
+参数，不并入订单文件，也不由订单数值反推。统一配置一次不表示所有证券必须使用相同
+规则；quantity_rules 用必填 default 和可选 overrides 表达，字段形状由 CLI owner 定义。
+初始化账户时，为行情观察、估值、初始账户和冻结指令涉及的证券解析一次规则映射：
+命中 overrides 使用该证券完整规则，否则使用 default。执行器与持仓构造器消费同一份映射，
+无需请求为全市场逐个重复相同规则。default 是调用方声明的场景假设，不表示所有板块
+的真实规则必然一致；不同规则用 overrides 显式声明。不按订单内容猜测最小数量或步长。
+metrics.parameters 保留紧凑请求的语义值，不将 symbols 改写成展开列表或把规则复制数千份。
+
+| 信息 | 回答的业务问题 | 所属输入或结果 |
+| --- | --- | --- |
+| 股票、方向、数量、限价、生效与到期时间，以及撤单指令 | 要执行什么交易？ | order_refs 中的委托与撤单 |
+| 最小申报数量、申报/成交步长、价格步长、可卖限制 | 指令是否合法、可以如何成交？ | execution.quantity_rules |
+| 费率、最低佣金及相应计算口径 | 应预占和扣除多少费用？ | execution.fees 及其绑定的费用模型 |
+| 实际成交数量、价格、实际费用 | 最终发生了什么？ | 成交与结算事实 |
+
+按删除测试判断：移除订单文件里的执行规则和费用，订单仍能完整表达交易要求；但若从
+整个回放中移除这些规则，执行器就无法确定订单合法性、资金需求和账户变化。规则因此
+是独立执行依赖，不能因为订单已经有 qty 就省略。例如买入 150 股，在允许以 50 股递增
+的假设下和要求以 100 股递增的假设下，接纳结果可以不同；150 本身不能反推出合法步长。
+当前 quantity_rules 还包含 price_tick 和 enforce_t1，分别约束价格与可卖数量，名称
+不应被理解为只负责填写委托股数。费用影响接纳和结算的例子及计算边界见下文。
+
+目标路径可以根据已有持仓/挂单差量与现金/可卖预算生成合法数量；冻结具体订单保持其
+原数量，不满足接纳条件时明确拒绝，不能暗中缩量冒充原订单成交。策略输入只生成原始
+目标；买卖方向、报价和数量合法化在最终目标进入订单边界后完成。
+同一批冻结指令可以在不同交易约束或费用下重复回放，比较的是固定指令的执行结果。
+订单生成时使用过原规则，不意味着回放时必须由该订单定义执行环境。若新规则或费用
+应影响策略选择、仓位或后续订单生成，必须从信号/策略重新回放，不能将固定订单的比较
+解释为策略重新决策后的表现。
+
+完整复现还依赖初始账户、行情、时间范围、成交假设、实际采用的规则和费用，以及准确
+代码状态。将这些输入与订单一起归档，是完整场景的打包方式，不改变各自的语义归属。
+当前继续使用独立订单制品和请求参数快照，不为减少 POST 字段扩大 order_refs 的职责，
+也不增加订单与请求各保存一份执行配置、再按优先级覆盖的机制。费用参数保存在
+metrics.parameters，实际费用保存在成交结算事实中；两者不能互相替代。
 
 实现名称按职责区分：`AccountExecutionSimulator` 管理单账户订单生命周期并驱动成交假设，
 `*FillModel` 定义成交价格与撮合条件，`SettlementEngine` 协调费用、持仓和账本更新；
@@ -1446,9 +1656,14 @@ reference_price 与成交价均为申报价，滑点成本为零。它不伪造�
 按该价格成交。期末持仓用当时可见价格估值，不为得到利润而强制清仓。输出解释为声明策略、
 账户和报价条件下的假设收益；同一预测搭配不同仓位、退出或费用规则可以得到不同收益。
 
-买单按原报价及费用预占现金，卖单按可卖量预占数量；撤销、过期、成交释放
-对应占用。T+1 由显式证券规则决定。金额和费用使用 Decimal，佣金最低收费按每单累计
-成交金额计算增量，不对每次部分成交重复收最低费；卖出印花税和沪市过户费使用任务
+买单按原报价及费用预占现金，卖单按可卖量预占数量；撤销、过期、成交释放对应占用。
+费用必须参与执行过程，不能只在最终收益上扣除。例如现金为 2,000 元、以 10 元限价买入
+200 股，零费用时可以满足资金要求；若假设这笔交易需要 5 元费用，就需要 2,005 元，
+原资金不足以接纳该订单。不同费用还可能改变后续委托的可用资金。这个例子只说明费用
+的执行作用，不声明真实费率或最低佣金。
+T+1 由显式证券规则决定。金额和费用使用 Decimal；费用参数不是预先确定的实际扣款，
+未成交、部分成交及实际成交金额都会影响结算。佣金最低收费按每单累计成交金额计算
+增量，不对每次部分成交重复收最低费；卖出印花税和沪市过户费使用任务
 声明费率。本轮不进行未声明的分币舍入，不把示例费率当真实市场成本。SettlementEngine
 是费用、持仓和 ledger 的唯一协调入口，以稳定 fill_id 去重；完全相同的回报只应用一次，
 冲突身份或超卖在改变账户前失败。
@@ -1554,37 +1769,51 @@ execution.parquet 保留 `ledger.records` 和 `ledger.order_events` 两个现有
 order_id 关联账本记录。无成交时不补零价或零费用，无任何执行记录时写带固定 schema 的
 零行表，明确区分正常无交易和明细未成功发布。
 
-equity.parquet 按 `EquityCurve.points` 的原有顺序保存六列：`ts_us` 为 int64；
-`cash`、`market_value`、`equity`、`peak_equity`、`drawdown` 为 float64。
+equity.parquet 按 `EquityCurve.points` 的原有顺序保存七列：`ts_us` 为 int64；
+`cash`、`market_value`、`dividend_receivable`、`equity`、`peak_equity`、`drawdown` 为 float64。
 各列均不为空。保留实际估值时点与计算精度，不重采样为每日结果，不在空日期插值。
 同一时点已由 EquityCurve 替换的值只保存最终快照；该文件不是账户状态变更日志。
 
 valuation-marks.parquet 按估值时点、初始/日终批次及 symbol 排序保存实际正持仓的依据：
 ts_us、trade_date、symbol、qty 为估值时间、账户日、证券和整数股数；price 为 Decimal
 原样字符串；price_ts_us、price_trade_date、price_kind 保留原价格时间、原日期及
-mark/daily_close/execution 来源种类；reason 为 initial、daily_close、suspension 或
+mark/daily_close/execution/corporate_action 来源种类；reason 为 initial、daily_close、suspension 或
 missing_daily_close。initial 标记初始批次，日终缺口沿价使用 missing_daily_close，
 不能因保留旧价而把 price_trade_date 改成估值当天。
 时间和数量列为 int64，其余为 string，全部非 null。初始批次保存首次决策前持仓，日终批次
 保留同刻最终估值，已卖完的证券不残留旧日终记录；无持仓时写固定 schema 的零行表。
 该文件解释估值依据，既不是补造的市场行情，也不参与成交。盘中完整权益序列仍由 equity.parquet 保存。
 
-orders.json 按原顺序保存完整 OrderIntent/CancelOrders，可直接用于 execution_eval；
+orders.json 按原顺序保存完整 OrderIntent/CancelOrders，可作为 execution_eval 的指令输入；
+它不是完整回放场景，执行参数与订单的分工见[委托、执行规则与费用的职责](#orders-and-execution-parameters)。
 targets.json 保存风控前目标。risk-cases.json 保存账户与挂单快照，可通过 RiskCases.from_files().evaluate() 复演规则决定；
 它不替代 risk_rule_eval 的完整策略输入。
 预测引用、模型身份及模型/特征/标签摘要随指标/预测记录保存；
 行情原文件和运行环境没有自动复制归档，完整复演还需保留这些输入及准确源码版本。
 
+corporate-actions.json 保存 tax_basis=gross、coverage=distributions_and_supplied_notices、
+input_digests、distributions、notices、records、unresolved 和 outstanding_entitlements。
+输入摘要为所读列的有序 records JSON 的 SHA-256；用于发现输入变化，不代替原始版本
+归档。records 包含 action_id、ts_us、symbol、event、eligible_qty、cash_delta、
+receivable_delta、shares_delta、source_ref；event 为 registered、recognized、cash_paid 或
+shares_released，金额按 Decimal 字符串保存，股份为整数。它独立于 execution，不增加
+订单数、成交数、换手或交易费用。
+
 metrics.json 的稳定顶层结构是 mode、parameters、not_run、prediction_refs、data_quality，
-以及实际执行的 signal_eval、risk_eval、risk_effectiveness、execution_eval、portfolio、final_account。
+以及实际执行的 signal_eval、risk_eval、risk_effectiveness、execution_eval、portfolio、final_account、corporate_actions。
 applied_risk 记录本账户实际业务规则，无业务风控时为 null。risk_eval 保留案例、原始决定
 与 outcome 快照，rule_coverage 按规则类型累计检查/触发次数，同类多条规则会分别计数。
 
-data_quality 包含 diagnostic_only 和 issues：每条 issue 保存 ts_us、trade_date、symbol
-及 reason=missing_daily_close；diagnostic_only 必须等于 issues 是否非空。无已消费缺口时
-保存 false 和空数组，这不等于所有数据或收益已经验证。诊断标记属于本次整条账户路径，
+data_quality 包含 diagnostic_only、issues 和 corporate_action_issues：每条行情 issue 保存 ts_us、trade_date、symbol，
+reason 为 missing_daily_close 或 unknown_listing_status，分别表示已确认覆盖的收盘价缺口
+和缺少上市确认依据；二者不能混为一类。公司行动 issue 保存 ts_us、可空 symbol/action_id、
+reason、source_ref；reason 包括 missing_distribution_data、incomplete_distribution、fractional_shares
+及 unsupported_<kind>。diagnostic_only 必须等于两类 issues 任一非空。无已消费异常时
+保存 false 和两个空数组，这不等于所有数据或收益已经验证。诊断标记属于本次整条账户路径，
 后续恢复行情不清除；数值评价仍可计算，但收益和风险结果在修复输入并重新回放前仅供
-诊断。暂不成交可能避开亏损，不能宣称诊断收益更保守。不增加独立异常文件或发布通道。
+诊断。暂不成交可能避开亏损，不能宣称诊断收益更保守。公司行动事实制品同时保留其未解决事项，
+不增加独立异常发布通道。corporate_actions 汇总税务与覆盖口径、准备分配数、登记数、税前
+到账金额和按证券统计的送转数量；final_account 另保留 dividend_receivable 和未结清权益。
 
 risk_effectiveness 按配置顺序保存 rules，
 每项含 rule、observations、sample_count、defined_count、observed_breach_count、

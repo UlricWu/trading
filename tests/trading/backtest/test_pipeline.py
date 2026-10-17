@@ -56,7 +56,7 @@ def initialize_step() -> InitializeAccountStep:
     config = FakeExecutionConfig(
         market_source={'frequency': 'minute', 'start': '2026-07-03', 'end': '2026-07-03',
                        'symbols': ['600000', '000001']}, end_ts_us=180_000_000,
-        quantity_rules={s: QuantityRules(1, 1, 1, 1, 1, Decimal('0.01'), True) for s in ('A', 'B')},
+        quantity_rules={"default": QuantityRules(1, 1, 1, 1, 1, Decimal('0.01'), True)},
         fees=FeeConfig(commission_rate=0, stamp_tax_rate=0, transfer_rate=0, min_commission=0),
         annual_factor=252, fill=QuotedFillConfig(type='quoted'),
     )

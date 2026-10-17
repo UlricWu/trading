@@ -6,8 +6,9 @@ import pytest
 
 from src import logs
 from src.trading.backtest.evaluation import SignalEvaluation, evaluate_execution, evaluate_portfolio
+from src.trading.backtest.market.replay import MarketDataIssue
 from src.trading.backtest.reporting.bundle import ReportingBundle
-from src.trading.backtest.reporting.metrics import BacktestMetrics
+from src.trading.backtest.reporting.metrics import BacktestMetrics, MarketDataQuality
 from src.trading.core.equity import EquityCurve
 from src.trading.core.ledger import ExecutionLedger
 from src.training.evaluation import ICObservation
@@ -69,3 +70,25 @@ def test_report_distinguishes_undefined_values_no_orders_and_unrun_capabilities(
     persisted = json.loads(pm.experiment_backtest_metrics(experiment_name='empty').read_text())
     assert persisted['execution_eval']['order_completion_rate'] is None
     assert persisted['portfolio']['sharpe'] is None
+
+
+def test_report_separates_unresolved_listing_status_from_missing_closes(tmp_path: Path) -> None:
+    issues = (
+        MarketDataIssue(ts_us=1, trade_date="2026-09-15", symbol="601238", reason="missing_daily_close"),
+        MarketDataIssue(ts_us=1, trade_date="2026-09-15", symbol="001246", reason="unknown_listing_status"),
+    )
+    metrics = BacktestMetrics(mode="execution_eval", parameters={}, not_run={},
+        data_quality=MarketDataQuality(diagnostic_only=True, issues=issues))
+    (tmp_path / "metrics.json").write_text(metrics.model_dump_json())
+    messages = []
+    sink = logs.add(lambda message: messages.append(str(message)), format="{message}",
+                    filter="src.trading.backtest.reporting.bundle")
+    try:
+        report = ReportingBundle(tmp_path).run()
+    finally:
+        logs.remove(sink)
+    expected = "1 个证券日缺少收盘价；1 个证券日上市状态未确认"
+    assert expected in "".join(messages)
+    assert expected in report.read_text()
+    assert "2 个证券日缺少收盘价" not in "".join(messages)
+    assert "上市状态未确认不等于已确认未上市" in report.read_text()

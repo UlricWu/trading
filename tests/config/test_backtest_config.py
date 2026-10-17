@@ -10,11 +10,27 @@ from pydantic import TypeAdapter, ValidationError
 
 from src.config.backtest_config import (
     FakeExecutionConfig,
+    InitialAccount,
     ReplayMarketSourceConfig,
     StrategyConfig,
     ThresholdStrategyConfig,
     TopKHysteresisStrategyConfig,
 )
+
+
+@pytest.mark.parametrize("recognition,sellable,error", [(False, 200, "recognition"), (True, 201, "unlisted")])
+def test_snapshot_cannot_lose_recognized_rights_or_unlock_unlisted_shares(
+    recognition: bool, sellable: int, error: str,
+) -> None:
+    rights = {"distribution": {"action_id": "600000/bonus", "symbol": "600000", "source_ref": "test",
+        "announced_ts_us": 1, "record_ts_us": 2, "ex_ts_us": 3, "pay_ts_us": 5,
+        "shares_available_ts_us": 5, "cash_per_share": "0.1", "shares_per_share": "0.5",
+        "reference_cash_per_share": "0.1", "reference_shares_per_share": "0.5"},
+        "eligible_qty": 200, "recognized": recognition}
+    with pytest.raises(ValidationError, match=error):
+        InitialAccount(ts_us=4, trade_date="2026-09-03", cash=0, positions={"600000": 300},
+                       sellable={"600000": sellable}, average_cost={"600000": 10}, peak_equity=3000,
+                       distribution_entitlements=[rights])
 
 
 def test_threshold_strategy_applies_confirmed_default() -> None:
@@ -109,7 +125,7 @@ def test_strategy_rejects_values_outside_the_confirmed_schema(
 
 @pytest.mark.parametrize("source", [
     {"frequency": "tick"}, {"start": "2026-7-17"}, {"end": "2026-07-16"},
-    {"symbols": []}, {"symbols": ["600000", "600000"]}, {"symbols": ["830799"]},
+    {"symbols": None}, {"symbols": ["600000", "600000"]}, {"symbols": ["830799"]},
     {"symbols": ["60000x"]}, {"symbols": [600000]},
     {"output_ref": "relative.json"}, {"output_ref": "/tmp/market.json"}, {"output_ref": None},
     {"guess_unit": True},
@@ -151,3 +167,62 @@ def test_execution_requires_local_source_and_rejects_market_json(
         assert ("market_source",) in errors
     else:
         assert errors[("market_ref",)] == "extra_forbidden"
+
+
+@pytest.mark.parametrize("selection", [{}, {"symbols": []}])
+def test_market_source_defaults_to_full_market(selection: dict[str, object]) -> None:
+    source = ReplayMarketSourceConfig.model_validate({
+        "frequency": "daily", "start": "2026-09-01", "end": "2026-09-30", **selection,
+    })
+
+    assert source.symbols == ()
+
+
+def test_execution_accepts_default_rules_and_complete_symbol_overrides(
+    backtest_payload: Callable[[str], dict[str, object]],
+) -> None:
+    fields = backtest_payload("execution_eval")["execution"]
+    default = {"buy_min_qty": 100, "buy_step_qty": 100, "sell_min_qty": 1,
+               "sell_step_qty": 1, "fill_step_qty": 1, "price_tick": "0.01", "enforce_t1": True}
+    fields["quantity_rules"] = {"default": default, "overrides": {
+        "688001": {**default, "buy_min_qty": 200, "buy_step_qty": 1},
+    }}
+
+    config = FakeExecutionConfig.model_validate(fields)
+
+    assert config.quantity_rules.default.buy_min_qty == 100
+    assert config.quantity_rules.overrides["688001"].buy_min_qty == 200
+
+
+@pytest.mark.parametrize("invalid_rules", [
+    {}, {"overrides": {}}, {"600000": {}}, {"default": None},
+    {"default": {}, "overrides": {"600000": {"buy_min_qty": 200}}},
+])
+def test_execution_requires_explicit_complete_default_rules(
+    backtest_payload: Callable[[str], dict[str, object]], invalid_rules: dict[str, object],
+) -> None:
+    fields = backtest_payload("execution_eval")["execution"]
+    fields["quantity_rules"] = invalid_rules
+    with pytest.raises(ValidationError):
+        FakeExecutionConfig.model_validate(fields)
+
+
+def test_quantity_rule_overrides_replace_whole_rules(
+    backtest_payload: Callable[[str], dict[str, object]],
+) -> None:
+    fields = backtest_payload("execution_eval")["execution"]
+    fields["quantity_rules"]["overrides"] = {"600000": {"buy_min_qty": 200}}
+    with pytest.raises(ValidationError, match="buy_step_qty"):
+        FakeExecutionConfig.model_validate(fields)
+
+
+def test_execution_rejects_old_per_symbol_rule_shape(
+    backtest_payload: Callable[[str], dict[str, object]],
+) -> None:
+    fields = backtest_payload("execution_eval")["execution"]
+    fields["quantity_rules"] = {"600000": fields["quantity_rules"]["default"]}
+    with pytest.raises(ValidationError) as caught:
+        FakeExecutionConfig.model_validate(fields)
+    errors = {error["loc"]: error["type"] for error in caught.value.errors()}
+    assert errors[("quantity_rules", "default")] == "missing"
+    assert errors[("quantity_rules", "600000")] == "extra_forbidden"

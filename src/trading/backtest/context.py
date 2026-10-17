@@ -10,6 +10,7 @@ from typing import Literal
 
 from src.trading.backtest.commands import OrderCommandSchedule
 from src.trading.backtest.clock import ReplayClock
+from src.trading.backtest.corporate_actions import CorporateActionIssue, CorporateActionSchedule
 from src.trading.backtest.execution.simulator import AccountExecutionSimulator
 from src.trading.backtest.market.replay import MarkObservation, ReplayMarket, ReplayMarketInput, ReplaySession
 from src.trading.backtest.market.signals import RecordedSignalBatch, SignalBatch
@@ -19,6 +20,7 @@ from src.trading.core.events import PendingOrder, TargetEvent
 from src.trading.core.ledger import ExecutionLedger
 from src.trading.core.tape import SignalTape, TargetTape
 from src.trading.portfolio.state import PortfolioState
+from src.trading.portfolio.corporate_actions import CorporateActionRecord, Distribution
 from src.trading.portfolio.constructors.base import PortfolioConstructor
 from src.trading.portfolio.constructors.fixed_holding import FixedHoldingConstructor
 from src.trading.risk import RiskManager
@@ -41,7 +43,7 @@ class PositionValuation:
     price: Decimal
     price_ts_us: int
     price_trade_date: str
-    price_kind: Literal["mark", "daily_close", "execution"]
+    price_kind: Literal["mark", "daily_close", "execution", "corporate_action"]
     reason: Literal["initial", "daily_close", "suspension", "missing_daily_close"]
 
 
@@ -66,6 +68,9 @@ class BacktestState:
     decision_dates: dict[int, str] = field(default_factory=dict)
     last_mark_prices: dict[str, float] = field(default_factory=dict)
     valuation_marks: dict[tuple[int, str], tuple[PositionValuation, ...]] = field(default_factory=dict)
+    corporate_action_records: list[CorporateActionRecord] = field(default_factory=list)
+    distribution_terms: dict[str, Distribution] = field(default_factory=dict)
+    corporate_action_issues: dict[tuple[str, str | None, str], CorporateActionIssue] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,9 +124,12 @@ class BacktestContext:
 
     metrics: BacktestMetrics
     sessions: tuple[ReplaySession, ...] = ()
+    symbols_by_date: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    unknown_listing_symbols_by_date: dict[str, tuple[str, ...]] = field(default_factory=dict)
     market_input: ReplayMarketInput | None = None
     inputs: BacktestInputs | None = None
     initial_marks: tuple[MarkObservation, ...] = ()
+    corporate_actions: CorporateActionSchedule = field(default_factory=CorporateActionSchedule)
     state: BacktestState | None = None
     market: ReplayMarket | None = None
     executor: AccountExecutionSimulator | None = None

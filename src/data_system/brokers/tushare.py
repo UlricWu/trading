@@ -55,6 +55,7 @@ class TushareBroker:
             "stock_st": "stock_st",
             "stk_limit": "stk_limit",
             "suspend_d": "suspend_d",
+            "dividend": "dividend",
             "cyq_perf": "cyq_perf",
             "margin": "margin",
             "margin_detail": "margin_detail",
@@ -123,7 +124,7 @@ class TushareBroker:
         if not self._materialize_query(
             source_name=source_name,
             api_name=api_name,
-            params={"trade_date": compact_date},
+            params={"record_date" if raw_object == "dividend" else "trade_date": compact_date},
             raw_payload=raw_payload,
         ):
             return None
@@ -190,6 +191,9 @@ class TushareBroker:
                 f"api_name={api_name} params={params}"
             )
             return False
+
+        if source_name == "dividend" and len(response) >= 2000:
+            raise ValueError("dividend response reached the source's 2000-row limit; completeness is unconfirmed")
 
         payload = response.to_parquet()
         if not isinstance(payload, bytes):

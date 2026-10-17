@@ -126,6 +126,16 @@ labels/<label_set>/<version>/trade_date=<date>/data.parquet
 labels/<label_set>/<version>/trade_date=<date>/meta.json
 ```
 
+上述三个命名空间的当前版本统一为 `v1`，新增版本的授权遵循根
+[工程规范](../../AGENTS.md#工程规范)。字段扩充仍更新当前 owner 定义的 `v1` schema；
+已有派生分区需要同步重建，不能通过另开版本目录绕过，也不增加多版本读取或回退。
+
+`dividend/v1` 为保留来源公告与原始行摘要的分配记录；`corporate_actions/v1` 为同登记日的
+解析结果。公告核验输入使用 `raw/announcements/corporate_action_reviews/trade_date=<date>/reviews.json`
+及同目录 Meta；核验内容、来源摘要与多输入 lineage 由[数据源 owner](source_contract.md#dividend)
+定义。它们继续使用上述单对象路径与原子发布；重建不改写已入库 Tushare raw。
+需要留存被替换的派生对象时，将其与精确输入、源码一同归档为验证证据，不作为另一正式版本供运行时读取。
+
 `trade_calendar` 不使用单日 processed 分区，固定为：
 
 ```text
@@ -320,6 +330,7 @@ experiments/<experiment_name>/
 ├── execution.parquet                       # 执行与结算事实
 ├── equity.parquet                          # 事件估值
 ├── valuation-marks.parquet                 # 初始与日终持仓的估值价格依据
+├── corporate-actions.json                  # 公司行动来源、权益、记账与未解决事项
 ├── metrics.json
 └── report.html
 ```

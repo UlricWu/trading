@@ -17,6 +17,8 @@ from src.data_system.builders.level2_stock_trade_1m import (
     STOCK_TRADE_1M_KEY,
     STOCK_TRADE_1M_SCHEMA,
 )
+from src.data_system.normalize.level2_security import SECURITY_TYPE_RANGES, SecurityType
+from src.data_system.corporate_actions import CorporateActionResolution
 from src.utils import table_ops
 from src.utils.datetime_utils import DateTimeUtils
 from src.utils.path import PathManager
@@ -225,6 +227,31 @@ class Access:
             f"no later formal trade date is representable: trade_date={validated_date}"
         )
 
+    def historical_stock_listings(self, *, trade_date: str) -> dict[str, str | None]:
+        """Return historical SH/SZ members and their known listing dates.
+
+        None means unknown, not unlisted. Membership includes stocks without daily
+        bars and suspended or ST stocks; the snapshot does not prove pre-open availability.
+
+        Example:
+            listings = access.historical_stock_listings(trade_date="2026-09-01")
+            listed_on = listings["600000"]
+        """
+        validated_date = DateTimeUtils.require_system_date(trade_date, field_name="trade_date")
+        stock_basic = self._read_processed_frame(trade_date=validated_date, dataset_name="stock_basic")
+        _unique_data_symbols(stock_basic, dataset_name="stock_basic")
+        table_ops.require_columns(stock_basic, ("list_date",), who="stock_basic")
+        stock_ranges = tuple(rule for rule in SECURITY_TYPE_RANGES if rule.security_type == SecurityType.STOCK)
+        return {
+            symbol: None if pd.isna(list_date) else DateTimeUtils.require_system_date(
+                list_date, field_name=f"stock_basic[{symbol}].list_date",
+            )
+            for symbol, list_date in stock_basic.loc[:, ["symbol", "list_date"]].sort_values("symbol").itertuples(
+                index=False, name=None,
+            )
+            if any(f"{rule.start:06d}" <= symbol <= f"{rule.end:06d}" for rule in stock_ranges)
+        }
+
     def universe(
         self,
         *,
@@ -422,6 +449,73 @@ class Access:
             symbols=requested_symbols,
         )
         return frame.loc[:, list(columns)].copy()
+
+    def dividends(self, *, record_date: str) -> pd.DataFrame | None:
+        """Read distributions by registration date; None means uncollected coverage.
+
+        A committed empty table proves no returned records. Broken committed objects
+        still fail instead of being converted into missing coverage.
+
+        Example:
+            distributions = access.dividends(record_date="2026-09-02")
+        """
+        day = DateTimeUtils.require_system_date(record_date, field_name="record_date")
+        paths = self._pm.processed_object(dataset_name="dividend", version=self._processed_version, trade_date=day)
+        loaded = meta.find(pm=self._pm, meta_path=paths.meta_path, expected_payload_path=paths.payload_path)
+        if loaded is None:
+            return None
+        with pq.ParquetFile(loaded.payload_path) as parquet:
+            frame = parquet.read().to_pandas()
+        columns = ("ts_code", "symbol", "end_date", "ann_date", "div_proc", "imp_ann_date", "record_date", "ex_date",
+                   "pay_date", "div_listdate", "cash_div_tax", "stk_div", "source_row_id")
+        table_ops.require_columns(frame, columns, who="dividend")
+        if not frame.empty:
+            _validated_symbols(frame["symbol"].unique().tolist())
+            if not frame["record_date"].eq(day).all():
+                raise ValueError(f"dividend.record_date must equal requested date: {day}")
+        return frame.loc[:, columns].copy()
+
+    def corporate_actions(self, *, record_date: str) -> tuple[CorporateActionResolution, ...] | None:
+        """Read resolved events and issues; None means unprepared registration coverage.
+
+        Example:
+            actions = access.corporate_actions(record_date="2024-07-23")
+        """
+        day = DateTimeUtils.require_system_date(record_date, field_name="record_date")
+        paths = self._pm.processed_object(dataset_name="corporate_actions", version="v1", trade_date=day)
+        loaded = meta.find(pm=self._pm, meta_path=paths.meta_path, expected_payload_path=paths.payload_path)
+        if loaded is None:
+            return None
+        with pq.ParquetFile(loaded.payload_path) as parquet:
+            frame = parquet.read().to_pandas()
+        table_ops.require_columns(frame, ("symbol", "record_date", "resolution"), who="corporate_actions")
+        resolutions = tuple(CorporateActionResolution.model_validate_json(value) for value in frame["resolution"])
+        for row, resolution in zip(frame.itertuples(index=False), resolutions, strict=True):
+            if row.symbol != resolution.symbol or row.record_date != day or resolution.record_date.isoformat() != day:
+                raise ValueError(f"corporate-action identity does not match partition: {day}")
+        ids = [item.candidate_id for item in resolutions]
+        actions = [item.review.action_id for item in resolutions if item.review is not None]
+        if len(set(ids)) != len(ids) or len(set(actions)) != len(actions):
+            raise ValueError(f"corporate-action identities must be unique: {day}")
+        return resolutions
+
+    def corporate_action_notices(self, *, trade_date: str) -> pd.DataFrame | None:
+        """Read supplied non-distribution notices without claiming comprehensive coverage.
+
+        Example:
+            notices = access.corporate_action_notices(trade_date="2026-09-15")
+        """
+        day = DateTimeUtils.require_system_date(trade_date, field_name="trade_date")
+        paths = self._pm.processed_object(dataset_name="corporate_action_notices",
+                                          version=self._processed_version, trade_date=day)
+        loaded = meta.find(pm=self._pm, meta_path=paths.meta_path, expected_payload_path=paths.payload_path)
+        if loaded is None:
+            return None
+        with pq.ParquetFile(loaded.payload_path) as parquet:
+            frame = parquet.read().to_pandas()
+        columns = ("action_id", "symbol", "available_ts_us", "effective_ts_us", "kind", "source_ref")
+        table_ops.require_columns(frame, columns, who="corporate_action_notices")
+        return frame.loc[:, columns].copy()
 
     def turnover_rates(
         self,

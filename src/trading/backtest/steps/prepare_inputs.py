@@ -35,7 +35,7 @@ class PrepareInputsStep:
         config = submission.execution
         initial = submission.initial_account
         source = cast(ReplayMarketInput, context.market_input)
-        if not initial.positions.keys() <= set(config.market_source.symbols):
+        if config.market_source.symbols and not initial.positions.keys() <= set(config.market_source.symbols):
             raise ValueError("market_source.symbols must cover initial holdings")
         if source.session_at(initial.ts_us).trade_date != initial.trade_date:
             raise ValueError("initial snapshot trade_date disagrees with replay start")
@@ -43,17 +43,13 @@ class PrepareInputsStep:
         if config.fill.type == "quoted" and any(
             mark.data_issues and mark.ts_us <= config.end_ts_us for mark in source.marks
         ):
-            raise ValueError("diagnostic replay with missing daily closes requires limit_price execution")
+            raise ValueError("diagnostic replay with unresolved market data issues requires limit_price execution")
         for ts_us in config.risk_check_ts_us:
             source.session_at(ts_us)
             if not initial.ts_us <= ts_us <= config.end_ts_us:
                 raise ValueError("risk check is outside the simulation interval")
         if config.fill.type == "limit_price" and any(o.volume_qty is None for o in source.observations):
             raise ValueError("price-model execution requires explicit observed volume_qty")
-        symbols = {o.symbol for o in source.observations} | initial.positions.keys()
-        if not symbols <= config.quantity_rules.keys():
-            raise ValueError("execution quantity rules must cover all observed and held symbols")
-
         if isinstance(submission, ExecutionEvalSubmission):
             decisions = OrderCommandSchedule.from_files(
                 submission.order_refs, start=submission.start, end=submission.end, market=source,

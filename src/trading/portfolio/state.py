@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 
 from src.trading.core.events import FillEvent, Side
+from src.trading.portfolio.corporate_actions import DistributionEntitlement
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,6 +49,7 @@ class PortfolioState:
     realized_pnl: Decimal = Decimal("0")
     buy_qty_today: dict[str, int] = field(default_factory=dict)
     current_day: str | None = None
+    distribution_entitlements: dict[str, DistributionEntitlement] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         self.initial_cash = Decimal(str(self.initial_cash))
@@ -56,6 +58,7 @@ class PortfolioState:
         self.positions = dict(self.positions)
         self.avg_cost = {symbol: Decimal(str(cost)) for symbol, cost in self.avg_cost.items()}
         self.buy_qty_today = dict(self.buy_qty_today)
+        self.distribution_entitlements = dict(self.distribution_entitlements)
 
     def on_trading_day_start(self, trade_date: str) -> None:
         """Unlock prior-day buys once, preserving initial snapshot restrictions.
@@ -72,12 +75,31 @@ class PortfolioState:
         self.current_day = trade_date
 
     def t1_sellable(self, symbol: str) -> int:
-        """Return shares not bought in the current account day.
+        """Return shares outside both same-day purchases and unlisted distributions.
 
         Example:
             sellable = account.t1_sellable("600000")
         """
-        return self.positions.get(symbol, 0) - self.buy_qty_today.get(symbol, 0)
+        return self.positions.get(symbol, 0) - self.buy_qty_today.get(symbol, 0) - self.unlisted_shares(symbol)
+
+    def unlisted_shares(self, symbol: str) -> int:
+        """Return allocated stock that cannot trade yet, regardless of the T+1 setting.
+
+        Example:
+            locked = account.unlisted_shares("600000")
+        """
+        return sum(item.shares_qty for item in self.distribution_entitlements.values()
+                   if item.distribution.symbol == symbol and item.recognized and not item.shares_released)
+
+    @property
+    def dividend_receivable(self) -> Decimal:
+        """Value recognized cash rights without making them spendable.
+
+        Example:
+            equity = account.cash + market_value + account.dividend_receivable
+        """
+        return sum((item.cash_amount for item in self.distribution_entitlements.values()
+                    if item.recognized and not item.cash_paid), Decimal(0))
 
     def apply_fill(
         self, fill: FillEvent, *, cost: FillCost,
@@ -109,7 +131,8 @@ class PortfolioState:
             if remaining:
                 self.positions[fill.symbol] = remaining
                 if fill.symbol in self.buy_qty_today:
-                    self.buy_qty_today[fill.symbol] = min(self.buy_qty_today[fill.symbol], remaining)
+                    self.buy_qty_today[fill.symbol] = min(
+                        self.buy_qty_today[fill.symbol], remaining - self.unlisted_shares(fill.symbol))
             else:
                 self.positions.pop(fill.symbol)
                 self.avg_cost.pop(fill.symbol)

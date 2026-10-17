@@ -505,7 +505,7 @@ def test_quantity_rules_reject_coercion_and_unknown_fields(
     backtest_payload: Callable[[BacktestMode | str], dict[str, object]],
 ) -> None:
     payload = backtest_payload('full_backtest')
-    rule = payload['execution']['quantity_rules']['600000']
+    rule = payload['execution']['quantity_rules']['default']
     rule['buy_min_qty'] = True
     with pytest.raises(InvalidJobRequest):
         parse_job_request(payload)

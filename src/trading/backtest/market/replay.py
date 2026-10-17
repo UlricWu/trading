@@ -43,7 +43,7 @@ class ReplaySession(BaseModel):
 
 
 class MarketDataIssue(BaseModel):
-    """A dated source gap whose suspension status remains unresolved.
+    """A dated unresolved listing status or missing close for confirmed coverage.
 
     Example:
         issue = MarketDataIssue(ts_us=close_us, trade_date="2026-09-15",
@@ -54,7 +54,7 @@ class MarketDataIssue(BaseModel):
     ts_us: StrictInt
     trade_date: str
     symbol: str
-    reason: Literal["missing_daily_close"]
+    reason: Literal["missing_daily_close", "unknown_listing_status"]
 
 
 class MarkObservation(BaseModel):
@@ -175,7 +175,7 @@ class VisiblePrice:
     price: Decimal
     ts_us: int
     trade_date: str
-    kind: Literal["mark", "daily_close", "execution"]
+    kind: Literal["mark", "daily_close", "execution", "corporate_action"]
 
 
 class ReplayMarket:
@@ -253,6 +253,24 @@ class ReplayMarket:
         """
         mark = self._price_marks.get(symbol)
         return None if mark is None else mark.price
+
+    def apply_distribution_reference(
+        self, *, symbol: str, ts_us: int, trade_date: str,
+        reference_cash_per_share: Decimal, reference_shares_per_share: Decimal,
+    ) -> None:
+        """Replace a stale cum-dividend valuation basis without supplying trading volume.
+
+        Example:
+            market.apply_distribution_reference(symbol="600000", ts_us=ex_start,
+                trade_date="2026-09-03", reference_cash_per_share=Decimal("0.1"), reference_shares_per_share=Decimal(0))
+        """
+        prior = self._price_marks.get(symbol)
+        if prior is None or prior.ts_us >= ts_us:
+            return
+        price = (prior.price - reference_cash_per_share) / (1 + reference_shares_per_share)
+        if price <= 0:
+            raise ValueError(f"distribution reference price must be positive: {symbol}/{trade_date}")
+        self._price_marks[symbol] = VisiblePrice(price, ts_us, trade_date, "corporate_action")
 
     @property
     def prices(self) -> Mapping[str, Decimal]:

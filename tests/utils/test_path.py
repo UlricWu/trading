@@ -187,10 +187,10 @@ def test_formal_dataset_paths_use_canonical_partition_files(tmp_path: Path) -> N
     processed_version_dir = storage_root / "processed" / "sh_order" / "v1"
     processed_partition = processed_version_dir / trade_date_partition
     feature_partition = (
-        storage_root / "features" / "l2_microstructure" / "v2" / trade_date_partition
+        storage_root / "features" / "l2_microstructure" / "v1" / trade_date_partition
     )
     label_partition = (
-        storage_root / "labels" / "return_5d" / "v3" / trade_date_partition
+        storage_root / "labels" / "return_5d" / "v1" / trade_date_partition
     )
 
     assert (
@@ -207,7 +207,7 @@ def test_formal_dataset_paths_use_canonical_partition_files(tmp_path: Path) -> N
     )
     assert pm.feature_object(
         feature_set="l2_microstructure",
-        version="v2",
+        version="v1",
         trade_date="2026-05-01",
     ) == ObjectPaths(
         payload_path=feature_partition / "data.parquet",
@@ -215,7 +215,7 @@ def test_formal_dataset_paths_use_canonical_partition_files(tmp_path: Path) -> N
     )
     assert pm.label_object(
         label_set="return_5d",
-        version="v3",
+        version="v1",
         trade_date="2026-05-01",
     ) == ObjectPaths(
         payload_path=label_partition / "data.parquet",

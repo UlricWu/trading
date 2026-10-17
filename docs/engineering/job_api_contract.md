@@ -164,6 +164,9 @@ CLI-only 的 `data-calendar`、`data-standard-bootstrap`、`data-level2-minute-b
     risk_rule_eval 在一个 Job 内执行一次带指定风控的账户回放，评价控制效果与剩余风险。
   - 日期使用规范 YYYY-MM-DD 且 start<=end；risk 的日期选择信号决策，不能用案例文件代替。
   - 每个请求只创建一个 Job；路径、数值和嵌套结构先由共享构造边界校验。
+  - 分红送转从本地正式数据准备，所有模式按税前记账，报告标注未扣红利税；无需加入
+    order_refs 或 fees。跨区间已登记权益通过 initial_account.distribution_entitlements 传入，
+    默认空数组明确表示没有历史待结清权益，详见[公司行动 owner](../offline_workflow_contract.md#公司行动与非交易账户事件)。
 
 一个 Job 对应一个完整 workflow 执行单位；每个有效请求只创建一个 Job。请求必须先完成
 字段和业务参数构造，再加入 FIFO；任一字段无效时不得创建任何 Job、ID、日志或子进程。
@@ -179,6 +182,66 @@ CLI-only 的 `data-calendar`、`data-standard-bootstrap`、`data-level2-minute-b
   "dataset": {
     "feature_group": "daily_basic_selected_v1",
     "label_group": "daily_close_return_rank_d1/v1"
+  }
+}
+```
+
+整月全市场冻结委托回放：向 `POST /jobs` 提交下列 JSON。`symbols: []`（或省略 symbols）
+表示按历史名单覆盖沪深股票；非空数组表示指定证券。日频与分钟共用此请求结构，只需将
+frequency 改为 minute，并确保对应本地正式数据齐备。order_refs 是服务所在环境可读的
+委托文件绝对路径，仍须提供真实委托，不能仅凭行情自动生成交易。以下初始现金、规则、
+零费率和零滑点是流程验证假设，不代表各板块的实际交易规则；差异规则放入 overrides，
+其值必须是完整规则。起止账户时刻为上海时区 2026-09-01 15:00 与 2026-09-30 15:00。
+
+```json
+{
+  "kind": "backtest",
+  "mode": "execution_eval",
+  "start": "2026-09-01",
+  "end": "2026-09-30",
+  "order_refs": [
+    "/data/orders/2026-09.json"
+  ],
+  "initial_account": {
+    "ts_us": 1788246000000000,
+    "trade_date": "2026-09-01",
+    "cash": "1000000000000",
+    "positions": {},
+    "sellable": {},
+    "average_cost": {},
+    "peak_equity": 1000000000000.0
+  },
+  "execution": {
+    "market_source": {
+      "frequency": "daily",
+      "start": "2026-09-01",
+      "end": "2026-09-30",
+      "symbols": []
+    },
+    "end_ts_us": 1790751600000000,
+    "quantity_rules": {
+      "default": {
+        "buy_min_qty": 100,
+        "buy_step_qty": 100,
+        "sell_min_qty": 1,
+        "sell_step_qty": 1,
+        "fill_step_qty": 1,
+        "price_tick": "0.01",
+        "enforce_t1": true
+      },
+      "overrides": {}
+    },
+    "fees": {
+      "commission_rate": 0,
+      "stamp_tax_rate": 0,
+      "transfer_rate": 0,
+      "min_commission": 0
+    },
+    "annual_factor": 252,
+    "fill": {
+      "type": "limit_price",
+      "slippage_bp": 0
+    }
   }
 }
 ```
@@ -211,7 +274,7 @@ CLI-only 的 `data-calendar`、`data-standard-bootstrap`、`data-level2-minute-b
     },
     "end_ts_us": 1783062000000000,
     "quantity_rules": {
-      "600000": {
+      "default": {
         "buy_min_qty": 100, "buy_step_qty": 100, "sell_min_qty": 1,
         "sell_step_qty": 1, "fill_step_qty": 1, "price_tick": "0.01", "enforce_t1": true
       }
@@ -251,7 +314,7 @@ CLI-only 的 `data-calendar`、`data-standard-bootstrap`、`data-level2-minute-b
     },
     "end_ts_us": 1783062000000000,
     "quantity_rules": {
-      "600000": {
+      "default": {
         "buy_min_qty": 100, "buy_step_qty": 100, "sell_min_qty": 1,
         "sell_step_qty": 1, "fill_step_qty": 1, "price_tick": "0.01", "enforce_t1": true
       }

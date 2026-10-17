@@ -43,6 +43,84 @@ def test_access_requires_safe_processed_version(tmp_path: Path) -> None:
         Access(pm=pm, processed_version="../v1")
 
 
+@pytest.mark.parametrize("dataset,method,columns", [
+    ("dividend", "dividends", ["ts_code", "symbol", "end_date", "ann_date", "div_proc", "imp_ann_date", "record_date", "ex_date",
+                               "pay_date", "div_listdate", "cash_div_tax", "stk_div", "source_row_id"]),
+    ("corporate_action_notices", "corporate_action_notices",
+     ["action_id", "symbol", "available_ts_us", "effective_ts_us", "kind", "source_ref"]),
+])
+def test_corporate_sources_distinguish_absent_empty_and_broken_committed_objects(
+    tmp_path: Path, dataset: str, method: str, columns: list[str],
+) -> None:
+    pm = PathManager(tmp_path)
+    access = Access(pm=pm, processed_version="v1")
+    read = getattr(access, method)
+    args = {"record_date" if dataset == "dividend" else "trade_date": "2026-09-01"}
+    assert read(**args) is None
+    _write_processed_frame(pm, "2026-09-01", dataset, pd.DataFrame(columns=columns))
+    assert read(**args).empty
+    pm.processed_object(dataset_name=dataset, version="v1", trade_date="2026-09-01").payload_path.unlink()
+    with pytest.raises((FileNotFoundError, RuntimeError)):
+        read(**args)
+
+
+def test_dividend_partition_cannot_silently_move_registration_date(tmp_path: Path) -> None:
+    pm = PathManager(tmp_path)
+    _write_processed_frame(pm, "2026-09-01", "dividend", pd.DataFrame({"ts_code": ["600000.SH"], "symbol": ["600000"], "ann_date": ["2026-08-01"], "source_row_id": ["0" * 64],
+        "end_date": ["2026-06-30"], "div_proc": ["实施"], "imp_ann_date": ["2026-08-20"],
+        "record_date": ["2026-09-02"], "ex_date": ["2026-09-03"], "pay_date": ["2026-09-03"],
+        "div_listdate": [None], "cash_div_tax": ["0.1"], "stk_div": [None]}))
+    with pytest.raises(ValueError, match="record_date"):
+        Access(pm=pm, processed_version="v1").dividends(record_date="2026-09-01")
+
+
+@pytest.mark.parametrize("symbols,expected", [
+    (["600000", "830799", "900001", "688001", "000001", "300001"],
+     ("000001", "300001", "600000", "688001")),
+    ([], ()),
+])
+def test_historical_stock_listings_need_only_historical_list(
+    tmp_path: Path, symbols: list[str], expected: tuple[str, ...],
+) -> None:
+    pm = PathManager(tmp_path)
+    _write_processed_frame(pm, "2026-09-01", "stock_basic", pd.DataFrame({"symbol": symbols, "list_date": [None] * len(symbols)}))
+
+    assert Access(pm=pm, processed_version="v1").historical_stock_listings(trade_date="2026-09-01") == dict.fromkeys(expected)
+
+
+@pytest.mark.parametrize("symbols", [["600000", "600000"], ["bad"], [None]])
+def test_historical_stock_listings_reject_invalid_members(tmp_path: Path, symbols: list[str | None]) -> None:
+    pm = PathManager(tmp_path)
+    _write_processed_frame(pm, "2026-09-01", "stock_basic", pd.DataFrame({"symbol": symbols}))
+    with pytest.raises(ValueError):
+        Access(pm=pm, processed_version="v1").historical_stock_listings(trade_date="2026-09-01")
+
+
+def test_historical_stock_listings_do_not_replace_a_missing_list_with_daily_bars(tmp_path: Path) -> None:
+    pm = PathManager(tmp_path)
+    _write_processed_frame(pm, "2026-09-01", "daily_bar", pd.DataFrame({"symbol": ["600000"]}))
+    with pytest.raises(FileNotFoundError):
+        Access(pm=pm, processed_version="v1").historical_stock_listings(trade_date="2026-09-01")
+
+
+def test_historical_stock_listings_preserve_unknown_and_future_dates(tmp_path: Path) -> None:
+    pm = PathManager(tmp_path)
+    _write_processed_frame(pm, "2026-09-01", "stock_basic", pd.DataFrame({
+        "symbol": ["600000", "001246", "301686"], "list_date": ["1999-11-10", None, "2026-09-22"],
+    }))
+    assert Access(pm=pm, processed_version="v1").historical_stock_listings(trade_date="2026-09-01") == {
+        "001246": None, "301686": "2026-09-22", "600000": "1999-11-10",
+    }
+
+
+@pytest.mark.parametrize("list_date", ["0", "20260901", "2026-02-30", "", 0])
+def test_historical_stock_listings_reject_invalid_dates(tmp_path: Path, list_date: str | int) -> None:
+    pm = PathManager(tmp_path)
+    _write_processed_frame(pm, "2026-09-01", "stock_basic", pd.DataFrame({"symbol": ["600000"], "list_date": [list_date]}))
+    with pytest.raises((TypeError, ValueError), match="list_date"):
+        Access(pm=pm, processed_version="v1").historical_stock_listings(trade_date="2026-09-01")
+
+
 def test_daily_bars_reads_full_object_and_requested_symbol_order(
     tmp_path: Path,
 ) -> None:

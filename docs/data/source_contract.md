@@ -2,7 +2,7 @@
 
 - **状态**：正式 owner
 - **适用范围**：`data.brokers`、`data.sources`、source identity、Tushare active
-  manifest、source-native 查询、`trade_calendar` 与 `daily_bar` 的正式语义。
+  manifest、source-native 查询、`trade_calendar`、`daily_bar`、`dividend` 及分配事实解析的正式语义。
 - **工作流 owner**：[`docs/offline_workflow_contract.md`](../offline_workflow_contract.md)
 - **存储 owner**：[`docs/data/storage_layout.md`](storage_layout.md)
 
@@ -75,6 +75,7 @@ broker config 不声明 `normalize_profile`。
 | `stock_st` | `stock_st` |
 | `stk_limit` | `stk_limit` |
 | `suspend_d` | `suspend_d` |
+| `dividend` | `dividend` |
 | `cyq_perf` | `cyq_perf` |
 | `margin` | `margin` |
 | `margin_detail` | `margin_detail` |
@@ -105,7 +106,7 @@ lineage已更新并读回验证。实际采集时间为2026-09-24 11:39:13 +08:0
 旧快照、精确采集时间、内容摘要和校验结果见
 [维护记录](/home/wsw/app/maintenance-evidence/suspend-d-2026-06-11-repair-2026-09-24-hry43yg_/README.md)。
 
-除 `trade_calendar` 外，当前 Tushare source 按单日参数
+除 `trade_calendar` 与 `dividend` 外，当前 Tushare source 按单日参数
 `trade_date=YYYYMMDD` 查询。`trade_calendar` 固定查询 SSE，并以自然年作为唯一请求与对象
 分区：
 
@@ -115,6 +116,125 @@ trade_cal(exchange="SSE", start_date=YYYY0101, end_date=YYYY1231)
 
 每个缺失自然年最多请求一次。全年 response 原样保存为该年的 raw Parquet；其他 source
 response 仍按单日保存。Broker 不改变正式 processed 字段。
+
+<a id="dividend"></a>
+
+### 分红送转数据
+
+`dividend` 按 `record_date=YYYYMMDD` 查询。raw/processed 路径仍使用统一的
+`trade_date=YYYY-MM-DD` 分区，该日期在此数据集表示股权登记日，不是公告日、除权日或
+支付日。按登记日查询能够确定账户权益的归属；按除权日只查询回测区间会遗漏先前登记、
+本期到账的权利，这些跨区间权利由初始账户显式携带，不能从当前持仓反推。
+
+raw 保存原始 response；`processed/dividend/v1` 保留以下列。新增来源字段仍使用当前版本，
+已入库分区从原始 response 同步重建，版本规则由[存储 owner](storage_layout.md#processedfeatures-与-labels)定义：
+
+| 字段 | 正式含义 |
+| --- | --- |
+| ts_code、symbol | 保留含交易所的来源证券身份，并另存六位展示代码 |
+| ann_date | 源端预案、决案公告日；不等于最终条款的历史可见时间 |
+| end_date | 利润分配所属报告期结束日 |
+| div_proc | 源端分配进度；预案、预披露与实施不能混为同一事件 |
+| imp_ann_date、record_date、ex_date、pay_date、div_listdate | 实施公告日、登记日、除权除息日、派息日、红股上市日 |
+| cash_div_tax | 每股税前现金红利，元/原股份；不是每十股金额 |
+| stk_div | 每股送转合计比例；不再次叠加 stk_bo_rate 或 stk_co_rate |
+| source_row_id | 完整原始行经空值规范化及排序 JSON 编码后的 SHA-256；重复行仍逐行保留 |
+
+日期转换为 `YYYY-MM-DD`，金额和比例转换为十进制文本，源端 null 保留；分配进度仅去除首尾空白。
+状态修正不会补出缺失的实施公告日，`实施 ` 且公告为空仍属于待核实事实。股票分配记录
+可以没有现金侧，现金分红记录可以没有送转侧；两侧都未知不能当成确定的零分配。零行
+response 必须生成上述列齐全的空对象，明确区别于尚未采集。单次 response 达到接口
+2,000 行上限时无法证明完整，下载失败，不提交可能截断的对象。
+
+2026-10-16 的历史覆盖验收对齐已提交 `daily_bar/v1` 的 2018-01-02 至 2026-09-30，
+共 2,123 个交易日，也覆盖现有分钟数据的全部 222 个日期。通过现有 data-system Steps
+补齐 2,102 个登记日并复用原有 21 日；raw、processed 与 Meta 均齐全，共保存 34,165 条
+源记录，其中 34,031 条状态严格等于“实施”，525 个分区为明确空集合。单次最多 179 行；
+逐分区核对了字段转换、源值、登记日期和直接上游关系，再执行同一范围全部命中 Meta，
+文件摘要不变。精确代码状态、日期集合、源对象摘要和校验脚本见
+[历史入库证据](/tmp/trading-dividend-history-8g4non80/evidence.json)，临时证据目录需保留归档。
+
+这批源记录不等于同样数量的独立分配事件。按证券、报告期、登记日检查，严格等于实施的
+源记录有 915 组两行身份，其中沪深 906 组、北交所 9 组。866 组当时的标准化字段相同；49 组
+字段不一致分为：21 组仅实施公告日不同、25 组仅现金为 0/null、1 组同时存在上述两类差异、
+2 组非零现金金额不同。2026-10-16 对全部 472 个相关登记日重新查询，915 组均复现，返回
+行多重集合与原入库对象一致。该统计不证明 915 组对应同一种业务关系，也不证明单行事件可靠。
+原始查询及文件保留证据仍见上面的历史入库记录。
+
+按首尾空白规范化重建后，实施记录为 34,032 条、候选关联组为 33,116 组，重复组为
+916 组。新增的一组是 `600803.SH/2024-12-31/2025-07-21`，此前其中一行的“实施 ”未被
+严格相等筛选纳入；这修正统计口径，不表示新增一次分配。当时错误地为新增字段另开版本目录，
+该次验证保留了原 raw、原派生对象及其 Meta 共 8,492 个文件，二次执行未改写新制品；
+实际目录及精确源码以该次证据为准，不能将其视为当前版本契约。
+当前规范化与解析输入统一使用 `dividend/v1`。2026-10-17 从原始对象重建全部 2,123 日，
+并同步重建 `corporate_actions/v1` 的直接上游引用；规范化 payload 与修正前逐字节相同，
+解析事实不变，原始输入及公告核验输入未改写，重复执行复用全部分区。木林森与中岩大地的
+真实历史回放也验证了登记、派现与送转结果。已替换的派生对象移出正式存储并归档，
+精确源码、输入摘要、回归测试及回放结果见[V1 修正证据](/tmp/trading-dividend-v1-20261017-s57bz_hg/evidence.json)。
+五组公告核验分别形成 4 个 resolved 和 1 个 not_entitled，其他 33,111 组为
+unresolved，其中包含 911 个重复组。核验状态不能由“已入库”代替。精确代码、全部输入摘要、
+逐重复组处置及重跑核对见[解析与回放证据](/tmp/trading-corporate-action-resolution-_6lgzo9e/evidence.json)。
+
+#### 从来源记录到业务事件
+
+本节唯一拥有 `corporate_actions/v1` 的数据语义。账户生命周期仍由
+[公司行动与非交易账户事件](../offline_workflow_contract.md#公司行动与非交易账户事件)拥有。
+`ResolveCorporateActionsStep` 在 dividend/v1 之后运行，按 `ts_code/end_date/record_date` 聚集
+待解释记录。该键只是候选关联键，不是来源承诺的事件主键；不通过给公告行加序号或
+ann_date 把重复记录变成多次到账，也不以数值一致证明分配对象相同。
+
+可回放的条款必须有公告核验事实。核验输入是
+`raw/announcements/corporate_action_reviews/trade_date=<登记日>/reviews.json` 及其 Meta；
+JSON 为 `CorporateActionReview` 数组。每项包含 candidate_id、source_digest、独立 action_id、
+shareholder_scope、record_date、ex_date、pay_date、div_listdate、terms、evidence_refs、reason。
+source_digest 是组内按字典序排序的全部 source_row_id（保留重复项）用换行连接后的 SHA-256。
+核验事实必须绑定这个摘要；来源变化、核验身份重复、孤立核验或非法条款直接失败，不能继续
+使用过期核验。公告链接及解释属于输入事实，不允许在回测代码里写股票代码特例。
+
+当前账户口径明确为 `ordinary_shareholder`：二级市场普通流通股持有人，不模拟公告单列的
+大股东、回购专户、重整投资人或债权人身份。税前/税后与股东资格是不同维度；税前记账
+不能使原本不合资格的持仓取得权益。terms 逐版本保存 published_date、cash_per_share、
+shares_per_share、reference_cash_per_share、reference_shares_per_share，金额与比例为 Decimal。
+后两项仅用于普通除权参考公式，必须由公告确认，不能默认复制账户分配金额。
+
+首次有权益的计划必须在登记日前公开；条款修订可以在登记后、除权前公开。版本日期严格
+递增，金额的零值必须明确提供。当前已确认案例的登记、除权、支付和上市日不随版本变化；
+需要变更这些阶段日、处理除权后更正或其他特殊公式时，须补齐相应业务事实，不能塞入
+现有金额修订路径。已确认普通股东没有权益的事件可在登记日公开，但必须在除权日前公开。
+
+每个候选组发布一个 resolution，保留 candidate_id、symbol、record_date、source_digest、
+全部 source_row_ids、status、reason、review。状态为 resolved、not_entitled 或 unresolved；
+后者 review 为 null，前两者必须保存核验内容。Parquet 的物理列为 symbol、record_date、
+resolution（上述命名模型的 JSON），空集合仍发布列完整对象。Meta 的直接上游是同日
+`dividend/v1`，Parquet metadata 的 corporate_action_inputs 另保存来源及核验 Meta 相对路径
+对应的 payload SHA-256。生产者重跑比较这些摘要；新增或修改核验时重建解析对象，不复用
+旧的未解决结论。回测制品保存解析输入摘要和完整 disposition，以便复现。
+
+缺少核验时保留待核实状态，不凭“只有一条”“重复字段相同”“取最新”“取最大”“null 补零”
+生成权益。reason 区分实施日期缺失、非标准报告期、分配字段不一致、公告日期不同、重复方案
+待核实、受益人与参考价未核实。非标准报告期仅是核验提示，不据此断言重整；同样，标准报告期
+也不证明没有重整。扫描覆盖全部实施记录，而不仅是 49 组差异。原始行完整保存和解析全部完成
+只证明数据流程完成，unresolved 不得计入业务核验通过数量。
+
+核验依据说明了这些边界的必要性：
+
+- [木林森 2017 年度实施公告](https://static.cninfo.com.cn/finalpage/2018-03-30/1204547578.PDF)
+  对 2018-04-10 登记权益只规定一次每股 0.247 元和每股转增 1 股，重复披露不产生第二次权益。
+- [顺丰 2024 年中期及特别分红实施公告](https://file.finance.sina.com.cn/211.154.219.97:9494/MRGG/CNSESZ_STOCK/2024/2024-10/2024-10-31/10567932.PDF)
+  的 1.4 元是中期 0.4 元与特别 1 元的合计，源行 0.4 与 1.4 不可相加；除息折算金额为 1.3939620 元。
+- [宝丰 2023 年度实施公告](https://file.finance.sina.com.cn/211.154.219.97:9494/MRGG/CNSESH_STOCK/2024/2024-7/2024-07-18/10334213.PDF)
+  对中小股东每股派 0.3158 元，对指定大股东派 0.2650 元，除息参考价扣减 0.28 元；三个数值
+  不可互换，两个源金额并非简单的错误值和正确值。
+- [正邦重整实施公告](https://paper.cnstock.com/html/2023-12/02/content_1849219.htm)
+  的转增股份不分给原股东。后续[不开盘参考价调整的披露](https://epaper.stcn.com/att/202312/07/4c557ab7-8595-492e-a006-2041fff5000a.pdf)
+  确认本次不调整参考价；普通账户不获得源 stk_div=1.623 所描述的重整股份。
+- [中岩大地 2025-07-05 调整公告](https://paper.cnstock.com/html/2025-07/05/content_2089677.htm)
+  将每股现金 0.2816137 改为 0.2814904、转增 0.3994521 改为 0.3992772，登记日为 07-04。
+  两条快照都保存最终比例并不证明 06-30 已经公开最终条款；需保留原公告和修订两个版本。
+
+字段和查询依据：[Tushare 分红送股接口](https://tushare.pro/document/2?doc_id=103)。接口只有
+日期，不能提供券商到账微秒、零碎股最终分配、持仓批次红利税、受益人类别或完整修订链。
+当前下载结果也不证明历史时点版本未被修订；采集时间不得充当历史公开时间。
 
 ## Level-2 source identity
 

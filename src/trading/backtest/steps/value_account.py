@@ -31,7 +31,8 @@ class ValueAccountStep:
         held = {symbol for symbol, qty in state.portfolio_state.positions.items() if qty}
         origins = market.price_marks
         suspended = market.suspended_close_symbols.get(ts_us, frozenset())
-        gaps = {issue.symbol for issue in market.daily_close_issues.get(ts_us, ())}
+        gaps = {issue.symbol for issue in market.daily_close_issues.get(ts_us, ())
+                if issue.reason == "missing_daily_close"}
         unpriced = held - origins.keys()
         if unpriced:
             raise ValueError(f"holdings require a prior visible raw price at {session.trade_date}/{ts_us}: {sorted(unpriced)}")
@@ -41,7 +42,8 @@ class ValueAccountStep:
             if missing:
                 raise ValueError(f"end-of-day holdings require declared raw daily-close marks or confirmed suspension: {sorted(missing)}")
             invalid = {symbol for symbol in held & suspended if symbol not in origins
-                       or origins[symbol].kind != "daily_close" or origins[symbol].trade_date >= session.trade_date}
+                       or origins[symbol].kind not in ("daily_close", "corporate_action")
+                       or (origins[symbol].kind == "daily_close" and origins[symbol].trade_date >= session.trade_date)}
             if invalid:
                 raise ValueError(f"suspended holdings require a prior visible raw daily close: {sorted(invalid)}")
         prices = {symbol: float(price) for symbol, price in market.prices.items()}
@@ -49,9 +51,10 @@ class ValueAccountStep:
             current_raw_prices=prices, last_mark_prices=state.last_mark_prices)
         state.last_mark_prices = valuation.mark_prices
         if is_initial:
-            state.initial_equity = float(state.portfolio_state.cash) + valuation.market_value
+            state.initial_equity = float(state.portfolio_state.cash + state.portfolio_state.dividend_receivable) + valuation.market_value
             state.equity_curve.starting_peak_equity = max(state.equity_curve.starting_peak_equity, state.initial_equity)
-        state.equity_curve.append(ts_us=ts_us, cash=float(state.portfolio_state.cash), market_value=valuation.market_value)
+        state.equity_curve.append(ts_us=ts_us, cash=float(state.portfolio_state.cash), market_value=valuation.market_value,
+                                 dividend_receivable=float(state.portfolio_state.dividend_receivable))
         for phase in (("initial",) if is_initial else ()) + (("close",) if is_close else ()):
             state.valuation_marks[(ts_us, phase)] = tuple(
                 PositionValuation(

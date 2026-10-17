@@ -73,8 +73,8 @@ composition root 通过 `DateTimeUtils.today()` 取得一次 Asia/Shanghai 当�
 Meta 或其他运行错误以 `1` 退出。命令不接受日期、年份、refresh 或其他参数。
 
 `data-standard-bootstrap` 是 CLI-only 的 Standard facts 冷启动入口。它的闭区间只表示显式
-请求的 calendar 与 Standard facts 范围；workflow 不选择 Feature/Label operation，不构建
-derived 对象，也不根据 Feature lookback 隐式扩大范围。它构造
+请求的 calendar 与 Standard facts 范围，并发布同登记日的公司行动解析结果；workflow 不选择
+Feature/Label operation，也不根据 Feature lookback 隐式扩大范围。它构造
 `StandardFactBootstrapSubmission` 并只调用一次 `run_standard_fact_bootstrap`。范围内没有
 正式交易 session 时成功；任一正式交易日的 Standard fact 缺失或其他运行错误时退出 `1`。
 该命令不属于 HTTP Job API、cron 或日常 `data-standard`。
@@ -229,6 +229,9 @@ mode 只接受下表五个值；旧任务名称 `tradable_alpha_eval`、`risk_ev
 execution 不接受该字段。其资格筛选作用由
 [Backtest workflow](../offline_workflow_contract.md#backtest-workflow) 定义。
 order_refs 和 prediction_refs 是有序绝对路径数组；空事实可报告无样本。
+order_refs 的内容是委托/撤单序列；quantity_rules 和 fees 仍在 execution 中一次性配置，
+不从订单文件读取或覆盖。其职责、独立配置的理由及固定指令比较的解释边界由
+[Offline owner](../offline_workflow_contract.md#orders-and-execution-parameters)拥有。
 模型同目录训练记录、预测身份和首次实际决策的成熟时间核验由
 [Backtest workflow](../offline_workflow_contract.md#backtest-workflow) 拥有，不要求调用者
 提供 model_use、生效时间、binding_refs 或训练记录路径。
@@ -237,20 +240,25 @@ order_refs 和 prediction_refs 是有序绝对路径数组；空事实可报告�
 
 | 对象 | 字段及构造约束 |
 | --- | --- |
-| initial_account | ts_us 整数、trade_date、非负有限 Decimal cash、positions 非负整数映射、sellable 同键映射且不超过持仓、average_cost 同键非负有限 Decimal 映射、非负有限 peak_equity；ts_us 必须早于模拟终点 |
-| execution | market_source；end_ts_us 整数、quantity_rules 证券映射、fees、正数有限 annual_factor、fill；risk_check_ts_us 按模式约束如下 |
-| market_source | frequency 为 daily/minute；start、end 为规范日期且 start<=end；symbols 为非空、唯一的六位沪深股票代码数组，范围沿用 Level-2 股票分类 |
-| quantity_rules 每证券值 | buy_min_qty、buy_step_qty、sell_min_qty、sell_step_qty、fill_step_qty 都是正整数，price_tick 是正数有限 Decimal，enforce_t1 是显式 bool；不可用 bool 代替数量 |
+| initial_account | ts_us 整数、trade_date、非负有限 Decimal cash、positions 非负整数映射、sellable 同键映射且不超过持仓、average_cost 同键非负有限 Decimal 映射、非负有限 peak_equity；ts_us 必须早于模拟终点；distribution_entitlements 默认空数组，显式携带已登记未结清分红送转权益，字段和阶段约束由[公司行动 owner](../offline_workflow_contract.md#公司行动与非交易账户事件)定义 |
+| execution | market_source；end_ts_us 整数、quantity_rules、fees、正数有限 annual_factor、fill；risk_check_ts_us 按模式约束如下 |
+| market_source | frequency 为 daily/minute；start、end 为规范日期且 start<=end；symbols 可省略，默认为 []；省略或空数组表示全市场，非空数组选择指定证券；代码须唯一且为六位沪深股票代码，范围沿用 Level-2 股票分类；不接受 null 或 universe 对象 |
+| quantity_rules | 必填 default 规则；可选 overrides 默认为 {}，以证券代码映射到完整替换规则；不接受旧的顶层逐证券映射 |
+| quantity_rules.default / overrides 每证券值 | buy_min_qty、buy_step_qty、sell_min_qty、sell_step_qty、fill_step_qty 都是正整数，price_tick 是正数有限 Decimal，enforce_t1 是显式 bool；不可用 bool 代替数量 |
 | fees | commission_rate、stamp_tax_rate、transfer_rate、min_commission，均为非负有限 Decimal；不使用隐含费率或最低佣金 |
 | risk | rules 非空数组，按声明顺序选具名规则；每项为 type=max_single_name 和非负有限 max_ratio，或 type=max_gross_exposure 和非负有限 max_gross_ratio，或 type=max_drawdown 和 [0,1] max_drawdown |
 | strategy | type、params、order_window_minutes、quote；两种成交假设均须完整 quote。窗口分钟为正整数 |
 | quote | buy_offset_bp、sell_offset_bp，均为 [0,10000) 的有限 Decimal；不接受额外字段 |
 
+quantity_rules.default 必须由调用方明确提供，不根据市场隐式选择规则；overrides 命中时
+完整替换 default，不逐字段合并。fees 仍须显式提供完整费用参数。全市场的历史成员解析、
+覆盖保留与规则展开由 [Offline owner](../offline_workflow_contract.md#真实行情到回放输入)定义。
+
 execution.market_source 必填且不能为 null，在同一次 backtest 的启动组内读取本地正式
 日频或分钟行情。source 的日期是行情覆盖范围，独立于请求的决策日期和
 execution.end_ts_us；初始持仓缺少可见价格时，启动 Step 按需读取更早的正式日线。
-确认停牌及无法确认停牌的局部日线缺口按下述 owner 分别处理；后者在 limit_price 下继续
-并发布诊断结果，quoted 在输入准备时拒绝模拟终点内的该类缺口，不增加请求开关。
+确认停牌、局部日线缺口与上市状态未知按下述 owner 分别处理；两类待核实异常在 limit_price
+下继续并分别报告，quoted 在输入准备时拒绝模拟终点内的这些异常，不增加请求开关。
 行情在内存中交给后续 Steps，不读写中间行情 JSON；execution.market_ref
 和 market_source.output_ref 均作为额外字段拒绝，不保留兼容入口。时间、价格、单位及准备顺序由
 [真实行情到回放输入](../offline_workflow_contract.md#真实行情到回放输入)拥有。
