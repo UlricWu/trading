@@ -1,6 +1,10 @@
 # Default ignored files
 /shelf/
 /workspace.xml
+# Local module and interpreter settings
+/*.iml
+/modules.xml
+/misc.xml
 # Editor-based HTTP Client requests
 /httpRequests/
 # Ignored default folder with query files
