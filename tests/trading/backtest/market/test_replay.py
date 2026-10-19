@@ -149,3 +149,40 @@ def test_data_gap_cannot_conflict_with_a_price_suspension_or_visibility(change: 
               "data_issues": (issue,), **change}
     with pytest.raises(ValueError, match="data issues require"):
         MarkObservation.model_validate(values)
+
+
+def test_reference_revisions_recompute_from_original_price_without_compounding() -> None:
+    market = ReplayMarket(market_input())
+    market.on_time(2)
+    market.apply_distribution_reference(action_id="cash", symbol="A", ts_us=2, trade_date="2026-07-03",
+        reference_cash_per_share=Decimal("0.4"), reference_shares_per_share=Decimal(0))
+    assert market.get_price("A") == Decimal("9.6")
+    market.on_time(3)
+    assert market.revise_distribution_reference(action_id="cash", symbol="A", ts_us=3,
+        reference_cash_per_share=Decimal("0.04"), reference_shares_per_share=Decimal(0))
+    assert market.get_price("A") == Decimal("9.96")
+    assert not market.revise_distribution_reference(action_id="cash", symbol="A", ts_us=3,
+        reference_cash_per_share=Decimal("0.04"), reference_shares_per_share=Decimal(0))
+    market.on_time(4)
+    assert market.revise_distribution_reference(action_id="cash", symbol="A", ts_us=4,
+        reference_cash_per_share=Decimal("0.1"), reference_shares_per_share=Decimal("0.1"))
+    assert market.get_price("A") == Decimal("9")
+    assert market.observations_at(4) == ()
+
+
+@pytest.mark.parametrize("replacement", ["execution", "other_distribution"])
+def test_late_reference_cannot_replace_real_prices_or_another_event(replacement: str) -> None:
+    market = ReplayMarket(market_input())
+    market.on_time(2)
+    market.apply_distribution_reference(action_id="first", symbol="A", ts_us=2, trade_date="2026-07-03",
+        reference_cash_per_share=Decimal("0.1"), reference_shares_per_share=Decimal(0))
+    if replacement == "execution":
+        market.on_time(60_000_000)
+    else:
+        market.on_time(3)
+        market.apply_distribution_reference(action_id="second", symbol="A", ts_us=3, trade_date="2026-07-03",
+            reference_cash_per_share=Decimal("0.2"), reference_shares_per_share=Decimal(0))
+    prior = market.price_marks["A"]
+    assert not market.revise_distribution_reference(action_id="first", symbol="A", ts_us=70_000_000,
+        reference_cash_per_share=Decimal("0.04"), reference_shares_per_share=Decimal(0))
+    assert market.price_marks["A"] is prior

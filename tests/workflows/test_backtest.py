@@ -5,8 +5,9 @@ import json
 from collections.abc import Callable, Iterator
 from copy import deepcopy
 from dataclasses import replace
-from datetime import date, time
+from datetime import date, time, timedelta
 from decimal import Decimal
+from hashlib import sha256
 from pathlib import Path
 from typing import Literal
 from unittest.mock import Mock
@@ -21,6 +22,8 @@ from pydantic import TypeAdapter
 
 from src import logs
 from src.data_system.corporate_actions import CorporateActionReview, CorporateActionResolution
+from src.data_system.context import DataContext
+from src.data_system.steps.resolve_security_status import ResolveSecurityStatusStep
 from src.access import Access, meta
 from src.data_system.builders.level2_stock_trade_1m import STOCK_TRADE_1M_SCHEMA
 from src.config.backtest_config import BacktestMode
@@ -76,6 +79,7 @@ def delivery(
     days = ("2026-07-01", "2026-07-02", "2026-07-03", "2026-07-06", "2026-07-07")
     access = Mock(spec=Access)
     access.corporate_actions.return_value = ()
+    access.security_status.return_value = ()
     access.corporate_action_notices.return_value = None
     access.trade_dates.side_effect = lambda *, start_date, end_date: [
         day for day in days if start_date <= day <= end_date
@@ -793,7 +797,7 @@ def test_label_read_failure_occurs_after_fact_publication_and_preserves_the_fact
                     trade_date: str, label_column: str) -> pd.DataFrame:
         saved.update({path.name: path.read_bytes() for path in root.iterdir()})
         assert saved.keys() == {'execution.parquet', 'equity.parquet', 'valuation-marks.parquet', 'orders.json',
-                                'targets.json', 'risk-cases.json', 'corporate-actions.json'}
+                                'targets.json', 'risk-cases.json', 'corporate-actions.json', 'security-status.json'}
         assert pq.read_table(root / 'equity.parquet')['ts_us'][-1].as_py() == fields['execution']['end_ts_us']
         raise error
 
@@ -1864,6 +1868,98 @@ def test_full_market_resolves_history_before_selecting_available_bars(
     assert all(not mark.data_issues for mark in closes)
     assert metrics.parameters["execution"]["market_source"]["symbols"] == []
     assert set(metrics.parameters["execution"]["quantity_rules"]) == {"default", "overrides"}
+
+
+@pytest.fixture
+def publish_security_status(market_sources: PathManager) -> Callable[[str, list[dict[str, object]]], None]:
+    def publish(day: str, states: list[dict[str, object]]) -> None:
+        pm = market_sources
+        path = pm.raw_payload(broker="announcements", source_name="security_status_reviews",
+            trade_date=day, payload_file="reviews.json")
+        documents = []
+        reviews = []
+        for index, state in enumerate(states):
+            identity = f"{day.replace('-', '')}{index:02d}"
+            payload = f"%PDF-1.4 fixed evidence {identity}".encode()
+            digest = sha256(payload).hexdigest()
+            url = f"https://example.org/{identity}.pdf"
+            FileSystem.write_bytes_atomic(path.parent / f"{identity}.pdf", payload)
+            documents.append({"announcement_id": identity, "symbol": state["ts_code"].split(".")[0],
+                "title": "Reviewed security state", "published_date": str(date.fromisoformat(day) - timedelta(days=1)),
+                "url": url, "sha256": digest, "fetched_at": "2026-10-18T00:00:00Z"})
+            reviews.append({**state, "trade_date": day, "available_ts_us": _ts(day, 0, 0),
+                "evidence_refs": [f"{url}#sha256={digest}"], "reason": "Fixed dated status evidence"})
+        inputs = {"version": "v1", "documents": documents, "reviews": reviews, "source_digests": {
+            name: sha256(pm.processed_object(dataset_name=name, version="v1", trade_date=day).payload_path.read_bytes()).hexdigest()
+            for name in ("stock_basic", "suspend_d")}}
+        FileSystem.write_bytes_atomic(path, json.dumps(inputs).encode())
+        meta.commit(pm=pm, payload_path=path)
+        ResolveSecurityStatusStep(pm=pm).run(DataContext(start=day, end=day, trade_dates=(day,)))
+    return publish
+
+
+@pytest.mark.parametrize("frequency", ["daily", "minute"])
+def test_reviewed_prelisting_and_suspension_preserve_holdings_without_inventing_trades(
+    market_sources: PathManager, frequency: Literal["daily", "minute"],
+    backtest_payload: Callable[[str], dict[str, object]],
+    publish_security_status: Callable[[str, list[dict[str, object]]], None],
+) -> None:
+    pm = market_sources
+    _write_source(pm, pm.processed_year_object(dataset_name="trade_calendar", version="v1", calendar_year=2026).payload_path,
+        pa.table({"trade_date": ["2026-07-16", *_DAYS], "is_open": [True] * 4}))
+    _write_source(pm, pm.processed_object(dataset_name="daily_bar", version="v1", trade_date="2026-07-16").payload_path,
+        pa.table({"symbol": ["600000"], "trade_date": ["2026-07-16"], "close": [8.0], "vol": [1.0]}))
+    for index, day in enumerate(_DAYS):
+        _write_source(pm, pm.processed_object(dataset_name="stock_basic", version="v1", trade_date=day).payload_path,
+            pa.table({"symbol": ["000001", "600000", "001246"], "list_date": ["1991-04-03", "1999-11-10", None]}))
+        states = [{"ts_code": "001246.SZ", "listing_status": "pre_listing"}]
+        if index < 2:
+            path = pm.processed_object(dataset_name="daily_bar", version="v1", trade_date=day).payload_path
+            bars = pq.ParquetFile(path).read().to_pandas()
+            _write_source(pm, path, pa.Table.from_pandas(bars.loc[bars["symbol"] != "600000"], preserve_index=False))
+            _write_source(pm, pm.processed_object(dataset_name="sh_stock_trade_1m", version="v1", trade_date=day).payload_path,
+                pa.Table.from_pylist([], schema=STOCK_TRADE_1M_SCHEMA))
+            _write_source(pm, pm.processed_object(dataset_name="suspend_d", version="v1", trade_date=day).payload_path,
+                pa.table({"symbol": ["600000", "600000"], "trade_date": [day, day], "suspend_type": ["S", "R"],
+                          "suspend_timing": pa.array([None, None], type=pa.string())}))
+            states.append({"ts_code": "600000.SH", "listing_status": "listed", "trading_status": "suspended"})
+        publish_security_status(day, states)
+    fields = backtest_payload("execution_eval")
+    fields.pop("kind")
+    fields.update(start=_DAYS[0], end=_DAYS[-1], order_refs=[])
+    fields["initial_account"].update(ts_us=_ts(_DAYS[0], 9, 30), trade_date=_DAYS[0],
+        positions={"600000": 100}, sellable={"600000": 0}, average_cost={"600000": "5"}, peak_equity=20800)
+    fields["execution"].update(end_ts_us=_ts(_DAYS[-1], 15), market_source={
+        "frequency": frequency, "start": _DAYS[0], "end": _DAYS[-1], "symbols": []})
+    submission = create_backtest_submission(**fields)
+    metrics = BacktestMetrics(mode=submission.mode, parameters=submission.model_dump(mode="json"), not_run={})
+    run_backtest(submission=submission, path_manager=pm, experiment_name="reviewed-status", metrics=metrics)
+    assert not metrics.data_quality.diagnostic_only
+    assert metrics.final_account.positions == {"600000": 100}
+    assert metrics.final_account.sellable == {"600000": 100}
+    assert metrics.portfolio.initial_equity == 20800
+    assert metrics.portfolio.final_equity == 21400
+    output = pm.experiment_dir(experiment_name="reviewed-status")
+    assert pq.read_table(output / "execution.parquet").num_rows == 0
+    marks = pq.read_table(output / "valuation-marks.parquet").to_pylist()
+    suspended = [row for row in marks if row["reason"] == "suspension"]
+    assert len(suspended) == 2 and all(row["price_trade_date"] == "2026-07-16" for row in suspended)
+    evidence = json.loads((output / "security-status.json").read_text())
+    assert len(evidence["statuses"]) == 5 and len(evidence["input_digests"]) == 3
+
+
+@pytest.mark.parametrize("frequency", ["daily", "minute"])
+def test_reviewed_prelisting_conflicting_with_real_market_data_is_not_silently_filtered(
+    market_sources: PathManager, frequency: Literal["daily", "minute"],
+    publish_security_status: Callable[[str, list[dict[str, object]]], None],
+) -> None:
+    pm = market_sources
+    for day in _DAYS:
+        _write_source(pm, pm.processed_object(dataset_name="stock_basic", version="v1", trade_date=day).payload_path,
+            pa.table({"symbol": ["000001", "600000"], "list_date": [None, "1999-11-10"]}))
+    publish_security_status(_DAYS[0], [{"ts_code": "000001.SZ", "listing_status": "pre_listing"}])
+    with pytest.raises(ValueError, match="market data conflicts with reviewed security status"):
+        _run_source_backtest(path_manager=pm, start_date=_DAYS[0], end_date=_DAYS[-1], symbols=(), frequency=frequency)
 
 
 @pytest.mark.parametrize("minimum,step,min_commission,rejection", [

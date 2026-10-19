@@ -69,6 +69,21 @@ class CorporateActionSchedule:
     def __post_init__(self) -> None:
         self.input_digests = dict(self.input_digests)
         self.versions = tuple(sorted((*self.distributions, *self.revisions), key=lambda action: action.announced_ts_us))
+        initial = {action.action_id: action for action in self.distributions}
+        if len(initial) != len(self.distributions) or any(action.announced_ts_us > action.ex_ts_us for action in self.distributions):
+            raise ValueError("distributions require distinct initial events known by their ex time")
+        previous = dict(initial)
+        for action in sorted(self.revisions, key=lambda item: item.announced_ts_us):
+            prior = previous.get(action.action_id)
+            if (prior is None or action.announced_ts_us <= prior.announced_ts_us
+                or (action.symbol, action.record_ts_us, action.ex_ts_us, action.pay_ts_us, action.shares_available_ts_us)
+                != (prior.symbol, prior.record_ts_us, prior.ex_ts_us, prior.pay_ts_us, prior.shares_available_ts_us)):
+                raise ValueError("distribution revisions require an earlier event with unchanged phase dates")
+            if action.announced_ts_us > action.ex_ts_us and (
+                action.cash_per_share != prior.cash_per_share or action.shares_per_share != prior.shares_per_share
+            ):
+                raise ValueError("late distribution revisions must not change cash or shares")
+            previous[action.action_id] = action
         for action in self.distributions:
             if action.cash_per_share or action.shares_per_share:
                 self.registrations.setdefault(action.record_ts_us, []).append(action)

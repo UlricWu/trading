@@ -116,7 +116,7 @@ def mark_to_market(
         for symbol, price in last_mark_prices.items()
     }
     updated_marks = dict(prior_marks)
-    market_value = 0.0
+    position_values = []
 
     for symbol, qty in positions.items():
         sym = str(symbol)
@@ -135,9 +135,9 @@ def mark_to_market(
                 f"symbol={symbol}: price={price}"
             )
         updated_marks[sym] = float(price)
-        market_value += normalized_qty * float(price)
+        position_values.append(normalized_qty * float(price))
 
-    return PortfolioValuation(float(market_value), updated_marks)
+    return PortfolioValuation(math.fsum(position_values), updated_marks)
 
 
 def _require_nonnegative_quantity(value: int, *, label: str) -> int:

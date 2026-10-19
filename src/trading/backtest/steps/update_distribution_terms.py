@@ -4,6 +4,7 @@ from decimal import Decimal
 from typing import cast
 
 from src.trading.backtest.context import BacktestContext, BacktestState, TickState
+from src.trading.backtest.market.replay import ReplayMarket
 from src.trading.portfolio.corporate_actions import CorporateActionRecord
 
 
@@ -36,4 +37,12 @@ class UpdateDistributionTermsStep:
             state.corporate_action_records.append(CorporateActionRecord(action.action_id, tick.ts_us,
                 action.symbol, "terms_updated", entitlement.eligible_qty if entitlement is not None else 0,
                 Decimal(0), Decimal(0), 0, action.source_ref))
+            if current is not None and action.announced_ts_us > action.ex_ts_us and cast(
+                ReplayMarket, context.market
+            ).revise_distribution_reference(action_id=action.action_id, symbol=action.symbol, ts_us=tick.ts_us,
+                reference_cash_per_share=action.reference_cash_per_share,
+                reference_shares_per_share=action.reference_shares_per_share):
+                state.corporate_action_records.append(CorporateActionRecord(action.action_id, tick.ts_us,
+                    action.symbol, "reference_updated", entitlement.eligible_qty if entitlement is not None else 0,
+                    Decimal(0), Decimal(0), 0, action.source_ref))
         return context

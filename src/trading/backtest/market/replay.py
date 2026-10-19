@@ -199,6 +199,7 @@ class ReplayMarket:
         self.daily_close_issues: dict[int, tuple[MarketDataIssue, ...]] = {}
         self._marks = tuple(sorted((*initial_marks, *source.marks), key=lambda mark: mark.ts_us))
         self._price_marks: dict[str, VisiblePrice] = {}
+        self._distribution_references: dict[str, tuple[VisiblePrice, VisiblePrice]] = {}
         self._mark_index = 0
         self._observation_index = 0
         self._ts_us: int | None = None
@@ -255,13 +256,13 @@ class ReplayMarket:
         return None if mark is None else mark.price
 
     def apply_distribution_reference(
-        self, *, symbol: str, ts_us: int, trade_date: str,
+        self, *, action_id: str, symbol: str, ts_us: int, trade_date: str,
         reference_cash_per_share: Decimal, reference_shares_per_share: Decimal,
     ) -> None:
         """Replace a stale cum-dividend valuation basis without supplying trading volume.
 
         Example:
-            market.apply_distribution_reference(symbol="600000", ts_us=ex_start,
+            market.apply_distribution_reference(action_id="distribution/600000", symbol="600000", ts_us=ex_start,
                 trade_date="2026-09-03", reference_cash_per_share=Decimal("0.1"), reference_shares_per_share=Decimal(0))
         """
         prior = self._price_marks.get(symbol)
@@ -270,7 +271,36 @@ class ReplayMarket:
         price = (prior.price - reference_cash_per_share) / (1 + reference_shares_per_share)
         if price <= 0:
             raise ValueError(f"distribution reference price must be positive: {symbol}/{trade_date}")
-        self._price_marks[symbol] = VisiblePrice(price, ts_us, trade_date, "corporate_action")
+        applied = VisiblePrice(price, ts_us, trade_date, "corporate_action")
+        self._price_marks[symbol] = applied
+        self._distribution_references[action_id] = (prior, applied)
+
+    def revise_distribution_reference(
+        self, *, action_id: str, symbol: str, ts_us: int,
+        reference_cash_per_share: Decimal, reference_shares_per_share: Decimal,
+    ) -> bool:
+        """Revise this event's still-visible mark from its original cum-distribution price.
+
+        Example:
+            changed = market.revise_distribution_reference(action_id="distribution/600000",
+                symbol="600000", ts_us=publication_us, reference_cash_per_share=Decimal("0.04"),
+                reference_shares_per_share=Decimal(0))
+        """
+        reference = self._distribution_references.get(action_id)
+        if reference is None:
+            return False
+        basis, applied = reference
+        if self._price_marks.get(symbol) is not applied:
+            return False
+        price = (basis.price - reference_cash_per_share) / (1 + reference_shares_per_share)
+        if price <= 0:
+            raise ValueError(f"distribution reference price must be positive: {symbol}/{applied.trade_date}")
+        if price == applied.price:
+            return False
+        revised = VisiblePrice(price, ts_us, applied.trade_date, "corporate_action")
+        self._price_marks[symbol] = revised
+        self._distribution_references[action_id] = (basis, revised)
+        return True
 
     @property
     def prices(self) -> Mapping[str, Decimal]:

@@ -1,6 +1,7 @@
 # filepath: tests/data_system/steps/test_resolve_corporate_actions.py
 """Publication, review lineage and reuse at the corporate-action data boundary."""
 from copy import deepcopy
+from hashlib import sha256
 import json
 from pathlib import Path
 
@@ -10,6 +11,7 @@ import pytest
 
 from src.access import Access, meta
 from src.data_system.context import DataContext
+from src.data_system.distribution_announcements import ReviewExtractionManifest
 from src.data_system.steps.resolve_corporate_actions import ResolveCorporateActionsStep
 from src.utils.filesystem import FileSystem
 from src.utils.parquet_writer import write_parquet_atomic
@@ -80,6 +82,32 @@ def test_committed_empty_source_is_not_missing_coverage(source: tuple[PathManage
         access.corporate_actions(record_date=context.start)
 
 
+def test_changed_review_bytes_cannot_reuse_a_valid_extraction_manifest(
+    source: tuple[PathManager, DataContext, dict[str, object]],
+) -> None:
+    pm, context, case = source
+    review_path = pm.raw_payload(broker="announcements", source_name="corporate_action_reviews",
+        trade_date=context.start, payload_file="reviews.json")
+    payload = json.dumps([case["review"]]).encode()
+    FileSystem.write_bytes_atomic(review_path, payload)
+    manifest = ReviewExtractionManifest(inputs={}, producer_sha256="0" * 64,
+        reviews_sha256=sha256(payload).hexdigest(), issues={})
+    FileSystem.write_bytes_atomic(review_path.parent / "extraction.json", manifest.model_dump_json().encode())
+    meta.commit(pm=pm, payload_path=review_path)
+    step = ResolveCorporateActionsStep(pm)
+    step.run(context)
+    output = pm.processed_object(dataset_name="corporate_actions", version="v1", trade_date=context.start).payload_path
+    previous = output.read_bytes()
+    changed = payload.replace(b'"0.3158"', b'"0.3159"')
+    assert changed != payload and len(changed) == len(payload)
+    FileSystem.write_bytes_atomic(review_path, changed)
+
+    with pytest.raises(ValueError, match="extraction reviews digest changed"):
+        step.run(context)
+
+    assert output.read_bytes() == previous
+
+
 def test_access_requires_all_candidates_of_an_associated_event(tmp_path: Path) -> None:
     cases = json.loads((Path(__file__).parents[2] / "fixtures/corporate_actions/verified_distributions.json").read_text())
     case = next(item for item in cases if item["records"][0]["symbol"] == "000550")
@@ -102,3 +130,27 @@ def test_access_requires_all_candidates_of_an_associated_event(tmp_path: Path) -
     meta.commit(pm=pm, payload_path=paths.payload_path)
     with pytest.raises(ValueError, match="association is incomplete"):
         access.corporate_actions(record_date=day)
+
+
+def test_changed_source_can_rebuild_owned_partition_without_accepting_stale_output(
+    source: tuple[PathManager, DataContext, dict[str, object]],
+) -> None:
+    pm, context, case = source
+    step = ResolveCorporateActionsStep(pm)
+    step.run(context)
+    output = pm.processed_object(dataset_name="corporate_actions", version="v1", trade_date=context.start)
+    original = output.payload_path.read_bytes()
+    paths = pm.processed_object(dataset_name="dividend", version="v1", trade_date=context.start)
+    rows = deepcopy(case['records'])
+    rows.append({**rows[0], 'symbol': '000001', 'ts_code': '000001.SZ', 'source_row_id': '1' * 64})
+    write_parquet_atomic(output_file=paths.payload_path, table=pa.Table.from_pylist(rows))
+    meta.commit(pm=pm, payload_path=paths.payload_path)
+    access = Access(pm=pm, processed_version='v1')
+    with pytest.raises(RuntimeError, match='upstream payload size changed'):
+        access.corporate_actions(record_date=context.start)
+    step.run(context)
+    resolutions = access.corporate_actions(record_date=context.start)
+    assert len(resolutions) == 2
+    assert {row.symbol for row in resolutions} == {rows[0]['symbol'], '000001'}
+    archived, = (output.payload_path.parent / 'history').glob('*/data.parquet')
+    assert archived.read_bytes() == original

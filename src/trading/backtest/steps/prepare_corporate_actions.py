@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, time, timedelta
+from datetime import date, time
 from hashlib import sha256
 
 from src.access import Access
@@ -74,7 +74,7 @@ class PrepareCorporateActionsStep:
                             raise ValueError(f"distribution event is not a prepared trading day: {review.action_id}/{event_date}")
                     for terms in review.terms:
                         action = Distribution(action_id=review.action_id, symbol=item.symbol, source_ref=source_ref,
-                            announced_ts_us=_timestamp(terms.published_date + timedelta(days=1), time()),
+                            announced_ts_us=terms.available_ts_us,
                             record_ts_us=record_ts_us, ex_ts_us=_timestamp(review.ex_date, time()),
                             pay_ts_us=_timestamp(review.pay_date, time(15)) if review.pay_date is not None else None,
                             shares_available_ts_us=_timestamp(review.div_listdate, time(9, 30)) if review.div_listdate is not None else None,

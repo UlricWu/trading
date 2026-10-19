@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict
+from hashlib import sha256
 from pathlib import Path
 from typing import cast
 
@@ -137,6 +138,13 @@ class FactsPersistStep:
             ),
         )
         run_dir = self._output_dir
+        statuses = {day: [status.model_dump(mode="json") for status in reviews]
+            for day, reviews in context.security_status_by_date.items()}
+        FileSystem.write_bytes_atomic(run_dir / "security-status.json", json.dumps({
+            "version": "v1", "statuses": [status for reviews in statuses.values() for status in reviews],
+            "input_digests": {day: sha256(json.dumps(reviews, ensure_ascii=False, sort_keys=True,
+                separators=(",", ":")).encode()).hexdigest() for day, reviews in statuses.items()},
+        }, ensure_ascii=False, indent=2, allow_nan=False).encode())
         actions = context.corporate_actions
         action_facts = {
             "tax_basis": "gross",

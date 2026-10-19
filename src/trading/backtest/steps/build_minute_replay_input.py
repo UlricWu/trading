@@ -33,16 +33,18 @@ class BuildMinuteReplayInputStep:
         for session in context.sessions:
             bars = self.access.daily_bars(trade_date=session.trade_date)
             minutes = self.access.stock_trade_minutes(trade_date=session.trade_date)
+            observed = set(bars["symbol"]) | set(minutes["symbol"].unique().to_pylist())
             unknown = set(context.unknown_listing_symbols_by_date.get(session.trade_date, ()))
-            observed_symbols.update(unknown & (set(bars["symbol"]) | set(minutes["symbol"].unique().to_pylist())))
+            observed_symbols.update(unknown & observed)
             symbols = tuple(sorted(set(context.symbols_by_date[session.trade_date]) | observed_symbols))
             unknown -= set(symbols)
             context.symbols_by_date[session.trade_date] = symbols
-            bars = bars.loc[bars["symbol"].isin(symbols)].copy()
             missing = set(symbols) - set(bars["symbol"])
             suspended = confirmed_suspended_symbols(
                 missing_symbols=missing, suspensions=self.access.suspensions(trade_date=session.trade_date),
-            ) if missing else frozenset()
+                reviewed_statuses=context.security_status_by_date.get(session.trade_date, ()), observed_symbols=observed,
+            )
+            bars = bars.loc[bars["symbol"].isin(symbols)].copy()
             facts = minute_replay_facts(
                 minutes=minutes, daily_bars=bars, session=session,
                 symbols=symbols, source_version=self.source_version, suspended_symbols=suspended,

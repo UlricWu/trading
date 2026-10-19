@@ -74,6 +74,20 @@ class PathManager:
         """Return the resolved formal storage root."""
         return self._root
 
+    def raw_source_dir(self, *, broker: str, source_name: str) -> Path:
+        """Return one raw source directory for its owner's partition scans.
+
+        Example:
+            root = pm.raw_source_dir(broker="cninfo", source_name="corporate_action_publications")
+            partitions = tuple(root.glob("trade_date=*"))
+        """
+        return (
+            self._root
+            / "raw"
+            / self.require_safe_basename(broker, "broker")
+            / self.require_safe_basename(source_name, "source_name")
+        )
+
     def raw_payload(
         self,
         *,
@@ -416,13 +430,7 @@ class PathManager:
         source_name: str,
         trade_date: str,
     ) -> Path:
-        return (
-            self._root
-            / "raw"
-            / self.require_safe_basename(broker, "broker")
-            / self.require_safe_basename(source_name, "source_name")
-            / self._trade_date_partition(trade_date)
-        )
+        return self.raw_source_dir(broker=broker, source_name=source_name) / self._trade_date_partition(trade_date)
 
     def _processed_partition(
         self,
@@ -443,13 +451,7 @@ class PathManager:
         source_name: str,
         calendar_year: int,
     ) -> Path:
-        return (
-            self._root
-            / "raw"
-            / self.require_safe_basename(broker, "broker")
-            / self.require_safe_basename(source_name, "source_name")
-            / self._year_partition(calendar_year)
-        )
+        return self.raw_source_dir(broker=broker, source_name=source_name) / self._year_partition(calendar_year)
 
     def _processed_year_partition(
         self,

@@ -188,7 +188,7 @@ def test_data_workflow_supplies_one_linear_domain_step_sequence(
 
     assert result is None
     derived_steps = (
-        ["ExtractDistributionTermsStep", "ResolveCorporateActionsStep", "FeatureBuildStep", "LabelBuildStep"]
+        ["ExtractDistributionTermsStep", "ResolveCorporateActionsStep", "ResolveSecurityStatusStep", "FeatureBuildStep", "LabelBuildStep"]
         if kind == "data-standard"
         else ["Level2MinuteBuildStep", "Stock1430DailyMaterializeStep"]
     )

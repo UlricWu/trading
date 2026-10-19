@@ -1,6 +1,7 @@
 # filepath: tests/data_system/test_corporate_actions.py
 """Announcement-backed regressions for source duplication and incomplete facts."""
 from copy import deepcopy
+from datetime import datetime
 from hashlib import sha256
 import json
 from pathlib import Path
@@ -94,3 +95,59 @@ def test_one_announced_event_can_bind_distinct_source_candidates_without_double_
     changed = second.model_copy(update={"source_row_id": "4" * 64})
     with pytest.raises(ValueError, match="source digest changed"):
         resolve_corporate_actions((first, changed), (review,))
+
+
+def test_reference_only_revision_can_become_visible_after_ex_at_its_verified_time() -> None:
+    payload = deepcopy(_read_cases()[0]["review"])
+    original = payload["terms"][0]
+    stamp = int(datetime.fromisoformat(payload["ex_date"] + "T07:41:10+08:00").timestamp()) * 1_000_000
+    payload["terms"].append({**original, "published_date": payload["ex_date"],
+        "published_ts_us": stamp, "reference_cash_per_share": "0.039943"})
+    review = CorporateActionReview.model_validate(payload)
+    assert review.terms[-1].available_ts_us == stamp
+    assert review.terms[-1].cash_per_share == review.terms[0].cash_per_share
+    payload["terms"][-1]["cash_per_share"] = "0.041"
+    with pytest.raises(ValidationError, match="late revision.*cash or shares"):
+        CorporateActionReview.model_validate(payload)
+
+
+def test_exact_publication_time_must_match_its_declared_local_date() -> None:
+    payload = deepcopy(_read_cases()[0]["review"])
+    payload["terms"][0]["published_ts_us"] = int(datetime.fromisoformat(
+        payload["record_date"] + "T07:41:10+08:00").timestamp()) * 1_000_000
+    with pytest.raises(ValidationError, match="publication.*date"):
+        CorporateActionReview.model_validate(payload)
+
+
+def test_independent_announcement_retains_its_identity_when_dividend_source_arrives() -> None:
+    payload = deepcopy(_read_cases()[0]["review"])
+    original = DividendRecord.model_validate(_read_cases()[0]["records"][0])
+    url = "https://static.cninfo.com.cn/finalpage/2018-03-30/1204547578.PDF"
+    payload.update(candidate_id="cninfo:1204547578", source_digest="a" * 64,
+        action_id="cninfo:1204547578:ordinary_shareholder", evidence_refs=(url + "#sha256=" + "a" * 64,),
+        announcement_source={"source": "cninfo", "announcement_id": "1204547578", "symbol": original.symbol,
+            "title": "2017年年度权益分派实施公告", "published_date": payload["terms"][0]["published_date"], "url": url})
+    review = CorporateActionReview.model_validate(payload)
+    standalone, = resolve_corporate_actions((), (review,))
+    assert standalone.status == "resolved"
+    assert standalone.symbol == original.symbol
+    assert standalone.source_row_ids == ()
+    assert standalone.source_digest == "a" * 64
+    payload["related_sources"] = {original.candidate_id: sha256(original.source_row_id.encode()).hexdigest()}
+    linked = CorporateActionReview.model_validate(payload)
+    rows = resolve_corporate_actions((original,), (linked,))
+    assert {row.candidate_id for row in rows} == {standalone.candidate_id, original.candidate_id}
+    assert all(row.review == linked for row in rows)
+    assert len({row.review.action_id for row in rows}) == 1
+    assert next(row for row in rows if row.candidate_id == original.candidate_id).source_row_ids == (original.source_row_id,)
+    changed = original.model_copy(update={"source_row_id": "b" * 64})
+    with pytest.raises(ValueError, match="source digest changed"):
+        resolve_corporate_actions((changed,), (linked,))
+
+
+def test_independent_announcement_cannot_invent_its_native_identity_or_evidence() -> None:
+    payload = deepcopy(_read_cases()[0]["review"])
+    payload["announcement_source"] = {"source": "cninfo", "announcement_id": "1204547578", "symbol": "002745",
+        "title": "权益分派实施公告", "published_date": "2018-03-30", "url": "https://static.cninfo.com.cn/example.PDF"}
+    with pytest.raises(ValidationError, match="announcement source"):
+        CorporateActionReview.model_validate(payload)

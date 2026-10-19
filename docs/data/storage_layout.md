@@ -131,18 +131,44 @@ labels/<label_set>/<version>/trade_date=<date>/meta.json
 已有派生分区需要同步重建，不能通过另开版本目录绕过，也不增加多版本读取或回退。
 
 `dividend/v1` 为保留来源公告与原始行摘要的分配记录；`corporate_actions/v1` 为同登记日的
-解析结果。公开公告和核验使用下列 raw 对象，均按来源候选的股权登记日分区；公告查询
+解析结果。公开公告和核验使用下列 raw 对象，均按核验事件的股权登记日分区；公告查询
 范围单独存于集合中，不把自然日公告误标成登记日披露：
 
 - `raw/cninfo/corporate_action_announcements/trade_date=<date>/announcements.json` 及 Meta；
   同目录保存 `<announcement_id>.pdf`、下载回执和原始查询请求/响应，集合保存各自摘要。
+- `raw/bse/corporate_action_announcements/trade_date=<date>/announcements.json` 及 Meta；
+  原文文件名使用原生十六进制或 `manual<数字>` 公告 ID，同目录保存官方新旧代码对照
+  HTML、回执及查询证据；保留源索引给出的 `disclosure/` 或历史 `uploads/` 路径。
+  两个来源的集合在替换前完整归档至各自 `history/<旧集合 SHA-256>/`；它们是审计证据，
+  不作为额外版本或运行时回退输入。
 - `raw/announcements/corporate_action_review_inputs/trade_date=<date>/reviews.json` 及 Meta；
-  显式复核输入以同目录 `collection.sha256` 绑定所核查的公告集合。
+  显式复核输入以同目录 `collection.sha256` 绑定所核查的公告集合；多渠道时绑定各集合
+  路径和 SHA-256 所组成的有序映射摘要。独立公告来源在同一核验对象中保存原生公告身份、
+  原文摘要和历史公开时间，不新增表或伪造 dividend 行；既有 dividend 分区仍记录实际查询
+  覆盖，包括明确的空结果。后续真实源候选通过 related_sources 关联同一 action_id。
 - `raw/announcements/corporate_action_reviews/trade_date=<date>/reviews.json` 及 Meta；
   自动提取流程另保存 `extraction.json`，绑定精确输入、生成代码、核验输出及未解决原因。
 
+显式复核输入、自动核验输出及 `corporate_actions/v1` 处置对象被替换前，分别在同目录
+`history/<旧内容摘要>/` 保留原 payload、Meta 与对应的集合绑定或提取清单。核验归档的
+摘要覆盖整组文件，避免结果金额相同而证据或生成代码变化时覆盖旧记录；处置 Parquet
+本身的 schema metadata 已绑定全部输入摘要。归档只供复核与复现，不增加运行时版本选择。
+
+按披露日发现公告使用 `raw/{cninfo,bse}/corporate_action_publications/trade_date=<自然披露日>/`，
+与上述登记日证据集合分开。`index.json` 及 Meta 保存该来源当日的完整公开索引，
+`coverage.json` 绑定索引 SHA-256、条数、观察时间及原始分页请求/响应摘要；完整空索引
+表示已查询且无披露，不能用缺文件代表空结果。每次查询前写入 `pending.json`，仅在索引、
+覆盖证据和 Meta 全部提交后删除；失败刷新即使保留旧的有效索引，也仍须重试。
+旧索引发生变化时，将原索引、覆盖证据和 Meta 一起归档至 `history/<旧整组摘要>/`，
+原始请求/响应以内容及采集时间生成的唯一文件名保留。此处仍使用 V1。
+
 核验内容、来源摘要与多输入 lineage 由[数据源 owner](source_contract.md#dividend)定义。它们继续使用上述单对象路径与原子发布；重建不改写已入库 Tushare raw。
 需要留存被替换的派生对象时，将其与精确输入、源码一同归档为验证证据，不作为另一正式版本供运行时读取。
+
+证券状态补充使用 `raw/announcements/security_status_reviews/trade_date=<date>/reviews.json`
+及同目录 Meta、`<announcement_id>.pdf`，分区日期是状态适用的账户日。输出为
+`processed/security_status/v1/trade_date=<date>/data.parquet` 及 Meta；直接 upstream 指向
+对应核验输入 Meta，多输入摘要与状态语义由[数据源 owner](source_contract.md#公告核验的证券状态)拥有。
 
 `trade_calendar` 不使用单日 processed 分区，固定为：
 
@@ -160,6 +186,8 @@ Meta API，不建立第二套对象校验。
 
 `processed/<dataset_name>/<version>/` 是实际分区扫描所需的正式目录身份，由
 `PathManager.processed_version_dir()` 返回。调用方不得从 processed root 手工拼接该路径。
+Raw 来源 owner 扫描自己的分区时，通过 `PathManager.raw_source_dir(broker, source_name)`
+取得 `raw/<broker>/<source_name>/`；该方法只返回目录，不创建分区或判断采集状态。
 规范文件名固定的 processed、feature 和 label 对象由 `PathManager` 一次返回不可变的
 `ObjectPaths(payload_path, meta_path)`；调用方不得以两次路径调用分别重建同一对象身份。
 对应入口为 `processed_object()`、`processed_year_object()`、`feature_object()` 和
@@ -211,7 +239,7 @@ payload 字节数、直接 upstream 或 symbol slice 无效时必须失败，不
 producer 必须先发布 payload，再原子写入 `meta.json`；该顺序不构成多文件事务，也不
 定义并发写协调。
 
-`src/access/meta.py` 公开本地对象的 `MetaRecord`、`find()`、`require()`、`commit()`，
+`src/access/meta.py` 公开本地对象的 `MetaRecord`、`find()`、`require()`、`inspect_output()`、`commit()`，
 以及 Level-2 来源的 `RemoteRawRecord`、`find_level2_raw()`、`commit_remote_raw()`。
 `find_level2_raw()` 在唯一允许的 Level-2 raw 路径读取网盘记录或待迁移的本地记录；
 后者仍校验本地文件。`commit_remote_raw()` 原子写网盘记录，不执行网络 I/O。
@@ -223,6 +251,14 @@ producer 必须先发布 payload，再原子写入 `meta.json`；该顺序不构
 可选直接 upstream 和可选 symbol slices。`commit()` 在 payload 已完成后原子发布同目录
 `meta.json`。三个操作都接收已经绑定正式 storage root 的 `PathManager`，不建立第二个
 root 身份。Meta 不记录日志。
+
+`inspect_output()` 仅供拥有派生输出的 producer 在输入更新后决定重建：校验旧 Meta
+schema、路径身份、旧 payload 字节数及关系字段格式，但不要求旧 upstream 的记录大小
+仍等于当前输入大小。返回旧对象不表示可消费或可复用；producer 须先以普通读取契约
+校验全部当前输入，再比较领域输入摘要、验证业务条件并重新发布。它不将损坏输出转为
+未产出，只有 Meta 缺失返回 `None`。这使合法的输入更新可以重建派生对象，同时
+`find()`、`require()` 及 Access 继续拒绝过期 lineage；不得通过重新提交旧输出的 Meta
+假装它已经使用新输入生成。
 
 ## Raw Meta 一次性迁移
 
@@ -339,6 +375,7 @@ experiments/<experiment_name>/
 ├── equity.parquet                          # 事件估值
 ├── valuation-marks.parquet                 # 初始与日终持仓的估值价格依据
 ├── corporate-actions.json                  # 公司行动来源、权益、记账与未解决事项
+├── security-status.json                    # 本次消费的公告核验证券状态与摘要
 ├── metrics.json
 └── report.html
 ```

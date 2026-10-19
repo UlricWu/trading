@@ -16,6 +16,7 @@ from src.data_system.context import DataContext
 from src.data_system.corporate_actions import CorporateActionReview, DividendRecord, resolve_corporate_actions
 from src.data_system.steps._partition import _publish_parquet_object
 from src.data_system.distribution_announcements import ReviewExtractionManifest
+from src.utils.filesystem import FileSystem
 from src.utils.path import PathManager
 
 
@@ -40,22 +41,24 @@ class ResolveCorporateActionsStep:
             loaded = meta.require(pm=self.pm, meta_path=source.meta_path, expected_payload_path=source.payload_path)
             review_meta = self.pm.raw_meta(broker="announcements", source_name="corporate_action_reviews", trade_date=day)
             reviewed = meta.find(pm=self.pm, meta_path=review_meta)
-            reviews = (() if reviewed is None else TypeAdapter(tuple[CorporateActionReview, ...]).validate_json(
-                reviewed.payload_path.read_bytes()))
+            reviews = ()
             inputs = {str(source.meta_path.relative_to(self.pm.storage_root)): sha256(loaded.payload_path.read_bytes()).hexdigest()}
             if reviewed is not None:
-                inputs[str(review_meta.relative_to(self.pm.storage_root))] = sha256(reviewed.payload_path.read_bytes()).hexdigest()
+                review_payload = reviewed.payload_path.read_bytes()
+                reviews = TypeAdapter(tuple[CorporateActionReview, ...]).validate_json(review_payload)
+                inputs[str(review_meta.relative_to(self.pm.storage_root))] = sha256(review_payload).hexdigest()
             extraction = None
             if reviewed is not None and (extraction_path := reviewed.payload_path.parent / "extraction.json").exists():
-                extraction = ReviewExtractionManifest.model_validate_json(extraction_path.read_bytes())
-                if extraction.reviews_sha256 != sha256(reviewed.payload_path.read_bytes()).hexdigest():
+                extraction_payload = extraction_path.read_bytes()
+                extraction = ReviewExtractionManifest.model_validate_json(extraction_payload)
+                if extraction.reviews_sha256 != inputs[str(review_meta.relative_to(self.pm.storage_root))]:
                     raise ValueError(f"extraction reviews digest changed: {day}")
                 for relative, digest in extraction.inputs.items():
                     if sha256((self.pm.storage_root / relative).read_bytes()).hexdigest() != digest:
                         raise ValueError(f"extraction input digest changed: {relative}")
-                inputs[str(extraction_path.relative_to(self.pm.storage_root))] = sha256(extraction_path.read_bytes()).hexdigest()
+                inputs[str(extraction_path.relative_to(self.pm.storage_root))] = sha256(extraction_payload).hexdigest()
             paths = self.pm.processed_object(dataset_name="corporate_actions", version="v1", trade_date=day)
-            existing = meta.find(pm=self.pm, meta_path=paths.meta_path, expected_payload_path=paths.payload_path)
+            existing = meta.inspect_output(pm=self.pm, meta_path=paths.meta_path, expected_payload_path=paths.payload_path)
             if existing is not None:
                 with pq.ParquetFile(existing.payload_path) as parquet:
                     saved_inputs = json.loads((parquet.schema_arrow.metadata or {})[b"corporate_action_inputs"])
@@ -74,6 +77,11 @@ class ResolveCorporateActionsStep:
                 metadata={b"corporate_action_inputs": json.dumps(inputs, sort_keys=True).encode()})
             table = pa.Table.from_pylist([{"symbol": item.symbol, "record_date": day,
                 "resolution": item.model_dump_json()} for item in resolutions], schema=schema)
+            if existing is not None:
+                archive_id = sha256(existing.payload_path.read_bytes()).hexdigest()
+                for original in (paths.payload_path, paths.meta_path):
+                    FileSystem.write_bytes_atomic(paths.payload_path.parent / "history" / archive_id / original.name,
+                        original.read_bytes())
             _publish_parquet_object(pm=self.pm, paths=paths, table=table, upstream_meta_path=source.meta_path)
             unresolved = sum(item.status == "unresolved" for item in resolutions)
             logs.info(f"✅ corporate actions; trade_date={day} groups={len(resolutions)} unresolved={unresolved}")

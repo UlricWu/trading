@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from itertools import permutations
 
 import pytest
 
@@ -61,3 +62,10 @@ def test_valuation_uses_visible_prices_and_returns_owned_marks() -> None:
 def test_valuation_does_not_replace_invalid_or_missing_marks_with_zero(prices: Mapping[str, float]) -> None:
     with pytest.raises(RuntimeError, match="held symbol=A"):
         mark_to_market(positions={"A": 100}, current_raw_prices=prices, last_mark_prices={})
+
+
+def test_valuation_does_not_depend_on_position_iteration_order() -> None:
+    prices = {"A": 10000000.0, "B": 0.03, "C": 0.03}
+    values = {mark_to_market(positions=dict.fromkeys(order, 1), current_raw_prices=prices,
+                            last_mark_prices={}).market_value for order in permutations(prices)}
+    assert values == {10000000.06}

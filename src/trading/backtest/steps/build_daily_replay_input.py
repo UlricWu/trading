@@ -32,16 +32,18 @@ class BuildDailyReplayInputStep:
         observed_symbols: set[str] = set()
         for session in context.sessions:
             bars = self.access.daily_bars(trade_date=session.trade_date)
+            observed = set(bars["symbol"])
             unknown = set(context.unknown_listing_symbols_by_date.get(session.trade_date, ()))
-            observed_symbols.update(unknown & set(bars["symbol"]))
+            observed_symbols.update(unknown & observed)
             symbols = set(context.symbols_by_date[session.trade_date]) | observed_symbols
             unknown -= symbols
             context.symbols_by_date[session.trade_date] = tuple(sorted(symbols))
-            bars = bars.loc[bars["symbol"].isin(symbols)].copy()
-            missing = set(symbols) - set(bars["symbol"])
+            missing = symbols - observed
             suspended = confirmed_suspended_symbols(
                 missing_symbols=missing, suspensions=self.access.suspensions(trade_date=session.trade_date),
-            ) if missing else frozenset()
+                reviewed_statuses=context.security_status_by_date.get(session.trade_date, ()), observed_symbols=observed,
+            )
+            bars = bars.loc[bars["symbol"].isin(symbols)].copy()
             facts = daily_replay_facts(bars=bars, session=session, source_version=self.source_version,
                 suspended_symbols=suspended, missing_symbols=missing - suspended, unknown_listing_symbols=unknown)
             marks.extend(facts.marks)

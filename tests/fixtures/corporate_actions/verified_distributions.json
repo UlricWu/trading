@@ -276,7 +276,7 @@
           "cash_per_share": "0.2816137",
           "shares_per_share": "0.3994521",
           "reference_cash_per_share": "0.2764547",
-          "reference_shares_per_share": "0.392134"
+          "reference_shares_per_share": "0.3921344"
         },
         {
           "published_date": "2025-07-05",
@@ -287,8 +287,8 @@
         }
       ],
       "evidence_refs": [
-        "https://disc.static.szse.cn/download/disc/disk03/finalpage/2025-06-27/97ace6b6-6662-4b73-8efc-8b05d98434e7.PDF",
-        "https://paper.cnstock.com/html/2025-07/05/content_2089677.htm"
+        "https://static.cninfo.com.cn/finalpage/2025-06-30/1224017153.PDF#sha256=972fa64793d6feb1486d0f88f7d93e4bb2fc93bf335c69ea63fe650bdf66c66a",
+        "https://static.cninfo.com.cn/finalpage/2025-07-05/1224085489.PDF#sha256=af3c4f592fa7573eeb279a2f8aa32d554d4f04731f729c9b7b703e77b295cea3"
       ],
       "reason": "post_registration_terms_revision"
     }

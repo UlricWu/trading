@@ -11,6 +11,7 @@ import pyarrow as pa
 import pyarrow.compute as pc
 
 from src.data_system.market_phase import MarketPhase
+from src.data_system.security_status import SecurityStatus
 from src.trading.backtest.market.data_view import ExecutionObservation
 from src.trading.backtest.market.replay import MarketDataIssue, MarkObservation, ReplaySession
 from src.trading.core.time import BarTime, US_PER_MINUTE
@@ -29,6 +30,7 @@ class ReplayFacts(NamedTuple):
 
 def confirmed_suspended_symbols(
     *, missing_symbols: Collection[str], suspensions: pd.DataFrame,
+    reviewed_statuses: Sequence[SecurityStatus] = (), observed_symbols: Collection[str] = (),
 ) -> frozenset[str]:
     """Return confirmed full-day suspensions, leaving ambiguous gaps unresolved.
 
@@ -36,11 +38,18 @@ def confirmed_suspended_symbols(
         suspended = confirmed_suspended_symbols(missing_symbols={"600000"},
             suspensions=events)
     """
-    events = suspensions.loc[suspensions["symbol"].isin(missing_symbols)]
+    observed = set(observed_symbols)
+    for status in reviewed_statuses:
+        if (status.symbol in observed and (status.listing_status in {"pre_listing", "delisted"}
+                or status.trading_status == "suspended")):
+            raise ValueError(f"market data conflicts with reviewed security status: {status.symbol}@{status.trade_date}")
+    reviewed_trading = {status.symbol for status in reviewed_statuses if status.trading_status is not None}
+    events = suspensions.loc[suspensions["symbol"].isin(set(missing_symbols) - reviewed_trading)]
     full_day = events["suspend_type"].eq("S") & events["suspend_timing"].isna()
     confirmed = set(events.loc[full_day, "symbol"])
     conflicting = set(events.loc[~full_day, "symbol"])
-    return frozenset(confirmed - conflicting)
+    reviewed_suspended = {status.symbol for status in reviewed_statuses if status.trading_status == "suspended"}
+    return frozenset((confirmed - conflicting) | (reviewed_suspended & set(missing_symbols)))
 
 
 def _daily_close_mark(

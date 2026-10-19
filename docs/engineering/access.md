@@ -307,6 +307,15 @@ Arrow schema、请求日期和完整唯一 key，并已按
 重复 key 时失败。返回值保留同一 schema，并按完整 key 全局升序；有效的两市空对象返回固定
 schema 零行表。Access 不执行 14:30 universe、窗口、Feature 或 Label 计算。
 
+## 公告核验证券状态
+
+`security_status(T)` 读取同日 `security_status/v1`，返回不可变的 SecurityStatus 序列。
+没有该补充对象时返回空序列，含义仅为没有已提交的补充核验，不证明原始状态正常。
+存在对象时验证 Meta、三列 schema、证券日唯一性、字段与分区身份，以及 schema metadata
+中的 stock_basic、suspend_d、reviews 摘要仍对应当前原始输入；任一失效立即失败。
+公告证据、状态取值及可见时间由[数据源 owner](../data/source_contract.md#公告核验的证券状态)
+拥有，Access 不执行公告下载、条款提取、上市推断或行情填充。
+
 ## 错误归属
 
 - 非法日期、版本、窗口大小、请求 symbol 和上市自然日参数在 public 边界以

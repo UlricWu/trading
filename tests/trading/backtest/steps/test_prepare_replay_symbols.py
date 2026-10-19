@@ -10,6 +10,7 @@ from src.trading.backtest.steps.prepare_replay_symbols import PrepareReplaySymbo
 
 def test_full_market_keeps_held_and_past_members_without_anticipating_new_listings() -> None:
     access = Mock(spec=Access)
+    access.security_status.return_value = ()
     access.historical_stock_listings.side_effect = [
         {"600000": "1999-11-10", "000001": "2026-09-02", "001246": None},
         {"600000": None, "000001": "2026-09-02", "001246": None},
@@ -34,6 +35,7 @@ def test_full_market_keeps_held_and_past_members_without_anticipating_new_listin
 
 def test_explicit_selection_does_not_require_historical_lists() -> None:
     access = Mock(spec=Access)
+    access.security_status.return_value = ()
     context = BacktestContext(metrics=BacktestMetrics(mode="execution_eval", parameters={}, not_run={}),
                               sessions=(ReplaySession(trade_date="2026-09-01", start_ts_us=0,
         close_ts_us=100, windows=({"trade_date": "2026-09-01", "start_ts_us": 0, "end_ts_us": 100},)),))

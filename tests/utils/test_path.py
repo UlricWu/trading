@@ -109,6 +109,7 @@ def test_raw_and_staging_paths_preserve_source_native_identity(
         / "trade_date=2026-05-01"
     )
 
+    assert pm.raw_source_dir(broker="level2_ftp", source_name="sh_stock_ordertrade") == raw_partition.parent
     assert (
         pm.raw_payload(
             broker="level2_ftp",
@@ -318,6 +319,8 @@ def test_each_path_identity_is_validated_at_the_public_boundary(
     storage_root.mkdir()
     pm = PathManager(storage_root)
 
+    with pytest.raises(ValueError, match="broker must be a safe basename"):
+        pm.raw_source_dir(broker="../tushare", source_name="stock_daily")
     with pytest.raises(ValueError, match="source_name must be a safe basename"):
         pm.raw_meta(
             broker="tushare",

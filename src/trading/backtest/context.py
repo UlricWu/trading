@@ -8,6 +8,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Literal
 
+from src.data_system.security_status import SecurityStatus
 from src.trading.backtest.commands import OrderCommandSchedule
 from src.trading.backtest.clock import ReplayClock
 from src.trading.backtest.corporate_actions import CorporateActionIssue, CorporateActionSchedule
@@ -126,6 +127,7 @@ class BacktestContext:
     sessions: tuple[ReplaySession, ...] = ()
     symbols_by_date: dict[str, tuple[str, ...]] = field(default_factory=dict)
     unknown_listing_symbols_by_date: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    security_status_by_date: dict[str, tuple[SecurityStatus, ...]] = field(default_factory=dict)
     market_input: ReplayMarketInput | None = None
     inputs: BacktestInputs | None = None
     initial_marks: tuple[MarkObservation, ...] = ()

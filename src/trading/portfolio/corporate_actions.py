@@ -38,8 +38,8 @@ class Distribution(BaseModel):
 
     @model_validator(mode="after")
     def _validate_dates(self) -> Self:
-        if self.record_ts_us >= self.ex_ts_us or self.announced_ts_us > self.ex_ts_us:
-            raise ValueError("distribution requires registration < ex date and terms available by ex date")
+        if self.record_ts_us >= self.ex_ts_us:
+            raise ValueError("distribution requires registration < ex date")
         for amount, timestamp, field in (
             (self.cash_per_share, self.pay_ts_us, "pay_ts_us"),
             (self.shares_per_share, self.shares_available_ts_us, "shares_available_ts_us"),
@@ -109,7 +109,7 @@ class CorporateActionRecord:
     action_id: str
     ts_us: int
     symbol: str
-    event: Literal["terms_updated", "registered", "recognized", "cash_paid", "shares_released"]
+    event: Literal["terms_updated", "reference_updated", "registered", "recognized", "cash_paid", "shares_released"]
     eligible_qty: int
     cash_delta: Decimal
     receivable_delta: Decimal

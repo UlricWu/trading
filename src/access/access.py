@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from hashlib import sha256
+import json
 from pathlib import Path
 from typing import ClassVar, Literal
 
@@ -19,6 +21,7 @@ from src.data_system.builders.level2_stock_trade_1m import (
 )
 from src.data_system.normalize.level2_security import SECURITY_TYPE_RANGES, SecurityType
 from src.data_system.corporate_actions import CorporateActionResolution
+from src.data_system.security_status import SecurityStatus
 from src.utils import table_ops
 from src.utils.datetime_utils import DateTimeUtils
 from src.utils.path import PathManager
@@ -510,6 +513,41 @@ class Access:
         if any(item.review is not None and actions[item.review.action_id] != item.review for item in resolutions):
             raise ValueError(f"corporate-action identities must be unique: {day}")
         return resolutions
+
+    def security_status(self, *, trade_date: str) -> tuple[SecurityStatus, ...]:
+        """Read evidence-bound daily supplements; absent supplements leave source states unknown.
+
+        Example:
+            statuses = access.security_status(trade_date="2026-09-15")
+        """
+        day = DateTimeUtils.require_system_date(trade_date, field_name="trade_date")
+        paths = self._pm.processed_object(dataset_name="security_status", version="v1", trade_date=day)
+        loaded = meta.find(pm=self._pm, meta_path=paths.meta_path, expected_payload_path=paths.payload_path)
+        if loaded is None:
+            return ()
+        with pq.ParquetFile(loaded.payload_path) as parquet:
+            inputs = json.loads(parquet.schema_arrow.metadata[b"security_status_inputs"])
+            rows = parquet.read().to_pandas()
+        if set(inputs) != {"stock_basic", "suspend_d", "reviews"}:
+            raise ValueError(f"security status input identities are incomplete: {day}")
+        for name in ("stock_basic", "suspend_d"):
+            source = self._pm.processed_object(dataset_name=name, version="v1", trade_date=day)
+            original = meta.require(pm=self._pm, meta_path=source.meta_path, expected_payload_path=source.payload_path)
+            if sha256(original.payload_path.read_bytes()).hexdigest() != inputs[name]:
+                raise ValueError(f"security status source digest changed: {name}/{day}")
+        review_path = self._pm.raw_payload(broker="announcements", source_name="security_status_reviews",
+            trade_date=day, payload_file="reviews.json")
+        reviewed = meta.require(pm=self._pm, meta_path=review_path.parent / "meta.json", expected_payload_path=review_path)
+        if sha256(reviewed.payload_path.read_bytes()).hexdigest() != inputs["reviews"]:
+            raise ValueError(f"security status review digest changed: {day}")
+        table_ops.require_columns(rows, ("symbol", "trade_date", "resolution"), who="security_status")
+        statuses = tuple(SecurityStatus.model_validate_json(value) for value in rows["resolution"])
+        for row, status in zip(rows.itertuples(index=False), statuses, strict=True):
+            if row.symbol != status.symbol or row.trade_date != day or status.trade_date.isoformat() != day:
+                raise ValueError(f"security status identity differs from partition: {day}")
+        if len({status.symbol for status in statuses}) != len(statuses):
+            raise ValueError(f"security status identities must be unique: {day}")
+        return statuses
 
     def corporate_action_notices(self, *, trade_date: str) -> pd.DataFrame | None:
         """Read supplied non-distribution notices without claiming comprehensive coverage.

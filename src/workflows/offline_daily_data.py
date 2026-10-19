@@ -21,6 +21,7 @@ from src.data_system.steps.calendar_materialize import CalendarMaterializeStep
 from src.data_system.steps.fact_materialize import FactMaterializeStep
 from src.data_system.steps.extract_distribution_terms import ExtractDistributionTermsStep
 from src.data_system.steps.resolve_corporate_actions import ResolveCorporateActionsStep
+from src.data_system.steps.resolve_security_status import ResolveSecurityStatusStep
 from src.data_system.steps.feature_build import FeatureBuildStep
 from src.data_system.steps.label_build import LabelBuildStep
 from src.data_system.steps.previous_day_materialize import PreviousDayMaterializeStep
@@ -179,6 +180,8 @@ def run_offline_data(
             ),
             *((ExtractDistributionTermsStep(pm=path_manager), ResolveCorporateActionsStep(pm=path_manager))
               if "dividend" in fact_sources else ()),
+            *((ResolveSecurityStatusStep(pm=path_manager),)
+              if {"stock_basic", "suspend_d"} <= fact_sources.keys() else ()),
             FeatureBuildStep(
                 pm=path_manager,
                 access=access,
@@ -271,6 +274,8 @@ def run_standard_fact_bootstrap(
         ),
         *((ExtractDistributionTermsStep(pm=path_manager), ResolveCorporateActionsStep(pm=path_manager))
           if "dividend" in fact_sources else ()),
+        *((ResolveSecurityStatusStep(pm=path_manager),)
+          if {"stock_basic", "suspend_d"} <= fact_sources.keys() else ()),
     )
     pipeline = DataPipeline(
         steps=steps,

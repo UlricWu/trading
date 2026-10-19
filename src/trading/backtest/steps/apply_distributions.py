@@ -26,7 +26,7 @@ class ApplyDistributionsStep:
         account = state.portfolio_state
         for scheduled in context.corporate_actions.recognitions.get(tick.ts_us, ()):
             action = state.distribution_terms[scheduled.action_id]
-            market.apply_distribution_reference(symbol=action.symbol, ts_us=tick.ts_us,
+            market.apply_distribution_reference(action_id=action.action_id, symbol=action.symbol, ts_us=tick.ts_us,
                 trade_date=tick.session.trade_date, reference_cash_per_share=action.reference_cash_per_share,
                 reference_shares_per_share=action.reference_shares_per_share)
             entitlement = account.distribution_entitlements.get(action.action_id)
