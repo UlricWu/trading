@@ -113,7 +113,10 @@ Access 不提供接收 `dataset_name` 的 public 方法，也不提供任意路�
 
 `daily_bars()` 返回正式 `daily_bar`。`symbols=None` 返回当日完整对象；显式 symbol
 序列返回按请求顺序排列的行；空序列返回保留列的空表。请求 symbol 必须是唯一的六位
-数字字符串。`adjustment_factors()` 和 `turnover_rates()` 使用相同选择规则，并分别返回
+数字字符串。量、金额与比例直接沿用[processed 单位](../data/source_contract.md#tushare-processed-单位)，
+不在 Access 缩放；日线的 ah_vol/ah_amount 保留独立的可空盘后观察。读取 vol/ah_vol 时
+保留 nullable int64，不能因同列含 null 而转为浮点并丢失大整数精度。
+`adjustment_factors()` 和 `turnover_rates()` 使用相同选择规则，并分别返回
 精确列：
 
 ```text
@@ -165,7 +168,8 @@ Access 不将事件集合变成盘前可知的可交易名单；如何解释日�
 
 `dividends(record_date=...)` 读取 `processed/dividend/v1/trade_date=<record_date>`，与 composition root 提供的 processed version 一致。
 字段含义归[数据源 owner](../data/source_contract.md#dividend)；本边界检查完整列、证券代码和
-记录所属登记日，返回独立 DataFrame，不筛选实施状态或改变金额。
+记录所属登记日，返回独立 DataFrame，不筛选实施状态或改变金额；base_date/base_share
+随来源行返回，base_share 已为股，不再乘10000。
 
 `corporate_actions(record_date=...)` 读取 `corporate_actions/v1`，返回不可变的
 `CorporateActionResolution` tuple。校验持久化模型、登记分区、内外证券身份及候选唯一性；

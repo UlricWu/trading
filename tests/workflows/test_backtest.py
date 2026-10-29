@@ -1477,7 +1477,7 @@ def market_sources(tmp_path: Path) -> PathManager:
                       pa.table({"symbol": pa.array([], type=pa.string())}))
         _write_source(pm, pm.processed_object(dataset_name="daily_bar", version="v1", trade_date=day).payload_path,
                       pa.table({"symbol": _SYMBOLS, "trade_date": [day] * 2,
-                                "close": [20.0 + index * 2, 10.0 + index * 2], "vol": [123.45, 6.78]}))
+                                "close": [20.0 + index * 2, 10.0 + index * 2], "vol": [12345, 678]}))
         for dataset, symbol in (("sh_stock_trade_1m", "600000"), ("sz_stock_trade_1m", "000001")):
             rows = []
             if day != "2026-07-21":
@@ -1517,7 +1517,7 @@ def _distribution_case(
     for index, day in enumerate(_DAYS):
         price = 10.0 if not index else ex_price
         _write_source(pm, pm.processed_object(dataset_name="daily_bar", version="v1", trade_date=day).payload_path,
-                      pa.table({"symbol": _SYMBOLS, "trade_date": [day] * 2, "close": [10.0, price], "vol": [1000.0] * 2}))
+                      pa.table({"symbol": _SYMBOLS, "trade_date": [day] * 2, "close": [10.0, price], "vol": [100000] * 2}))
         minute_path = pm.processed_object(dataset_name="sh_stock_trade_1m", version="v1", trade_date=day).payload_path
         rows = pq.ParquetFile(minute_path).read().to_pylist()
         for row in rows:
@@ -1552,7 +1552,7 @@ def test_compensation_separates_visible_rights_credit_and_trading_without_ex_dat
         pa.table({"trade_date": ["2026-07-16"], "is_open": [True]}), pq.ParquetFile(calendar).read()]))
     _write_source(market_sources, market_sources.processed_object(
         dataset_name="daily_bar", version="v1", trade_date="2026-07-16").payload_path,
-        pa.table({"symbol": ["600000"], "trade_date": ["2026-07-16"], "close": [10.0], "vol": [1000.0]}))
+        pa.table({"symbol": ["600000"], "trade_date": ["2026-07-16"], "close": [10.0], "vol": [100000]}))
     first = dict(published_date="2026-07-18" if late_eligibility else "2026-07-16",
         benefit_state="conditional", cash_per_share=None if benefit == "cash" else "0",
         shares_per_share=None if benefit == "shares" else "0", reference_cash_per_share=None,
@@ -1691,7 +1691,7 @@ def test_special_reference_is_published_after_registration_and_never_becomes_acc
         pa.table({"trade_date": ["2026-07-16"], "is_open": [True]}), pq.ParquetFile(calendar).read()]))
     _write_source(market_sources, market_sources.processed_object(
         dataset_name="daily_bar", version="v1", trade_date="2026-07-16").payload_path,
-        pa.table({"symbol": ["600000"], "trade_date": ["2026-07-16"], "close": [10.0], "vol": [1000.0]}))
+        pa.table({"symbol": ["600000"], "trade_date": ["2026-07-16"], "close": [10.0], "vol": [100000]}))
     review = CorporateActionReview(candidate_id="600000.SH/2026-06-30/2026-07-17",
         action_id="fixture/reorganization", shareholder_scope="ordinary_shareholder", record_date=_DAYS[0],
         ex_date=_DAYS[1], pay_date=None, div_listdate=_DAYS[2] if Decimal(shares) else None,
@@ -2052,7 +2052,7 @@ def test_initial_suspended_holdings_use_history_and_unlock_on_the_calendar(
     _write_source(pm, pm.processed_year_object(dataset_name="trade_calendar", version="v1", calendar_year=2026).payload_path,
                   pa.table({"trade_date": ["2026-07-16", *_DAYS], "is_open": [True] * 4}))
     _write_source(pm, pm.processed_object(dataset_name="daily_bar", version="v1", trade_date="2026-07-16").payload_path,
-                  pa.table({"symbol": ["600000"], "trade_date": ["2026-07-16"], "close": [8.0], "vol": [1.0]}))
+                  pa.table({"symbol": ["600000"], "trade_date": ["2026-07-16"], "close": [8.0], "vol": [100]}))
     for day in _DAYS[:2]:
         daily = pm.processed_object(dataset_name="daily_bar", version="v1", trade_date=day).payload_path
         bars = pq.ParquetFile(daily).read().to_pandas()
@@ -2125,7 +2125,7 @@ def test_full_market_distinguishes_prelisting_unknown_and_confirmed_members(
         if index > 0:
             path = pm.processed_object(dataset_name="daily_bar", version="v1", trade_date=day).payload_path
             bars = pq.ParquetFile(path).read().to_pylist()
-            bars.append({"symbol": "000002", "trade_date": day, "close": 8.0, "vol": 100.0})
+            bars.append({"symbol": "000002", "trade_date": day, "close": 8.0, "vol": 10000})
             _write_source(pm, path, pa.Table.from_pylist(bars))
     measured = mocker.spy(Instrumentation, "measure")
 
@@ -2247,7 +2247,7 @@ def test_reviewed_prelisting_and_suspension_preserve_holdings_without_inventing_
     _write_source(pm, pm.processed_year_object(dataset_name="trade_calendar", version="v1", calendar_year=2026).payload_path,
         pa.table({"trade_date": ["2026-07-16", *_DAYS], "is_open": [True] * 4}))
     _write_source(pm, pm.processed_object(dataset_name="daily_bar", version="v1", trade_date="2026-07-16").payload_path,
-        pa.table({"symbol": ["600000"], "trade_date": ["2026-07-16"], "close": [8.0], "vol": [1.0]}))
+        pa.table({"symbol": ["600000"], "trade_date": ["2026-07-16"], "close": [8.0], "vol": [100]}))
     for index, day in enumerate(_DAYS):
         _write_source(pm, pm.processed_object(dataset_name="stock_basic", version="v1", trade_date=day).payload_path,
             pa.table({"symbol": ["000001", "600000", "001246"], "list_date": ["1991-04-03", "1999-11-10", None]}))
@@ -2480,19 +2480,26 @@ def test_missing_source_propagates_without_replacing_existing_results(
     assert output.read_bytes() == b"previous complete artifact"
 
 
-@pytest.mark.parametrize("volume", [-1.0, float("nan"), float("inf"), 0.001])
+@pytest.mark.parametrize("volume,message", [
+    (-1, "volume_qty must be a non-negative integer"),
+    (None, "vol must provide observed shares"),
+    (float("nan"), "vol must provide observed shares"),
+    (float("inf"), "volume_qty must be a non-negative integer"),
+    (0.001, "volume_qty must be a non-negative integer"),
+])
 def test_daily_volume_cannot_be_rounded_or_replaced_by_unlimited_liquidity(
-    market_sources: PathManager, volume: float,
+    market_sources: PathManager, volume: float | None, message: str,
 ) -> None:
     path = market_sources.processed_object(dataset_name="daily_bar", version="v1", trade_date=_DAYS[0]).payload_path
     frame = pd.read_parquet(path)
-    frame.loc[frame["symbol"] == "600000", "vol"] = volume
+    frame = frame.loc[frame["symbol"] == "600000"].copy()
+    frame["vol"] = volume
     _write_source(market_sources, path, pa.Table.from_pandas(frame, preserve_index=False))
     output = market_sources.experiment_dir(experiment_name="backtest_source")
-    with pytest.raises(ValueError, match="vol \\* 100"):
+    with pytest.raises(ValueError, match=message):
         _run_source_backtest(
             path_manager=market_sources, start_date=_DAYS[0], end_date=_DAYS[-1],
-            symbols=_SYMBOLS, frequency="daily",
+            symbols=("600000",), frequency="daily",
         )
     assert not output.exists()
 
@@ -2620,7 +2627,7 @@ def test_verified_real_announcements_drive_one_account_event_and_separate_refere
         if case_index == 6 and session == ex_day:
             price = Decimal("9.90")
         _write_source(pm, pm.processed_object(dataset_name="daily_bar", version="v1", trade_date=session).payload_path,
-            pa.table({"symbol": [symbol], "trade_date": [session], "close": [float(price)], "vol": [1000000.0]}))
+            pa.table({"symbol": [symbol], "trade_date": [session], "close": [float(price)], "vol": [100000000]}))
         rows = [{"symbol": symbol, "trade_date": session, "minute_start_ts_utc": _ts(session, 9, 30),
             "phase": 2, "open": float(price), "high": float(price), "low": float(price), "close": float(price),
             "volume_sum": 1000000, "notional_sum": float(price) * 1000000, "trade_count": 1,
@@ -2710,7 +2717,7 @@ def test_confirmed_compensations_execute_their_original_publication_and_settleme
         _write_source(pm, pm.processed_object(dataset_name="suspend_d", version="v1", trade_date=session).payload_path,
             pa.table({"symbol": pa.array([], type=pa.string())}))
         _write_source(pm, pm.processed_object(dataset_name="daily_bar", version="v1", trade_date=session).payload_path,
-            pa.table({"symbol": [symbol], "trade_date": [session], "close": [10.0], "vol": [1000000.0]}))
+            pa.table({"symbol": [symbol], "trade_date": [session], "close": [10.0], "vol": [100000000]}))
     ref = pm.raw_payload(broker="announcements", source_name="corporate_action_reviews", trade_date=day, payload_file="reviews.json")
     FileSystem.write_bytes_atomic(ref, json.dumps([case["review"]]).encode())
     meta.commit(pm=pm, payload_path=ref)
@@ -2893,7 +2900,7 @@ def test_announcement_stream_preserves_early_eligibility_late_settlement_and_com
     _write_source(pm, calendar_path, pa.Table.from_pylist(calendar))
     for day in ("2026-07-16", "2026-07-22"):
         _write_source(pm, pm.processed_object(dataset_name="daily_bar", version="v1", trade_date=day).payload_path,
-            pa.table({"symbol": _SYMBOLS, "trade_date": [day] * 2, "close": [14.0, 14.0], "vol": [100.0, 100.0]}))
+            pa.table({"symbol": _SYMBOLS, "trade_date": [day] * 2, "close": [14.0, 14.0], "vol": [10000, 10000]}))
     for dataset in ("suspend_d", "corporate_actions", "sh_stock_trade_1m", "sz_stock_trade_1m"):
         original = pm.processed_object(dataset_name=dataset, version="v1", trade_date=_DAYS[-1]).payload_path
         _write_source(pm, pm.processed_object(dataset_name=dataset, version="v1", trade_date="2026-07-22").payload_path,

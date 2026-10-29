@@ -36,7 +36,7 @@ def test_minute_converter_rejects_invalid_vwap_inputs(session: ReplaySession, no
 
 
 def test_converters_preserve_source_objects_and_keep_selection_outside_execution(session: ReplaySession) -> None:
-    bars = pd.DataFrame({"symbol": ["600000"], "close": [11.0], "vol": [1.01]})
+    bars = pd.DataFrame({"symbol": ["600000"], "close": [11.0], "vol": [101]})
     before = bars.copy(deep=True)
     minutes = pa.table({"symbol": ["600000", "600000", "000001"], "phase": [0, 2, 2],
                         "minute_start_ts_utc": [session.windows[0].start_ts_us] * 3,

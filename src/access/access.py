@@ -373,7 +373,7 @@ class Access:
         trade_date: str,
         symbols: Sequence[str] | None = None,
     ) -> pd.DataFrame:
-        """Return formal daily bars, optionally in requested symbol order.
+        """Return daily bars in yuan, shares and fractional rates, in requested order.
 
         Example:
             all_bars = access.daily_bars(trade_date="2026-05-06")
@@ -470,7 +470,7 @@ class Access:
         with pq.ParquetFile(loaded.payload_path) as parquet:
             frame = parquet.read().to_pandas()
         columns = ("ts_code", "symbol", "end_date", "ann_date", "div_proc", "imp_ann_date", "record_date", "ex_date",
-                   "pay_date", "div_listdate", "cash_div_tax", "stk_div")
+                   "pay_date", "div_listdate", "cash_div_tax", "stk_div", "base_date", "base_share")
         table_ops.require_columns(frame, columns, who="dividend")
         if not frame.empty:
             _validated_symbols(frame["symbol"].unique().tolist())
@@ -911,7 +911,9 @@ class Access:
             dataset_name=dataset_name,
         )
         with pq.ParquetFile(loaded.payload_path) as parquet_file:
-            return parquet_file.read().to_pandas()
+            return parquet_file.read().to_pandas(
+                types_mapper={pa.int64(): pd.ArrowDtype(pa.int64())}.get if dataset_name == "daily_bar" else None,
+            )
 
     def _read_daily_object(
         self,

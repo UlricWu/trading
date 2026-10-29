@@ -260,6 +260,21 @@ def test_complete_ordinary_source_is_executable_without_an_announcement(ordinary
     assert result.action_id == "dividend:600000.SH/2026-06-30/2026-07-17:ordinary_shareholder"
 
 
+def test_base_capital_remains_source_observation_without_changing_entitlements(ordinary_source: DividendRecord) -> None:
+    record = DividendRecord.model_validate({
+        **ordinary_source.model_dump(), "base_date": "2026-06-30", "base_share": 12345678.9,
+    })
+    result, = resolve_corporate_actions((record,), ())
+    original, = resolve_corporate_actions((ordinary_source,), ())
+    assert result.status == original.status == "resolved"
+    assert result.action_id == original.action_id
+    assert result.source_record == record
+    assert result.source_record.base_share == 12345678.9
+    assert result.source_record.base_date == date(2026, 6, 30)
+    assert result.source_record.cash_div_tax == original.source_record.cash_div_tax
+    assert result.source_record.stk_div == original.source_record.stk_div
+
+
 @pytest.mark.parametrize(("changes", "reason"), [
     ({"cash_div_tax": None}, "missing_distribution_terms"),
     ({"stk_div": None}, "missing_distribution_terms"),

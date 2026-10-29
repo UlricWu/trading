@@ -33,6 +33,8 @@ class DividendRecord(BaseModel):
     div_listdate: date | None
     cash_div_tax: Decimal | None = Field(ge=0, allow_inf_nan=False)
     stk_div: Decimal | None = Field(ge=0, allow_inf_nan=False)
+    base_date: date | None = None
+    base_share: float | None = Field(default=None, ge=0, allow_inf_nan=False)
 
     @property
     def candidate_id(self) -> str:

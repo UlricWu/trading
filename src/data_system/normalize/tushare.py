@@ -4,11 +4,13 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from decimal import Decimal
 from pathlib import Path
 from types import MappingProxyType
 
 import pandas as pd
 import pyarrow as pa
+import pyarrow.compute as pc
 import pyarrow.parquet as pq
 
 from src import logs
@@ -35,13 +37,36 @@ _TARGET_SCHEMAS: Mapping[str, pa.Schema] = MappingProxyType(
                 ("pre_close", pa.float64()),
                 ("change", pa.float64()),
                 ("pct_chg", pa.float64()),
-                ("vol", pa.float64()),
+                ("vol", pa.int64()),
                 ("amount", pa.float64()),
+                ("ah_vol", pa.int64()),
+                ("ah_amount", pa.float64()),
                 ("symbol", pa.string()),
             ]
         ),
     }
 )
+
+# Source units belong to docs/data/source_contract.md and its dataset owners.
+# Identically named fields need different factors.
+_UNIT_MULTIPLIERS: Mapping[str, Mapping[str, float]] = MappingProxyType({
+    "daily_bar": MappingProxyType({"amount": 1_000.0, "ah_amount": 1_000.0, "pct_chg": 0.01}),
+    "daily_basic": MappingProxyType({
+        "total_share": 10_000.0, "float_share": 10_000.0, "free_share": 10_000.0,
+        "total_mv": 10_000.0, "circ_mv": 10_000.0,
+        "turnover_rate": 0.01, "turnover_rate_f": 0.01, "dv_ratio": 0.01, "dv_ttm": 0.01,
+    }),
+    "stock_basic": MappingProxyType({
+        "total_share": 100_000_000.0, "float_share": 100_000_000.0,
+        "rev_yoy": 0.01, "profit_yoy": 0.01, "gpr": 0.01, "npr": 0.01,
+    }),
+    "moneyflow": MappingProxyType({
+        **{f"{side}_{size}_amount": 10_000.0
+           for side in ("buy", "sell") for size in ("sm", "md", "lg", "elg")},
+        "net_mf_amount": 10_000.0,
+    }),
+    "dividend": MappingProxyType({"base_share": 10_000.0}),
+})
 
 
 def normalize_tushare(
@@ -55,7 +80,8 @@ def normalize_tushare(
     """Normalize one structured Tushare raw object.
 
     ``trade_date=None`` identifies the annual trade-calendar object; daily
-    Tushare objects receive their partition date from the fact step.
+    Tushare objects receive their partition date from the fact step. Confirmed
+    units become shares, yuan and fractional rates; raw payloads stay unchanged.
 
     Example:
         output = normalize_tushare(
@@ -66,7 +92,7 @@ def normalize_tushare(
             trade_date="2026-07-27",
         )
     """
-    raw_frame = pq.ParquetFile(input_file).read().to_pandas()
+    raw_frame = pq.ParquetFile(input_file).read().to_pandas(types_mapper=pd.ArrowDtype)
     logs.info(
         f"▶️ Tushare normalize; "
         f"target={target_name} trade_date={trade_date} "
@@ -117,16 +143,57 @@ def normalize_tushare(
     ):
         normalized_frame["symbol"] = pd.Series(dtype="string")
 
+    if target_name == "daily_bar":
+        for column in ("ah_vol", "ah_amount"):
+            if column not in normalized_frame.columns:
+                normalized_frame[column] = pd.Series(float("nan"), index=normalized_frame.index)
+
+    if target_name == "dividend":
+        for column in ("base_date", "base_share"):
+            if column not in normalized_frame.columns:
+                normalized_frame[column] = pd.Series(None, index=normalized_frame.index, dtype="object")
+
+    for column, multiplier in _UNIT_MULTIPLIERS.get(target_name, {}).items():
+        if column in normalized_frame.columns:
+            try:
+                normalized_frame[column] = pd.to_numeric(normalized_frame[column]).astype("float64") * multiplier
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"{target_name}.{column}: cannot normalize numeric units") from exc
+            if pc.all(pc.is_finite(pa.array(normalized_frame[column]))).as_py() is False:
+                raise ValueError(f"{target_name}.{column}: normalized values must be finite")
+
+    volume_columns = ()
+    if target_name == "daily_bar":
+        volume_columns = ("vol", "ah_vol")
+    elif target_name == "moneyflow":
+        volume_columns = tuple(f"{side}_{size}_vol" for side in ("buy", "sell")
+                               for size in ("sm", "md", "lg", "elg")) + ("net_mf_vol",)
+    for column in volume_columns:
+        if column not in normalized_frame.columns:
+            continue
+        try:
+            # Two decimal places in lots express whole shares. Decimal kernels
+            # reject fractional shares and avoid binary products such as 0.29 * 100.
+            lots = pc.cast(pa.array(normalized_frame[column].astype("string")), pa.decimal128(21, 2))
+            shares = pc.cast(pc.multiply_checked(lots,
+                pa.scalar(Decimal(100), type=pa.decimal128(3, 0))), pa.int64())
+        except (pa.ArrowInvalid, pa.ArrowNotImplementedError) as exc:
+            raise ValueError(f"{target_name}.{column}: quantity must convert exactly to int64 shares") from exc
+        if target_name == "daily_bar" and pc.any(pc.less(shares, 0)).as_py():
+            raise ValueError(f"{target_name}.{column}: shares must be non-negative")
+        normalized_frame[column] = pd.Series(shares, dtype=pd.ArrowDtype(pa.int64()), index=normalized_frame.index)
+
     if target_name == "dividend":
         columns = ("ts_code", "symbol", "end_date", "ann_date", "div_proc", "imp_ann_date", "record_date", "ex_date",
-                   "pay_date", "div_listdate", "cash_div_tax", "stk_div")
+                   "pay_date", "div_listdate", "cash_div_tax", "stk_div", "base_date", "base_share")
         if normalized_frame.empty:
-            normalized_frame = pd.DataFrame({column: pd.Series(dtype="string") for column in columns})
+            normalized_frame = pd.DataFrame({column: pd.Series(dtype="float64" if column == "base_share" else "string")
+                                             for column in columns})
         else:
             table_ops.require_columns(normalized_frame, columns, who="dividend")
             normalized_frame = normalized_frame.loc[:, columns].copy()
             normalized_frame["div_proc"] = normalized_frame["div_proc"].str.strip()
-            for column in ("end_date", "ann_date", "imp_ann_date", "record_date", "ex_date", "pay_date", "div_listdate"):
+            for column in ("end_date", "ann_date", "imp_ann_date", "record_date", "ex_date", "pay_date", "div_listdate", "base_date"):
                 normalized_frame[column] = normalized_frame[column].map(
                     lambda value: None if pd.isna(value) else DateTimeUtils.normalize_source_date(value, field_name=column))
             for column in ("cash_div_tax", "stk_div"):

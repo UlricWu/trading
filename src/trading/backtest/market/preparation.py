@@ -75,7 +75,7 @@ def daily_replay_facts(
     missing_symbols: Collection[str] = (),
     unknown_listing_symbols: Collection[str] = (),
 ) -> ReplayFacts:
-    """Use raw close and exact lot-to-share conversion for one complete account day.
+    """Use raw close and processed share counts for one complete account day.
 
     The interval starts at the declared account-day start, so intraday submissions
     cannot consume any part of that day's volume. Source tables remain unchanged.
@@ -90,15 +90,13 @@ def daily_replay_facts(
         available_ts_us=session.close_ts_us,
     )
     observations: list[ExecutionObservation] = []
-    for symbol, volume_lots in bars.loc[:, ["symbol", "vol"]].itertuples(index=False, name=None):
-        volume_shares = Decimal(str(volume_lots)) * 100
-        if (not volume_shares.is_finite() or volume_shares < 0
-                or volume_shares != volume_shares.to_integral_value()):
-            raise ValueError(f"daily_bar {session.trade_date}/{symbol}: vol * 100 must be whole non-negative shares")
+    for symbol, volume_shares in bars.loc[:, ["symbol", "vol"]].itertuples(index=False, name=None):
+        if pd.isna(volume_shares):
+            raise ValueError(f"daily_bar {session.trade_date}/{symbol}: vol must provide observed shares")
         observations.append(ExecutionObservation(
             observation_id=f"daily_bar/{source_version}/{session.trade_date}/{symbol}"
                            f"/{bar_time.start_ts_us}/{bar_time.end_ts_us}",
-            symbol=symbol, time=bar_time, price=close_mark.prices[symbol], volume_qty=int(volume_shares),
+            symbol=symbol, time=bar_time, price=close_mark.prices[symbol], volume_qty=volume_shares,
         ))
     return ReplayFacts((close_mark,), tuple(sorted(observations, key=lambda item: item.symbol)))
 

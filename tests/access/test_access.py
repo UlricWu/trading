@@ -45,7 +45,7 @@ def test_access_requires_safe_processed_version(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("dataset,method,columns", [
     ("dividend", "dividends", ["ts_code", "symbol", "end_date", "ann_date", "div_proc", "imp_ann_date", "record_date", "ex_date",
-                               "pay_date", "div_listdate", "cash_div_tax", "stk_div"]),
+                               "pay_date", "div_listdate", "cash_div_tax", "stk_div", "base_date", "base_share"]),
     ("corporate_action_notices", "corporate_action_notices",
      ["action_id", "symbol", "available_ts_us", "effective_ts_us", "kind", "source_ref"]),
 ])
@@ -69,9 +69,25 @@ def test_dividend_partition_cannot_silently_move_registration_date(tmp_path: Pat
     _write_processed_frame(pm, "2026-09-01", "dividend", pd.DataFrame({"ts_code": ["600000.SH"], "symbol": ["600000"], "ann_date": ["2026-08-01"],
         "end_date": ["2026-06-30"], "div_proc": ["实施"], "imp_ann_date": ["2026-08-20"],
         "record_date": ["2026-09-02"], "ex_date": ["2026-09-03"], "pay_date": ["2026-09-03"],
-        "div_listdate": [None], "cash_div_tax": ["0.1"], "stk_div": [None]}))
+        "div_listdate": [None], "cash_div_tax": ["0.1"], "stk_div": [None], "base_date": [None], "base_share": [None]}))
     with pytest.raises(ValueError, match="record_date"):
         Access(pm=pm, processed_version="v1").dividends(record_date="2026-09-01")
+
+
+def test_dividends_return_normalized_base_shares_without_rescaling(tmp_path: Path) -> None:
+    pm = PathManager(tmp_path)
+    _write_processed_frame(pm, "2026-09-01", "dividend", pd.DataFrame({
+        "ts_code": ["600000.SH"], "symbol": ["600000"], "ann_date": ["2026-08-01"],
+        "end_date": ["2026-06-30"], "div_proc": ["实施"], "imp_ann_date": ["2026-08-20"],
+        "record_date": ["2026-09-01"], "ex_date": ["2026-09-03"], "pay_date": ["2026-09-03"],
+        "div_listdate": [None], "cash_div_tax": ["0.12345678"], "stk_div": ["0"],
+        "base_date": ["2026-08-31"], "base_share": [123456789.0],
+    }))
+    frame = Access(pm=pm, processed_version="v1").dividends(record_date="2026-09-01")
+    assert frame is not None
+    assert frame["base_share"].tolist() == [123456789.0]
+    assert frame["base_date"].tolist() == ["2026-08-31"]
+    assert frame["cash_div_tax"].tolist() == ["0.12345678"]
 
 
 @pytest.mark.parametrize("symbols,expected", [
@@ -152,6 +168,25 @@ def test_daily_bars_reads_full_object_and_requested_symbol_order(
     assert selected["close"].tolist() == [20.0, 12.0]
     assert empty.empty
     assert empty.columns.tolist() == ["symbol", "trade_date", "close"]
+
+
+def test_daily_bars_preserve_nullable_integer_share_counts(tmp_path: Path) -> None:
+    pm = PathManager(tmp_path)
+    day = "2026-05-06"
+    _write_processed_frame(pm, day, "daily_bar", pd.DataFrame({
+        "symbol": ["600000", "000001"], "trade_date": [day, day], "close": [10.001, 20.0],
+        "vol": pd.Series([9223372036854775807, None], dtype=pd.ArrowDtype(pa.int64())),
+        "ah_vol": pd.Series([29, None], dtype=pd.ArrowDtype(pa.int64())),
+        "amount": [123456.0, None], "pct_chg": [0.025, None],
+    }))
+    frame = Access(pm=pm, processed_version="v1").daily_bars(trade_date=day)
+    assert frame.loc[0, "vol"] == 9223372036854775807
+    assert type(frame.loc[0, "vol"]) is int
+    assert frame.loc[0, "ah_vol"] == 29
+    assert pd.isna(frame.loc[1, "vol"]) and pd.isna(frame.loc[1, "ah_vol"])
+    assert frame.loc[0, "close"] == 10.001
+    assert frame.loc[0, "amount"] == 123456.0
+    assert frame.loc[0, "pct_chg"] == 0.025
 
 
 def test_daily_bars_rejects_missing_object_and_invalid_symbol_request(

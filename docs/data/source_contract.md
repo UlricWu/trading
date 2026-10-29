@@ -2,7 +2,7 @@
 
 - **状态**：正式 owner
 - **适用范围**：`data.brokers`、`data.sources`、source identity、Tushare active
-  manifest、source-native 查询、`trade_calendar`、`daily_bar`、`dividend` 及分配事实解析的正式语义。
+  manifest、source-native 查询、Tushare 通用单位标准化、`trade_calendar`、`daily_bar`、`dividend` 及分配事实解析的正式语义。
 - **工作流 owner**：[`docs/offline_workflow_contract.md`](../offline_workflow_contract.md)
 - **存储 owner**：[`docs/data/storage_layout.md`](storage_layout.md)
 
@@ -164,7 +164,8 @@ response 仍按单日保存。Broker 不改变正式 processed 字段。
 支付日。按登记日查询能够确定账户权益的归属；按除权日只查询回测区间会遗漏先前登记、
 本期到账的权利，这些跨区间权利由初始账户显式携带，不能从当前持仓反推。
 
-raw 保存原始 response；`processed/dividend/v1` 保留以下列。新增来源字段仍使用当前版本，
+Broker 显式请求来源默认字段及非默认的 base_date、base_share；raw 保存原始 response。
+`processed/dividend/v1` 保留以下列。新增来源字段仍使用当前版本，
 已入库分区从原始 response 同步重建，版本规则由[存储 owner](storage_layout.md#processedfeatures-与-labels)定义：
 
 | 字段 | 正式含义 |
@@ -176,8 +177,16 @@ raw 保存原始 response；`processed/dividend/v1` 保留以下列。新增来�
 | imp_ann_date、record_date、ex_date、pay_date、div_listdate | 实施公告日、登记日、除权除息日、派息日、红股上市日 |
 | cash_div_tax | 每股税前现金红利，元/原股份；不是每十股金额 |
 | stk_div | 每股送转合计比例；不再次叠加 stk_bo_rate 或 stk_co_rate |
+| base_date | 来源基准日；不替代登记日或公开可见日期 |
+| base_share | 来源基准股本从万股乘10000转换为股，nullable float64；保留发布精度，不擅自取整 |
 
-日期转换为 `YYYY-MM-DD`，金额和比例转换为十进制文本，源端 null 保留；分配进度仅去除首尾空白。
+日期转换为 `YYYY-MM-DD`，每股现金和送转比例转换为十进制文本，源端 null 保留；分配进度仅去除首尾空白。
+base_date/base_share 未提供时为 null，不补0，不借用 total_share/float_share。基准股本只表示
+分配方案的来源观察，不是账户登记持股，也不参与替代普通股东每股条款；DividendRecord 保留
+这两个可选事实，既有候选身份、条款选择及账户权益公式不变。
+现金保持元/原股份，送转保持新增股/原股份；不按每十股或百分数再次缩放。来源单位见
+[Tushare 分红字段](https://tushare.pro/document/2?doc_id=103)。仅靠单位转换不能恢复来源
+已舍入的股本精度，公开可见性仍由各条款的实施公告时间决定。
 状态修正不会补出缺失的实施公告日，`实施 ` 且公告为空仍属于待核实事实。股票分配记录
 可以没有现金侧，现金分红记录可以没有送转侧；两侧都未知不能当成确定的零分配。零行
 response 必须生成上述列齐全的空对象，明确区别于尚未采集。单次 response 达到接口
@@ -1677,6 +1686,61 @@ row in valid yearly trade_calendar object AND is_open == true
 刷新不是当前 offline data workflow 的行为。旧 `trade_date=YYYY-MM-DD` 日历对象不构成
 年度正式对象，Access 不读取该旧布局。
 
+## Tushare processed 单位
+
+Raw 保存来源 response 的字段、数值和单位。Normalize 是来源单位进入系统的唯一换算边界；
+Access、Feature、Label 与回放消费 processed 单位，不再解释手、千元、万元或百分数。
+本节拥有下表的来源映射；分红字段由[分红 owner](#dividend)拥有，
+Level-2 的证券类型、价格编码与股票股数由[Level-2 owner](level2_normalization.md#raw-到-processed-字段关系)拥有。
+
+当前股票事实采用股、人民币元、元/股和小数比例（1 表示 100%）。单位按具体 API 与字段绑定，
+不按列名后缀或数值大小推断。字段名保留，例如 pct_chg 的 processed 数值仍按小数比例解释。
+
+| 本地数据集（源 API） | 字段 | 来源单位 → processed 单位 | 转换及类型 |
+| --- | --- | --- | --- |
+| daily_bar（daily） | vol、ah_vol | 手 → 股 | ×100，nullable int64 |
+| daily_bar（daily） | amount、ah_amount | 千元 → 元 | ×1000，float64 |
+| daily_bar（daily） | pct_chg | 百分数 → 小数收益率 | ×0.01，float64 |
+| daily_basic | total_share、float_share、free_share | 万股 → 股 | ×10000，float64 |
+| daily_basic | total_mv、circ_mv | 万元 → 元 | ×10000，float64 |
+| daily_basic | turnover_rate、turnover_rate_f、dv_ratio、dv_ttm | 百分数 → 小数比例 | ×0.01，float64 |
+| stock_basic（bak_basic） | total_share、float_share | 亿股 → 股 | ×100000000，float64 |
+| stock_basic（bak_basic） | rev_yoy、profit_yoy、gpr、npr | 百分数 → 小数比例 | ×0.01，float64 |
+| moneyflow | buy/sell 的 sm、md、lg、elg 档 vol 及 net_mf_vol | 手 → 股 | ×100，nullable int64；净量允许负数 |
+| moneyflow | 上述各档 amount 及 net_mf_amount | 万元 → 元 | ×10000，float64；净额允许负数 |
+
+来源依据：[daily](https://tushare.pro/document/2?doc_id=27)、
+[daily_basic](https://tushare.pro/document/2?doc_id=32)、
+[bak_basic](https://tushare.pro/document/2?doc_id=262)、
+[moneyflow](https://tushare.pro/document/2?doc_id=170)。同名 total_share 在 daily_basic 与
+bak_basic 的源尺度相差一万倍，因此不能共享仅按字段名选择的转换规则。
+
+采用股使价格乘数量直接得到元，避免成交、持仓和股本计算重复乘100；采用元使成交额、
+市值和资金流金额能按同一尺度计算。例：13.01 手转换为1301股，不先取整手数，也不要求
+成交股数为100的整数倍。手数使用精确十进制转换，非空值必须能无损落入 int64 股数；
+不足一股的尾数、非有限值或溢出必须失败，daily_bar 的量还必须非负。来源 null 保留，
+不能作为零成交或补齐盘后覆盖的依据。其他参与换算的非空数值必须有限，转换失败或溢出
+失败整个对象；不截断、不补零。换算只处理已提供的通用源字段，不凭缺列合成事实。
+
+股本是供应商发布的观察值，采用 float64 保留来源所提供的精度，不因以股表示而宣称精确到
+一股，也不擅自取整。行情价格、金额与比例沿用 float64，不提前舍入到两位或三位小数；
+金额单位为元不限制小数位。账户精确金额及公司行动条款继续沿用各自 Decimal 契约。
+百分比转比例不要求数值在0到1内；收益和增长可为负，换手率可超过1。
+
+以下字段数值不缩放：股票价格和绝对涨跌额；daily_basic 的 volume_ratio、pe、pe_ttm、pb、
+ps、ps_ttm 等倍数；adj_factor；已以元提供的 margin/margin_detail 金额。cyq_perf 的
+cost_5pct 等列表示成本价格，字段名中的分位不触发百分比换算。
+
+尚不能确定映射的字段继续保留 source-native 语义，不宣称已统一：top_list 的金额与比例、
+cyq_perf.winner_rate、bak_basic 的资产金额及 reserved/undp 等财务字段。前两者的官方字段
+表缺少明确单位，后者仍需明确币种及未注明字段的尺度。margin 汇总的 rqyl/rqmcl 混合
+股、份、手，无法用一个系数转换成股；margin_detail 的数量及非股票 Level-2 数量继续按
+证券类型和原 owner 解释。源币种不同不能仅改单位名称转换成人民币。
+
+单位一致只保证量纲可运算，不证明统计范围一致。单笔、累计快照、盘口存量、不同股本分母、
+复权基准、主动买卖及 tick-rule 方向必须分别保留。日线与 Level-2 对账前须先确认证券、日期、
+事件、时段和来源精度；日线成交额不要求等于收盘价乘成交量。
+
 ## Daily bar
 
 `processed/daily_bar/v1` 是行情事实，不是交易日历。它只能证明某个正式交易日的日线行情
@@ -1686,14 +1750,25 @@ Workflow 不为 `is_open=false` 的日期请求 `daily_bar`。`is_open=true` 时
 `daily_bar` 是数据缺失并必须失败；feature、label、training 或 backtest 不得跳过该日并
 把后续日期当作替代交易日。
 
-该对象保留 [Tushare A 股日线](https://tushare.pro/document/2?doc_id=27) 的未复权价格和
-源端单位：OHLC 为元，`vol` 为手（1 手为 100 股），`amount` 为千元；不在 processed
-层改写为回测单位。消费方要求股数时使用 `Decimal(str(vol)) * 100`，结果必须为有限、
-非负整数，不截断或四舍五入。回放价格/时间映射由
+该对象保留 [Tushare A 股日线](https://tushare.pro/document/2?doc_id=27) 的未复权价格，
+OHLC、pre_close、change 为元/股，vol/ah_vol 为股，amount/ah_amount 为元，pct_chg 为
+小数收益率；转换由上节唯一规定。pre_close 保留来源除权参考价含义，不能等同于上一日
+原始收盘价。回放价格/时间映射由
 [offline 工作流契约](../offline_workflow_contract.md#真实行情到回放输入)拥有。
+Broker 显式请求 ts_code、trade_date、open、high、low、close、pre_close、change、pct_chg、
+vol、amount、ah_vol、ah_amount。Processed 按该顺序保存，最后追加 symbol。
+ah_vol/ah_amount 是可空的盘后独立观察，来源未提供字段或值时保留 null，不补0；
+历史 raw 缺少这两个可选字段时仍只表达未知。该规则不证明日线主量额与盘后量额的包含关系，
+也不允许相加生成总量；当前 Level-2 不声明盘后固定价格渠道覆盖。
 Tushare 停牌期间不提供该证券日线，但不能反向推断每次日线缺失都属于停牌；缺行原因
 仍需核实。缺行不表示零成交的完整日线，也不得使用后续日线补齐。
 源端日线在盘后入库，其日标签不是精确的历史发布时刻证明。
+
+单位调整继续使用 v1。已经提交的旧单位 processed 必须从明确 raw 重建，不能在读取时自动
+猜测或兼容，也不能将旧 processed 再作为 Normalize 输入。有效 Meta 的命中不表示历史
+对象已经完成单位调整。正式切换须同时处理受影响的 Feature、模型输入和回放消费，并验证
+上下游尺度一致；单次普通 workflow 不隐式重写历史对象。缺少可选源字段的历史事实只有
+重新取得来源观察才能补齐，不能通过单位转换生成。
 
 ## Source no-data 边界
 
