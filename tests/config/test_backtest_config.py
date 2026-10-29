@@ -18,6 +18,13 @@ from src.config.backtest_config import (
 )
 
 
+def test_snapshot_rejects_future_corporate_action_diagnostics() -> None:
+    with pytest.raises(ValidationError, match="issues cannot come from the future"):
+        InitialAccount(ts_us=10, trade_date="2026-09-03", cash=0, positions={}, sellable={}, average_cost={},
+            peak_equity=0, corporate_action_issues=[dict(ts_us=11, symbol="600000", action_id="compensation/A",
+                reason="late_compensation_settlement", source_ref="fixture://compensation")])
+
+
 @pytest.mark.parametrize("recognition,sellable,error", [(False, 200, "recognition"), (True, 201, "unlisted")])
 def test_snapshot_cannot_lose_recognized_rights_or_unlock_unlisted_shares(
     recognition: bool, sellable: int, error: str,

@@ -1,12 +1,12 @@
 # filepath: src/data_system/brokers/bse.py
 """Read BSE's official historical NEEQ disclosures and security-code mapping."""
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Collection, Sequence
 from datetime import date, datetime
-from hashlib import sha256
 from html import unescape
 import json
 from pathlib import Path
+from uuid import uuid4
 import re
 import time
 from typing import Literal
@@ -76,9 +76,8 @@ class BseBroker:
             response.raise_for_status()
             payload = response.content
         FileSystem.write_bytes_atomic(directory / "security-code-mapping.html", payload)
-        digest = sha256(payload).hexdigest()
         FileSystem.write_bytes_atomic(directory / "security-code-mapping.request.json", json.dumps({
-            "url": url, "collected_at": self._clock().isoformat(), "response_sha256": digest,
+            "url": url, "collected_at": self._clock().isoformat(),
         }, sort_keys=True).encode())
         pairs = []
         tables = re.findall(r"<table\b[^>]*>(.*?)</table>", payload.decode("utf-8"), flags=re.S | re.I)
@@ -94,7 +93,7 @@ class BseBroker:
                 if len(row) != 5 or not re.fullmatch(r"[0-9]{6}", row[3]) or not re.fullmatch(r"[0-9]{6}", row[4]):
                     raise ValueError("BSE code mapping contains an invalid security row")
                 pairs.append(SecurityIdentity(symbol=row[4], published_symbol=row[3],
-                    evidence_url=url, evidence_sha256=digest))
+                    evidence_url=url, evidence_file="security-code-mapping.html"))
         if not pairs or len({row.symbol for row in pairs}) != len(pairs) or len({row.published_symbol for row in pairs}) != len(pairs):
             raise ValueError("BSE code mapping missing or ambiguous")
         return tuple(pairs)
@@ -136,11 +135,11 @@ class BseBroker:
             with self._session.post(url, data=parameters, timeout=30) as response:
                 payload = response.content
                 collected_at = self._clock().isoformat()
-                identity = sha256(json.dumps(parameters, sort_keys=True).encode() + payload + collected_at.encode()).hexdigest()
+                identity = uuid4().hex
                 FileSystem.write_bytes_atomic(directory / f"query-{identity}.json", payload)
                 FileSystem.write_bytes_atomic(directory / f"query-{identity}.request.json", json.dumps({
                     "url": url, "parameters": parameters, "collected_at": collected_at,
-                    "http_status": response.status_code, "response_sha256": sha256(payload).hexdigest(),
+                    "http_status": response.status_code,
                 }, ensure_ascii=False, sort_keys=True).encode())
                 response.raise_for_status()
             envelope = re.fullmatch(rb"\s*null\((.*)\)\s*;?\s*", payload, flags=re.S)
@@ -168,54 +167,60 @@ class BseBroker:
         return tuple(sorted(unique.values(), key=lambda row: (row.published_date, row.announcement_id)))
 
     def download_distribution_documents(
-        self, *, index: Sequence[_IndexRow], directory: Path,
+        self, *, index: Sequence[_IndexRow], directory: Path, implementation_dates: Collection[date] = (),
     ) -> tuple[AnnouncementFile, ...]:
-        """Keep original distribution PDFs and corrections with immutable receipts.
+        """Keep original distribution PDFs and corrections with download receipts.
 
         Example:
-            documents = broker.download_distribution_documents(index=rows, directory=raw_directory)
+            documents = broker.download_distribution_documents(index=rows, directory=raw_directory,
+                implementation_dates=(date(2019, 5, 13),))
         """
         documents = []
         for row in index:
-            if not is_distribution_evidence(row.title):
+            if not is_distribution_evidence(row.title) and row.published_date not in implementation_dates:
                 continue
-            urls = ("https://www.bse.cn" + row.path, "https://www.neeq.com.cn" + row.path)
-            path = directory / f"{row.announcement_id}.pdf"
-            receipt = path.with_suffix(".download.json")
-            if path.exists():
-                payload = path.read_bytes()
-                digest = sha256(payload).hexdigest()
-                saved = AnnouncementFile.model_validate_json(receipt.read_bytes())
-                if saved.url not in urls or saved.sha256 != digest:
-                    raise ValueError(f"cached BSE announcement identity changed: {row.announcement_id}")
-                url = saved.url
-                fetched_at = saved.fetched_at
-            else:
-                for url in urls:
-                    with self._session.get(url, timeout=40) as response:
-                        payload = response.content
-                        fetched_at = self._clock()
-                        attempt = sha256(url.encode() + payload + fetched_at.isoformat().encode()).hexdigest()
-                        digest = sha256(payload).hexdigest()
-                        FileSystem.write_bytes_atomic(directory / f"download-attempt-{attempt}.json", json.dumps({
-                            "url": url, "fetched_at": fetched_at.isoformat(), "http_status": response.status_code,
-                            "response_sha256": digest,
-                        }, sort_keys=True).encode())
-                        if response.status_code >= 400:
-                            FileSystem.write_bytes_atomic(directory / f"download-attempt-{attempt}.response", payload)
-                        if response.status_code == 403 and ("云安全平台".encode() in payload
-                            or b"Your current behavior is detected as abnormal" in payload):
-                            response.raise_for_status()
-                        if response.status_code in (403, 404) and url == urls[0]:
-                            continue
-                        response.raise_for_status()
-                    break
-                if not payload.startswith(b"%PDF"):
-                    raise ValueError(f"BSE announcement is not a PDF: {row.announcement_id}")
-                FileSystem.write_bytes_atomic(path, payload)
-                time.sleep(0.5)
-            original = AnnouncementFile(announcement_id=row.announcement_id, symbol=row.symbol, title=row.title,
-                published_date=row.published_date, url=url, sha256=digest, fetched_at=fetched_at)
-            FileSystem.write_bytes_atomic(receipt, original.model_dump_json(indent=2).encode())
-            documents.append(original)
+            publication = AnnouncementPublication(source="bse", announcement_id=row.announcement_id,
+                symbol=row.symbol, title=row.title, published_date=row.published_date,
+                url="https://www.bse.cn" + row.path)
+            documents.append(self.download_announcement(publication=publication,
+                path=directory / f"{row.announcement_id}.pdf"))
         return tuple(documents)
+
+    def download_announcement(self, *, publication: AnnouncementPublication, path: Path) -> AnnouncementFile:
+        """Preserve an original PDF and receipt, including the official historical mirror.
+
+        Example:
+            original = broker.download_announcement(publication=publication, path=pdf_path)
+        """
+        urls = (publication.url, publication.url.replace("https://www.bse.cn/", "https://www.neeq.com.cn/", 1))
+        receipt = path.with_suffix(".download.json")
+        if path.exists():
+            saved = AnnouncementFile.model_validate_json(receipt.read_bytes())
+            if saved.url not in urls:
+                raise ValueError(f"cached BSE announcement identity changed: {publication.announcement_id}")
+            return saved
+        for url in urls:
+            with self._session.get(url, timeout=40) as response:
+                payload = response.content
+                fetched_at = self._clock()
+                attempt = uuid4().hex
+                FileSystem.write_bytes_atomic(path.parent / f"download-attempt-{attempt}.json", json.dumps({
+                    "url": url, "fetched_at": fetched_at.isoformat(), "http_status": response.status_code,
+                }, sort_keys=True).encode())
+                if response.status_code >= 400:
+                    FileSystem.write_bytes_atomic(path.parent / f"download-attempt-{attempt}.response", payload)
+                if response.status_code == 403 and ("云安全平台".encode() in payload
+                    or b"Your current behavior is detected as abnormal" in payload):
+                    response.raise_for_status()
+                if response.status_code in (403, 404) and url == urls[0]:
+                    continue
+                response.raise_for_status()
+            break
+        if not payload.startswith(b"%PDF"):
+            raise ValueError(f"BSE announcement is not a PDF: {publication.announcement_id}")
+        FileSystem.write_bytes_atomic(path, payload)
+        original = AnnouncementFile(**publication.model_dump(exclude={"source", "url"}),
+            url=url, fetched_at=fetched_at)
+        FileSystem.write_bytes_atomic(receipt, original.model_dump_json(indent=2).encode())
+        time.sleep(0.5)
+        return original

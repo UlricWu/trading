@@ -20,7 +20,6 @@ from src.jobs.requests import (
     create_data_submission,
     create_feature_backfill_submission,
     create_level2_minute_backfill_submission,
-    create_standard_fact_bootstrap_submission,
     create_stock_1430_backfill_submission,
     create_stock_1430_fusion_backfill_submission,
     create_training_submission,
@@ -34,7 +33,6 @@ from src.workflows.offline_daily_data import (
     run_feature_backfill,
     run_level2_minute_backfill,
     run_offline_data,
-    run_standard_fact_bootstrap,
     run_stock_1430_backfill,
     run_stock_1430_fusion_backfill,
     run_previous_day_backfill,
@@ -71,38 +69,6 @@ def data_calendar() -> None:
         app_config=app_config,
         path_manager=PathManager(app_config.storage_root),
         as_of_date=DateTimeUtils.today(),
-    )
-
-
-@app.command()
-def data_standard_bootstrap(
-    start_date: str = typer.Option(..., "--start"),
-    end_date: str = typer.Option(..., "--end"),
-) -> None:
-    """Materialize one explicit Standard calendar and fact cold-start range.
-
-    Example:
-        data_standard_bootstrap(
-            start_date="2019-01-01",
-            end_date="2019-04-03",
-        )
-    """
-    try:
-        submission = create_standard_fact_bootstrap_submission(
-            start_date,
-            end_date,
-        )
-    except InvalidJobRequest as exc:
-        _raise_bad_parameter(
-            exc,
-            {"start": "--start", "end": "--end"},
-        )
-
-    app_config = AppConfig.load()
-    run_standard_fact_bootstrap(
-        app_config=app_config,
-        path_manager=PathManager(app_config.storage_root),
-        submission=submission,
     )
 
 

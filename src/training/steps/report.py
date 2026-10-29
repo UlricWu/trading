@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import hashlib
 from pathlib import Path
 from typing import cast
 
@@ -51,8 +50,6 @@ class ReportStep:
         logs.info(f"▶️ 诊断计算与报告输出; experiment={self._experiment_name}")
         model_ref = context.window.model_ref
         model = load(model_ref)
-        with model_ref.open("rb") as source:
-            model_digest = hashlib.file_digest(source, "sha256").hexdigest()
         metrics_ref = self._pm.experiment_training_metrics(experiment_name=self._experiment_name)
         evaluation = load_evaluation(metrics_ref)
         prediction_arrays: list[np.ndarray] = []
@@ -64,13 +61,12 @@ class ReportStep:
                 inputs, rows = read_prediction_record(Path(observation.prediction_ref))
                 if (
                     inputs.model_ref != model_ref or observation.model_ref != str(model_ref)
-                    or inputs.model_sha256 != model_digest
                     or inputs.decision_ts_us != observation.decision_ts_us
                 ):
                     raise ValueError("training report prediction inputs disagree with the evaluated model or date")
                 labels = read_evaluation_labels(pm=self._pm, inputs=inputs, model=model, predictions=rows)
-                if str(labels.ref) != observation.label_ref or labels.sha256 != observation.label_sha256:
-                    raise ValueError("training report label content has changed since IC evaluation")
+                if str(labels.ref) != observation.label_ref:
+                    raise ValueError("training report label reference disagrees with IC evaluation")
             except Exception as exc:
                 trade_date = DateTimeUtils.to_local(DateTimeUtils.from_utc_epoch_us(observation.decision_ts_us)).date().isoformat()
                 exc.add_note(f"诊断材料读取; trade_date={trade_date} prediction_ref={observation.prediction_ref} model_ref={model_ref}")

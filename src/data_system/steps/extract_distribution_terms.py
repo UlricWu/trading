@@ -1,12 +1,10 @@
 # filepath: src/data_system/steps/extract_distribution_terms.py
-"""Build complete reviews from local PDFs and explicitly supplied reviewed facts."""
+"""Build dated event facts from local PDFs and explicitly supplied reviews."""
 
 from collections import defaultdict
 from dataclasses import dataclass
-from hashlib import sha256
-import json
-from importlib.metadata import version
 from pathlib import Path
+from uuid import uuid4
 import re
 
 import pyarrow.parquet as pq
@@ -17,7 +15,7 @@ from pypdf.errors import PyPdfError
 from src import logs
 from src.access import meta
 from src.data_system.announcement_evidence import AnnouncementCollection
-from src.data_system.announcement_publications import AnnouncementPublication
+from src.data_system.announcement_publications import AnnouncementPublication, is_distribution_evidence
 from src.data_system.context import DataContext
 from src.data_system.corporate_actions import CorporateActionReview, DividendRecord, resolve_corporate_actions
 from src.data_system.distribution_announcements import AnnouncementText, ReviewExtractionManifest, extract_distribution_review
@@ -27,7 +25,7 @@ from src.utils.path import PathManager
 
 @dataclass(frozen=True, slots=True)
 class ExtractDistributionTermsStep:
-    """Publish complete reviews; missing or ambiguous fields remain unresolved.
+    """Publish confirmed stage facts; unconfirmed gaps and ambiguities remain unresolved.
 
     Example:
         step = ExtractDistributionTermsStep(pm=pm, review_refs=(reviewed_file,))
@@ -53,12 +51,6 @@ class ExtractDistributionTermsStep:
                 supplied[review.candidate_id] = review
         if not context.trade_dates:
             return context
-        producer_sha256 = sha256("\n".join((version("pypdf"), version("cryptography"))).encode() + b"".join(path.read_bytes() for path in (
-            Path(__file__), Path(__file__).parents[1] / "distribution_announcements.py",
-            Path(__file__).parents[1] / "corporate_actions.py",
-            Path(__file__).parents[1] / "announcement_evidence.py",
-            Path(__file__).parents[1] / "announcement_publications.py",
-        ))).hexdigest()
         for day in context.trade_dates:
             source = self.pm.processed_object(dataset_name="dividend", version="v1", trade_date=day)
             loaded = meta.require(pm=self.pm, meta_path=source.meta_path, expected_payload_path=source.payload_path)
@@ -68,7 +60,6 @@ class ExtractDistributionTermsStep:
             for row in records:
                 if row.div_proc == "实施":
                     groups[row.candidate_id].append(row)
-            source_digest = sha256(loaded.payload_path.read_bytes()).hexdigest()
             manual_path = self.pm.raw_payload(broker="announcements", source_name="corporate_action_review_inputs",
                 trade_date=day, payload_file="reviews.json")
             manual_meta = meta.find(pm=self.pm, meta_path=manual_path.parent / "meta.json", expected_payload_path=manual_path)
@@ -97,38 +88,24 @@ class ExtractDistributionTermsStep:
                 collection = AnnouncementCollection.model_validate_json(path.read_bytes())
                 if provider == "bse" and collection.query_scope != {"disclosureType": "5", "isNewThree": "", "xxfcbj": ""}:
                     raise ValueError(f"BSE announcement collection lacks complete market scope: {day}")
-                if collection.dividend_sha256 != source_digest:
-                    raise ValueError(f"announcement collection dividend input changed: {provider}/{day}")
                 if not symbols <= collection.index_counts.keys() or not collection.index_counts.keys() <= expected_symbols:
                     raise ValueError(f"announcement collection lacks complete source-candidate coverage: {provider}/{day}")
-                for name, digest in collection.request_sha256.items():
-                    if sha256((path.parent / name).read_bytes()).hexdigest() != digest:
-                        raise ValueError(f"announcement request evidence changed: {name}")
                 collections[provider] = collection
                 collection_paths[provider] = path
-            collection_inputs = {str(path.relative_to(self.pm.storage_root)): sha256(path.read_bytes()).hexdigest()
-                                 for path in collection_paths.values()}
-            collection_digest = (next(iter(collection_inputs.values())) if len(collection_inputs) == 1 else
-                sha256(json.dumps(collection_inputs, sort_keys=True).encode()).hexdigest())
-            checked_collection = manual_path.parent / "collection.sha256"
-            if (manual and not manual.keys() <= additions.keys()
-                and (not checked_collection.exists() or checked_collection.read_text() != collection_digest)):
-                raise ValueError(f"manual reviews require renewed verification for changed announcement collection: {day}")
             manual.update(additions)
             # Validate the whole manual set before replacing any committed input or output.
             resolve_corporate_actions(records, tuple(manual.values()))
             manually_bound = {candidate for review in manual.values()
                               for candidate in (review.candidate_id, *review.related_sources)}
-            known = {f"{document.url}#sha256={document.sha256}" for collection in collections.values()
+            known = {document.url for collection in collections.values()
                      for document in collection.documents}
-            known.update(f"{identity.evidence_url}#sha256={identity.evidence_sha256}"
+            known.update(identity.evidence_url
                          for collection in collections.values() for identity in collection.security_identities)
             for review in manual.values():
                 if not all(ref in known for ref in review.evidence_refs):
-                    raise ValueError(f"review evidence does not match collected PDF hashes: {review.candidate_id}")
+                    raise ValueError(f"review evidence does not match collected announcements: {review.candidate_id}")
                 if review.announcement_source is not None and not any(
-                    document.sha256 == review.source_digest
-                    and AnnouncementPublication(source=provider, **document.model_dump(exclude={"sha256", "fetched_at"}))
+                    AnnouncementPublication(source=provider, **document.model_dump(exclude={"sha256", "fetched_at"}))
                         == review.announcement_source
                     for provider, collection in collections.items() for document in collection.documents
                 ):
@@ -137,74 +114,67 @@ class ExtractDistributionTermsStep:
                     if terms.published_ts_us is not None and not any(
                         document.published_ts_us == terms.published_ts_us
                         and document.published_date == terms.published_date
-                        and f"{document.url}#sha256={document.sha256}" in review.evidence_refs
+                        and document.url in review.evidence_refs
                         for collection in collections.values() for document in collection.documents
                     ):
                         raise ValueError(f"review publication time lacks collected index evidence: {review.candidate_id}")
-            for provider, collection in collections.items():
-                for document in collection.documents:
-                    original = collection_paths[provider].parent / f"{document.announcement_id}.pdf"
-                    if sha256(original.read_bytes()).hexdigest() != document.sha256:
-                        raise ValueError(f"announcement PDF digest changed: {original}")
             if additions:
                 payload = TypeAdapter(tuple[CorporateActionReview, ...]).dump_json(tuple(manual[key] for key in sorted(manual)))
-                if manual_meta is not None and (manual_path.read_bytes() != payload
-                    or not checked_collection.exists() or checked_collection.read_text() != collection_digest):
-                    originals = {path.name: path.read_bytes() for path in
-                        (manual_path, manual_path.parent / "meta.json", checked_collection) if path.exists()}
-                    archive_id = sha256(b"".join(originals[key] for key in sorted(originals))).hexdigest()
-                    for name, original in originals.items():
-                        FileSystem.write_bytes_atomic(manual_path.parent / "history" / archive_id / name, original)
                 if manual_meta is None or manual_path.read_bytes() != payload:
+                    if manual_meta is not None:
+                        archive = manual_path.parent / "history" / uuid4().hex
+                        for original in (manual_path, manual_path.parent / "meta.json"):
+                            FileSystem.write_bytes_atomic(archive / original.name, original.read_bytes())
                     FileSystem.write_bytes_atomic(manual_path, payload)
                     meta.commit(pm=self.pm, payload_path=manual_path)
-                if not checked_collection.exists() or checked_collection.read_text() != collection_digest:
-                    FileSystem.write_bytes_atomic(checked_collection, collection_digest.encode())
                 manual_meta = meta.require(pm=self.pm, meta_path=manual_path.parent / "meta.json")
-            inputs = {str(loaded.payload_path.relative_to(self.pm.storage_root)): source_digest, **collection_inputs}
+            inputs = [str(path.relative_to(self.pm.storage_root))
+                      for path in (loaded.payload_path, *collection_paths.values())]
             if manual_meta is not None:
-                inputs[str(manual_path.relative_to(self.pm.storage_root))] = sha256(manual_path.read_bytes()).hexdigest()
-                inputs[str(checked_collection.relative_to(self.pm.storage_root))] = sha256(checked_collection.read_bytes()).hexdigest()
+                inputs.append(str(manual_path.relative_to(self.pm.storage_root)))
             output = self.pm.raw_payload(broker="announcements", source_name="corporate_action_reviews",
                 trade_date=day, payload_file="reviews.json")
             manifest_path = output.parent / "extraction.json"
             existing = meta.inspect_output(pm=self.pm, meta_path=output.parent / "meta.json", expected_payload_path=output)
+            previous = (() if existing is None else
+                TypeAdapter(tuple[CorporateActionReview, ...]).validate_json(output.read_bytes()))
+            previous_manifest = None
             if existing is not None and not manifest_path.exists():
-                previous = TypeAdapter(tuple[CorporateActionReview, ...]).validate_json(output.read_bytes())
                 if any(review.candidate_id not in manually_bound for review in previous):
                     raise ValueError(f"existing reviews require explicit import before extraction: {output}")
             if existing is not None and manifest_path.exists():
-                manifest = ReviewExtractionManifest.model_validate_json(manifest_path.read_bytes())
-                if (manifest.inputs == inputs and manifest.producer_sha256 == producer_sha256
-                    and manifest.reviews_sha256 == sha256(output.read_bytes()).hexdigest()):
-                    logs.info(f"♻️ distribution extraction; record_date={day}")
-                    continue
+                previous_manifest = ReviewExtractionManifest.model_validate_json(manifest_path.read_bytes())
             documents = []
-            unreadable: dict[tuple[str, str], list[str]] = defaultdict(list)
+            unreadable = defaultdict(list)
             identities = tuple(identity for collection in collections.values() for identity in collection.security_identities)
             for provider, collection in collections.items():
                 source_symbols = {row.symbol for row in records if row.div_proc == "实施"
+                    and row.candidate_id not in manually_bound
                     and ("bse" if row.ts_code.endswith(".BJ") else "cninfo") == provider}
-                source_symbols.update(row.published_symbol for row in collection.security_identities)
+                source_symbols.update(row.published_symbol for row in collection.security_identities
+                    if row.symbol in source_symbols)
                 for original in collection.documents:
                     if original.symbol not in source_symbols:
                         continue
-                    if not re.search(r"实施|更正|补充|修订|调整|取消|终止", original.title):
+                    implementation_dates = {row.imp_ann_date for row in records
+                        if row.symbol == original.symbol or any(identity.symbol == row.symbol
+                            and identity.published_symbol == original.symbol for identity in identities)}
+                    if not is_distribution_evidence(original.title) and original.published_date not in implementation_dates:
                         continue
                     try:
                         with (collection_paths[provider].parent / f"{original.announcement_id}.pdf").open("rb") as stream:
                             pages = tuple(page.extract_text() or "" for page in PdfReader(stream).pages)
                     except (PyPdfError, UnicodeDecodeError) as error:
-                        unreadable[provider, original.symbol].append(
-                            f"pdf_text_unreadable:{provider}:{original.announcement_id}:{type(error).__name__}")
+                        unreadable[provider, original.symbol].append((original,
+                            f"pdf_text_unreadable:{provider}:{original.announcement_id}:{type(error).__name__}"))
                         logs.warning(f"⚠️ distribution PDF requires review; record_date={day} provider={provider} "
                             f"announcement={original.announcement_id} error={error}")
                         continue
                     if not any(page.strip() for page in pages):
-                        unreadable[provider, original.symbol].append(
-                            f"pdf_text_unreadable:{provider}:{original.announcement_id}:empty_text")
+                        unreadable[provider, original.symbol].append((original,
+                            f"pdf_text_unreadable:{provider}:{original.announcement_id}:empty_text"))
                         continue
-                    documents.append(AnnouncementText(source=provider, **original.model_dump(exclude={"fetched_at"}), pages=pages))
+                    documents.append(AnnouncementText(source=provider, **original.model_dump(exclude={"sha256", "fetched_at"}), pages=pages))
             reviews = [review for review in manual.values() if review.announcement_source is not None]
             issues = {}
             for candidate_id, group in sorted(groups.items()):
@@ -220,34 +190,73 @@ class ExtractDistributionTermsStep:
                 symbol = group[0].symbol
                 provider = "bse" if group[0].ts_code.endswith(".BJ") else "cninfo"
                 aliases = {symbol, *(identity.published_symbol for identity in identities if identity.symbol == symbol)}
-                errors = sorted(reason for alias in aliases for reason in unreadable.get((provider, alias), ()))
-                if errors:
-                    issues[candidate_id] = ";".join(errors)
-                    continue
                 extraction = extract_distribution_review(group, documents, identities)
+                implementation_dates = {row.imp_ann_date for row in group if row.imp_ann_date is not None}
+                errors = []
+                for alias in aliases:
+                    for original, reason in unreadable.get((provider, alias), ()):
+                        if (extraction.review is not None and re.search(r"法律意见|专项意见", original.title)
+                            and not re.search(r"更正|补充|修订|取消|终止", original.title)):
+                            continue
+                        years = re.findall(r"(20\d{2})年", original.title)
+                        if (original.published_date not in implementation_dates and years
+                            and str(group[0].end_date.year) not in years):
+                            continue
+                        periods = re.findall(r"20\d{2}年?(上?半年度|年度|第[一二三四]季度|前三季度)", original.title)
+                        period_months = {"半年度": 6, "上半年度": 6, "年度": 12, "第一季度": 3,
+                            "第二季度": 6, "第三季度": 9, "前三季度": 9, "第四季度": 12}
+                        if (original.published_date not in implementation_dates and periods
+                            and all(period_months[period] != group[0].end_date.month for period in periods)):
+                            continue
+                        if is_distribution_evidence(original.title) or extraction.review is None:
+                            errors.append(reason)
+                if errors:
+                    issues[candidate_id] = ";".join(sorted(errors))
+                    continue
                 if extraction.review is None:
                     issues[candidate_id] = extraction.reason
                 else:
                     reviews.append(extraction.review)
-            action_candidates: dict[str, list[str]] = defaultdict(list)
+            action_reviews: dict[str, list[CorporateActionReview]] = defaultdict(list)
             for review in reviews:
-                action_candidates[review.action_id].append(review.candidate_id)
-            ambiguous = {candidate for candidates in action_candidates.values() if len(candidates) > 1 for candidate in candidates}
-            if ambiguous & manual.keys():
-                raise ValueError(f"reviewed announcement requires explicit source association: {day}")
-            for candidate in ambiguous:
-                issues[candidate] = "shared_announcement_event_requires_review"
-            reviews = [review for review in reviews if review.candidate_id not in ambiguous]
+                action_reviews[review.action_id].append(review)
+            reviews = []
+            for associated in action_reviews.values():
+                first = min(associated, key=lambda review: review.candidate_id)
+                facts = {"candidate_id", "related_sources", "evidence_refs", "reason"}
+                if any(review.model_dump(exclude=facts) != first.model_dump(exclude=facts) for review in associated):
+                    if any(review.candidate_id in manual for review in associated):
+                        raise ValueError(f"reviewed announcement requires explicit source association: {day}")
+                    for review in associated:
+                        issues[review.candidate_id] = "shared_announcement_event_requires_review"
+                    continue
+                candidates = {candidate for review in associated
+                    for candidate in (review.candidate_id, *review.related_sources)}
+                reviews.append(first.model_copy(update={
+                    "related_sources": tuple(sorted(candidates - {first.candidate_id})),
+                    "evidence_refs": tuple(sorted({ref for review in associated for ref in review.evidence_refs})),
+                }) if len(associated) > 1 else first)
+            bound = {candidate for review in reviews for candidate in (review.candidate_id, *review.related_sources)}
+            previously_bound = {candidate for review in previous
+                                for candidate in (review.candidate_id, *review.related_sources)}
+            if previous_manifest is not None:
+                previously_bound.update(candidate for candidate, reason in previous_manifest.issues.items()
+                    if reason.startswith("previous_review_requires_confirmation:"))
+            for candidate in previously_bound - bound:
+                if candidate not in groups:
+                    raise ValueError(f"previous review lost its source and requires confirmation: {candidate}")
+                issues[candidate] = "previous_review_requires_confirmation:" + issues.get(candidate, "missing_review")
             resolve_corporate_actions(records, reviews)
             payload = TypeAdapter(tuple[CorporateActionReview, ...]).dump_json(tuple(reviews))
-            manifest = ReviewExtractionManifest(inputs=inputs, producer_sha256=producer_sha256,
-                reviews_sha256=sha256(payload).hexdigest(), issues=issues)
-            if existing is not None:
-                originals = {path.name: path.read_bytes() for path in
-                    (output, output.parent / "meta.json", manifest_path) if path.exists()}
-                archive_id = sha256(b"".join(originals[key] for key in sorted(originals))).hexdigest()
-                for name, original in originals.items():
-                    FileSystem.write_bytes_atomic(output.parent / "history" / archive_id / name, original)
+            manifest = ReviewExtractionManifest(inputs=tuple(inputs), issues=issues)
+            if existing is not None and output.read_bytes() == payload and previous_manifest == manifest:
+                logs.info(f"♻️ distribution extraction; record_date={day}")
+                continue
+            if existing is not None and output.read_bytes() != payload:
+                archive = output.parent / "history" / uuid4().hex
+                for original in (output, output.parent / "meta.json", manifest_path):
+                    if original.exists():
+                        FileSystem.write_bytes_atomic(archive / original.name, original.read_bytes())
             FileSystem.write_bytes_atomic(output, payload)
             FileSystem.write_bytes_atomic(manifest_path, manifest.model_dump_json(indent=2).encode())
             meta.commit(pm=self.pm, payload_path=output, upstream_meta_path=source.meta_path)

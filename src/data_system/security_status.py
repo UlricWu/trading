@@ -2,7 +2,7 @@
 """Dated, evidence-bound listing and trading status supplements."""
 
 from datetime import date, time, timedelta
-from typing import Annotated, Literal, Self
+from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -18,7 +18,7 @@ class SecurityStatus(BaseModel):
     Example:
         status = SecurityStatus(ts_code="601238.SH", trade_date="2026-09-15",
             listing_status="listed", trading_status="suspended", available_ts_us=1789401600000000,
-            evidence_refs=("https://example.org/notice.pdf#sha256=" + "a" * 64,),
+            evidence_refs=("https://example.org/notice.pdf",),
             reason="A-share trading remains suspended")
     """
 
@@ -53,7 +53,7 @@ class SecurityStatus(BaseModel):
 
 
 class SecurityStatusReviews(BaseModel):
-    """Bind reviewed states to exact raw evidence and the facts they supplement.
+    """Associate reviewed states with their original disclosures and public times.
 
     Example:
         inputs = SecurityStatusReviews.model_validate_json(review_path.read_bytes())
@@ -62,20 +62,17 @@ class SecurityStatusReviews(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
     version: Literal["v1"]
-    source_digests: dict[str, Annotated[str, Field(pattern=r"^[a-f0-9]{64}$")]]
     documents: tuple[AnnouncementFile, ...]
     reviews: tuple[SecurityStatus, ...]
 
     @model_validator(mode="after")
     def _validate_evidence(self) -> Self:
-        if set(self.source_digests) != {"stock_basic", "suspend_d"}:
-            raise ValueError("security status must bind stock_basic and suspend_d source digests")
         identities = [review.symbol for review in self.reviews]
         if len(identities) != len(set(identities)):
             raise ValueError("security status must be unique by security within a daily partition")
-        documents = {f"{doc.url}#sha256={doc.sha256}": doc for doc in self.documents}
+        documents = {doc.url: doc for doc in self.documents}
         ids = [doc.announcement_id for doc in self.documents]
-        if len(ids) != len(set(ids)):
+        if len(ids) != len(set(ids)) or len(documents) != len(self.documents):
             raise ValueError("security status evidence must have unique announcement identities")
         for review in self.reviews:
             for ref in review.evidence_refs:

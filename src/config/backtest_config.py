@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from enum import Enum
-from datetime import time
+from datetime import date, time
 from decimal import Decimal
 from pathlib import Path
 from typing import Annotated, Literal, Self, TypeAlias
@@ -10,6 +10,7 @@ from typing import Annotated, Literal, Self, TypeAlias
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, model_validator
 
 from src.data_system.normalize.level2_security import SECURITY_TYPE_RANGES, SecurityType
+from src.trading.backtest.corporate_actions import CorporateActionIssue
 from src.trading.orders.constraints import QuantityRules, QuoteRule
 from src.trading.portfolio.corporate_actions import DistributionEntitlement
 from src.utils.datetime_utils import DateTimeUtils
@@ -173,10 +174,18 @@ class InitialAccount(BaseModel):
     average_cost: dict[str, NonnegativeMoney]
     peak_equity: float = Field(ge=0, allow_inf_nan=False, strict=True)
     distribution_entitlements: tuple[DistributionEntitlement, ...] = ()
+    registration_holdings: dict[str, dict[str, NonnegativeQuantity]] = Field(default_factory=dict)
+    corporate_action_issues: tuple[CorporateActionIssue, ...] = ()
 
     @model_validator(mode="after")
     def _validate_snapshot(self) -> Self:
         DateTimeUtils.require_system_date(self.trade_date, field_name="trade_date")
+        if any(issue.ts_us > self.ts_us for issue in self.corporate_action_issues):
+            raise ValueError("initial corporate-action issues cannot come from the future")
+        for day in self.registration_holdings:
+            DateTimeUtils.require_system_date(day, field_name="registration_holdings")
+            if DateTimeUtils.local_time_to_utc_epoch_us(time(15), date.fromisoformat(day)) > self.ts_us:
+                raise ValueError("registration holdings cannot include future closes")
         if self.positions.keys() != self.sellable.keys() or self.positions.keys() != self.average_cost.keys():
             raise ValueError("positions, sellable and average_cost must cover the same symbols")
         if any(self.sellable[symbol] > qty for symbol, qty in self.positions.items()):
@@ -188,9 +197,18 @@ class InitialAccount(BaseModel):
             action = item.distribution
             if max(action.record_ts_us, action.announced_ts_us) > self.ts_us:
                 raise ValueError("initial entitlement cannot precede its registration or current terms")
-            if item.recognition_issue is not None and action.ex_ts_us > self.ts_us:
+            if action.kind == "compensation":
+                if item.shares_credited and (action.shares_credit_ts_us is None or action.shares_credit_ts_us > self.ts_us):
+                    raise ValueError("initial compensation credit cannot precede its known date")
+                if item.shares_released and (action.shares_available_ts_us is None or action.shares_available_ts_us > self.ts_us):
+                    raise ValueError("initial compensation release cannot precede availability")
+                if item.cash_paid and (action.pay_ts_us is None or action.pay_ts_us > self.ts_us):
+                    raise ValueError("initial compensation payment cannot precede its known date")
+                continue
+            if item.recognition_issue is not None and (action.ex_ts_us is None or action.ex_ts_us > self.ts_us):
                 raise ValueError("initial recognition issue cannot precede the ex date")
-            if item.recognized != (action.ex_ts_us <= self.ts_us and item.recognition_issue is None):
+            if item.recognized != (action.ex_ts_us is not None and action.ex_ts_us <= self.ts_us
+                and action.benefit_state == "confirmed" and item.recognition_issue is None):
                 raise ValueError("initial entitlement recognition must match the snapshot time")
             if item.recognition_issue is not None:
                 continue
@@ -200,7 +218,7 @@ class InitialAccount(BaseModel):
                 raise ValueError("initial distributed-share release must match the snapshot time")
         locked: dict[str, int] = {}
         for item in self.distribution_entitlements:
-            if item.recognized and not item.shares_released:
+            if item.recognized and not item.shares_released and (item.distribution.kind == "distribution" or item.shares_credited):
                 symbol = item.distribution.symbol
                 locked[symbol] = locked.get(symbol, 0) + item.shares_qty
         if any(qty > self.positions.get(symbol, 0) - self.sellable.get(symbol, 0) for symbol, qty in locked.items()):

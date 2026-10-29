@@ -4,7 +4,6 @@
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime
-from hashlib import sha256
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -14,10 +13,11 @@ import requests
 
 from src import logs
 from src.access import meta
-from src.data_system.announcement_evidence import AnnouncementCollection, preserve_announcement_collection
+from src.data_system.announcement_evidence import AnnouncementCollection
 from src.data_system.announcement_publications import AnnouncementPublication
 from src.data_system.brokers.bse import BseBroker
 from src.data_system.context import DataContext
+from src.data_system.distribution_announcements import ReviewExtractionManifest
 from src.data_system.corporate_actions import CorporateActionReview, DividendRecord
 from src.utils.filesystem import FileSystem
 from src.utils.path import PathManager
@@ -54,7 +54,6 @@ class CollectBseAnnouncementsStep:
             for day in context.trade_dates:
                 source = self.pm.processed_object(dataset_name="dividend", version="v1", trade_date=day)
                 loaded = meta.require(pm=self.pm, meta_path=source.meta_path, expected_payload_path=source.payload_path)
-                digest = sha256(loaded.payload_path.read_bytes()).hexdigest()
                 with pq.ParquetFile(loaded.payload_path) as parquet:
                     records = TypeAdapter(tuple[DividendRecord, ...]).validate_python(parquet.read().to_pylist())
                 symbols = {row.symbol for row in records if row.div_proc == "实施" and row.ts_code.endswith(".BJ")}
@@ -71,26 +70,26 @@ class CollectBseAnnouncementsStep:
                 path = self.pm.raw_payload(broker="bse", source_name="corporate_action_announcements",
                     trade_date=day, payload_file="announcements.json")
                 committed = meta.find(pm=self.pm, meta_path=path.parent / "meta.json", expected_payload_path=path)
+                extraction_path = self.pm.raw_payload(broker="announcements", source_name="corporate_action_reviews",
+                    trade_date=day, payload_file="reviews.json").parent / "extraction.json"
+                retry_symbols = set()
+                if extraction_path.exists():
+                    issues = ReviewExtractionManifest.model_validate_json(extraction_path.read_bytes()).issues
+                    retry_symbols = {candidate.split(".", maxsplit=1)[0] for candidate, reason in issues.items()
+                        if reason in {"missing_implementation", "implementation_event_not_matched"}}
                 if committed is not None:
                     saved = AnnouncementCollection.model_validate_json(path.read_bytes())
-                    for document in saved.documents:
-                        if sha256((path.parent / f"{document.announcement_id}.pdf").read_bytes()).hexdigest() != document.sha256:
-                            raise ValueError(f"BSE announcement PDF digest changed: {document.announcement_id}")
-                    for name, expected in saved.request_sha256.items():
-                        if sha256((path.parent / name).read_bytes()).hexdigest() != expected:
-                            raise ValueError(f"BSE announcement request evidence changed: {name}")
                     known = {row.announcement_id: (row.symbol, row.title, row.published_date, row.published_ts_us, urlsplit(row.url).path)
                              for row in saved.documents}
                     observation_matches = all(known.get(row.announcement_id) ==
                         (row.symbol, row.title, row.published_date, row.published_ts_us, urlsplit(row.url).path)
                         for row in self.observed_publications)
-                    if (saved.dividend_sha256 == digest and saved.announcement_start == self.announcement_start
+                    if (saved.announcement_start == self.announcement_start
                         and saved.announcement_end == self.announcement_end and set(saved.index_counts) == symbols
                         and saved.query_scope == {"disclosureType": "5", "isNewThree": "", "xxfcbj": ""}
-                        and observation_matches):
+                        and observation_matches and not symbols.intersection(retry_symbols)):
                         logs.info(f"♻️ BSE announcement collection; record_date={day}")
                         continue
-                    preserve_announcement_collection(path=path, collection=saved)
                 if identities is None:
                     identities = broker.security_identities(directory=path.parent)
                     identity_directory = path.parent
@@ -113,16 +112,18 @@ class CollectBseAnnouncementsStep:
                     if not index:
                         raise ValueError(f"BSE announcement index empty for implemented dividend: {symbol}/{day}")
                     counts[symbol] = len(index)
-                    documents.extend(broker.download_distribution_documents(index=tuple(index.values()), directory=path.parent))
+                    documents.extend(broker.download_distribution_documents(index=tuple(index.values()), directory=path.parent,
+                        implementation_dates=frozenset(row.imp_ann_date for row in records
+                            if row.symbol == symbol and row.imp_ann_date is not None)))
                 evidence = (*path.parent.glob("query-*.json"), *path.parent.glob("download-attempt-*"),
                             path.parent / "security-code-mapping.html",
                             path.parent / "security-code-mapping.request.json")
-                collection = AnnouncementCollection(version="v1", dividend_sha256=digest,
+                collection = AnnouncementCollection(version="v1",
                     announcement_start=self.announcement_start, announcement_end=self.announcement_end,
                     collected_at=self.clock(), documents=tuple(documents), index_counts=counts,
                     security_identities=aliases,
                     query_scope={"disclosureType": "5", "isNewThree": "", "xxfcbj": ""},
-                    request_sha256={item.name: sha256(item.read_bytes()).hexdigest() for item in evidence})
+                    request_files=tuple(sorted(item.name for item in evidence)))
                 FileSystem.write_bytes_atomic(path, collection.model_dump_json(indent=2).encode())
                 meta.commit(pm=self.pm, payload_path=path)
                 logs.info(f"✅ BSE announcement collection; record_date={day} symbols={len(symbols)} documents={len(documents)}")

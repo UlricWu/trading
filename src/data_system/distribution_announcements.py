@@ -7,7 +7,6 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
-from hashlib import sha256
 from pathlib import PurePosixPath
 import re
 from typing import Literal, NamedTuple, Self
@@ -26,7 +25,7 @@ class AnnouncementText(BaseModel):
         document = AnnouncementText(source="cninfo", announcement_id="1225575286", symbol="688808",
             title="2026年半年度权益分派实施公告", published_date="2026-09-22",
             url="https://static.cninfo.com.cn/finalpage/2026-09-22/1225575286.PDF",
-            sha256="0" * 64, pages=("证券代码：688808",))
+            pages=("证券代码：688808",))
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -37,7 +36,6 @@ class AnnouncementText(BaseModel):
     published_date: date
     published_ts_us: StrictInt | None = None
     url: str
-    sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     pages: tuple[str, ...]
 
     @property
@@ -80,7 +78,7 @@ class AnnouncementText(BaseModel):
 
 @dataclass(frozen=True, slots=True)
 class DistributionExtraction:
-    """A complete review or an explicit unresolved extraction reason.
+    """A confirmed review or a diagnosis; source usability is resolved separately.
 
     Example:
         extraction = DistributionExtraction(review=None, reason="missing_implementation")
@@ -92,24 +90,22 @@ class DistributionExtraction:
 
 
 class ReviewExtractionManifest(BaseModel):
-    """Bind produced reviews and unresolved reasons to exact stored inputs.
+    """Record extraction inputs and diagnoses, including nonblocking source conflicts.
 
     Example:
         manifest = ReviewExtractionManifest.model_validate_json(path.read_bytes())
-        assert manifest.reviews_sha256 == sha256(reviews_path.read_bytes()).hexdigest()
+        print(manifest.issues)
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
-    inputs: dict[str, str]
-    producer_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
-    reviews_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    inputs: tuple[str, ...]
     issues: dict[str, str]
 
     @model_validator(mode="after")
     def _validate_input_paths(self) -> Self:
-        for relative, digest in self.inputs.items():
+        for relative in self.inputs:
             path = PurePosixPath(relative)
-            if path.is_absolute() or ".." in path.parts or not re.fullmatch(r"[a-f0-9]{64}", digest):
+            if path.is_absolute() or ".." in path.parts:
                 raise ValueError(f"invalid extraction input identity: {relative}")
         return self
 
@@ -121,6 +117,7 @@ _CASH = (
     r"每(10|一)?股(?:派发|派送|派|发放|分配)?人民币(?:现金红利|现金股利|现金)?([0-9]+(?:\.[0-9]+)?)元(?:现金)?[\[(](?:含税|税前(?=[\]);,。]))",
     r"每(10|一)?股派([0-9]+(?:\.[0-9]+)?)元人民币现金\(个人股东、投资基金适用股息红利差别化个人所得税政策",
     r"调整后(?:的)?每(一)?股现金红利=[^。;]{1,240}=([0-9]+(?:\.[0-9]+)?)元/股\(含税",
+    r"调整后每(一)?股现金分红(?:约)?为([0-9]+(?:\.[0-9]+)?)元\(含税",
 )
 _SHARES = (
     (r"(?<!资本公积金)(?<!资本公积)每(10)?股"
@@ -211,50 +208,83 @@ def _document_terms(document: AnnouncementText) -> _ImplementationTerms | str:
     first_page = normalize_announcement_text("".join(document.pages[:1]))
     if not re.search(rf"(?:(?:证券|股票|A股)代码|证券号码):(?:[0-9]{{6}}/)*{document.symbol}(?![0-9])", first_page) and repeated_header not in first_page:
         return "pdf_security_identity_mismatch"
-    if re.search(r"重整|(?<!转)债转股|偿债|以股抵债", text):
-        return "special_beneficiary_requires_review"
-    if not re.search(r"(?:登记在册|登记在)[^。]{0,80}全体[^。]{0,10}股东", text):
-        return "shareholder_scope_unclear"
-    sections = re.split(r"[一二][、.]\s*(?:本次实施的)?(?:权益分[派配]方案|分配方案|利润分配(?:及资本公积金?转增股本)?方案|资本公积金转增股本方案)", text)
-    plan = re.split(r"[二三][、.]", sections[-1], maxsplit=1)[0] if len(sections) == 2 else text
-    latest = tuple(re.finditer(r"(?:(?:按最新股本计算的|调整后的)[^:。]{0,40}(?:权益分派|利润分配)方案为|"
-        r"(?:权益分派|利润分配)方案调整为|分派变更如下):|因此,公司应(?=以[^。]{0,60}总股本)", plan))
-    if len(latest) > 1:
-        return "distribution_amount_ambiguous"
-    if latest:
-        plan = plan[latest[0].end():]
-    cash_values = set().union(*(_per_share(pattern, plan) for pattern in _CASH))
-    share_values = [set().union(*(_per_share(pattern, plan) for pattern in patterns)) for patterns in _SHARES]
-    if len(cash_values) > 1 or any(len(values) > 1 for values in share_values):
-        return "distribution_amount_ambiguous"
-    for patterns, zero_statement, values in zip(_SHARES,
-            (r"不(?:送红股|送股|派送红股)", r"不(?:以)?(?:进行)?(?:资本公积金?)?转增(?:股本|股份)"),
-            share_values, strict=True):
-        if not values and any(value for pattern in patterns for value in _per_share(pattern, text)) and not re.search(zero_statement, plan):
+    if re.search(r"本次(?:权益分[派配]|利润分配|分配|转增)(?:方案)?(?:已经|已)?(?:取消|终止)", text):
+        return "separate_revision_requires_review"
+    if ("预案" in document.title or re.search(r"本次(?:权益分[派配]|利润分配|分配|转增)(?:方案|预案)?"
+        r"(?:尚|还)需[^。]{0,60}(?:审议|批准)[^。]{0,30}(?:实施|生效)", text)):
+        return "implementation_stage_unconfirmed"
+    special = bool(re.search(r"重整|(?<!转)债转股|偿债|以股抵债", text))
+    if special:
+        all_excluded = re.search(
+            r"(?:上述|前述|本次)(?:资本公积金?转增的股份|转增(?:的)?(?:股票|股份))"
+            r"(?:[0-9,.]+股)?不向原股东分配[,;]全部", text)
+        if (not all_excluded or re.search(r"第[一二三四]轮转增|业绩[^。]{0,30}补偿", text)
+            or re.search(r"(?<!不)向(?:原|普通|中小|全体)股东[^。]{0,40}每(?:10)?股[^。]{0,20}(?:转增|送股)", text)
+            or re.search(r"(?<!不)(?:向|给予|对)(?:原|普通|中小|全体)股东[^。]{0,40}(?:补偿|补赠|转赠|额外分配)", text)):
+            return "special_beneficiary_requires_review"
+        if any(_per_share(pattern, text) - {Decimal(0)} for pattern in _CASH):
+            return "distribution_amount_conflict"
+        if not re.search(r"不涉及现金红利|不(?:派发|进行|派送)现金(?:红利|分红)|不分配现金", text):
+            allocation = re.search(r"[一二三四五六七八九十][、.]资本公积金?转增股本方案(.+?)"
+                r"(?=[一二三四五六七八九十][、.])", text)
+            if not allocation or all_excluded.group() not in allocation[1]:
+                return "ordinary_cash_entitlement_unconfirmed"
+            plan = allocation[1]
+            # Investor consideration paid to the issuer is not an ordinary shareholder dividend.
+            cash_scope = re.sub(r"(?:重整|产业|财务)投资人[^。;]{0,80}(?:支付|缴纳)(?:给|至)?(?:上市)?公司"
+                r"[^。;]{0,60}(?:现金|对价)[^。;]*", "", plan)
+            if (not re.search(r"用于(?:引入(?:重整|产业|财务)投资人|偿付债务|清偿债务|抵偿债务)", plan)
+                or re.search(r"另行(?:公告|披露|确定)|现金|红利|股利|派息|派现", cash_scope)
+                or re.search(r"(?:(?:向|给予|对)(?:原|普通|中小|全体)?股东|"
+                    r"(?:原|普通|中小|全体)股东(?:将|可|有权)(?:获得|获派|取得))[^。]{0,60}(?:现金|派息|派现)", text)):
+                return "ordinary_cash_entitlement_unconfirmed"
+        cash = shares = Decimal(0)
+        implicit_zero_cash = False
+        plan = text
+    else:
+        if not re.search(r"(?:登记在册|登记在)[^。]{0,80}全体[^。]{0,10}股东", text):
+            return "shareholder_scope_unclear"
+        sections = re.split(r"[一二][、.]\s*(?:本次实施的)?(?:权益分[派配]方案|分配方案|利润分配(?:及资本公积金?转增股本)?方案|资本公积金转增股本方案)", text)
+        plan = re.split(r"[二三][、.]", sections[-1], maxsplit=1)[0] if len(sections) == 2 else text
+        latest = tuple(re.finditer(r"(?:(?:按最新股本计算的|调整后的)[^:。]{0,40}(?:权益分派|利润分配)方案为|"
+            r"(?:权益分派|利润分配)方案调整为|分派变更如下|方案进行了调整,[^:。]{0,50}方案为|"
+            r"固定不变[”\"]?的原则,[^:。]{0,40}(?:权益分[派配]|利润分配)方案为):|"
+            r"因此,公司应(?=以[^。]{0,60}总股本)|根据以上情况,现重新计算每10股派发的现金红利|"
+            r"(?=调整后每股现金分红(?:约)?为[0-9]+(?:\.[0-9]+)?元\(含税)", plan))
+        if len(latest) > 1:
+            return "distribution_amount_ambiguous"
+        if latest:
+            plan = plan[latest[0].end():]
+        cash_values = set().union(*(_per_share(pattern, plan) for pattern in _CASH))
+        share_values = [set().union(*(_per_share(pattern, plan) for pattern in patterns)) for patterns in _SHARES]
+        if len(cash_values) > 1 or any(len(values) > 1 for values in share_values):
+            return "distribution_amount_conflict"
+        for patterns, zero_statement, values in zip(_SHARES,
+                (r"不(?:送红股|送股|派送红股)", r"不(?:以)?(?:进行)?(?:资本公积金?)?转增(?:股本|股份)"),
+                share_values, strict=True):
+            if not values and any(value for pattern in patterns for value in _per_share(pattern, text)) and not re.search(zero_statement, plan):
+                return "distribution_amount_missing"
+        if not cash_values and not any(share_values):
             return "distribution_amount_missing"
-    if not cash_values and not any(share_values):
-        return "distribution_amount_missing"
-    if not cash_values and not re.search(r"不(?:派发|进行|派送)现金(?:红利|分红)|不分配现金", plan):
-        return "zero_cash_not_confirmed"
-    cash = next(iter(cash_values), Decimal(0))
-    headline_cash = {Decimal(value) for value in re.findall(
-        r"A股每股现金(?:红利|分红)(?:为|:)?(?:人民币)?([0-9]+(?:\.[0-9]+)?)元", text)}
-    summary = re.split(r"[一二][、.]", text, maxsplit=1)[0]
-    headline_cash.update(Decimal(value) for value in re.findall(
-        r"(?:每股分配比例:?|重要内容提示:)每股现金(?:红利|分红)(?:为|:)?(?:人民币)?([0-9]+(?:\.[0-9]+)?)元", summary))
-    if headline_cash and headline_cash != {cash}:
-        return "distribution_amount_ambiguous"
-    actual_cash = {Decimal(value) for value in re.findall(
-        r"本次实际每股现金红利=[^。;]{1,180},即([0-9]+(?:\.[0-9]+)?)元/股=", plan)}
-    if actual_cash and actual_cash != {cash}:
-        return "distribution_amount_ambiguous"
-    shares = sum((next(iter(values), Decimal(0)) for values in share_values), Decimal(0))
+        implicit_zero_cash = not cash_values and not re.search(r"不(?:派发|进行|派送)现金(?:红利|分红)|不分配现金", plan)
+        if implicit_zero_cash and (not any(value > 0 for values in share_values for value in values)
+            or re.search(r"现金|派息|派(?:发|送)?[^。]{0,20}(?:红利|股利)", plan)):
+            return "distribution_amount_missing"
+        cash = next(iter(cash_values), Decimal(0))
+        headline_cash = {Decimal(value) for value in re.findall(
+            r"A股每股现金(?:红利|分红)(?:为|:)?(?:人民币)?([0-9]+(?:\.[0-9]+)?)元", text)}
+        summary = re.split(r"[一二][、.]", text, maxsplit=1)[0]
+        headline_cash.update(Decimal(value) for value in re.findall(
+            r"(?:每股分配比例:?|重要内容提示:)每股现金(?:红利|分红)(?:为|:)?(?:人民币)?([0-9]+(?:\.[0-9]+)?)元", summary))
+        if headline_cash and headline_cash != {cash}:
+            return "distribution_amount_conflict" if cash_values else "distribution_amount_missing"
+        shares = sum((next(iter(values), Decimal(0)) for values in share_values), Decimal(0))
     records = _dates(r"(?:股权|权益(?:分派)?)登记日期?(?:为|即|:|\(){0,3}", text)
     ex_dates = _dates(r"除(?:权除息日(?:\(红利发放日\))?|权日\(除息日\)|权\(息\)日|息日|权日)(?:为|:){0,3}", text)
     pay_dates = _dates(r"(?:现金(?:红利|分红|股利)|A股股东红利|股息|本次红利委托中国结算深圳分公司)(?:将)?于", text)
     # A table's last header must not consume the first registration-date cell after text joining.
     pay_dates.update(_dates(r"(?:现金)?红利发放日\)?(?:为|:){1,3}", text))
-    listing_dates = _dates(r"(?:新增(?:可流通股(?:份)?|股份)上市日(?:\(红利发放日\))?|"
+    listing_dates = _dates(r"(?:新增(?:可流通股(?:份)?|股份)上市日(?:\(红利发放日\))?|转增股(?:本|份)上市日|"
         r"无限售(?:条件)?流通股的起始交易日)(?:为|:){1,3}", text)
     listing_dates.update(date(int(year), int(month), int(day)) for year, month, day in re.findall(
         r"本次所送\(转\)的无限售(?:条件)?流通股的起始交易日(?:为|:){0,3}" + _DATE + r"(?=。)", text))
@@ -288,25 +318,62 @@ def _document_terms(document: AnnouncementText) -> _ImplementationTerms | str:
                         listing_dates.add(values[labels[2]])
                         pay_dates.add(values[labels[3]])
             preceding = (preceding + line)[-400:]
-    if len(records) != 1 or len(ex_dates) != 1:
+    if special:
+        ex_dates.update(_dates(r"股权登记日次一交易日\(", text))
+        if len(records) == 1 and re.search(r"股权登记日次一交易日[^。;]{0,40}(?:开盘参考价|除权)", text):
+            # A one-session suspension on registration links resumption to the next trading session.
+            resumptions = {date(int(y2), int(m2), int(d2)) for y1, m1, d1, y2, m2, d2 in re.findall(
+                _DATE + r"(?:公司)?股票(?:开市起)?停牌1个交易日[,;]并于" + _DATE
+                + r"(?:\([^)]*\))?(?:开市起)?复牌", text) if date(int(y1), int(m1), int(d1)) in records}
+            if resumptions and listing_dates:
+                if resumptions != listing_dates or len(resumptions) != 1:
+                    return "registration_or_ex_date_ambiguous"
+                ex_dates.update(resumptions)
+    if len(records) > 1 or len(ex_dates) > 1:
         return "registration_or_ex_date_ambiguous"
-    if (cash and len(pay_dates) != 1) or (shares and len(listing_dates) != 1):
+    if not records or not ex_dates:
+        return "registration_or_ex_date_missing"
+    if implicit_zero_cash and pay_dates:
+        return "distribution_amount_missing"
+    if (cash and len(pay_dates) > 1) or (shares and len(listing_dates) > 1):
         return "settlement_date_ambiguous"
-    reference = _reference_terms(text, plan, cash, shares)
-    if reference is None:
-        return "ex_reference_not_confirmed"
+    if (cash and not pay_dates) or (shares and not listing_dates):
+        return "settlement_date_missing"
+    reference = None if special else _reference_terms(text, plan, cash, shares)
     terms = DistributionTerms(published_date=document.published_date, published_ts_us=document.published_ts_us, cash_per_share=cash,
-        shares_per_share=shares, reference_cash_per_share=reference.cash_per_share,
-        reference_shares_per_share=reference.shares_per_share)
+        shares_per_share=shares, reference_cash_per_share=reference.cash_per_share if reference else None,
+        reference_shares_per_share=reference.shares_per_share if reference else None)
     return _ImplementationTerms(records.pop(), ex_dates.pop(), pay_dates.pop() if cash else None,
                                 listing_dates.pop() if shares else None, terms)
+
+
+def _reference_result(document: AnnouncementText) -> _ExReference | Decimal | str:
+    text = document.normalized_text
+    if not re.search(rf"(?:证券|股票|A股)代码:{document.symbol}(?![0-9])",
+                     normalize_announcement_text("".join(document.pages[:1]))):
+        return "pdf_security_identity_mismatch"
+    prices = {Decimal(value) for value in re.findall(
+        r"(?:除权(?:除息|\(息\))?(?:参考)?价格?|开盘参考价格?)(?:确定)?为(?:每股)?"
+        r"([0-9]+(?:\.[0-9]+)?)元", text)}
+    if len(prices) == 1:
+        return prices.pop()
+    if len(prices) > 1:
+        return "reference_result_conflict"
+    no_adjustment = (r"(?:参考价格?|除权)(?:不(?:作|做|进行)?调整|无需调整)|"
+        r"不(?:作|做|进行)?调整[^。;]{0,60}(?:开盘参考价格?|除权参考价格?)|不除权")
+    conditional = r"如果|(?:倘)?若|假如|一旦|仅当|只有|当[^。;]{0,80}时"
+    if ((re.search(no_adjustment, document.title) and not re.search(conditional, document.title))
+        or any(re.search(no_adjustment, sentence) and not re.search(conditional, sentence)
+            and re.search(r"鉴于|经计算|计算结果|因此|据此", sentence) for sentence in re.split(r"[。;]", text))):
+        return _ExReference(Decimal(0), Decimal(0))
+    return "ex_reference_not_confirmed"
 
 
 def extract_distribution_review(
     records: Sequence[DividendRecord], documents: Sequence[AnnouncementText],
     identities: Sequence[SecurityIdentity] = (),
 ) -> DistributionExtraction:
-    """Resolve one source candidate only when all matching implementation versions agree.
+    """Associate implementation facts by their publication, registration and security.
 
     Example:
         extracted = extract_distribution_review(records=source_group, documents=pdfs)
@@ -319,59 +386,129 @@ def extract_distribution_review(
     year, month = source.end_date.year, source.end_date.month
     period = {3: "第一季度|一季度|季度", 6: "上?半年度|(?:度)?(?:第[一二三四]次)?中期|季度",
               9: "前三季度|第三季度|三季度|季度", 12: "年度"}.get(month)
-    if period is None:
-        return DistributionExtraction(None, "nonstandard_reporting_period")
-    implementation_title = r"(?:权益分[派配]|利润分[配派]|分红派息|现金分红|转增股本).*实施(?:公告|的公告)"
+    implementation_dates = {row.imp_ann_date for row in records if row.imp_ann_date is not None}
+    if any(document.symbol in source_symbols and re.search(r"业绩.*补偿", document.title)
+        and _mentions_date(document.normalized_text, source.record_date) for document in documents):
+        return DistributionExtraction(None, "compensation_requires_review")
+    distribution_topic = r"权益分[派配]|利润分[配派]|分红派息|特别派息|现金分红|转增股本"
     matching = []
     for document in documents:
         title = normalize_announcement_text(document.title)
         if document.symbol not in source_symbols:
             continue
-        if not re.search(implementation_title, document.title):
+        if any(word in document.title for word in ("转股价格", "律师", "法律意见", "核查", "独立财务", "专项意见", "结果")):
             continue
-        if any(word in document.title for word in ("回购", "转股价格", "转债", "律师", "核查", "结果")):
+        if re.search(r"(?:回购(?:股份)?|发行|授予|行权)价(?:格)?", document.title):
             continue
         if "更正公告" in document.title and "更正后" not in document.title:
             continue
         text = document.normalized_text
-        if not re.search(rf"{year}年?(?:{period})", title):
+        if not re.search(distribution_topic, title) and document.published_date not in implementation_dates:
+            continue
+        if re.search(r"除权|参考价", document.title) and not re.search(distribution_topic + r".*实施", document.title):
+            continue
+        if document.published_date not in implementation_dates and not (
+            period is not None and re.search(rf"{year}年?(?:{period})", title)
+        ):
             if re.search(r"20\d{2}", title):
                 continue
             plan_periods = re.findall(r"20\d{2}年?(?:年度|上?半年度|下半年度|第?[一二三四]季度|"
                 r"(?:度)?(?:第[一二三四]次)?中期|季度)(?:权益分[派配]|利润分配|分红派息)方案", text)
-            if not plan_periods or any(not re.match(rf"{year}年?(?:{period})", value) for value in plan_periods):
+            if period is None or not plan_periods or any(not re.match(rf"{year}年?(?:{period})", value) for value in plan_periods):
                 continue
         if not _mentions_date(text, source.record_date):
             continue
         matching.append(document)
     if not matching:
-        return DistributionExtraction(None, "missing_implementation")
+        reason = "implementation_event_not_matched" if any(document.symbol in source_symbols for document in documents) else "missing_implementation"
+        return DistributionExtraction(None, reason)
+    reference_documents = [document for document in documents if document.symbol in source_symbols
+        and document not in matching and re.search(r"除权|参考价", document.title)
+        and re.search(r"结果|提示|不(?:作|做|进行)?调整|无需调整|不除权", document.title)
+        and not re.search(r"更正|补充|修订|取消|终止", document.title)
+        and (_mentions_date(document.normalized_text, source.record_date)
+            or any(normalize_announcement_text(original.title) in document.normalized_text
+                and _mentions_date(document.normalized_text, original.published_date) for original in matching))]
     matching.sort(key=lambda document: (document.published_date, document.published_ts_us is None,
         document.published_ts_us or 0, document.announcement_id))
     for document in documents:
-        if (document.symbol not in source_symbols or document in matching
+        if (document.symbol not in source_symbols or document in matching or document in reference_documents
             or document.published_date < matching[0].published_date
             or not re.search(r"更正|补充|修订|调整|取消|终止", document.title)
             or re.search(r"(?:回购(?:股份)?|转股|发行|授予|行权)价(?:格)?", document.title)):
             continue
         text = document.normalized_text
         title = normalize_announcement_text(document.title)
-        identifies_plan = re.search(rf"{year}年?(?:{period})", title) and re.search(implementation_title, title)
-        if (_mentions_date(text, source.record_date) or identifies_plan) and re.search(r"权益分派|利润分配|分红派息|转增股本", text):
+        revises_distribution = re.search(
+            r"(?:权益分[派配]|利润分配|分红派息|转增股本)(?:预案|方案)?(?:实施)?(?:公告)?的?"
+            r"(?:更正|补充|修订|调整|取消|终止)|(?:更正|补充|修订|调整|取消|终止)(?:公司)?"
+            r"(?:20\d{2}[^。:]{0,12})?(?:权益分[派配]|利润分配|分红派息|转增股本)", title)
+        if not revises_distribution:
+            continue
+        identifies_plan = (period is not None and re.search(rf"{year}年?(?:{period})", title)
+            and re.search(distribution_topic, title) and "实施" in title)
+        references_plan = any(normalize_announcement_text(original.title) in text
+            and _mentions_date(text, original.published_date) for original in matching)
+        if (_mentions_date(text, source.record_date) or identifies_plan or references_plan) and re.search(r"权益分派|利润分配|分红派息|转增股本", text):
+            total_correction = re.search(r"更正前:(.+?)更正后:(.+?)(?:除以上|除上述|除此之外)", text)
+            if (total_correction and re.search(r"(?:原公告)?其他内容不变", text)
+                and all(re.fullmatch(r"本次权益分派新增无限售条件流通股(?:股数)?(?:为|:)[0-9,.]+股。", section)
+                    for section in total_correction.groups())):
+                continue
             return DistributionExtraction(None, f"separate_revision_requires_review:{document.announcement_id}")
     versions: list[DistributionTerms] = []
     phase_dates = None
-    for document in matching:
-        parsed = _document_terms(document)
-        if isinstance(parsed, str):
-            return DistributionExtraction(None, f"{parsed}:{document.announcement_id}")
-        record_date, ex_date, pay_date, listing_date, terms = parsed
-        if record_date != source.record_date:
-            return DistributionExtraction(None, "announcement_registration_mismatch")
-        dates = (record_date, ex_date, pay_date, listing_date)
-        if phase_dates is not None and dates != phase_dates:
-            return DistributionExtraction(None, "phase_date_revision_requires_review")
-        phase_dates = dates
+    used = []
+    missing_reason = "missing_implementation"
+    for document in sorted((*matching, *reference_documents), key=lambda document: (
+        document.published_date, document.published_ts_us is None, document.published_ts_us or 0, document.announcement_id,
+    )):
+        if document in reference_documents:
+            if not versions:
+                continue
+            reference = _reference_result(document)
+            if isinstance(reference, str):
+                if reference in {"pdf_security_identity_mismatch", "ex_reference_not_confirmed"}:
+                    continue
+                return DistributionExtraction(None, f"{reference}:{document.announcement_id}")
+            terms = versions[-1].model_copy(update={"published_date": document.published_date,
+                "published_ts_us": document.published_ts_us,
+                "reference_cash_per_share": reference.cash_per_share if isinstance(reference, _ExReference) else None,
+                "reference_shares_per_share": reference.shares_per_share if isinstance(reference, _ExReference) else None,
+                "reference_price": reference if isinstance(reference, Decimal) else None})
+        else:
+            parsed = _document_terms(document)
+            if isinstance(parsed, str):
+                if parsed in {"distribution_amount_missing", "settlement_date_missing",
+                    "registration_or_ex_date_missing", "shareholder_scope_unclear", "implementation_stage_unconfirmed",
+                    "ordinary_cash_entitlement_unconfirmed"}:
+                    if versions and re.search(r"更正|补充|修订", document.title):
+                        return DistributionExtraction(None, f"separate_revision_requires_review:{document.announcement_id}")
+                    missing_reason = f"{parsed}:{document.announcement_id}"
+                    continue
+                return DistributionExtraction(None, f"{parsed}:{document.announcement_id}")
+            record_date, ex_date, pay_date, listing_date, terms = parsed
+            if record_date != source.record_date:
+                return DistributionExtraction(None, "announcement_registration_mismatch")
+            # An impossible past-year payment is evidence of a PDF defect, not a new payment schedule.
+            if (len(matching) == 1 and not reference_documents and pay_date is not None
+                and pay_date < document.published_date and pay_date.year < record_date.year
+                and terms.cash_per_share and terms.shares_per_share == 0
+                and terms.reference_cash_per_share == terms.cash_per_share
+                and terms.reference_shares_per_share == 0
+                and all(row.imp_ann_date == document.published_date and row.ex_date == ex_date
+                    and row.cash_div_tax == terms.cash_per_share and row.stk_div == 0
+                    and row.pay_date == source.pay_date for row in records)
+                and source.pay_date is not None and source.pay_date >= ex_date
+                and source.pay_date.year == record_date.year
+                and (source.pay_date.month, source.pay_date.day) == (pay_date.month, pay_date.day)):
+                return DistributionExtraction(None, f"announcement_payment_year_conflict:{document.announcement_id}:"
+                    f"pdf={pay_date}:dividend={source.pay_date}")
+            dates = (record_date, ex_date, pay_date, listing_date)
+            if phase_dates is not None and dates != phase_dates:
+                return DistributionExtraction(None, "phase_date_revision_requires_review")
+            phase_dates = dates
+        used.append(document)
         if versions:
             prior = versions[-1]
             if terms.model_dump(exclude={"published_date", "published_ts_us"}) == prior.model_dump(
@@ -382,16 +519,21 @@ def extract_distribution_review(
                 or prior.published_ts_us is None or terms.published_ts_us <= prior.published_ts_us):
                 return DistributionExtraction(None, "same_day_revision_order_unknown")
         versions.append(terms)
-    source_digest = sha256("\n".join(sorted(row.source_row_id for row in records)).encode()).hexdigest()
+    if not versions:
+        return DistributionExtraction(None, missing_reason)
+    has_reference = any(terms.reference_cash_per_share is not None or terms.reference_price is not None for terms in versions)
+    if not has_reference and any(terms.cash_per_share or terms.shares_per_share for terms in versions):
+        return DistributionExtraction(None, "ex_reference_not_confirmed")
+    reason = "implementation_pdf_terms_and_reference_confirmed" if has_reference else "ordinary_shareholder_zero_entitlement_confirmed"
     try:
-        evidence = [f"{document.url}#sha256={document.sha256}" for document in matching]
-        evidence.extend(sorted({f"{aliases[document.symbol].evidence_url}#sha256={aliases[document.symbol].evidence_sha256}"
-            for document in matching if document.symbol != source.symbol}))
-        review = CorporateActionReview(candidate_id=source.candidate_id, source_digest=source_digest,
-            action_id=f"{matching[0].source}:{matching[0].announcement_id}:ordinary_shareholder", shareholder_scope="ordinary_shareholder",
+        evidence = [document.url for document in used]
+        evidence.extend(sorted({aliases[document.symbol].evidence_url
+            for document in used if document.symbol != source.symbol}))
+        review = CorporateActionReview(candidate_id=source.candidate_id,
+            action_id=f"{used[0].source}:{used[0].announcement_id}:ordinary_shareholder", shareholder_scope="ordinary_shareholder",
             record_date=record_date, ex_date=ex_date, pay_date=pay_date, div_listdate=listing_date, terms=tuple(versions),
             evidence_refs=tuple(evidence),
-            reason="implementation_pdf_terms_and_reference_confirmed")
+            reason=reason)
     except ValidationError as error:
         return DistributionExtraction(None, f"unsupported_announcement_timeline:{error.errors(include_url=False)}")
-    return DistributionExtraction(review, "implementation_pdf_terms_and_reference_confirmed")
+    return DistributionExtraction(review, reason)

@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict
-from hashlib import sha256
 from pathlib import Path
 from typing import cast
 
@@ -52,6 +51,7 @@ _EQUITY_SCHEMA = pa.schema([
     pa.field("peak_equity", pa.float64(), nullable=False),
     pa.field("drawdown", pa.float64(), nullable=False),
     pa.field("dividend_receivable", pa.float64(), nullable=False),
+    pa.field("shares_receivable_value", pa.float64(), nullable=False),
 ])
 
 _VALUATION_MARK_SCHEMA = pa.schema([
@@ -138,25 +138,27 @@ class FactsPersistStep:
             ),
         )
         run_dir = self._output_dir
-        statuses = {day: [status.model_dump(mode="json") for status in reviews]
-            for day, reviews in context.security_status_by_date.items()}
         FileSystem.write_bytes_atomic(run_dir / "security-status.json", json.dumps({
-            "version": "v1", "statuses": [status for reviews in statuses.values() for status in reviews],
-            "input_digests": {day: sha256(json.dumps(reviews, ensure_ascii=False, sort_keys=True,
-                separators=(",", ":")).encode()).hexdigest() for day, reviews in statuses.items()},
+            "version": "v1", "statuses": [status.model_dump(mode="json")
+                for reviews in context.security_status_by_date.values() for status in reviews],
         }, ensure_ascii=False, indent=2, allow_nan=False).encode())
         actions = context.corporate_actions
         action_facts = {
             "tax_basis": "gross",
             "coverage": "distributions_and_supplied_notices",
-            "input_digests": actions.input_digests,
             "distributions": [action.model_dump(mode="json") for action in actions.distributions],
             "revisions": [action.model_dump(mode="json") for action in actions.revisions],
             "source_resolutions": [item.model_dump(mode="json") for item in actions.resolutions],
             "notices": [notice.model_dump(mode="json") for notice in actions.notices],
             "records": TypeAdapter(list[CorporateActionRecord]).dump_python(state.corporate_action_records, mode="json"),
             "unresolved": [issue.model_dump(mode="json") for issue in state.corporate_action_issues.values()],
-            "outstanding_entitlements": [item.model_dump(mode="json") for item in state.portfolio_state.distribution_entitlements.values()],
+            "outstanding_entitlements": [item.model_dump(mode="json")
+                for item in state.portfolio_state.distribution_entitlements.values()
+                if item.distribution.benefit_state != "cancelled" and (not item.recognized
+                    or (item.cash_amount and not item.cash_paid) or (item.shares_qty and not item.shares_released))],
+            "registration_holdings": state.portfolio_state.registration_holdings,
+            "entitlements": [item.model_dump(mode="json")
+                for item in state.portfolio_state.distribution_entitlements.values()],
         }
         FileSystem.write_bytes_atomic(run_dir / "corporate-actions.json",
             json.dumps(action_facts, ensure_ascii=False, allow_nan=False, indent=2).encode())

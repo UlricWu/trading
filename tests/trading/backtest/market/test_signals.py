@@ -158,7 +158,7 @@ def test_preparation_reuses_fixed_records_and_model_without_changing_missing_row
     tmp_path: Path, prediction_refs: tuple[Path, ...], access: Mock, mocker: MockerFixture,
 ) -> None:
     read_record = mocker.spy(signals, "read_prediction_record")
-    load_model = mocker.spy(signals, "load_prediction_model")
+    load_model = mocker.spy(signals, "load")
     predict = mocker.patch.object(InferenceModel, "predict", side_effect=AssertionError("fixed predictions"))
     signal = RecordedSignalInput(type="recorded", prediction_refs=tuple(reversed(prediction_refs)))
 
@@ -210,19 +210,19 @@ def test_each_recorded_model_is_checked_at_its_own_first_decision(
     assert tuple(signal_inputs_by_ts_us) == (FIRST_DECISION_TS_US, LAST_DECISION_TS_US)
 
 
-def test_reusing_a_model_does_not_hide_a_different_recorded_digest(
+def test_reusing_a_model_does_not_hide_inconsistent_record_identity(
     tmp_path: Path, prediction_refs: tuple[Path, ...], access: Mock,
 ) -> None:
     with pq.ParquetFile(prediction_refs[0]) as source:
         table = source.read()
     metadata = dict(table.schema.metadata)
     inputs = json.loads(metadata[b"prediction_inputs"])
-    inputs["model_sha256"] = "0" * 64
+    inputs["model_ref"] = str(tmp_path / "other-model.joblib")
     metadata[b"prediction_inputs"] = json.dumps(inputs).encode()
     pq.write_table(table.replace_schema_metadata(metadata), prediction_refs[0])
     signal = RecordedSignalInput(type="recorded", prediction_refs=tuple(reversed(prediction_refs)))
 
-    with pytest.raises(ValueError, match="model content has changed"):
+    with pytest.raises(ValueError, match="prediction rows disagree with their recorded inputs"):
         signals.prepare_signals(signal, start="2026-07-03", end="2026-07-06",
             access=access, pm=PathManager(tmp_path), min_listing_calendar_days=120,
             start_ts_us=FIRST_DECISION_TS_US, end_ts_us=LAST_DECISION_TS_US + 1)

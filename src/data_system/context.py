@@ -17,3 +17,4 @@ class DataContext:
     start: str
     end: str
     trade_dates: tuple[str, ...] = ()
+    publication_dates: tuple[str, ...] = ()

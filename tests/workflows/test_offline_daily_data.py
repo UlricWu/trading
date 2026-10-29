@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+from datetime import date, datetime, time
+from types import SimpleNamespace
 from typing import cast
 from unittest.mock import Mock
 
@@ -23,6 +25,7 @@ from src.config.data_config import (
 from src.data_system.brokers.level2 import Level2Broker
 from src.data_system.brokers.tushare import TushareBroker
 from src.data_system.context import DataContext
+from src.data_system.announcement_publications import AnnouncementPublication
 from src.data_system.normalize.level2 import normalize_level2
 from src.data_system.normalize.tushare import normalize_tushare
 from src.data_system.pipeline import DataPipeline
@@ -32,17 +35,16 @@ from src.jobs.requests import (
     DataSubmission,
     FeatureBackfillSubmission,
     Level2MinuteBackfillSubmission,
-    StandardFactBootstrapSubmission,
     Stock1430BackfillSubmission,
     Stock1430FusionBackfillSubmission,
 )
 from src.utils.path import PathManager
+from src.utils.datetime_utils import DateTimeUtils
 from src.workflows import offline_daily_data as workflow_module
 from src.workflows.offline_daily_data import (
     run_feature_backfill,
     run_level2_minute_backfill,
     run_offline_data,
-    run_standard_fact_bootstrap,
     run_stock_1430_backfill,
     run_stock_1430_fusion_backfill,
 )
@@ -70,6 +72,42 @@ def _app_config() -> AppConfig:
             },
         )
     )
+
+
+def test_standard_weekend_produces_partial_announcements_without_dividend_candidates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pm = PathManager(tmp_path)
+    monkeypatch.setattr(workflow_module, "datetime", SimpleNamespace(now=lambda tz: datetime(2026, 10, 28, tzinfo=tz)))
+    row = AnnouncementPublication(source="cninfo", announcement_id="1", symbol="600000",
+        title="重整进展公告", published_date="2026-09-19", url="https://example.test/1.pdf")
+    cninfo, bse = Mock(), Mock()
+    cninfo.announcement_index.return_value = (row,)
+    bse.announcement_index.return_value = ()
+    monkeypatch.setattr("src.data_system.steps.collect_publications.CninfoBroker", Mock(return_value=cninfo))
+    monkeypatch.setattr("src.data_system.steps.collect_publications.BseBroker", Mock(return_value=bse))
+    monkeypatch.setattr(workflow_module.CalendarMaterializeStep, "run", lambda self, context: context)
+    monkeypatch.setattr(workflow_module.FactMaterializeStep, "run", lambda self, context: context)
+    transport = Mock()
+    transport.__enter__ = Mock(return_value=transport)
+    transport.__exit__ = Mock(return_value=False)
+    response = Mock(content=b"%PDF-fixture")
+    response.__enter__ = Mock(return_value=response)
+    response.__exit__ = Mock(return_value=False)
+    transport.get.return_value = response
+    monkeypatch.setattr("src.data_system.steps.materialize_announcement_facts.requests.Session", lambda: transport)
+    monkeypatch.setattr("src.data_system.steps.materialize_announcement_facts.PdfReader", lambda stream: SimpleNamespace(
+        pages=[SimpleNamespace(extract_text=lambda: "证券代码：600000。重整方案尚需审议，净分配比例待确定。")]))
+    run_offline_data(app_config=_app_config(), path_manager=pm,
+        submission=DataSubmission(kind="data-standard", start="2026-09-19", end="2026-09-19"))
+    rows = Access(pm=pm, processed_version="v1").announcement_events(
+        as_of_ts_us=DateTimeUtils.local_time_to_utc_epoch_us(time(), date(2026, 9, 20)))
+    event, = rows
+    assert event.kind == "reorganization" and event.benefit_state == "conditional"
+    assert event.record_date is event.shares_per_share is None
+    cninfo.announcement_index.assert_called_once()
+    bse.announcement_index.assert_called_once()
+    assert not list(pm.processed_version_dir(dataset_name="dividend", version="v1").glob("trade_date=*"))
 
 
 @pytest.mark.parametrize(
@@ -188,7 +226,8 @@ def test_data_workflow_supplies_one_linear_domain_step_sequence(
 
     assert result is None
     derived_steps = (
-        ["ExtractDistributionTermsStep", "ResolveCorporateActionsStep", "ResolveSecurityStatusStep", "FeatureBuildStep", "LabelBuildStep"]
+        ["CollectPublicationsStep", "MaterializeAnnouncementFactsStep", "RefreshCorporateActionsStep",
+         "ResolveSecurityStatusStep", "FeatureBuildStep", "LabelBuildStep"]
         if kind == "data-standard"
         else ["Level2MinuteBuildStep", "Stock1430DailyMaterializeStep"]
     )
@@ -272,10 +311,10 @@ def test_workflow_broker_construction_failure_propagates_without_caching(
     monkeypatch.setattr(workflow_module, "FactMaterializeStep", fact_factory)
     monkeypatch.setattr(workflow_module, "DataPipeline", Mock())
 
-    run_standard_fact_bootstrap(
+    run_offline_data(
         app_config=_app_config(),
         path_manager=cast("PathManager", object()),
-        submission=StandardFactBootstrapSubmission(
+        submission=DataSubmission(kind="data-standard",
             start="2026-07-20", end="2026-07-20"
         ),
     )
@@ -373,7 +412,7 @@ def test_level2_sources_come_only_from_enabled_file_config(
 
 
 @pytest.mark.parametrize(
-    "kind", ["data-standard", "data-level2", "data-standard-bootstrap"]
+    "kind", ["data-standard", "data-level2"]
 )
 def test_workflow_rejects_empty_fact_selection_before_step_construction(
     kind: str,
@@ -396,24 +435,8 @@ def test_workflow_rejects_empty_fact_selection_before_step_construction(
     monkeypatch.setattr(workflow_module, "DataPipeline", pipeline_factory)
 
     with pytest.raises(ValueError, match="no fact sources"):
-        if kind == "data-standard-bootstrap":
-            run_standard_fact_bootstrap(
-                app_config=config,
-                path_manager=cast("PathManager", object()),
-                submission=StandardFactBootstrapSubmission(
-                    start="2019-01-01", end="2019-04-03"
-                ),
-            )
-        else:
-            run_offline_data(
-                app_config=config,
-                path_manager=cast("PathManager", object()),
-                submission=DataSubmission(
-                    kind=cast("DataJobKind", kind),
-                    start="2026-07-20",
-                    end="2026-07-20",
-                ),
-            )
+        run_offline_data(app_config=config, path_manager=cast("PathManager", object()),
+            submission=DataSubmission(kind=cast("DataJobKind", kind), start="2026-07-20", end="2026-07-20"))
 
     calendar_step_factory.assert_not_called()
     fact_step_factory.assert_not_called()
@@ -600,7 +623,7 @@ def test_level2_workflow_builds_fixed_derivatives_independent_of_daily_registry(
     pipeline.run.assert_called_once()
 
 
-def test_standard_fact_bootstrap_runs_only_calendar_and_standard_facts(
+def test_historical_standard_range_uses_the_common_pipeline(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(TushareBroker, "__init__", Mock(return_value=None))
@@ -625,16 +648,19 @@ def test_standard_fact_bootstrap_runs_only_calendar_and_standard_facts(
         Mock(return_value=("trade_calendar", "daily_bar", "daily_basic")),
     )
 
-    run_standard_fact_bootstrap(
+    run_offline_data(
         app_config=_app_config(),
         path_manager=cast("PathManager", object()),
-        submission=StandardFactBootstrapSubmission(
+        submission=DataSubmission(kind="data-standard",
             start="2019-01-01",
             end="2019-04-03",
         ),
     )
 
-    assert pipeline_factory.call_args.kwargs["steps"] == (calendar_step, fact_step)
+    steps = pipeline_factory.call_args.kwargs["steps"]
+    assert steps[:2] == (calendar_step, fact_step)
+    assert [type(step).__name__ for step in steps[2:]] == [
+        "CollectPublicationsStep", "MaterializeAnnouncementFactsStep", "FeatureBuildStep", "LabelBuildStep"]
     assert list(fact_step_factory.call_args.kwargs["sources"]) == [
         "daily_bar",
         "daily_basic",
@@ -647,9 +673,24 @@ def test_standard_fact_bootstrap_runs_only_calendar_and_standard_facts(
         DataContext(start="2019-01-01", end="2019-04-03")
     )
     assert [call.args[0] for call in logger.info.call_args_list] == [
-        "▶️ workflow; kind=data-standard-bootstrap start=2019-01-01 end=2019-04-03",
-        "✅ workflow; kind=data-standard-bootstrap start=2019-01-01 end=2019-04-03",
+        "▶️ workflow; kind=data-standard start=2019-01-01 end=2019-04-03",
+        "✅ workflow; kind=data-standard start=2019-01-01 end=2019-04-03",
     ]
+
+
+def test_standard_history_and_incremental_run_include_announcement_facts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pipeline = Mock(spec=DataPipeline)
+    factory = Mock(return_value=pipeline)
+    monkeypatch.setattr(workflow_module, "DataPipeline", factory)
+    run_offline_data(app_config=_app_config(), path_manager=cast("PathManager", object()),
+        submission=DataSubmission(kind="data-standard", start="2026-07-17", end="2026-07-21"))
+    assert [type(step).__name__ for step in factory.call_args.kwargs["steps"]] == [
+        "CalendarMaterializeStep", "FactMaterializeStep", "CollectPublicationsStep", "MaterializeAnnouncementFactsStep",
+        "RefreshCorporateActionsStep", "ResolveSecurityStatusStep", "FeatureBuildStep", "LabelBuildStep",
+    ]
+    pipeline.run.assert_called_once_with(DataContext(start="2026-07-17", end="2026-07-21"))
 
 
 def test_feature_backfill_resolves_targets_and_runs_only_one_feature_step(

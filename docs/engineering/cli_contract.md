@@ -7,7 +7,7 @@
 
 ## 通用边界
 
-CLI 把不可信文本解析为 `src.jobs.requests` 已构造的 data、fact bootstrap、Feature
+CLI 把不可信文本解析为 `src.jobs.requests` 已构造的 data、Feature
 backfill、Level-2 minute backfill、H03 14:30 backfill、H04 fusion backfill、training 或 backtest submission，
 加载一次 `AppConfig`，
 创建 `PathManager` 并调用一次工作流。HTTP Job API
@@ -51,7 +51,6 @@ override 拒绝和最终 schema 校验错误均归 `AppConfig.load()`，不在�
 
 ```text
 python -m src.cli data-calendar
-python -m src.cli data-standard-bootstrap --start YYYY-MM-DD --end YYYY-MM-DD
 python -m src.cli data-standard --start YYYY-MM-DD --end YYYY-MM-DD
 python -m src.cli data-level2 --start YYYY-MM-DD --end YYYY-MM-DD
 python -m src.cli data-level2-minute-backfill \
@@ -72,12 +71,11 @@ composition root 通过 `DateTimeUtils.today()` 取得一次 Asia/Shanghai 当�
 对象；不执行 fact、feature 或 label。命令成功时退出 `0`，配置、Tushare、normalize、
 Meta 或其他运行错误以 `1` 退出。命令不接受日期、年份、refresh 或其他参数。
 
-`data-standard-bootstrap` 是 CLI-only 的 Standard facts 冷启动入口。它的闭区间只表示显式
-请求的 calendar 与 Standard facts 范围，并发布同登记日的公司行动解析结果；workflow 不选择
-Feature/Label operation，也不根据 Feature lookback 隐式扩大范围。它构造
-`StandardFactBootstrapSubmission` 并只调用一次 `run_standard_fact_bootstrap`。范围内没有
-正式交易 session 时成功；任一正式交易日的 Standard fact 缺失或其他运行错误时退出 `1`。
-该命令不属于 HTTP Job API、cron 或日常 `data-standard`。
+`data-standard` 同时用于历史补齐和 cron 增量生产。显式闭区间内按交易日生产基础事实，
+按自然披露日（含周末）采集公告并物化结构化事实，随后更新相关公司行动和已配置派生集。
+历史补齐使用较长区间；不另设 Standard bootstrap 或公司行动准备、维护命令。早期公告
+缺比例或分母仍保存，事实缺口不是命令失败；网络、分页或持久化失败仍非零退出。
+冷启动的派生输入准备和配置边界见[workflow owner](../offline_workflow_contract.md#standard-历史补齐与日常生产)。
 
 `data-standard` 与 `data-level2` 构造不同 kind 的 `DataSubmission`，但都只调用一次固定的
 `run_offline_data` workflow，不接受 group、run ID 或实验身份。
@@ -98,6 +96,13 @@ Level-2 本地来源记录和压缩缓存。仍先按 AppConfig 要求提供 `EN
 `--apply --cleanup` 才按存储 owner 回收已匹配文件。日期限制同时约束转换和清理。
 未匹配分区保留并报告，不阻止其他已匹配分区；传输、无效 Meta 或写入错误非零退出。
 此命令不进入 Job API、cron 或日常 pipeline，不上传或修改网盘文件。
+
+公司行动 V1 一次性迁移入口为
+`python -m scripts.migrate_corporate_actions --source-root SOURCE --output-dir OUTPUT`。
+两个路径须为绝对路径，OUTPUT 必须尚不存在且与 SOURCE 互不包含；成功退出 0，参数
+错误退出 2，缺失输入、修正冲突或运行错误退出 1。命令不加载 AppConfig，不联网，不改动
+SOURCE，只生成隔离副本及报告。具体转换、保留证据和失败边界由
+[存储 owner](../data/storage_layout.md) 所有，不加入 Job API 或 cron。
 
 `data-level2-minute-backfill` 是 CLI-only 的两市股票一分钟事实历史回填入口。`start/end`
 闭区间只表示目标分钟分区；它构造 `Level2MinuteBackfillSubmission` 并只调用一次
@@ -240,7 +245,7 @@ order_refs 的内容是委托/撤单序列；quantity_rules 和 fees 仍在 exec
 
 | 对象 | 字段及构造约束 |
 | --- | --- |
-| initial_account | ts_us 整数、trade_date、非负有限 Decimal cash、positions 非负整数映射、sellable 同键映射且不超过持仓、average_cost 同键非负有限 Decimal 映射、非负有限 peak_equity；ts_us 必须早于模拟终点；distribution_entitlements 默认空数组，显式携带已登记未结清分红送转权益，字段和阶段约束由[公司行动 owner](../offline_workflow_contract.md#公司行动与非交易账户事件)定义 |
+| initial_account | ts_us 整数、trade_date、非负有限 Decimal cash、positions 非负整数映射、sellable 同键映射且不超过持仓、average_cost 同键非负有限 Decimal 映射、非负有限 peak_equity；ts_us 必须早于模拟终点；distribution_entitlements 默认空数组，携带分配与补偿权益阶段；registration_holdings 默认空映射，按历史日期保存持仓；corporate_action_issues 默认空数组，保存已有诊断。字段和阶段约束由[公司行动 owner](../offline_workflow_contract.md#公司行动与非交易账户事件)定义 |
 | execution | market_source；end_ts_us 整数、quantity_rules、fees、正数有限 annual_factor、fill；risk_check_ts_us 按模式约束如下 |
 | market_source | frequency 为 daily/minute；start、end 为规范日期且 start<=end；symbols 可省略，默认为 []；省略或空数组表示全市场，非空数组选择指定证券；代码须唯一且为六位沪深股票代码，范围沿用 Level-2 股票分类；不接受 null 或 universe 对象 |
 | quantity_rules | 必填 default 规则；可选 overrides 默认为 {}，以证券代码映射到完整替换规则；不接受旧的顶层逐证券映射 |

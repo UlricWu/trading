@@ -2,7 +2,6 @@
 """BSE collection must retain old-code evidence and reuse only complete source coverage."""
 
 from datetime import date, datetime, timezone
-from hashlib import sha256
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -38,7 +37,7 @@ def test_old_and_current_codes_are_queried_without_fabricating_an_identity(
         FileSystem.write_bytes_atomic(directory / "security-code-mapping.html", payload)
         FileSystem.write_bytes_atomic(directory / "security-code-mapping.request.json", b"{}")
         return (SecurityIdentity(symbol="920685", published_symbol="430685",
-            evidence_url="https://www.bse.cn/service/code_mapping.html", evidence_sha256=sha256(payload).hexdigest()),)
+            evidence_url="https://www.bse.cn/service/code_mapping.html", evidence_file="security-code-mapping.html"),)
 
     broker.security_identities.side_effect = identities
     broker.company_index.side_effect = [(SimpleNamespace(announcement_id="a" * 32),), ()]
@@ -64,8 +63,5 @@ def test_old_and_current_codes_are_queried_without_fabricating_an_identity(
     step.run(context)
     assert broker.company_index.call_count == 4
     assert AnnouncementCollection.model_validate_json(path.read_bytes()).query_scope["isNewThree"] == ""
-    archived, = (path.parent / "history").glob("*/announcements.json")
-    assert AnnouncementCollection.model_validate_json(archived.read_bytes()).query_scope["isNewThree"] == "1"
-    (path.parent / "security-code-mapping.html").write_bytes(b"modified alias evidence")
-    with pytest.raises(ValueError, match="request evidence changed"):
-        step.run(context)
+    assert not (path.parent / "history").exists()
+    assert (path.parent / "security-code-mapping.html").read_bytes() == b"official security-code mapping fixture"

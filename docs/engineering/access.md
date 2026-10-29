@@ -169,9 +169,22 @@ Access 不将事件集合变成盘前可知的可交易名单；如何解释日�
 
 `corporate_actions(record_date=...)` 读取 `corporate_actions/v1`，返回不可变的
 `CorporateActionResolution` tuple。校验持久化模型、登记分区、内外证券身份及候选唯一性；
+可执行处置保存完整普通 source_record 或已确认 review，unresolved 二者均为空。
+source_record 不能与同证券、同登记日的其他未关联候选同时作为普通单事件执行。
 同 action_id 的多个处置必须保存完全相同的 review、同一证券及完整 source 关联集合，
 缺失关联候选或冲突核验直接失败。Access 保留所有候选处置，不去掉重复事件所关联的来源，
-也不在读取时核验公告或选择版本；账户消费方按已验证的事件身份执行一次。未解决 disposition 与已核实事件一同返回。
+也不在读取时核验公告或选择版本；账户消费方按事件身份执行一次。普通来源、已核实事件
+与未解决 disposition 一同返回，review 为空不等于不可执行。
+
+`announcement_facts(publication_date, as_of_ts_us, observed_by_ts_us=None)` 返回该自然披露日
+可见的 `AnnouncementFacts` tuple，缺 Meta 返回 None，已提交但没有可见行返回空 tuple。
+读取校验原生公告唯一性、分区日期、外列与 facts 的事件身份、证券及两种时间一致性。
+`announcement_history(as_of_ts_us, symbols=None, observed_by_ts_us=None)` 读取截止该时点的
+已提交公告事实流；`announcement_events(...)` 调用来源领域的累计函数形成事件视图。
+两个接口均先过滤公开时刻，再按可选观察时刻过滤，之后才累计，不能从最终事件向过去
+回填字段。系统观察限制省略时表示公共信息历史视图，不声称当年该系统已经取得材料。
+累计视图保留缺项和冲突，适用于筛选、特征构建和账户投影；返回已有材料不等于证明
+所有历史日期覆盖完整，覆盖核对使用逐日接口。所有读取保持本地，不触发联网或正文解析。
 
 `corporate_action_notices(trade_date=...)` 读取同名 processed 数据集的补充公告，按事件生效
 所属账户日分区。每行包含 action_id、symbol、available_ts_us、effective_ts_us、kind、source_ref；
@@ -180,7 +193,7 @@ kind 为 cash_option、merger、delisting 或 other。两种时间分别表示�
 接受有依据的显式补充，不由 suspend_d 或日线缺口推断。它不是覆盖全市场公司行动的
 自动采集源；事件模型与是否影响账户由 workflow 校验和判断。
 
-上述接口只有 Meta 不存在时返回 None；已提交空表表示该对象没有返回记录。缺失的
+逐分区接口只有 Meta 不存在时返回 None；已提交空表表示该对象没有返回记录。缺失的
 corporate_actions 覆盖必须进入回测诊断，补充公告 None 则表示没有提供补充，不证明无其他事件。
 Meta、上游、payload 损坏及字段错误继续失败，不能捕获后改成空表。回测不触发网络补取。
 
@@ -312,7 +325,8 @@ schema 零行表。Access 不执行 14:30 universe、窗口、Feature 或 Label 
 `security_status(T)` 读取同日 `security_status/v1`，返回不可变的 SecurityStatus 序列。
 没有该补充对象时返回空序列，含义仅为没有已提交的补充核验，不证明原始状态正常。
 存在对象时验证 Meta、三列 schema、证券日唯一性、字段与分区身份，以及 schema metadata
-中的 stock_basic、suspend_d、reviews 摘要仍对应当前原始输入；任一失效立即失败。
+中的 stock_basic、suspend_d、reviews 路径是否分别指向规范的同日对象，并要求这些对象
+的 Meta 有效；身份或对象可用性不符立即失败，不计算内容摘要。
 公告证据、状态取值及可见时间由[数据源 owner](../data/source_contract.md#公告核验的证券状态)
 拥有，Access 不执行公告下载、条款提取、上市推断或行情填充。
 

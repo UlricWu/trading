@@ -4,8 +4,6 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from hashlib import sha256
-import json
 from pathlib import Path
 from types import MappingProxyType
 
@@ -121,13 +119,10 @@ def normalize_tushare(
 
     if target_name == "dividend":
         columns = ("ts_code", "symbol", "end_date", "ann_date", "div_proc", "imp_ann_date", "record_date", "ex_date",
-                   "pay_date", "div_listdate", "cash_div_tax", "stk_div", "source_row_id")
+                   "pay_date", "div_listdate", "cash_div_tax", "stk_div")
         if normalized_frame.empty:
             normalized_frame = pd.DataFrame({column: pd.Series(dtype="string") for column in columns})
         else:
-            source_rows = json.loads(raw_frame.to_json(orient="records", double_precision=15))
-            normalized_frame["source_row_id"] = [sha256(json.dumps(row, sort_keys=True,
-                separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode()).hexdigest() for row in source_rows]
             table_ops.require_columns(normalized_frame, columns, who="dividend")
             normalized_frame = normalized_frame.loc[:, columns].copy()
             normalized_frame["div_proc"] = normalized_frame["div_proc"].str.strip()

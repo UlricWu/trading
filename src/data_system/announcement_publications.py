@@ -1,12 +1,13 @@
 # filepath: src/data_system/announcement_publications.py
 """Publication-date facts used to discover new and revised corporate-action evidence."""
 
-from datetime import date
+from datetime import date, time, timedelta
 from pathlib import PurePosixPath
 import re
 from typing import Literal, Self
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StrictInt, model_validator
+from src.utils.datetime_utils import DateTimeUtils
 
 
 def is_distribution_evidence(title: str) -> bool:
@@ -16,8 +17,9 @@ def is_distribution_evidence(title: str) -> bool:
         assert is_distribution_evidence("关于相关公告更正的说明")
         assert not is_distribution_evidence("关于调整可转债转股价格的公告")
     """
-    return bool(re.search(r"分派|分配|分红|派息|转增|除权|除息|更正|补充|修订|取消|终止", title)
-        and not re.search(r"(?:回购(?:股份)?|转股|发行|授予|行权)价(?:格)?|律师|独立财务|激励计划|募集资金", title))
+    title = re.sub(r"[（(]已取消[）)]\s*$", "", title)
+    return bool(re.search(r"分派|分配|分红|派息|转增|转赠|除权|除息|重整|业绩.*补偿|更正|补充|修订|取消|终止", title)
+        and not re.search(r"(?:回购(?:股份)?|转股|发行|授予|行权)价(?:格)?|律师|独立财务|激励计划|募集资金|分红回报规划", title))
 
 
 class AnnouncementPublication(BaseModel):
@@ -37,6 +39,24 @@ class AnnouncementPublication(BaseModel):
     published_date: date
     published_ts_us: StrictInt | None = None
     url: str
+
+    @property
+    def available_ts_us(self) -> int:
+        """Use a verified publication instant or the next natural day's start.
+
+        Example:
+            visible = publication.available_ts_us <= decision_ts_us
+        """
+        return self.published_ts_us if self.published_ts_us is not None else (
+            DateTimeUtils.local_time_to_utc_epoch_us(time(), self.published_date + timedelta(days=1)))
+
+    @model_validator(mode="after")
+    def _validate_publication_time(self) -> Self:
+        if self.published_ts_us is not None and DateTimeUtils.to_local(
+            DateTimeUtils.from_utc_epoch_us(self.published_ts_us)
+        ).date() != self.published_date:
+            raise ValueError("exact publication time must match the local publication date")
+        return self
 
 
 class PublicationIndex(BaseModel):
@@ -64,43 +84,20 @@ class PublicationIndex(BaseModel):
 
 
 class PublicationCoverage(BaseModel):
-    """Bind a complete publication index to the exact observed public responses.
+    """Record index coverage and the observed public response locations.
 
     Example:
         coverage = PublicationCoverage.model_validate_json(path.read_bytes())
-        assert coverage.index_sha256 == sha256(index_path.read_bytes()).hexdigest()
+        print(coverage.index_count, coverage.observed_at)
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
-    index_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     index_count: int = Field(ge=0)
     observed_at: AwareDatetime
-    request_sha256: dict[str, str]
+    request_files: tuple[str, ...]
 
     @model_validator(mode="after")
     def _validate_evidence_paths(self) -> Self:
-        if any(PurePosixPath(name).name != name or not re.fullmatch(r"[a-f0-9]{64}", digest)
-               for name, digest in self.request_sha256.items()):
+        if any(PurePosixPath(name).name != name for name in self.request_files):
             raise ValueError("invalid publication query evidence identity")
         return self
-
-
-class CorporateActionMaintenance(BaseModel):
-    """Report publication discovery separately from the resulting candidate dispositions.
-
-    Unmatched publications are review work, not automatically confirmed distributions.
-
-    Example:
-        result = run_corporate_action_maintenance(path_manager=pm, publication_interval=interval)
-        print(result.affected_registration_dates, result.resolution_counts)
-    """
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-    version: Literal["v1"]
-    publication_start: date
-    publication_end: date
-    affected_registration_dates: tuple[str, ...]
-    unmatched_publications: tuple[AnnouncementPublication, ...]
-    resolution_counts: dict[str, int]
-    input_sha256: dict[str, str]
-    output_sha256: dict[str, str]

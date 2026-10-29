@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 from collections import Counter
 from collections.abc import Sequence
@@ -16,9 +15,10 @@ import pandas as pd
 from pydantic import BaseModel, ConfigDict, Field, FiniteFloat
 
 from src.access.feature_label import read_labels
+from src.training.artifact import load
 from src.training.engines.rank_ic import rank_ic
 from src.training.inference_model import InferenceModel
-from src.training.prediction import PredictionInputs, load_prediction_model, read_prediction_record
+from src.training.prediction import PredictionInputs, read_prediction_record
 from src.utils.filesystem import FileSystem
 from src.utils.path import PathManager
 
@@ -48,7 +48,6 @@ class ICObservation(BaseModel):
     ]
     prediction_ref: str | None = None
     label_ref: str | None = None
-    label_sha256: str | None = None
 
 
 class ICSummary(BaseModel):
@@ -85,7 +84,7 @@ class ICEvaluation(BaseModel):
 
 @dataclass(frozen=True, slots=True)
 class EvaluationLabels:
-    """Keep aligned label values with the exact source revision used to read them.
+    """Keep aligned label values with the concrete source object used to read them.
 
     Example:
         labels = read_evaluation_labels(pm=pm, inputs=inputs, model=model, predictions=rows)
@@ -94,7 +93,6 @@ class EvaluationLabels:
 
     values: np.ndarray
     ref: Path
-    sha256: str
 
 
 def evaluate_predictions(
@@ -128,7 +126,7 @@ def evaluate_prediction_record(ref: Path, *, pm: PathManager) -> ICObservation:
     """Evaluate saved predictions against the model's target without predicting.
 
     Labels are selected by the complete recorded keys and never change the input
-    population. Their content digest identifies this evaluation's label revision.
+    population. Their source reference identifies the selected label object.
 
     Example:
         observation = evaluate_prediction_record(
@@ -136,14 +134,14 @@ def evaluate_prediction_record(ref: Path, *, pm: PathManager) -> ICObservation:
         )
     """
     inputs, predictions = read_prediction_record(ref)
-    model = load_prediction_model(inputs)
+    model = load(inputs.model_ref)
     labels = read_evaluation_labels(pm=pm, inputs=inputs, model=model, predictions=predictions)
     observation = evaluate_predictions(
         model_ref=inputs.model_ref, decision_ts_us=inputs.decision_ts_us,
         predictions=predictions["prediction"].to_numpy(dtype=np.float64), labels=labels.values,
     )
     return observation.model_copy(update={
-        "prediction_ref": str(ref), "label_ref": str(labels.ref), "label_sha256": labels.sha256,
+        "prediction_ref": str(ref), "label_ref": str(labels.ref),
     })
 
 
@@ -151,7 +149,7 @@ def read_evaluation_labels(
     *, pm: PathManager, inputs: PredictionInputs, model: InferenceModel,
     predictions: pd.DataFrame,
 ) -> EvaluationLabels:
-    """Select labels by complete prediction keys and retain their source digest.
+    """Select labels by complete prediction keys and retain their source reference.
 
     Example:
         labels = read_evaluation_labels(pm=pm, inputs=inputs, model=model, predictions=rows)
@@ -173,11 +171,9 @@ def read_evaluation_labels(
     label_ref = pm.label_object(
         label_set=model.label_set, version=model.label_version, trade_date=inputs.trade_date,
     ).payload_path
-    with label_ref.open("rb") as source:
-        label_digest = hashlib.file_digest(source, "sha256").hexdigest()
     return EvaluationLabels(
         values=labels[model.label_column].iloc[positions].to_numpy(dtype=np.float64),
-        ref=label_ref, sha256=label_digest,
+        ref=label_ref,
     )
 
 

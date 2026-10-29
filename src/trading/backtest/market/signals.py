@@ -14,7 +14,7 @@ from src.jobs.requests import ModelSignalInput, RecordedSignalInput, SignalInput
 from src.trading.core.events import SignalEvent
 from src.training.artifact import load
 from src.training.inference_model import InferenceModel
-from src.training.prediction import load_prediction_model, read_prediction_record, save_prediction_record
+from src.training.prediction import read_prediction_record, save_prediction_record
 from src.training.record import TrainingRunRecord
 from src.utils.datetime_utils import DateTimeUtils
 from src.utils.path import PathManager
@@ -118,14 +118,13 @@ def _prepare_recorded_signals(
     signal: RecordedSignalInput, *, start: str, end: str,
 ) -> dict[int, _LoadedPrediction]:
     predictions: dict[int, _LoadedPrediction] = {}
-    models: dict[tuple[Path, str], InferenceModel] = {}
+    models: dict[Path, InferenceModel] = {}
     for ref in signal.prediction_refs:
         inputs, frame = read_prediction_record(ref)
         if not start <= inputs.trade_date <= end:
             continue
-        model_identity = (inputs.model_ref, inputs.model_sha256)
-        if model_identity not in models:
-            models[model_identity] = load_prediction_model(inputs)
+        if inputs.model_ref not in models:
+            models[inputs.model_ref] = load(inputs.model_ref)
         if frame["symbol"].duplicated().any():
             raise ValueError("one signal batch requires unique symbols")
         values = frame["prediction"].to_numpy(dtype=float)
@@ -138,7 +137,7 @@ def _prepare_recorded_signals(
         if event.ts_us in predictions:
             raise ValueError("signal decisions must have unique timestamps")
         batch = RecordedSignalBatch(inputs.trade_date, event, tuple(frame["symbol"]), ref)
-        predictions[event.ts_us] = _LoadedPrediction(batch, inputs.model_ref, models[model_identity])
+        predictions[event.ts_us] = _LoadedPrediction(batch, inputs.model_ref, models[inputs.model_ref])
     return dict(sorted(predictions.items()))
 
 

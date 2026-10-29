@@ -45,7 +45,7 @@ def test_access_requires_safe_processed_version(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("dataset,method,columns", [
     ("dividend", "dividends", ["ts_code", "symbol", "end_date", "ann_date", "div_proc", "imp_ann_date", "record_date", "ex_date",
-                               "pay_date", "div_listdate", "cash_div_tax", "stk_div", "source_row_id"]),
+                               "pay_date", "div_listdate", "cash_div_tax", "stk_div"]),
     ("corporate_action_notices", "corporate_action_notices",
      ["action_id", "symbol", "available_ts_us", "effective_ts_us", "kind", "source_ref"]),
 ])
@@ -66,7 +66,7 @@ def test_corporate_sources_distinguish_absent_empty_and_broken_committed_objects
 
 def test_dividend_partition_cannot_silently_move_registration_date(tmp_path: Path) -> None:
     pm = PathManager(tmp_path)
-    _write_processed_frame(pm, "2026-09-01", "dividend", pd.DataFrame({"ts_code": ["600000.SH"], "symbol": ["600000"], "ann_date": ["2026-08-01"], "source_row_id": ["0" * 64],
+    _write_processed_frame(pm, "2026-09-01", "dividend", pd.DataFrame({"ts_code": ["600000.SH"], "symbol": ["600000"], "ann_date": ["2026-08-01"],
         "end_date": ["2026-06-30"], "div_proc": ["实施"], "imp_ann_date": ["2026-08-20"],
         "record_date": ["2026-09-02"], "ex_date": ["2026-09-03"], "pay_date": ["2026-09-03"],
         "div_listdate": [None], "cash_div_tax": ["0.1"], "stk_div": [None]}))

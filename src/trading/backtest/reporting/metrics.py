@@ -5,7 +5,7 @@ from decimal import Decimal
 
 from typing import Literal, Self
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from src.config.backtest_config import BacktestMode, RiskConfig
 from src.trading.backtest.market.replay import MarketDataIssue
@@ -35,6 +35,9 @@ class AccountResult(BaseModel):
     pending_order_ids: tuple[int, ...]
     dividend_receivable: Decimal = Decimal(0)
     distribution_entitlements: tuple[DistributionEntitlement, ...] = ()
+    shares_receivable_value: float = 0.0
+    registration_holdings: dict[str, dict[str, int]] = Field(default_factory=dict)
+    corporate_action_issues: tuple[CorporateActionIssue, ...] = ()
 
 
 class MarketDataQuality(BaseModel):
@@ -71,6 +74,7 @@ class CorporateActionSummary(BaseModel):
     registered_count: int
     gross_cash_paid: Decimal
     shares_received: dict[str, int]
+    compensation_floor_count: int = 0
 
 
 class BacktestMetrics(BaseModel):

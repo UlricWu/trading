@@ -125,19 +125,19 @@ def test_data_calendar_bootstraps_through_the_current_market_year(
     assert isinstance(arguments["path_manager"], PathManager)
 
 
-def test_standard_fact_bootstrap_passes_one_validated_explicit_range(
+def test_standard_historical_range_uses_the_daily_workflow(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     config = SimpleNamespace(storage_root=tmp_path)
     workflow = Mock()
     monkeypatch.setattr(cli.AppConfig, "load", Mock(return_value=config))
-    monkeypatch.setattr(cli, "run_standard_fact_bootstrap", workflow)
+    monkeypatch.setattr(cli, "run_offline_data", workflow)
 
     result = CliRunner().invoke(
         cli.app,
         [
-            "data-standard-bootstrap",
+            "data-standard",
             "--start",
             "2019-01-01",
             "--end",
@@ -534,7 +534,10 @@ def test_backtest_preserves_run_date_and_logged_parameters_in_the_persisted_resu
         trade_dates=Mock(return_value=['2026-07-01']),
         daily_bars=Mock(return_value=pd.DataFrame({'symbol': ['600000'], 'close': [10.0], 'vol': [100.0]})),
         corporate_actions=Mock(return_value=()),
+        announcement_history=Mock(return_value=()),
         corporate_action_notices=Mock(return_value=None),
+        security_status=Mock(return_value=()),
+        suspensions=Mock(return_value=pd.DataFrame({"symbol": [], "suspend_type": [], "suspend_timing": []})),
     )))
     result = CliRunner().invoke(cli.app, ["backtest", "--mode", "risk_rule_eval",
         "--experiment-id", experiment_id, "--input-json", json.dumps(fields)])
@@ -652,7 +655,7 @@ def test_empty_runtime_schedule_propagates_as_exit_code_1(
             "2026-03-01",
         ],
         [
-            "data-standard-bootstrap",
+            "data-standard",
             "--start",
             "2019-04-02",
             "--end",

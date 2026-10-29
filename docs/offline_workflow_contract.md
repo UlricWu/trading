@@ -17,12 +17,8 @@ run_trade_calendar_bootstrap(
 
 run_offline_data(
     *, app_config: AppConfig, path_manager: PathManager,
-    submission: DataSubmission,
-) -> None
-
-run_standard_fact_bootstrap(
-    *, app_config: AppConfig, path_manager: PathManager,
-    submission: StandardFactBootstrapSubmission,
+    submission: DataSubmission, review_refs: Sequence[Path] = (),
+    identity_refs: Sequence[Path] = (),
 ) -> None
 
 run_feature_backfill(
@@ -225,7 +221,7 @@ ArtifactPersistStep, MetricsPersistStep, ReportStep,
 PrepareReplaySessionsStep, PrepareReplaySymbolsStep, BuildDailyReplayInputStep, BuildMinuteReplayInputStep,
 PrepareInputsStep, PrepareCorporateActionsStep, PrepareInitialMarksStep, InitializeAccountStep,
 UpdateMarketStep, UpdateDistributionTermsStep, ApplyDistributionsStep, ReleaseDistributedSharesStep, ObserveCorporateActionIssuesStep,
-AdvanceOrdersStep, ValueAccountStep, RecordEntitlementsStep, PayDividendsStep,
+AdvanceOrdersStep, ValueAccountStep, RecordEntitlementsStep, CreditCompensationSharesStep, PayDividendsStep,
 GenerateSignalStep, GenerateTargetsStep, ApplyRiskStep, SubmitTargetsStep, SubmitFrozenCommandsStep,
 CompleteRiskObservationStep, ScheduleWakeupsStep, FactsPersistStep, EvaluateResultsStep, PublishResultsStep
 ```
@@ -283,15 +279,15 @@ Tushare manifest 是受代码审查的执行清单，不通过配置、Broker �
 动态展开。Level-2 配置则只表达文件 identity、启停和输出映射。除 calendar 外的所选
 source 在 workflow 准备阶段转换为完整 `SourceConfig`，Standard 绑定到
 `FactMaterializeStep`，Level-2 绑定到 `Level2FactMaterializeStep`；固定的 Tushare calendar 由 `CalendarMaterializeStep` 按年度对象
-直接承担。Standard 选中 dividend 时，在 Fact 之后组装
-`ExtractDistributionTermsStep → ResolveCorporateActionsStep`，从已提交的本地公告及显式复核
-生成核验和 corporate_actions/v1，再继续 Feature/Label；没有公告集合时保留未采集提示，
-仍消费已有显式核验。公开采集由具名公告数据 workflow 按显式自然日范围执行，不在交易
-回放中发起网络请求。解析规则
-与核验事实由[数据源 owner](data/source_contract.md#dividend)定义。
+直接承担。Standard 在基础事实后采集自然日公告并物化 `announcement_facts/v1`；选中 dividend
+时通过 `RefreshCorporateActionsStep` 从 dividend 解析普通事件、优先应用已确认修正，刷新
+公告涉及的原登记日。采集成功不表示每份 PDF 都具备完整账户事实，缺项保持明确状态。
+没有某一事件的公告不阻止可信 dividend 记账；已提交修正的来源绑定仍须有效，不能因它
+是补充来源而忽略损坏。回放只读本地数据，不发起网络请求。具体来源语义归
+[数据源 owner](data/source_contract.md#dividend)。
 Standard 同时选择 stock_basic、suspend_d 时，还在 Fact 之后组装
 `ResolveSecurityStatusStep`，发布已提供的本地证券状态核验；没有核验输入的日期不补造状态。
-Standard bootstrap 使用相同事实派生顺序。
+历史补齐与日常范围使用相同事实生产顺序。
 
 每个 Fact Step 的所选 source 属于同一个 broker。Workflow 拥有 source 非空、source family
 选择和具体执行依赖的绑定。Workflow 在对应 source family 分支直接引用具体 broker class
@@ -388,8 +384,8 @@ Feature/label builder、Access 和 private 发布函数不记录运行日志。�
 Calendar 的 `_materialize_year` 无返回值；各 Step 的 `run` 返回原 `DataContext`。
 调度、计算或发布错误原样传播，失败分区不输出结果日志，也不追加重复错误日志。
 
-Standard 的显式 step 顺序固定为 calendar materialize → fact materialize → corporate actions resolve
-（选中 dividend 时）→ feature build →
+Standard 的显式 step 顺序固定为 calendar materialize → fact materialize → 公告自然日索引采集
+→ 公告事实表物化 → 原登记日公司行动刷新（选中 dividend 时）→ security status resolve（同时选中 stock_basic、suspend_d 时）→ feature build →
 label build，derived operation 来自 enabled 配置。Level-2 固定为 calendar materialize →
 `Level2FactMaterializeStep` → `Level2MinuteBuildStep` → `Stock1430DailyMaterializeStep`。每个 Step
 完成整个请求范围后才进入下一 Step，Pipeline 只执行 workflow 传入的单一 tuple，不知道
@@ -421,27 +417,35 @@ session，不执行分钟或 H03 输入读取。该日常链不生成 H04 融合
 `processed/stock_st/v1/trade_date=2019-04-01/data.parquet` 及同目录 `meta.json`，不得跳过
 normalize 或把 processed 对象留作缺失。成功对象必须先发布 payload 再提交 Meta；
 Meta reuse、lineage、Level-2 symbol slices 与 staging/raw 选择继续由各 producer owner 负责。
-Calendar bootstrap、Data、Standard fact cold-start、Feature backfill 与 Level-2 minute
+Calendar bootstrap、Data、Feature backfill 与 Level-2 minute
 backfill workflow 保留 `▶️ workflow` 和成功后的 `✅ workflow` 业务日志；Training 和
 Backtest workflow 不新增 workflow 边界日志。
 
-## Standard fact cold-start workflow
+## Standard 历史补齐与日常生产
 
-`run_standard_fact_bootstrap` 是 CLI-only `data-standard-bootstrap` 的唯一 workflow，直接消费
-已校验的 `StandardFactBootstrapSubmission(start, end)`。闭区间精确表示调用方要求写入的
-calendar 与 Standard facts，不表示 Feature 目标范围。Workflow 不读取 Feature/Label 配置，
-不从 builder 读取 lookback，也不隐式扩大日期范围。
+所有 Standard 数据（包括公告索引、原文解析后的事实表及公司行动）统一由
+`run_offline_data(kind="data-standard")` 生产。历史补齐和日常 cron 的区别是请求日期范围，
+不是数据所属 workflow；不再保留单独的 Standard bootstrap、公司行动 preparation 或 maintenance 入口。
+PDF 是源格式，不决定数据应在哪个入口生产：它提供的已公开事件事实既供账户使用，也可
+作为股票筛选或特征构建的输入，因此应与其他标准事实共享生产和查询边界。
 
-Workflow 与 Standard data workflow 使用同一个 Tushare active manifest 解析规则、同一个
-固定 calendar source、相同 broker/normalize 绑定和相同 lazy adapter cache 语义。它从收到
-的 `PathManager` 创建唯一 Access，显式组装 calendar materialize → fact materialize，选中
-dividend 时再组装 resolve corporate actions，并调用一次 `DataPipeline.run()`。Calendar、fact、Meta reuse、缺失日期、空正式 session
-集、日志与部分提交后的重跑语义和 Standard data workflow 完全相同；不组装 Feature 或 Label
-Step，不写 Feature/Label、experiment 或 Job 状态。
+| 场景 | 同一入口的范围 | 处理结果 |
+| --- | --- | --- |
+| 历史补齐 | 显式较长 `start/end` 闭区间 | 交易日基础事实、自然日公告、原登记日处置及已配置派生任务 |
+| 日常 cron | 上游已就绪的自然日或补跑区间 | 同一链路，休市日仍更新公告；交易日事实继续按日历筛选 |
+| 已确认修正或历史定向重跑 | 显式日期范围，可提供 `review_refs/identity_refs` | 保留确认材料，刷新受影响原登记日，不创建第二个业务入口 |
 
-Workflow 的 Instrumentation identity 固定为
-`data-standard-bootstrap_{start}_{end}`。进入执行时记录 `▶️ workflow`，成功返回后记录
-`✅ workflow`，两条日志的 `kind` 均为 `data-standard-bootstrap`。错误原样传播。
+公告索引不以已有 dividend 候选或当时股票池过滤。`MaterializeAnnouncementFactsStep` 将早期
+不完整披露写入 `announcement_facts/v1`；`RefreshCorporateActionsStep` 是链内步骤，负责已有
+登记分区的证据关联与重建，不是可独立调度的 workflow。自然日索引查询失败保留重试标记；
+网络、分页、持久化失败使任务失败，已完成分区保留。事实尚未披露与 PDF 解析错误分别保存，
+不能以“所有事件已可记账”作为标准数据生产成功条件。
+
+历史区间不自动扩大。冷启动若尚无 Feature 的历史 lookback，可先在配置中不启用派生集，
+用同一入口补齐输入，再针对目标范围生产派生数据；已有专用 Feature/Level-2 backfill 仍由
+各自 owner 定义。启用派生集时沿用其必要输入和成熟条件，缺失不能伪造成功或填零。
+新公告可刷新范围外的原登记日，这是处理该次公开事实的依赖，不是把后来的条款倒写到历史。
+补充后的历史回放仍按每项事实的公开时间选择版本；以前的估值或数量缺口不能被最终结果抹去。
 
 ## Feature backfill workflow
 
@@ -752,11 +756,13 @@ PredictionStep 加载这个具体已发布 ref 一次，按每个 EvaluationDay 
 顺序读取评价 Feature，保留全部原样本键，调用同一 predict，然后写入 workflow 指定的
 逐日路径。保存位置由本次运行拥有，不从模型 ref 隐式推断；不同日期分别保存，不能覆盖
 前日记录。全部预测完成后才进入标签评价。正常无预测行也保留，NaN 写为 Parquet null。
-公共 `save_prediction_record` 同时保存模型字节及实际同序 Feature 表的 SHA-256，
-metadata 由 `PredictionInputs` 定义；这只检测材料变化，不复制历史输入或证明历史可用。
+公共 `save_prediction_record` 保存具体模型 ref、交易日、决策时点及原始样本键，
+metadata 由 `PredictionInputs` 定义。模型 ref 已由禁止覆盖的发布契约建立稳定身份，
+其 Feature/Label 身份由模型保存；同一明确引用按可信输入使用，不额外检测文件内容变化。
 `verify_prediction_record(ref, pm=...)` 重新读取所声明分区，以完整原键选择原顺序，
-核对输入及模型摘要，再严格比较等长 float64 预测（包括 NaN 位置）；失败不重写原记录。
-输入和代码/环境保持可恢复仍是任务责任，不将摘要解释成数据归档。
+再严格比较等长 float64 预测（包括 NaN 位置）；失败不重写原记录。去掉内容摘要不移除
+身份、schema、样本键、模型训练日期或标签成熟约束；历史可见性由时间规则建立，摘要
+既不证明历史可用，也不能恢复输入。输入和代码/环境保持可恢复仍是任务责任。
 
 ICEvaluateStep 遍历窗口的逐日 prediction_ref，通过共用 `evaluate_prediction_record` 读取实际
 落盘预测，随后读取模型自身标签身份及列对应的 Label。按完整键选取记录对应的标签并保持
@@ -782,8 +788,8 @@ TrainingPipeline 每次 run 新建 Context，观察不泄漏到另一运行；�
 每项观察字段为 model_ref、decision_ts_us、input_count、no_prediction_count、
 missing_label_count、value、pair_count、undefined_reasons。其中 missing_label_count 只计
 有预测但缺标签的行，满足 input_count = no_prediction_count + missing_label_count + pair_count。
-从持久化预测产生的观察还包含 prediction_ref、label_ref 和 label_sha256，明确本次评价
-采用的预测及标签修订；直接评价内存数组时三者为 None。标签改变会产生另一评价事实，
+从持久化预测产生的观察还包含 prediction_ref、label_ref，明确本次评价
+采用的预测及标签对象；直接评价内存数组时两者为 None。重新评价生成相应评价事实，
 不会改变已保存的预测。
 
 Metrics JSON 有 observations 与 summary 两项。Summary 精确包含 date_count、
@@ -820,9 +826,9 @@ ReportStep 的结束摘要必须包括实际训练日期、拟合样本数、特
   输出“评估 MAE − 训练 MAE”和“评估 RMSE − 训练 RMSE”。训练误差是拟合内误差，
   差距也可能来自样本分布变化，不能单凭差值宣布过拟合或模型可上线。
 
-报告读取评价标签时复用 IC 评价的完整键对齐，并核对标签路径与内容摘要仍属于 metrics
-记录的同一修订；预测中的模型引用、模型摘要及决策时点必须与所报告的模型和观察一致。
-发现材料不一致时失败，不能混合旧 IC 与新标签误差。评价误差只使用已保存的预测，
+报告读取评价标签时复用 IC 评价的完整键对齐，并核对标签路径属于 metrics
+记录的同一对象；预测中的模型引用及决策时点必须与所报告的模型和观察一致。
+身份不一致时失败。同一引用内容遵循上述可信输入前提，不加入文件变化检测。评价误差只使用已保存的预测，
 不重新预测评价集。报告保留模型完整来源、逐日观察、无值原因和覆盖率；数学无定义在
 HTML 和日志均显示“无值”，不补零或隐藏。
 
@@ -889,7 +895,8 @@ tick_steps，逐时点执行:
   → ObserveCorporateActionIssuesStep → AdvanceOrdersStep → ValueAccountStep
   → 信号路径：GenerateSignalStep → GenerateTargetsStep → [ApplyRiskStep] → SubmitTargetsStep
     或冻结委托路径：SubmitFrozenCommandsStep
-  → RecordEntitlementsStep → PayDividendsStep → ObserveCorporateActionIssuesStep
+  → RecordEntitlementsStep → CreditCompensationSharesStep → ReleaseDistributedSharesStep
+  → PayDividendsStep → ObserveCorporateActionIssuesStep
   → ValueAccountStep → [CompleteRiskObservationStep] → ScheduleWakeupsStep
 
 result_steps:
@@ -1103,8 +1110,8 @@ portfolio/execution_eval 给出，是该路径的运行代价和背景，不声�
 strategy_eval、risk_rule_eval 和 full 的 `prepare_signals` 在返回前对每个模型的首次实际选中决策应用
 同一训练记录及成熟下界，
 并检查全部决策满足 `initial_account.ts_us <= decision_ts_us < execution.end_ts_us`。
-准备期间每份预测记录只读取一次，同一模型路径及内容摘要复用已加载模型；每份记录声明的
-模型身份仍须匹配，不能仅按路径复用而忽略不同摘要。PrepareInputsStep 消费该准备函数
+准备期间每份预测记录只读取一次，同一具体模型 ref 复用已加载模型；每份记录声明的
+模型引用、交易日和决策时点仍须与记录行匹配。PrepareInputsStep 消费该准备函数
 返回的批次，不追加模型使用或模拟区间校验；这些约束由同一准备边界建立，避免同一可信
 调用链重复读取和核验。
 预测缺失是合法无信号，非法数值或身份错误不是无信号。Threshold/TopK 对缺分数的已有
@@ -1351,7 +1358,8 @@ execution 中提供以下字段；其他账户、决策和执行参数照常提�
 
 公司行动不会产生模拟买卖成交。2026-10-16 用户确认按税前分红记账并在报告明确标注，
 本轮直接采用以下分红送转回放语义；红利税不混入交易佣金，也不宣称真实税后收益。
-输入使用本地已解析的 `corporate_actions/v1`，由 Access 按股权登记日读取；
+输入使用本地 `corporate_actions/v1` 以及按公开时间过滤的 `announcement_facts/v1` 事件流；
+普通 dividend 和已确认修正继续优先，公告流补充尚未进入登记日处置的事件；
 原始来源、公告核验、事件归并和数据版本归
 [数据源 owner](data/source_contract.md#dividend)，已提交对象读取归
 [Access owner](engineering/access.md#corporate-actions)。
@@ -1365,53 +1373,135 @@ owner 使用 `adj_factor`，价格转换与 as-of 锚点由[价格复权契约](
 不能直接代表红利到账后留作现金的账户路径。复权因子及原价与复权价的比值不能唯一确定
 现金和送转股份的构成，也不提供本账户的权益资格、到账时刻或股份可卖时间；两种价格的
 差额还受累计复权与锚点影响，不能直接记为应收红利。因子可辅助核对价格调整，不能替代
-分配事件事实，当前公告核验要求仍由数据源 owner 定义。
+分配事件事实，普通来源准入和公告补充规则由数据源 owner 定义。
 
 账户权益统一按以下关系计算，`raw_mark` 表示未复权口径下当前可见的估值价格，包括下述
 尚无新行情时使用的临时除权参考价：
 
 ```text
-equity = cash + Σ(positions[symbol] × raw_mark[symbol]) + dividend_receivable
+equity = cash + Σ(positions[symbol] × raw_mark[symbol]) + dividend_receivable + shares_receivable_value
 ```
 
 送转股份进入 positions；其是否已上市可卖属于独立的 sellable 约束。已确认应收计入权益，
 到账前不属于可用现金；支付时应收转为现金，不再次增加权益。
 
-准备、条款更新、权益登记、除权生效、现金到账分别由独立 Step 承担，日频和分钟复用同一账户计算。
-账户适用范围为二级市场普通流通股持有人，不默认取得指定大股东、回购专户或重整投资人资格：
+准备、条款更新、权益登记、权益确认、股份到账、现金到账分别由独立 Step 承担，日频和分钟复用同一账户计算。
+以下除权日确认及非整数拒绝规则适用于普通分红送转；补偿使用本节后述独立阶段，不套用除权门槛。
+账户适用范围遵循[数据源 owner 的合资格普通流通股持仓定义](data/source_contract.md#从来源记录到业务事件)；
+按登记日收盘持仓计算各事件的实际净权益，买入日期本身不构成资格或数量证明：
 
-- `PrepareCorporateActionsStep` 读取已解析事件及未解决 disposition，只编译登记、生效、支付、
-  上市和公告修订日程，不再按源行创建权益或在此选择最新源行。公告证明多个候选属于
+- `PrepareCorporateActionsStep` 读取已解析事件、未解决 disposition 与当期可见的公告事实版本，编译登记、生效、支付、
+  上市和条款修订日程；可执行普通来源与已核验事件共用账户阶段，不在此重新选择源行。
+  对数据源 owner 已允许的普通纯送转，将来源空现金转换为 Decimal 零现金条款；
+  source_resolutions 中的源行仍保留 null，pay_ts_us 为空，不产生现金应收或现金支付阶段。
+  此转换不提前条款公开时间，不改变送转确认与股份上市阶段，也不覆盖已确认修正。
+  公告证明多个候选属于
   同一事件时，保留全部来源处置，按 action_id 只编译一份事件和修订日程。数据覆盖缺失与明确空对象
-  不同，缺失记入诊断；损坏对象和非法字段仍失败。输入摘要和全部解析 disposition 随制品保存。
-  续跑还读取初始未结清权益所引用的登记日分区，只纳入已有权益对应的事件，确保跨区间
-  修订仍按公开时间应用，不因登记日早于行情起点而丢失修订，也不据此补登记其他权益。
+  不同，缺失记入诊断；损坏对象和非法字段仍失败。实际消费的完整解析 disposition 随制品保存。
+  续跑读取初始权益（含已完成阶段）引用的登记日分区。公告流按每个公开时点形成累计视图，
+  缺登记日的事件仍留在事实层；登记日明确后可固定资格，即使除权日、比例或结算日未知。
+  与已有同证券同登记日处置重叠时不另建账户事件；已确认关联优先，特殊事件缺关联时报告
+  announcement_account_link_pending，不能仅按同公司或最新日期推断两条来源相同。
 - `UpdateDistributionTermsStep` 在除权处理之前，将当前已公开版本放入本次运行的账户状态；
   同一事件的修订只更新条款，保留已登记股数，不重新登记或重新到账。未来版本只存在于
   准备日程，不进入此前的账户状态或决策。每次实际更新保留 terms_updated 事实。
 - `RecordEntitlementsStep` 在登记日收盘全部成交及当前提交完成后固定权益数量。登记不
   立即增加净值；含权价格仍包含这份权利。卖出后已登记的红利不会消失。登记只固定股数，
-  不把本次已知分配比例冻结成不可修订的事实；明确普通股东不获分配的事件不登记权益。
+  不把本次已知分配比例冻结成不可修订的事实，也不要求待定比例已经确定。只要当时可见
+  的安排明确该类持仓参与分配，就保存 eligible_qty；明确普通股东不获分配的事件不登记权益。
 - `ApplyDistributionsStep` 在除权日账户日起点确认应收税前红利、增加送转股份并分摊原
-  持仓总成本。`ReleaseDistributedSharesStep` 在来源声明的上市日首个交易窗口起点解锁
+  持仓总成本；当时仍有待定金额或比例时，保留登记股数和 pending_distribution_terms，
+  不把未知当作零权益，也不产生未经确认的应收或股份。后续版本可见后，在首次处理时按
+  已固定的登记股数确认尚未确认的权益，记录当前时刻，不能回填为此前已经持有。
+  这沿用现金和送转作为同一次权益确认的原有边界，不为待定项新增估值假设。
+  `ReleaseDistributedSharesStep` 在来源声明的上市日首个交易窗口起点解锁
   新股份，与普通买入 T+1 分开，关闭 T+1 也不能提前解锁。到除权时才按当时可见的最终
   条款检查送转数量；非整数结果没有可靠零碎股分配事实时不猜取整，该项分配暂不确认、
   不支付也不解锁，并保留已登记股数和诊断；不凭本账户推断全市场随机派股。
+  后续首次确认时上市时点已过，则在本次确认后释放股份；既不要求再次经过过去的上市
+  时点，也不把新增股份提前加入可卖数量。重复执行确认、释放及支付均不重复记账。
 - `PayDividendsStep` 在支付日收盘、交易与决策完成后，将应收红利转入可用现金。数据只
   有支付日期，没有券商实际入账时刻，因此采用这个明确、偏晚的可用时间假设，不能
-  宣称还原当日盘中资金可用性。净值在除息时已确认应收，到账不重复增加收益。
+  宣称还原当日盘中资金可用性。净值在权益确认时已计入应收，到账不重复增加收益。
+  因金额待定而未确认的事件，若条款补齐时支付时点已过，在本次权益确认后的支付阶段
+  转入现金，保持该阶段位于当前决策之后的顺序；记账时刻为当前处理时刻，不倒写过去。
   权益金额使用每股税前红利乘以登记股数的 Decimal 精确结果，不另模拟券商到分取整。
   例如江波龙 2026-06-01 登记的合并分配，每股税前 0.9907442 元，公告明确实际到账
   不足分舍尾；100 股在本模型为 99.07442 元，按该公告结算为 99.07 元，相差 0.00442 元。
   每股条款核验通过不表示已经复现券商结算精度，不能因此修改源比例。原文与受控记账
   见[合并分配验证](/home/wsw/app/maintenance-evidence/backtest-coverage-20261018-xncht91n/new-cash-bindings-pipeline-result.json)。
 
+所有事件共用资格持仓快照。登记截止固定资格，不是确认到账。RecordEntitlementsStep 在收盘成交及提交完成后保存 registration_holdings，
+覆盖全部已走过收盘的实际持仓（空持仓同样保存），不依赖未来是否出现公司行动公告；续跑快照
+及结果携带这些日期快照。同一收盘时刻续跑或重复处理不得以到账后的持仓覆盖已固定的
+资格快照。后来明确历史资格日时，UpdateDistributionTermsStep 在该版可见
+后读取对应快照，并在当前时刻记录资格；缺少日期快照为 missing_registration_holdings，
+不能用当前持仓、未来持仓或默认零代替。初始快照不得携带未来收盘。
+
+普通分配在登记后仍缺除权日时保持待处理；已知除权日到达且当时可见金额明确才确认权益。
+支付日或上市日未披露不拒绝已知权益，保留应收及不可卖股份，直到相应日程公开。
+未知参考价不拒绝事件，按实际暴露和行情记录估值缺口；普通公式假设仅用于普通分配，不能
+套用于重整。新披露的阶段日期仅在公开之后触发，不能产生早于公开时间的处理时钟。
+已确认权益的现金/股份变更、已支付或解锁日期更正要求独立账户调整，不覆盖旧账。
+
+补偿按来源 kind=compensation 执行。conditional 不确认确定资产，本模型不估算或有权利的概率价值；
+cancelled 不到账。confirmed 且资格登记已经完成、金额明确时确认应收现金或待到账股份；登记收盘先固定
+持仓再确认，不等待下一次行情或条款更新，允许之后的同日到账步骤继续执行。金额待定仍报告
+pending_distribution_terms。确认不要求支付或可卖日期已经公开。待到账股份不进入 positions
+或 sellable，shares_receivable_value 按本模型获配整股数与当时可见同证券价格计算。
+这是待到账权益的估值假设，不是已收到可交易股票。没有资格截止后的可见价格时记录
+missing_compensation_mark；有旧价时沿用并保留诊断，没有价格时保留未估值缺口，不能宣称净值完整。
+未支付现金或未到账股份的已确认数量发生更正时，UpdateDistributionTermsStep 在当前公开
+时点记录 entitlement_revised 和应收差额，不改写旧净值；已结算部分不支持自动冲销。
+已经完成的支付、到账或可卖日期也不能被后续版本静默改写，须提供独立账户调整。
+例如融捷股份 2018 年先确认 3,910.79 万元补偿，07-10 公告增加至 4,053.53 万元，应保留
+原应收与公开后的增额，而不是把最终每股数提前至首次确认。
+
+CreditCompensationSharesStep 在已公开到账日的收盘交易和决策之后，将应收股份转为
+positions，保持已有持仓总成本，不生成成交；ReleaseDistributedSharesStep 只有在股份
+已到账且已到公开的上市或解除限制时间后才释放。上市日早于到账日时，实际释放随到账
+推进，不因上市日期已过而提前增加可卖股数。上市日已经过去、数量已经确认，但到账日
+仍未知的正数应收股份，保留 pending_compensation_credit 诊断；它说明可用持仓历史尚不完整，
+不否定源事件已经确认。没有确定到账日时继续列为应收，不能从预计区间或管理人账户
+过户记录推定普通账户到账。迟到日程按 max(阶段时间, 版本可见时间) 的首次账户处理推进，
+实际处理记在当前时刻，不改写此前净值或可卖数量。现金沿用应收转现金的支付步骤。
+实际到账日期晚到时保留 late_compensation_settlement 诊断，说明公告可见前的可用资金或股份
+没有被完整还原；后续补齐不使这段历史变为已验证收益。
+到账只转移资产类别，不重复确认收益；普通分配与补偿均保留已完成权益记录，防止后续公告或
+恢复运行后重复登记、支付或入股。`corporate-actions.json.entitlements` 保存完整阶段状态；
+`outstanding_entitlements` 仅用于查看未结清项，不能单独充当恢复快照。完成公告只增加新增事实，已知实施日程无需逐笔等待完成公告。
+例如坚瑞沃能已知每股净获配 0.05 股但只有预计到账区间时，10,000 股资格持仓确认
+500 股待到账权益，positions 和 sellable 仍为 10,000 股。海航基础司法定向分配明确
+登记日入股、之后上市时，按相同阶段模型分别增加持仓与可卖数量；登记持仓先固定，
+不能用新增后的持仓再算一轮权益。两例的来源关联及确定日期归数据源 owner。
+
+补偿赠股的 theoretical_shares_qty 按已确认公式计算；有实际账户获配结果时使用
+actual_shares_qty，否则按向下取整的明确回测假设得到模型整股数。公式采用原始整数分子、
+分母直接整除，避免先舍入比例导致整股误差；普通分红送转既有非整数处理不改变。
+确认事实保存理论尾数、模型获配数和 allocation_basis（account_result 或 floor_assumption），
+没有发生取整的计算标为 exact。报告按事件身份统计使用取整假设的事件数，同一事件
+后续改额不重复计数，续跑仍保留该假设，不把它们表述为逐账户真实结算已复现。
+茂业商业 10,000 股对应理论 335.216861… 股，本模型计 335 股，实际结算可能为 336 股。
+单次股份差异至多一股的边界不保证后续交易与风控路径误差仍如此小。
+应收估值与到账一致采用该模型整股数，因此到账不会再次产生收益或隐式丢弃尾数资产。
+
 有原始公开索引支持的精确发布时间时，按 published_ts_us 唤醒并暴露该版条款；仅有公告日期时，以该日期结束后的下一自然日 00:00 作为明确的延后可见假设；若此时
 没有账户 session，在下一个已准备账户日开始应用。它不是对真实披露微秒的声明，不能
-用文件落款或本次采集时间伪造盘中可见性。首次产生权益的计划需要先于登记可见；
-后续现金或股份修订允许登记后可见，但必须在除权前已披露。登记数量与条款版本分别保存。
-有精确发布时间的参考参数更正可以晚于除权起点：仅当该事件的临时参考价仍是当前估值来源，
-才从保存的原含权基价重新计算；不能在上一次已扣减价格上再次除权。真实行情已替代该参考价，
+用文件落款或本次采集时间伪造盘中可见性。普通分红送转首次分配安排需要在登记时已经可见，登记数量
+与条款版本分别保存；允许的待定项补齐及已知值修订边界由数据源 owner 定义。后续公告
+可以补齐同一历史事件的最终事实，但不能让此前账户状态、策略或风控读取该未来数值。
+数据不足期间已经产生的公司行动诊断持续保留，即使最后已经完成结算，整段结果仍标为
+diagnostic_only；最终余额得到补齐不证明期间净值、交易决策和可卖数量已完整还原。
+待定权益及其诊断随初始账户快照续跑，后续补齐不重新取当前持仓，也不重复登记。
+雅博与安通的[真实日线回放证据](/home/wsw/app/maintenance-evidence/corporate-actions-pending-20261025-8q2nukd4/replay/results.json)
+覆盖完整运行、重复运行以及登记后和待定阶段的续跑，输入、执行请求与
+[对应代码](/home/wsw/app/maintenance-evidence/corporate-actions-pending-20261025-8q2nukd4/validated-code)
+一并保留。雅博的 500,000 股模型持仓按后续公开比例确认 613,029 股，确认与释放均发生在
+2022-01-07 首次可见时点，不倒写到 01-06；此前待定诊断保留。两个事件各 100 股的模型
+持仓都产生非整数分配，保留登记权益与诊断；不能将公开比例当成该账户的整股结算结果。
+有精确发布时间的参考参数或绝对参考价更正可以晚于除权起点：仅当该事件的临时参考价仍是当前估值来源，
+才应用新参考价，或从保存的原含权基价重新计算；不能在上一次已扣减价格上再次除权。
+使用公式修订而缺少原含权基价时直接失败，不能从绝对参考价倒造基价。真实行情已替代该参考价，
 或另一个事件已更新该估值时，只记录可见条款，不覆盖当前价格。参考价实际变化单列
 reference_updated，现金、应收、股份和已登记股数均不变；该记录不提供成交价格或成交量。
 `002349` 2021-06-30 07:41:10 公开的更正属于此类：每股税前现金仍为 0.041 元，参考扣减从
@@ -1425,15 +1515,53 @@ reference_updated，现金、应收、股份和已登记股数均不变；该记
 时点卖出前已受影响的持仓，也包含新委托和未结清权益；重复观察不重复记录。
 有证券身份的未解决事项只在账户存在上述暴露时进入诊断；分区缺失继续作为覆盖缺口报告。补充公告的可见时点
 晚于当日账户收盘时，在下一已准备账户日开始观察，不倒写此前异常。
+已确认零现金、零新增股份的来源可处置为 not_entitled，而不要求除权参考价完整。
+此类事件不登记权益、不生成应收、不增加股份，也不进入支付或解锁阶段；保留来源处置
+是为了覆盖不适用于普通股东的公司整体转增比例。其参考值缺失时，仅在除权生效后、
+账户存在上述暴露且仍无该时点或之后的可见价格时，记录 missing_ex_reference。
+原价格及其时间和来源保持原样，用它继续产生的净值和决策只能作为带缺口的诊断结果；
+不能将零获配解释成价格不变，也不补造零参考参数。新价格可见后不再新增该缺口，已经
+发生过的估值缺口仍保留在结果中；无账户暴露或估值前已有新价格时不产生该项诊断。
+后来可见的公告明确市场参考价不调整时，才按已确认的零扣减、零参考送转版本处理；
+它与账户零权益是两个独立事实。金科 2025-09-09 的完整实施方案可以先确认普通账户零
+权益，09-12 结果公告只有日期时，其“不调整”结论从 09-13 零时可见，不能提前消除
+09-12 尚无新行情时的估值缺口。原公告中的条件规则若尚未编译，仍如实保留这一限制；
+不把阈值当参考价。后续版本的处理继续遵守真实行情已替代临时估值后不得覆盖价格的规则。
 
 除权生效时尚无新行情，上一含权价格不能直接乘以增加后的股数。仅用于临时估值与决策
-参考的除权基准为 `(上一可见价格 - reference_cash_per_share) / (1 + reference_shares_per_share)`，保留
-`corporate_action` 来源和事件记录；下一真实价格覆盖它。这不是新成交行情，不产生量，
+参考的除权基准使用当时可见的公告 reference_price，或完整公式参数计算出的
+`(上一可见价格 - reference_cash_per_share) / (1 + reference_shares_per_share)`。公告确定的绝对
+参考价不依赖上一价格，也不能拆成虚构红利；两种表达互斥。保留 `corporate_action` 来源和
+事件记录；下一真实价格覆盖它。这不是新成交行情，不产生量，
 不修改执行观察或冻结委托。
-账户分配使用 cash_per_share、shares_per_share；除权参数必须来自公告核验。宝丰实际普通
-股东红利 0.3158 元、参考扣减 0.28 元，顺丰合计红利 1.4 元、参考扣减 1.3939620 元，
-证明两种金额不能复用。特殊分配口径不能由此通式恢复时必须提供确定事实；若计算得到非正参考价格，无法建立
-可靠估值，直接失败，不补造价格。
+账户分配使用 cash_per_share、shares_per_share；临时估值明确区分两种依据，并在
+distribution.reference_basis 保存：
+
+- `announcement`：使用已确认 review 的完整参考参数或 reference_price，保留其版本可见
+  时间。参考值尚未公开时仍登记并按阶段处理权益，缺估值依据则保留诊断；
+  不能提前采用随后公布的价格或把未知当成零。宝丰普通股东红利 0.3158 元、参考扣减 0.28 元，顺丰合计红利
+  1.4 元、参考扣减 1.3939620 元，证明账户权益与交易所参考参数不必相等。供销大集
+  每股净获配 2.1898786 股，仍使用单独公布的 1.80 元参考价；景峰医药普通股东净获配
+  为零，市场参考价仍为 4.36 元。零权益事件已知参考值仍用于估值；未知时按上述实际价格
+  缺口处理，不能因此否定零权益结论。后续首次取得参考值，只在尚无除权后新价格时从
+  当前可见时刻应用；之后的参考修订仅更新本事件仍在使用的临时价格，均不改写过去净值。
+- `ordinary_formula_assumption`：对直接采用 dividend 或已明确普通口径的公告事件，以解释后的税前现金和送转
+  比例代入普通公式，明确作为尚无新行情时的估值假设；它不声称已取得交易所真实参考
+  参数，也不写成公告核验。该假设只使用当前可见条款和上一可见价格，不倒读当日收盘、
+  后来的复权因子或未来修订。假设参数须等于该版分配的现金、股份比例，不能混入任意值。
+
+已有已确认修正优先，真实行情可见后替换临时估值。两者均保留 `corporate_action` 价格
+来源，具体依据由分配事件的 reference_basis 与 source_resolutions 追溯；报告明确说明
+普通公式的假设性质。仅采用该假设不构成分红权益缺失，但净值结论受这一估值假设约束。
+已知特殊分配口径不能由此通式恢复时，不套用普通公式；零权益事件的未知参考值按上述
+诊断规则处理，有权益事件也不因缺参考值整笔丢弃。若计算得到非正参考价格，无法
+建立可靠估值，直接失败，不补造价格。
+
+例如普通股东每股现金 0.30 元、已确认除息参考扣减 0.2974 元时，登记持有 1,000 股
+形成 300 元税前应收并支付一次。0.2974 只在尚无新行情时用于估值：上一可见价格为
+10 元，则临时价格为 9.7026 元；它不形成 297.40 元的账户现金，不增加其他受益人账户。
+随后真实行情可见便替换临时价格，应收及到账仍为 300 元。对应来源消歧由数据源 owner
+中的舒华体育案例说明，账户阶段不再重新解析公告。
 
 例如登记日持有 100 股、除息前价格 10 元、每股税前红利 1 元，并假设没有其他现金、
 市场涨跌、交易或费用，除息参考扣减与普通股东分红均为 1 元：
@@ -1444,25 +1572,38 @@ reference_updated，现金、应收、股份和已登记股数均不变；该记
 | 除息后、到账前 | 100 × 9 = 900 元 | 100 元 | 0 元 | 1,000 元 |
 | 到账后 | 100 × 9 = 900 元 | 0 元 | 100 元 | 1,000 元 |
 
-若该分配尚未核验，回放不会据来源金额生成可执行权益；当真实行情已反映除息、应收却
-未入账时，上例账面可能只剩 900 元。此差异来自账户分配事实缺项，不代表真实亏损 100 元。
-当前待补齐的是受益对象、同一事件的归并及历史条款版本等核验事实，不能归结为公告原文
-本身不清楚。涉及账户暴露的未解决事项继续进入诊断，不能以零入账金额证明真实没有分红；
+完整普通来源即使没有公告核验也按阶段生成权益。若存在未解决的缺失、冲突、重复或特殊
+受益对象，仍不能猜金额；真实行情已反映除息而应收缺项时，上例账面可能只剩 900 元。
+这不能解释成真实亏损 100 元。涉及账户暴露的未解决事项继续进入诊断，不能以零入账金额
+证明真实没有分红，也不能将 PDF 解析失败一律当成来源金额不可用；
 来源事实、公告生产与剩余覆盖见[公告流程](data/source_contract.md#announcement-verification-todo)。
 
-初始账户需要包含已登记、尚未完成的分配权益；默认空集合明确表示没有这类历史权益，
+初始账户需要包含已登记、尚未完成的分配权益；补偿同时保留已完成记录，防止后续公告
+触发重复入账。默认空集合明确表示没有这类历史权益，
 不得从初始持仓反推过去登记日的持有人。跨回测终点尚未到账或上市的权益继续保留，
 不为了结清权益延长回测。
 `initial_account.distribution_entitlements` 每项包含 distribution、eligible_qty、recognized、
-cash_paid、shares_released、可空 recognition_issue。非整数分配在除权后仍未确认时，
-recognition_issue=fractional_shares 与登记数量一同保存；续跑恢复诊断，不伪造已确认、已支付
+cash_paid、shares_released、shares_credited、可空 actual_shares_qty 和 recognition_issue。
+普通分配的待定金额或比例、非整数分配在除权后仍未确认时，
+分别保存 pending_distribution_terms、fractional_shares 与登记数量；续跑恢复诊断，不伪造已确认、已支付
 或已上市阶段，也不丢弃未来修复所需的登记数量。distribution 保存 action_id、symbol、source_ref、announced_ts_us、
 record_ts_us、ex_ts_us、pay_ts_us、shares_available_ts_us、cash_per_share、shares_per_share、
-reference_cash_per_share、reference_shares_per_share；announced_ts_us 表示该快照当前条款版本的可见时刻，
-可以晚于登记，但不得晚于除权，也不得晚于初始账户快照。
-不含现金或股份时对应结算时间为 null。eligible_qty 为登记时正整数股数，三个布尔阶段字段
+reference_cash_per_share、reference_shares_per_share、reference_price、reference_basis，以及 kind、
+benefit_state、shares_credit_ts_us、shares_numerator、shares_denominator。reference_basis 为 announcement 或
+ordinary_formula_assumption，缺省 announcement 沿用显式核验条款的输入约定。
+announced_ts_us 表示该快照当前条款版本的可见时刻，
+可以晚于登记；合法的待定项补齐或参考修订也可以晚于除权，但不得晚于初始账户快照。
+普通分配不含现金或股份时对应结算时间为 null；待定项保留 null 数值和已经确认的结算时间。
+补偿允许金额先明确、结算日期后公开，阶段依照前述补偿规则推进。
+eligible_qty 为登记时正整数股数，四个布尔阶段字段
 默认 false。初始权益身份不能重复，阶段必须与快照时点匹配，sellable 必须扣除未上市股份；
-不接受通过修改阶段跳过尚未发生的除权、支付或上市。期末同结构保存未结清权益供续跑。
+不接受通过修改阶段跳过尚未发生的除权、支付或上市。期末同结构保存权益供续跑。
+initial_account.corporate_action_issues 携带已发生的公司行动诊断，默认空数组；每项时间
+不得晚于快照。final_account 保存同结构及 registration_holdings，续跑必须原样携带，
+不能因为补偿已经到账就清除此前缺少比例、估值价格或迟到结算公告的诊断。
+普通来源权益在续跑时仍按 source action_id 读取原登记日。若补充修正改变了该事件身份，
+或该候选已不再可执行，已有权益快照不能与新事件一起派发，必须从登记阶段重放；同身份
+的条款仍按公开版本与初始快照核对，不能静默覆盖已确认的账户阶段。
 
 换股、现金选择权及退市清偿不是分红送转接口能够完整交付的事实。已核实的其他事件可
 通过本地补充公告输入保存事件身份、生效时点、证券和来源；影响持仓或委托但尚无完整
@@ -1590,16 +1731,36 @@ Decimal 精确相等；各有 10 条记录仅因金额末尾零而序列化不�
 另由前述真实事件受控场景验证，不能用九月结果不变替代该新增行为的验证。阶段解析输出
 相等本身也不能替代账户全流程对账。
 
-全历史数据验收覆盖源 owner 定义的全部日期及候选，并保留各交易所、原因和公告覆盖
-的分项统计；未解决项不能从分母删除。日频按本地历史输入验收，分钟只对真实已具备
-输入的日期验收，不把日频覆盖等同于全历史分钟可用。现有候选核验及反向来源完整性
-分别给出证据；增量维护验证新增公告、旧事件更正、摘要失效、失败分区恢复和相同输入
-重复执行。源码、全部影响结果的输入及旧/新结果绑定摘要并归档。
+全历史数据验收覆盖源 owner 定义的全部日期及候选，并分别统计普通来源执行、已确认
+修正、未解决项及声明范围内的公告调查覆盖；未解决项不能从分母删除。日频按本地历史输入验收，分钟只对真实已具备
+输入的日期验收，不把日频覆盖等同于全历史分钟可用。现有候选处置及反向来源完整性
+分别给出证据；增量维护验证新增公告、已确认修正的复用、旧事件更正、失败分区恢复和
+相同输入重复执行。保留准确源码、全部影响结果的输入及旧/新结果；不以内容摘要或文件
+变化检测作为公司行动验收要求。
+
+普通来源主流程的已确认材料基线见
+[整合证据](/home/wsw/app/maintenance-evidence/corporate-actions-dividend-20261024-3il6maaf/supplement-validation-report.txt)：
+纳入的 192 个事件均通过精确金额、股份、版本可见性和重复阶段调用检查；全部 640 个
+已确认事件中，634 个完成受控账户验证，6 个因 10-08 缺少公司行动覆盖分区而未完成。
+来源归并后的处置逐项核对保留了全部已确认事件；新增的 880 个普通来源事件全部完成
+受控账户检查，现金和股份各执行一次。受控持仓和价格只验证记账，不表示真实历史收益。
+原 13 个真实日行情场景扩展为 21 个、106 次运行，结果为 16 个可执行和 5 个诊断场景，见
+[来源归并账户验收](/home/wsw/app/maintenance-evidence/corporate-actions-source-merge-20261025-snkwn52s/report.txt)。
+采用普通纯送转空现金解释后，新增的 296 个来源事件全部完成受控账户检查：源现金保留
+null，账户现金权益为零，没有现金支付阶段，送转股份及上市释放各执行一次。真实日行情
+扩展为 22 个场景、116 次运行，其中 600581 的空现金送转改为可执行，另加入 688466 同类
+场景；18 个可执行场景完整、重复及登记后／除权后续跑终态一致，4 个未解决场景继续保持
+诊断且没有分配到账。覆盖重复观察、空值与明确零值、较晚实施公告日、非季度末现金、
+合并分配、源遗漏、独立公告、送转及金额修正、盘前参考修订和异常诊断。较晚实施日期没有
+被提前使用；07:41:10 修订没有提前用于除权日 00:00，真实行情可见后替代临时参考价。
+精确源码、全部输入、338 项回归及账户结果见
+[普通送转空现金验收](/home/wsw/app/maintenance-evidence/corporate-actions-zero-cash-20261025-6jx4xpsd/report.txt)；
+这些案例不构成全历史策略账户或分钟行情覆盖验证，也没有补齐前述 6 项覆盖缺口。
 
 只有本次消费范围内已知问题得到正确解释、必要账户事件已处理且独立对账通过，才可
 解除对应诊断；`diagnostic_only=false` 本身不证明数据或收益完整正确。最终结论始终
 受明确的税前、现金到账时点、撮合模型、行情范围和历史可见性假设约束。九月验收可
-先完成，但不能据此宣称全历史核验已经完成；后续历史工作不得因此缩小范围。
+先完成，但不能据此宣称全历史核验已经完成；普通来源可执行也不等同于所有公告已经核实。
 
 2026 年 9 月真实输入的验证固定 21 个交易日、月初 5,206 只沪深股票（含 ST）和 10,412 条
 冻结委托。154 个日线缺行证券日中，153 个可由明确全天停牌解释；`601238@2026-09-15`
@@ -1758,7 +1919,7 @@ owner 维护，本月源值零差异不能推广为全部历史来源已可靠�
 [九月覆盖验证](#september-coverage-validation)，主账户仍因未估值现金选择权保留诊断。
 两项支付日错误公告只从登记前
 公开的更正版本形成合法可执行计划，不模拟更正前对错误日期作交易决策；涉及已执行阶段
-日期变化等能力仍未覆盖。独立复算不直接改变正式数据，只有带原文和摘要的核验发布才
+日期变化等能力仍未覆盖。独立复算不直接改变正式数据，只有保留原文及公开时间的核验发布才
 改变对应 disposition，不能在期末净利润上直接加减差额代替历史入账。
 
 初次敏感性比较保留在[影响分析笔记](/tmp/trading-dividend-impact-20261017-f083_ile/analysis.ipynb)
@@ -2034,8 +2195,8 @@ execution.parquet 保留 `ledger.records` 和 `ledger.order_events` 两个现有
 order_id 关联账本记录。无成交时不补零价或零费用，无任何执行记录时写带固定 schema 的
 零行表，明确区分正常无交易和明细未成功发布。
 
-equity.parquet 按 `EquityCurve.points` 的原有顺序保存七列：`ts_us` 为 int64；
-`cash`、`market_value`、`dividend_receivable`、`equity`、`peak_equity`、`drawdown` 为 float64。
+equity.parquet 按 `EquityCurve.points` 的原有顺序保存八列：`ts_us` 为 int64；
+`cash`、`market_value`、`dividend_receivable`、`shares_receivable_value`、`equity`、`peak_equity`、`drawdown` 为 float64。
 各列均不为空。保留实际估值时点与计算精度，不重采样为每日结果，不在空日期插值。
 同一时点已由 EquityCurve 替换的值只保存最终快照；该文件不是账户状态变更日志。
 
@@ -2053,20 +2214,25 @@ orders.json 按原顺序保存完整 OrderIntent/CancelOrders，可作为 execut
 它不是完整回放场景，执行参数与订单的分工见[委托、执行规则与费用的职责](#orders-and-execution-parameters)。
 targets.json 保存风控前目标。risk-cases.json 保存账户与挂单快照，可通过 RiskCases.from_files().evaluate() 复演规则决定；
 它不替代 risk_rule_eval 的完整策略输入。
-预测引用、模型身份及模型/特征/标签摘要随指标/预测记录保存；
+预测引用、模型身份及标签引用随指标/预测记录保存；
 行情原文件和运行环境没有自动复制归档，完整复演还需保留这些输入及准确源码版本。
 
-security-status.json 保存 `version=v1`、`statuses` 和 `input_digests`。statuses 保留本次
-逐日消费的完整核验结论、可见时刻和原文摘要引用；input_digests 按账户日绑定该日有序
-statuses JSON（UTF-8、排序键、无多余分隔空格）的 SHA-256。没有补充状态时两项均为空，
+security-status.json 保存 `version=v1` 和 `statuses`。statuses 保留本次
+逐日消费的完整核验结论、适用日期、可见时刻和原文引用，已有完整事实不再额外计算其摘要。
+没有补充状态时 statuses 为空，
 不表示原始名单或停复牌输入已核验。原始来源仍须和源码一起保留以支持完整复演。
 
 corporate-actions.json 保存 tax_basis=gross、coverage=distributions_and_supplied_notices、
-input_digests、distributions、notices、records、unresolved 和 outstanding_entitlements。
-输入摘要为所读列的有序 records JSON 的 SHA-256；用于发现输入变化，不代替原始版本
-归档。records 包含 action_id、ts_us、symbol、event、eligible_qty、cash_delta、
-receivable_delta、shares_delta、source_ref；event 为 terms_updated、reference_updated、registered、
-recognized、cash_paid 或 shares_released，金额按 Decimal 字符串保存，股份为整数。它独立于 execution，不增加
+distributions、revisions、source_resolutions、notices、records、unresolved、outstanding_entitlements
+和 registration_holdings。outstanding_entitlements 只列未结清权益；已完成或已取消的补偿
+记录仍留在 final_account.distribution_entitlements 中，保存防重复入账的身份和阶段。
+source_resolutions 区分普通来源与已确认 review；distributions、revisions 中的 reference_basis
+标明公告参考参数或普通公式假设，不能将普通来源执行数量当作公告核验数量。
+公司行动输入按数据源 owner 的可信前提使用；完整保存实际消费的条款与处置，不计算
+用于检测源文件变化的摘要。records 包含 action_id、ts_us、symbol、event、eligible_qty、cash_delta、
+receivable_delta、shares_delta、shares_receivable_delta、fractional_shares、allocation_basis、source_ref；
+event 为 terms_updated、reference_updated、registered、recognized、entitlement_revised、cash_paid、
+shares_credited 或 shares_released。金额及理论尾数按 Decimal 字符串保存，实际股份变动为整数。它独立于 execution，不增加
 订单数、成交数、换手或交易费用。
 
 metrics.json 的稳定顶层结构是 mode、parameters、not_run、prediction_refs、data_quality，
@@ -2083,7 +2249,8 @@ reason、source_ref；reason 包括 missing_distribution_data、incomplete_distr
 后续恢复行情不清除；数值评价仍可计算，但收益和风险结果在修复输入并重新回放前仅供
 诊断。暂不成交可能避开亏损，不能宣称诊断收益更保守。公司行动事实制品同时保留其未解决事项，
 不增加独立异常发布通道。corporate_actions 汇总税务与覆盖口径、准备分配数、登记数、税前
-到账金额和按证券统计的送转数量；final_account 另保留 dividend_receivable 和未结清权益。
+到账金额和按证券统计的新增股份数量，以及 compensation_floor_count；final_account 另保留
+dividend_receivable、shares_receivable_value、权益阶段、registration_holdings 和 corporate_action_issues。
 
 risk_effectiveness 按配置顺序保存 rules，
 每项含 rule、observations、sample_count、defined_count、observed_breach_count、

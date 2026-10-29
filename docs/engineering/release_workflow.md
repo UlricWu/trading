@@ -265,7 +265,7 @@ dispatcher 只读取持久化记录并以参数数组执行固定安装路径
   就绪时间或 cron daemon 时区，因而不提供默认时刻。
 - cron 在上游前一日文件齐备后运行，不得固化业务日期。运行器默认通过
   `DateTimeUtils.days_before(DateTimeUtils.today(), 1)` 取得 Asia/Shanghai 的前一自然日，
-  workflow 再按正式交易日历筛选；休市日自然成功。只有人工单次补跑可以用
+  workflow 中行情按正式交易日历筛选，公告按自然披露日采集；休市日仍须完成公告生产。只有人工单次补跑可以用
   `MINQUANT_OFFLINE_DATA_DATE=YYYY-MM-DD` 覆盖。运行时刻必须考虑上游在次日供数，
   不得用系统 UTC 日期或“上一个交易日”替代前一自然日而在休市期间重复生产。
 - 一次运行先提交并等待单日 `data-standard` Job，再提交并等待 `data-level2` Job。Standard

@@ -67,21 +67,6 @@ class DataSubmission:
 
 
 @dataclass(frozen=True, slots=True)
-class StandardFactBootstrapSubmission:
-    """Describe one validated CLI-only Standard fact cold-start range.
-
-    Example:
-        submission = StandardFactBootstrapSubmission(
-            start="2019-01-01",
-            end="2019-04-03",
-        )
-    """
-
-    start: str
-    end: str
-
-
-@dataclass(frozen=True, slots=True)
 class FeatureBackfillSubmission:
     """Describe one validated CLI-only Feature target range.
 
@@ -476,25 +461,6 @@ def create_data_submission(
     normalized_start, normalized_end = _require_range(start, end)
     return DataSubmission(
         kind=cast(DataJobKind, kind),
-        start=normalized_start,
-        end=normalized_end,
-    )
-
-
-def create_standard_fact_bootstrap_submission(
-    start: object,
-    end: object,
-) -> StandardFactBootstrapSubmission:
-    """Construct one usable CLI-only Standard fact cold-start submission.
-
-    Example:
-        submission = create_standard_fact_bootstrap_submission(
-            "2019-01-01",
-            "2019-04-03",
-        )
-    """
-    normalized_start, normalized_end = _require_range(start, end)
-    return StandardFactBootstrapSubmission(
         start=normalized_start,
         end=normalized_end,
     )

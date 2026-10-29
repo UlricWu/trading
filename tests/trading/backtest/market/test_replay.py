@@ -158,16 +158,45 @@ def test_reference_revisions_recompute_from_original_price_without_compounding()
         reference_cash_per_share=Decimal("0.4"), reference_shares_per_share=Decimal(0))
     assert market.get_price("A") == Decimal("9.6")
     market.on_time(3)
-    assert market.revise_distribution_reference(action_id="cash", symbol="A", ts_us=3,
+    assert market.revise_distribution_reference(action_id="cash", symbol="A", ts_us=3, ex_ts_us=2, trade_date="2026-07-03",
         reference_cash_per_share=Decimal("0.04"), reference_shares_per_share=Decimal(0))
     assert market.get_price("A") == Decimal("9.96")
-    assert not market.revise_distribution_reference(action_id="cash", symbol="A", ts_us=3,
+    assert not market.revise_distribution_reference(action_id="cash", symbol="A", ts_us=3, ex_ts_us=2, trade_date="2026-07-03",
         reference_cash_per_share=Decimal("0.04"), reference_shares_per_share=Decimal(0))
     market.on_time(4)
-    assert market.revise_distribution_reference(action_id="cash", symbol="A", ts_us=4,
+    assert market.revise_distribution_reference(action_id="cash", symbol="A", ts_us=4, ex_ts_us=2, trade_date="2026-07-03",
         reference_cash_per_share=Decimal("0.1"), reference_shares_per_share=Decimal("0.1"))
     assert market.get_price("A") == Decimal("9")
     assert market.observations_at(4) == ()
+
+
+@pytest.mark.parametrize("has_prior", [True, False])
+def test_absolute_reference_is_independent_of_account_rights_and_prior_quote(has_prior: bool) -> None:
+    data = market_input()
+    if not has_prior:
+        data = data.model_copy(update={"marks": ()})
+    market = ReplayMarket(data)
+    market.on_time(2)
+    market.apply_distribution_reference(action_id="reorganization", symbol="A", ts_us=2, trade_date="2026-07-03",
+        reference_cash_per_share=None, reference_shares_per_share=None, reference_price=Decimal("1.80"))
+    assert market.get_price("A") == Decimal("1.80")
+    market.apply_distribution_reference(action_id="reorganization", symbol="A", ts_us=2, trade_date="2026-07-03",
+        reference_cash_per_share=None, reference_shares_per_share=None, reference_price=Decimal("1.80"))
+    assert market.revise_distribution_reference(action_id="reorganization", symbol="A", ts_us=3, ex_ts_us=2, trade_date="2026-07-03",
+        reference_cash_per_share=None, reference_shares_per_share=None, reference_price=Decimal("1.81"))
+    assert market.get_price("A") == Decimal("1.81")
+    assert market.observations_at(2) == ()
+    if not has_prior:
+        with pytest.raises(ValueError, match="original cum-distribution price"):
+            market.revise_distribution_reference(action_id="reorganization", symbol="A", ts_us=4, ex_ts_us=2, trade_date="2026-07-03",
+                reference_cash_per_share=Decimal("0.1"), reference_shares_per_share=Decimal(0))
+        assert market.get_price("A") == Decimal("1.81")
+    market.on_time(60_000_000)
+    quote = market.price_marks["A"]
+    assert quote.kind != "corporate_action"
+    assert not market.revise_distribution_reference(action_id="reorganization", symbol="A", ts_us=70_000_000, ex_ts_us=2, trade_date="2026-07-03",
+        reference_cash_per_share=None, reference_shares_per_share=None, reference_price=Decimal("1.82"))
+    assert market.price_marks["A"] is quote
 
 
 @pytest.mark.parametrize("replacement", ["execution", "other_distribution"])
@@ -183,6 +212,6 @@ def test_late_reference_cannot_replace_real_prices_or_another_event(replacement:
         market.apply_distribution_reference(action_id="second", symbol="A", ts_us=3, trade_date="2026-07-03",
             reference_cash_per_share=Decimal("0.2"), reference_shares_per_share=Decimal(0))
     prior = market.price_marks["A"]
-    assert not market.revise_distribution_reference(action_id="first", symbol="A", ts_us=70_000_000,
+    assert not market.revise_distribution_reference(action_id="first", symbol="A", ts_us=70_000_000, ex_ts_us=2, trade_date="2026-07-03",
         reference_cash_per_share=Decimal("0.04"), reference_shares_per_share=Decimal(0))
     assert market.price_marks["A"] is prior

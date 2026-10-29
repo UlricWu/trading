@@ -3,8 +3,11 @@
 
 from datetime import date
 from decimal import Decimal
+import json
+from pathlib import Path
 
 import pytest
+from pydantic import TypeAdapter
 
 from src.data_system.corporate_actions import DividendRecord
 from src.data_system.announcement_evidence import SecurityIdentity
@@ -14,13 +17,47 @@ from src.data_system.distribution_announcements import AnnouncementText, extract
 def _source() -> DividendRecord:
     return DividendRecord(ts_code="600000.SH", symbol="600000", end_date="2026-06-30", ann_date=None,
         div_proc="实施", imp_ann_date="2026-09-01", record_date="2026-09-09", ex_date="2026-09-10",
-        pay_date="2026-09-10", div_listdate=None, cash_div_tax="0.1", stk_div="0", source_row_id="1" * 64)
+        pay_date="2026-09-10", div_listdate=None, cash_div_tax="0.1", stk_div="0")
+
+
+def test_obsolete_payment_year_is_diagnosed_without_overriding_ordinary_dividend() -> None:
+    cases = json.loads((Path(__file__).parents[1] /
+        "fixtures/corporate_actions/implementation_publications.json").read_text())
+    case = next(case for case in cases if case["symbol"] == "300016")
+    rows = TypeAdapter(tuple[DividendRecord, ...]).validate_python(case["records"])
+    docs = TypeAdapter(tuple[AnnouncementText, ...]).validate_python(case["documents"])
+    result = extract_distribution_review(rows, docs)
+    assert result.review is None
+    assert result.reason == (
+        "announcement_payment_year_conflict:1205941522:pdf=2018-04-03:dividend=2019-04-03")
+    assert rows[0].pay_date == date(2019, 4, 3)
+    assert "2018年4月3日" in docs[0].normalized_text
+
+
+@pytest.mark.parametrize("source_change,pdf_payment", [
+    ({}, "2026年9月8日"),
+    ({}, "2025年9月11日"),
+    ({"pay_date": None}, "2025年9月10日"),
+    ({"cash_div_tax": "0.2"}, "2025年9月10日"),
+    ({"ex_date": "2026-09-11"}, "2025年9月10日"),
+    ({"imp_ann_date": "2026-09-02"}, "2025年9月10日"),
+])
+def test_payment_year_policy_does_not_hide_other_conflicts(
+    source_change: dict[str, str | None], pdf_payment: str,
+) -> None:
+    document = _document(plan="向全体股东每10股派1元人民币现金（含税）。", reference="差异化分红送转：否")
+    document = document.model_copy(update={"pages": tuple(page.replace(
+        "现金红利将于2026年9月10日", "现金红利将于" + pdf_payment) for page in document.pages)})
+    source = DividendRecord.model_validate({**_source().model_dump(), **source_change})
+    result = extract_distribution_review((source,), (document,))
+    assert result.review is None
+    assert not result.reason.startswith("announcement_payment_year_conflict")
 
 
 def _document(*, plan: str, reference: str, publication: str = "2026-09-01", identity: str = "1") -> AnnouncementText:
     return AnnouncementText(source="cninfo", announcement_id=identity, symbol="600000", title="2026年半年度权益分派实施公告",
         published_date=publication, url=f"https://static.cninfo.com.cn/finalpage/{publication}/{identity}.PDF",
-        sha256=identity * 64, pages=(f"""证券代码：600000
+        pages=(f"""证券代码：600000
 二、分配方案
 {plan}
 三、相关日期
@@ -29,6 +66,195 @@ def _document(*, plan: str, reference: str, publication: str = "2026-09-01", ide
 新增可流通股份上市日：2026年9月10日。
 登记在册的本公司全体股东。
 {reference}""",))
+
+
+@pytest.mark.parametrize("title", ["权益分派实施公告", "权益分派事项实施的提示性公告",
+    "权益分派实施暨风险提示的公告", "关于权益分派的进展公告", "提示性公告",
+    "关于扣除回购专用账户股份后实施权益分派的公告"])
+def test_operative_body_identifies_distribution_without_a_title_suffix(title: str) -> None:
+    document = _document(plan="向全体股东每10股派1元人民币现金（含税）。", reference="差异化分红送转：否")
+    result = extract_distribution_review((_source(),), (document.model_copy(update={"title": title}),))
+    assert result.review is not None, result.reason
+    assert result.review.terms[0].cash_per_share == Decimal("0.1")
+    assert result.review.terms[0].published_date == document.published_date
+
+
+@pytest.mark.parametrize("later", [False, True])
+def test_doushen_originals_confirm_zero_rights_without_waiting_for_reference(later: bool) -> None:
+    case = json.loads((Path(__file__).parents[1] / "fixtures/corporate_actions/body_matched_events.json").read_text())[0]
+    rows = TypeAdapter(tuple[DividendRecord, ...]).validate_python(case["records"])
+    docs = TypeAdapter(tuple[AnnouncementText, ...]).validate_python(case["documents"])
+    selected = tuple(d for d in docs if d.announcement_id == "1218675470"
+        or (later and d.announcement_id == "1218734554"))
+    result = extract_distribution_review(rows, selected)
+    assert result.review is not None, result.reason
+    assert result.review.record_date == date(2023, 12, 26)
+    assert result.review.ex_date == date(2023, 12, 27)
+    assert result.review.pay_date is result.review.div_listdate is None
+    assert all(t.cash_per_share == t.shares_per_share == 0 for t in result.review.terms)
+    assert result.review.terms[0].reference_price is None
+    assert len(result.review.terms) == (2 if later else 1)
+    if later:
+        assert result.review.terms[-1].reference_price == Decimal("2.52")
+        assert result.review.terms[-1].published_date == date(2023, 12, 27)
+
+
+@pytest.mark.parametrize("clause", ["本次分配方案尚需股东大会审议通过后方可实施。", "本次分配方案已经取消。"])
+def test_dated_proposal_or_cancellation_cannot_become_an_implemented_plan(clause: str) -> None:
+    doc = _document(plan=clause + "向全体股东每10股派1元人民币现金（含税）。", reference="差异化分红送转：否")
+    result = extract_distribution_review((_source(),), (doc,))
+    assert result.review is None
+    assert result.reason.startswith("implementation_stage_unconfirmed" if "尚需" in clause else "separate_revision_requires_review")
+
+
+@pytest.mark.parametrize("later", [False, True])
+def test_jinke_complete_reorganization_confirms_zero_rights_and_links_effective_dates(later: bool) -> None:
+    case = json.loads((Path(__file__).parents[1] / "fixtures/corporate_actions/body_matched_events.json").read_text())[1]
+    rows = TypeAdapter(tuple[DividendRecord, ...]).validate_python(case["records"])
+    docs = TypeAdapter(tuple[AnnouncementText, ...]).validate_python(case["documents"])
+    selected = tuple(doc for doc in docs if later or doc.published_date == date(2025, 9, 9))
+    result = extract_distribution_review(rows, selected)
+    assert result.review is not None, result.reason
+    review = result.review
+    assert rows[0].cash_div_tax is None and rows[0].stk_div == 1
+    assert review.record_date == date(2025, 9, 11)
+    assert review.ex_date == date(2025, 9, 12)
+    assert review.pay_date is review.div_listdate is None
+    assert all(terms.cash_per_share == terms.shares_per_share == 0 for terms in review.terms)
+    initial = review.terms[0]
+    assert initial.published_date == date(2025, 9, 9)
+    assert initial.reference_price is initial.reference_cash_per_share is initial.reference_shares_per_share is None
+    assert len(review.terms) == (2 if later else 1)
+    if later:
+        final = review.terms[1]
+        assert final.reference_cash_per_share == final.reference_shares_per_share == 0
+        assert final.reference_price is None
+        assert final.published_date == date(2025, 9, 12)
+        assert final.published_ts_us is None
+        assert final.available_ts_us > initial.available_ts_us
+        assert review.evidence_refs == tuple(doc.url for doc in docs if doc.announcement_id in {"1224645547", "1224652944"})
+
+
+@pytest.mark.parametrize("change", ["incomplete_plan", "unquantified_cash", "cash_compensation", "quantified_cash", "later_cash_clause"])
+def test_zero_stock_allocation_does_not_override_missing_scope_or_cash_rights(change: str) -> None:
+    case = json.loads((Path(__file__).parents[1] / "fixtures/corporate_actions/body_matched_events.json").read_text())[1]
+    rows = TypeAdapter(tuple[DividendRecord, ...]).validate_python(case["records"])
+    doc = next(AnnouncementText.model_validate(row) for row in case["documents"] if row["announcement_id"] == "1224645547")
+    text = doc.normalized_text
+    if change == "incomplete_plan":
+        start, tail = text.split("二、资本公积转增股本方案", maxsplit=1)
+        text = start + "前述转增股票不向原股东分配,全部按另行披露的方案处理。三、股权登记日" + tail.split("三、股权登记日", maxsplit=1)[1]
+    elif change == "later_cash_clause":
+        text += "原股东将获得现金,具体金额另行公告。"
+    else:
+        clause = {"unquantified_cash": "另向原股东派发现金,金额另行公告。",
+            "cash_compensation": "另向原股东支付现金补偿。", "quantified_cash": "向全体股东每10股派1元人民币现金(含税)。"}[change]
+        text = text.replace("三、股权登记日", clause + "三、股权登记日")
+    result = extract_distribution_review(rows, (doc.model_copy(update={"pages": (text,)}),))
+    assert result.review is None
+    assert result.reason.startswith({"incomplete_plan": "ordinary_cash_entitlement_unconfirmed",
+        "unquantified_cash": "ordinary_cash_entitlement_unconfirmed", "cash_compensation": "special_beneficiary_requires_review",
+        "quantified_cash": "distribution_amount_conflict", "later_cash_clause": "ordinary_cash_entitlement_unconfirmed"}[change])
+
+
+@pytest.mark.parametrize("change", ["missing_next_session", "different_listing", "different_suspension", "explicit_conflict"])
+def test_linked_dates_require_the_same_registration_suspension_and_resumption(change: str) -> None:
+    case = json.loads((Path(__file__).parents[1] / "fixtures/corporate_actions/body_matched_events.json").read_text())[1]
+    rows = TypeAdapter(tuple[DividendRecord, ...]).validate_python(case["records"])
+    doc = next(AnnouncementText.model_validate(row) for row in case["documents"] if row["announcement_id"] == "1224645547")
+    text = doc.normalized_text
+    if change == "missing_next_session":
+        text = text.replace("股权登记日次一交易日", "后续交易日")
+    elif change == "different_listing":
+        text = text.replace("转增股本上市日为2025年9月12日", "转增股本上市日为2025年9月15日")
+    elif change == "different_suspension":
+        text = text.replace("申请2025年9月11日公司股票停牌", "申请2025年9月10日公司股票停牌")
+    else:
+        text += "除权日为2025年9月15日。"
+    result = extract_distribution_review(rows, (doc.model_copy(update={"pages": (text,)}),))
+    assert result.review is None
+    assert result.reason.startswith("registration_or_ex_date_ambiguous" if change in {"different_listing", "explicit_conflict"}
+        else "registration_or_ex_date_missing")
+
+
+@pytest.mark.parametrize("title,body,confirmed", [
+    ("关于不调整开盘参考价的提示公告", "本次开盘参考价无需调整。", True),
+    ("关于开盘参考价无需调整的公告", "本次开盘参考价无需调整。", True),
+    ("除权计算结果公告", "鉴于股权登记日收盘价为1.45元,低于转增平均价3.30元,本次开盘参考价无需调整。", True),
+    ("除权计算结果公告", "如果股权登记日收盘价低于或等于3.30元,本次开盘参考价无需调整。", False),
+    ("关于若收盘价低于3.30元则不调整开盘参考价的提示公告", "若收盘价低于3.30元,开盘参考价无需调整。", False),
+    ("关于当收盘价低于3.30元时不调整开盘参考价的提示公告", "根据计算结果,当收盘价低于3.30元时,开盘参考价无需调整。", False),
+])
+def test_only_final_no_adjustment_decision_becomes_a_reference(title: str, body: str, confirmed: bool) -> None:
+    initial = _document(plan="公司实施重整。前述转增股票不向原股东分配，全部用于偿付债务。不涉及现金红利。", reference="")
+    final = initial.model_copy(update={"announcement_id": "2", "published_date": date(2026, 9, 8),
+        "title": title, "url": "fixture://no-adjustment",
+        "pages": ("证券代码：600000。股权登记日为2026年9月9日。" + body,)})
+    result = extract_distribution_review((_source(),), (initial, final))
+    assert result.review is not None, result.reason
+    assert result.review.terms[0].reference_cash_per_share is None
+    assert len(result.review.terms) == (2 if confirmed else 1)
+    if confirmed:
+        assert result.review.terms[1].reference_cash_per_share == result.review.terms[1].reference_shares_per_share == 0
+        assert result.review.terms[1].reference_price is None
+        assert result.review.terms[1].published_date == date(2026, 9, 8)
+
+
+@pytest.mark.parametrize("index,cash,shares", [(2, "1", "0"), (3, "0.8", "0.4"),
+    (4, "0.13", "0"), (5, "0.03", "0"), (6, "0.25", "0"), (7, "0.015", "0")])
+def test_body_matching_preserves_ordinary_facts_and_ignores_only_aggregate_corrections(
+    index: int, cash: str, shares: str,
+) -> None:
+    case = json.loads((Path(__file__).parents[1] / "fixtures/corporate_actions/body_matched_events.json").read_text())[index]
+    rows = TypeAdapter(tuple[DividendRecord, ...]).validate_python(case["records"])
+    docs = TypeAdapter(tuple[AnnouncementText, ...]).validate_python(case["documents"])
+    result = extract_distribution_review(rows, docs)
+    assert result.review is not None, result.reason
+    assert len(result.review.terms) == 1
+    assert result.review.terms[0].cash_per_share == Decimal(cash)
+    assert result.review.terms[0].shares_per_share == Decimal(shares)
+    if index == 3:
+        corrected = tuple(doc.model_copy(update={"pages": tuple(page.replace(
+            "本次权益分派新增无限售条件流通股", "本次权益分派每股转增") for page in doc.pages)})
+            if doc.announcement_id == "1217021915" else doc for doc in docs)
+        assert extract_distribution_review(rows, corrected).reason.startswith("separate_revision_requires_review")
+
+
+def test_later_reference_can_identify_original_by_publication_without_repeating_registration() -> None:
+    initial = _document(plan="向全体股东每10股派1元人民币现金（含税）。", reference="差异化分红送转：否")
+    later = initial.model_copy(update={"announcement_id": "2", "published_date": date(2026, 9, 8),
+        "url": "https://static.cninfo.com.cn/finalpage/2026-09-08/2.PDF", "title": "除权参考价结果提示公告",
+        "pages": ("证券代码：600000。根据2026年9月1日披露的《2026年半年度权益分派实施公告》，本次除权参考价格为9.5元。",)})
+    result = extract_distribution_review((_source(),), (initial, later))
+    assert result.review is not None, result.reason
+    assert len(result.review.terms) == 2
+    assert result.review.terms[1].reference_price == Decimal("9.5")
+    assert result.review.terms[1].published_date == date(2026, 9, 8)
+    unrelated = later.model_copy(update={"pages": (later.pages[0].replace("9月1日", "8月1日"),)})
+    unchanged = extract_distribution_review((_source(),), (initial, unrelated))
+    assert unchanged.review is not None
+    assert len(unchanged.review.terms) == 1
+
+
+@pytest.mark.parametrize("phrase", ["部分转增股份不向原股东分配", "第一轮转增股份不向原股东分配，第二轮向普通股东分配股票",
+    "前述转增股票不向原股东分配，全部用于清偿债务。另向普通股东按每10股转增2股实施分配",
+    "前述转增股票不向原股东分配，全部用于清偿债务。另向普通股东无偿转赠股份作为补偿"])
+def test_partial_exclusion_cannot_become_zero_ordinary_entitlement(phrase: str) -> None:
+    doc = _document(plan=f"公司实施重整。{phrase}，不涉及现金红利。", reference="")
+    result = extract_distribution_review((_source(),), (doc,))
+    assert result.review is None
+    assert result.reason.startswith("special_beneficiary_requires_review")
+
+
+def test_compensation_identification_requires_matching_eligibility_not_just_publication() -> None:
+    ordinary = _document(plan="以公司现有总股本100000股为基数，向全体股东每10股派1元人民币现金（含税）。", reference="")
+    compensation = AnnouncementText(source="cninfo", announcement_id="2", symbol="600000",
+        title="业绩补偿股份的实施公告", published_date="2026-09-01", url="fixture://compensation",
+        pages=("股权登记日为2026年8月1日，补偿股份转赠给其他股东。",))
+    result = extract_distribution_review((_source(),), (ordinary, compensation))
+    assert result.review is not None
+    matched = compensation.model_copy(update={"pages": ("股权登记日为2026年9月9日，补偿股份转赠给其他股东。",)})
+    assert extract_distribution_review((_source(),), (matched,)).reason == "compensation_requires_review"
 
 
 @pytest.mark.parametrize("bonus,capital,total", [("1", "4", "0.5"), ("1", "1", "0.2")])
@@ -43,7 +269,7 @@ def test_bonus_and_capital_shares_are_distinct_components(bonus: str, capital: s
     assert terms.reference_shares_per_share == Decimal(total)
     conflicting = document.model_copy(update={"pages": (document.pages[0].replace(
         "三、相关日期", "每10股送红股2股。三、相关日期"),)})
-    assert extract_distribution_review((_source(),), (conflicting,)).reason.startswith("distribution_amount_ambiguous")
+    assert extract_distribution_review((_source(),), (conflicting,)).reason.startswith("distribution_amount_conflict")
 
 
 def test_numbered_first_implementation_section_excludes_original_proposal() -> None:
@@ -96,7 +322,7 @@ def test_named_final_dividend_cannot_be_replaced_by_paid_interim_cash() -> None:
         "公司已派发2026年中期现金红利每股人民币0.30元（含税）。", reference="差异化分红送转：否")
     result = extract_distribution_review((_source(),), (document,))
     assert result.review is None
-    assert result.reason.startswith("distribution_amount_ambiguous")
+    assert result.reason.startswith("distribution_amount_conflict")
 
 
 def test_total_share_base_can_be_stated_as_benchmark() -> None:
@@ -177,7 +403,7 @@ def test_bank_gross_headline_must_agree_with_implementation_cash(headline: str) 
     text = document.pages[0].replace("二、分配方案", f"重要内容提示：{headline}。二、分配方案")
     result = extract_distribution_review((_source(),), (document.model_copy(update={"pages": (text,)}),))
     assert result.review is None
-    assert result.reason.startswith("distribution_amount_ambiguous")
+    assert result.reason.startswith("distribution_amount_conflict")
 
 
 def test_gross_tax_synonyms_cannot_hide_conflicting_amounts() -> None:
@@ -185,7 +411,7 @@ def test_gross_tax_synonyms_cannot_hide_conflicting_amounts() -> None:
         reference="差异化分红送转：否")
     result = extract_distribution_review((_source(),), (document,))
     assert result.review is None
-    assert result.reason.startswith("distribution_amount_ambiguous")
+    assert result.reason.startswith("distribution_amount_conflict")
 
 
 @pytest.mark.parametrize("share_class", ["A股", ""])
@@ -202,7 +428,7 @@ def test_headline_must_agree_with_implementation_cash(share_class: str, headline
         assert result.review.terms[0].reference_cash_per_share == Decimal("0.2974")
     else:
         assert result.review is None
-        assert result.reason.startswith("distribution_amount_ambiguous")
+        assert result.reason.startswith("distribution_amount_conflict")
 
 
 @pytest.mark.parametrize("share_class", ["B股", "H股"])
@@ -215,19 +441,18 @@ def test_foreign_share_class_summary_is_not_an_a_share_cash_conflict(share_class
     assert result.review.terms[0].cash_per_share == Decimal("0.30")
 
 
-@pytest.mark.parametrize("per_ten,approved", [("2.599999", False), ("2.599990", True)])
-def test_actual_per_share_equation_cannot_disagree_with_per_ten_distribution(per_ten: str, approved: bool) -> None:
+@pytest.mark.parametrize("per_ten,cash", [("2.599999", "0.2599999"), ("2.599990", "0.259999")])
+def test_implementation_cash_is_independent_of_per_share_equation_precision(per_ten: str, cash: str) -> None:
     document = _document(plan="本次实际每股现金红利=现金分红总额÷总股本，"
         "即0.259999元/股=179402901.60元/690011220股。"
         f"向全体股东每10股派{per_ten}元人民币现金（含税）。",
         reference="除权（息）参考价格=前收盘价格-0.259999元。")
     result = extract_distribution_review((_source(),), (document,))
-    if approved:
-        assert result.review is not None, result.reason
-        assert result.review.terms[0].cash_per_share == Decimal("0.259999")
-    else:
-        assert result.review is None
-        assert result.reason.startswith("distribution_amount_ambiguous")
+    assert result.review is not None, result.reason
+    terms, = result.review.terms
+    assert terms.cash_per_share == Decimal(cash)
+    assert terms.reference_cash_per_share == Decimal("0.259999")
+    assert terms.shares_per_share == terms.reference_shares_per_share == 0
 
 
 def test_after_tax_body_amount_is_not_a_gross_cash_summary() -> None:
@@ -268,12 +493,20 @@ def test_undated_title_uses_an_explicit_consistent_plan_period(title: str) -> No
     ("权益分派实施公告", "公司2026年9月召开股东会。本次方案为："),
     ("权益分派实施公告", "此前2025年半年度权益分派方案已完成。本公司2026年半年度权益分派方案为："),
 ])
-def test_title_or_body_period_ambiguity_cannot_be_replaced_by_source_period(title: str, period_text: str) -> None:
+@pytest.mark.parametrize("publication_matches", [False, True])
+def test_period_label_is_not_required_when_implementation_and_registration_identify_the_event(
+    title: str, period_text: str, publication_matches: bool,
+) -> None:
     document = _document(plan=f"{period_text}每10股派1元人民币现金（含税）。",
         reference="差异化分红送转：否").model_copy(update={"title": title})
-    result = extract_distribution_review((_source(),), (document,))
-    assert result.review is None
-    assert result.reason == "missing_implementation"
+    source = _source() if publication_matches else _source().model_copy(update={"imp_ann_date": date(2026, 8, 31)})
+    result = extract_distribution_review((source,), (document,))
+    assert (result.review is not None) is publication_matches
+    if publication_matches:
+        assert result.review.record_date == source.record_date
+        assert result.review.terms[0].cash_per_share == Decimal("0.1")
+    else:
+        assert result.reason == "implementation_event_not_matched"
 
 
 @pytest.mark.parametrize("registration", ["股权登记日（2026年9月9日）", "本次权益分派登记日为：2026年9月9日"])
@@ -367,7 +600,7 @@ def test_different_actual_distribution_cannot_silently_keep_the_proposal(actual:
         reference="除权（息）参考价格=前收盘价格-0.09782元。")
     result = extract_distribution_review((_source(),), (document,))
     assert result.review is None
-    assert result.reason.startswith("distribution_amount_ambiguous")
+    assert result.reason.startswith("distribution_amount_conflict")
 
 
 def test_unchanged_first_section_cannot_lose_shares_in_second_section() -> None:
@@ -442,7 +675,82 @@ def test_entitlement_does_not_copy_ex_reference_or_after_tax_amount() -> None:
     terms, = result.review.terms
     assert terms.cash_per_share == Decimal("0.1002381")
     assert terms.reference_cash_per_share == Decimal("0.0999693")
-    assert result.review.evidence_refs == (document.url + "#sha256=" + document.sha256,)
+    assert result.review.evidence_refs == (document.url,)
+
+
+def test_ordinary_cash_does_not_include_the_reference_deduction() -> None:
+    document = _document(plan="向全体股东每股派发现金红利0.30元（含税）。不送红股，不进行资本公积金转增股本。",
+        reference="除权除息参考价格=（前收盘价格-0.2974）÷（1+0）。")
+    result = extract_distribution_review((_source(),), (document,))
+    assert result.review is not None, result.reason
+    terms, = result.review.terms
+    assert terms.cash_per_share * 1000 == Decimal("300")
+    assert terms.reference_cash_per_share == Decimal("0.2974")
+    assert terms.shares_per_share == 0
+
+
+@pytest.mark.parametrize("index", range(12))
+def test_actual_implementation_supersession_and_unrelated_publications(index: int) -> None:
+    cases = json.loads((Path(__file__).parents[1] /
+        "fixtures/corporate_actions/implementation_relevance.json").read_text())
+    case = cases[index]
+    rows = TypeAdapter(tuple[DividendRecord, ...]).validate_python(case["records"])
+    docs = TypeAdapter(tuple[AnnouncementText, ...]).validate_python(case["documents"])
+    result = extract_distribution_review(rows, docs)
+    if rows[0].symbol == "002422":
+        assert result.review is None and result.reason == "ex_reference_not_confirmed"
+    elif rows[0].symbol == "002026":
+        assert result.review is None and result.reason.startswith("separate_revision_requires_review")
+    else:
+        assert result.review is not None, result.reason
+        terms, = result.review.terms
+        assert terms.cash_per_share == (rows[0].cash_div_tax or Decimal(0))
+        assert terms.shares_per_share == rows[0].stk_div
+        assert terms.published_date == rows[0].imp_ann_date
+        assert result.review.evidence_refs == tuple(doc.url for doc in docs if doc.published_date == rows[0].imp_ann_date)
+        if rows[0].symbol == "300017":
+            assert terms.reference_cash_per_share == Decimal("0.03") != terms.cash_per_share
+        if rows[0].symbol == "600750":
+            assert terms.reference_cash_per_share == Decimal("0.2200") != terms.cash_per_share
+
+
+def test_later_reference_result_completes_early_rights_without_requiring_another_full_plan() -> None:
+    original = _document(plan="向全体股东每10股派1元人民币现金（含税）。", reference="")
+    final = AnnouncementText(source="cninfo", announcement_id="2", symbol="600000",
+        title="关于除权参考价格计算结果的提示公告", published_date=date(2026, 9, 9),
+        url="https://static.cninfo.com.cn/finalpage/2026-09-09/2.PDF",
+        pages=("证券代码：600000。股权登记日：2026年9月9日。除权参考价格为9.80元/股。",))
+    result = extract_distribution_review((_source(),), (final, original))
+    assert result.review is not None, result.reason
+    early, late = result.review.terms
+    assert early.reference_price is early.reference_cash_per_share is None
+    assert early.cash_per_share == late.cash_per_share == Decimal("0.1")
+    assert late.reference_price == Decimal("9.80")
+    assert late.published_date == date(2026, 9, 9)
+    assert late.available_ts_us > early.available_ts_us
+    assert result.review.pay_date == date(2026, 9, 10)
+    later = final.model_copy(update={"published_date": date(2026, 9, 10)})
+    delayed = extract_distribution_review((_source(),), (original, later))
+    assert delayed.review is not None
+    assert delayed.review.terms[0].reference_price is None
+    assert delayed.review.terms[-1].available_ts_us > result.review.terms[-1].available_ts_us
+    cancelled = final.model_copy(update={"title": "关于取消权益分派及除权参考价格计算结果的提示公告",
+        "pages": (final.pages[0] + "本次权益分派取消。",)})
+    rejected = extract_distribution_review((_source(),), (original, cancelled))
+    assert rejected.review is None
+    assert rejected.reason.startswith("separate_revision_requires_review")
+
+
+def test_incomplete_early_pdf_is_not_a_gate_for_a_complete_later_implementation() -> None:
+    early = _document(plan="具体分配数量另行公告。", reference="")
+    final = _document(plan="每10股派3元人民币现金（含税）。", reference="差异化分红送转：否",
+        publication="2026-09-02", identity="2")
+    result = extract_distribution_review((_source(),), (early, final))
+    assert result.review is not None, result.reason
+    terms, = result.review.terms
+    assert terms.published_date == date(2026, 9, 2)
+    assert terms.cash_per_share == Decimal("0.3")
+    assert result.review.evidence_refs == (final.url,)
 
 
 @pytest.mark.parametrize("title,expected", [
@@ -451,7 +759,7 @@ def test_entitlement_does_not_copy_ex_reference_or_after_tax_amount() -> None:
     ("2024年季度权益分派实施公告", False),
 ])
 def test_generic_quarter_title_requires_same_year_and_registration_identity(title: str, expected: bool) -> None:
-    source = _source().model_copy(update={"end_date": date(2025, 9, 30)})
+    source = _source().model_copy(update={"end_date": date(2025, 9, 30), "imp_ann_date": date(2026, 8, 31)})
     document = _document(plan="每10股派1元人民币现金（含税）。", reference="差异化分红送转：否").model_copy(
         update={"title": title})
     result = extract_distribution_review((source,), (document,))
@@ -482,11 +790,11 @@ def test_historical_code_requires_proven_alias_and_original_pdf_header() -> None
         "pages": tuple(page.replace("600000", "430685") for page in document.pages)})
     assert extract_distribution_review((source,), (document,)).reason == "missing_implementation"
     alias = SecurityIdentity(symbol="920685", published_symbol="430685",
-        evidence_url="https://www.bse.cn/service/code_mapping.html", evidence_sha256="2" * 64)
+        evidence_url="https://www.bse.cn/service/code_mapping.html", evidence_file="security-code-mapping.html")
     review = extract_distribution_review((source,), (document,), (alias,)).review
     assert review is not None
     assert review.action_id == f"bse:{'a' * 32}:ordinary_shareholder"
-    assert review.evidence_refs[-1] == alias.evidence_url + "#sha256=" + alias.evidence_sha256
+    assert review.evidence_refs[-1] == alias.evidence_url
     incorrect = document.model_copy(update={"pages": tuple(page.replace("430685", "920685") for page in document.pages)})
     result = extract_distribution_review((source,), (incorrect,), (alias,))
     assert result.review is None
@@ -542,8 +850,12 @@ def test_unrelated_invalid_dates_do_not_crash_event_matching(mentions_registrati
     revision = original.model_copy(update={"announcement_id": "2", "title": "重组报告书（修订稿）",
         "published_date": date(2026, 9, 2), "pages": (text,)})
     result = extract_distribution_review((_source(),), (original, revision))
-    assert (result.review is None) is mentions_registration
+    assert result.review is not None
+    assert result.review.evidence_refs == (original.url,)
     if mentions_registration:
+        actual_revision = revision.model_copy(update={"title": "关于权益分派方案的修订公告"})
+        result = extract_distribution_review((_source(),), (original, actual_revision))
+        assert result.review is None
         assert result.reason == "separate_revision_requires_review:2"
 
 
@@ -591,9 +903,9 @@ def test_conflicting_or_unlabelled_paired_formula_remains_unresolved(reference: 
 
 
 @pytest.mark.parametrize(("plan", "reference", "reason"), [
-    ("每10股转增4股。", "", "zero_cash_not_confirmed"),
+    ("每10股转增4股。", "", "distribution_amount_missing"),
     ("每10股派1元人民币现金（含税）。", "", "ex_reference_not_confirmed"),
-    ("每10股派1元人民币现金（含税）。每10股派2元人民币现金（含税）。", "", "distribution_amount_ambiguous"),
+    ("每10股派1元人民币现金（含税）。每10股派2元人民币现金（含税）。", "", "distribution_amount_conflict"),
     ("每10股派1元人民币现金（含税）。", "重整投资人另行受让。", "special_beneficiary_requires_review"),
     ("每10股派1元人民币现金（含税）。", "除权除息价格=前收盘价-0.08元。另：除权除息价格=前收盘价-0.09元。", "ex_reference_not_confirmed"),
 ])
@@ -601,6 +913,40 @@ def test_ambiguous_or_incomplete_pdf_is_not_approved(plan: str, reference: str, 
     result = extract_distribution_review((_source(),), (_document(plan=plan, reference=reference),))
     assert result.review is None
     assert result.reason.startswith(reason)
+
+
+def test_complete_stock_plan_does_not_require_an_explicit_zero_cash_sentence() -> None:
+    document = _document(plan="以资本公积金向全体股东每10股转增4股。", reference="差异化分红送转：否")
+    document = document.model_copy(update={"pages": (document.pages[0].replace(
+        "现金红利将于2026年9月10日发放。", ""),)})
+    source = _source().model_copy(update={"cash_div_tax": None, "pay_date": None,
+        "stk_div": Decimal("0.4"), "div_listdate": date(2026, 9, 10)})
+    result = extract_distribution_review((source,), (document,))
+    assert result.review is not None, result.reason
+    assert result.review.pay_date is None
+    assert result.review.terms[0].cash_per_share == Decimal(0)
+    assert result.review.terms[0].shares_per_share == Decimal("0.4")
+    assert result.review.terms[0].reference_cash_per_share == Decimal(0)
+    assert source.cash_div_tax is None
+
+
+@pytest.mark.parametrize("cash_clause", ["现金分红金额待定。", "每10股派发人民币现金若干元。"])
+def test_stock_plan_with_unread_cash_terms_does_not_become_zero_cash(cash_clause: str) -> None:
+    document = _document(plan=f"每10股转增4股。{cash_clause}", reference="差异化分红送转：否")
+    document = document.model_copy(update={"pages": (document.pages[0].replace(
+        "现金红利将于2026年9月10日发放。", ""),)})
+    result = extract_distribution_review((_source(),), (document,))
+    assert result.review is None
+    assert result.reason.startswith("distribution_amount_missing")
+
+
+def test_zero_share_plan_without_cash_does_not_assert_no_entitlement() -> None:
+    document = _document(plan="每10股转增0股。", reference="差异化分红送转：否")
+    document = document.model_copy(update={"pages": (document.pages[0].replace(
+        "现金红利将于2026年9月10日发放。", ""),)})
+    result = extract_distribution_review((_source(),), (document,))
+    assert result.review is None
+    assert result.reason.startswith("distribution_amount_missing")
 
 
 def test_versions_are_retained_and_phase_date_correction_does_not_backfill_history() -> None:
@@ -733,7 +1079,7 @@ def test_share_credit_date_cannot_supply_missing_listing_date() -> None:
         "本次所转增股份于2026年9月10日直接记入股东证券账户。")
     result = extract_distribution_review((_source(),), (document.model_copy(update={"pages": (text,)}),))
     assert result.review is None
-    assert result.reason.startswith("settlement_date_ambiguous")
+    assert result.reason.startswith("settlement_date_missing")
 
 
 @pytest.mark.parametrize("cash,label", [(True, "现金红利发放日"), (False, "新增可流通股上市日"),
@@ -807,7 +1153,7 @@ def test_unconfirmed_edge_number_and_body_amount_are_preserved() -> None:
     document = document.model_copy(update={"pages": (first + "2026年9", "2\n月10日" + second)})
     result = extract_distribution_review((_source(),), (document,))
     assert result.review is None
-    assert result.reason.startswith("registration_or_ex_date_ambiguous")
+    assert result.reason.startswith("registration_or_ex_date_missing")
 
 
 @pytest.mark.parametrize("plan,cash", [

@@ -3,6 +3,7 @@ from typing import cast
 
 from src.trading.backtest.context import BacktestContext, BacktestState, PositionValuation, TickState
 from src.trading.backtest.market.replay import ReplayMarket
+from src.trading.backtest.corporate_actions import CorporateActionIssue
 from src.trading.portfolio.engine import mark_to_market
 
 
@@ -50,11 +51,27 @@ class ValueAccountStep:
         valuation = mark_to_market(positions={symbol: state.portfolio_state.positions[symbol] for symbol in held},
             current_raw_prices=prices, last_mark_prices=state.last_mark_prices)
         state.last_mark_prices = valuation.mark_prices
+        shares_receivable_value = 0.0
+        for entitlement in state.portfolio_state.distribution_entitlements.values():
+            action = entitlement.distribution
+            if action.kind != "compensation" or not entitlement.recognized or entitlement.shares_credited:
+                continue
+            if not entitlement.shares_qty:
+                continue
+            mark = origins.get(action.symbol)
+            if mark is None or mark.ts_us <= action.record_ts_us:
+                key = (action.source_ref, action.action_id, "missing_compensation_mark")
+                state.corporate_action_issues.setdefault(key, CorporateActionIssue(ts_us=ts_us,
+                    symbol=action.symbol, action_id=action.action_id, reason=key[2], source_ref=action.source_ref))
+            if mark is not None:
+                shares_receivable_value += entitlement.shares_qty * float(mark.price)
         if is_initial:
-            state.initial_equity = float(state.portfolio_state.cash + state.portfolio_state.dividend_receivable) + valuation.market_value
+            state.initial_equity = (float(state.portfolio_state.cash + state.portfolio_state.dividend_receivable)
+                + valuation.market_value + shares_receivable_value)
             state.equity_curve.starting_peak_equity = max(state.equity_curve.starting_peak_equity, state.initial_equity)
         state.equity_curve.append(ts_us=ts_us, cash=float(state.portfolio_state.cash), market_value=valuation.market_value,
-                                 dividend_receivable=float(state.portfolio_state.dividend_receivable))
+                                 dividend_receivable=float(state.portfolio_state.dividend_receivable),
+                                 shares_receivable_value=shares_receivable_value)
         for phase in (("initial",) if is_initial else ()) + (("close",) if is_close else ()):
             state.valuation_marks[(ts_us, phase)] = tuple(
                 PositionValuation(

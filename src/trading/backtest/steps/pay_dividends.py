@@ -2,6 +2,7 @@
 from typing import cast
 
 from src.trading.backtest.context import BacktestContext, BacktestState, TickState
+from src.trading.backtest.corporate_actions import CorporateActionIssue
 from src.trading.portfolio.corporate_actions import pay_dividend
 
 
@@ -21,11 +22,14 @@ class PayDividendsStep:
         state = cast(BacktestState, context.state)
         tick = cast(TickState, context.tick)
         account = state.portfolio_state
-        for action in context.corporate_actions.payments.get(tick.ts_us, ()):
-            entitlement = account.distribution_entitlements.get(action.action_id)
-            if entitlement is None or not entitlement.recognized or entitlement.cash_paid:
+        for entitlement in tuple(account.distribution_entitlements.values()):
+            action = entitlement.distribution
+            if (not entitlement.recognized or entitlement.cash_paid or action.pay_ts_us is None
+                or action.pay_ts_us > tick.ts_us):
                 continue
-            state.corporate_action_records.append(pay_dividend(account, entitlement))
-            if not entitlement.shares_qty or entitlement.shares_released:
-                del account.distribution_entitlements[action.action_id]
+            state.corporate_action_records.append(pay_dividend(account, entitlement, ts_us=tick.ts_us))
+            if action.kind == "compensation" and action.announced_ts_us > action.pay_ts_us:
+                key = (action.source_ref, action.action_id, "late_compensation_settlement")
+                state.corporate_action_issues.setdefault(key, CorporateActionIssue(ts_us=tick.ts_us,
+                    symbol=action.symbol, action_id=action.action_id, reason=key[2], source_ref=action.source_ref))
         return context

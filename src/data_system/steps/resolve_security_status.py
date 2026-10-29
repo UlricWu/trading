@@ -1,8 +1,7 @@
 # filepath: src/data_system/steps/resolve_security_status.py
-"""Publish reviewed daily security states without rewriting source market facts."""
+"""Publish reviewed daily security states with their source references."""
 
 from dataclasses import dataclass
-from hashlib import sha256
 import json
 
 import pyarrow as pa
@@ -13,12 +12,13 @@ from src.access import meta
 from src.data_system.context import DataContext
 from src.data_system.security_status import SecurityStatusReviews
 from src.data_system.steps._partition import _publish_parquet_object
+from src.utils.filesystem import FileSystem
 from src.utils.path import PathManager
 
 
 @dataclass(frozen=True, slots=True)
 class ResolveSecurityStatusStep:
-    """Verify evidence and original inputs, then publish their independent status.
+    """Publish reviewed states linked to disclosures and sources for the same day.
 
     Example:
         ResolveSecurityStatusStep(pm=pm).run(DataContext(start="2026-09-15",
@@ -28,7 +28,7 @@ class ResolveSecurityStatusStep:
     pm: PathManager
 
     def run(self, context: DataContext) -> DataContext:
-        """Keep unreviewed dates unchanged and invalidate stale reviewed partitions.
+        """Publish explicit confirmed facts, reusing equal output and source references.
 
         Example:
             context = step.run(context)
@@ -44,30 +44,30 @@ class ResolveSecurityStatusStep:
             reviewed = SecurityStatusReviews.model_validate_json(payload)
             if any(review.trade_date.isoformat() != day for review in reviewed.reviews):
                 raise ValueError(f"security status review date differs from partition: {day}")
-            for name, digest in reviewed.source_digests.items():
+            inputs = {"reviews": str(review_path.relative_to(self.pm.storage_root))}
+            for name in ("stock_basic", "suspend_d"):
                 source = self.pm.processed_object(dataset_name=name, version="v1", trade_date=day)
                 original = meta.require(pm=self.pm, meta_path=source.meta_path,
                     expected_payload_path=source.payload_path)
-                if sha256(original.payload_path.read_bytes()).hexdigest() != digest:
-                    raise ValueError(f"security status source digest changed: {name}/{day}")
+                inputs[name] = str(original.payload_path.relative_to(self.pm.storage_root))
             for document in reviewed.documents:
                 original_pdf = review_path.parent / f"{document.announcement_id}.pdf"
-                if sha256(original_pdf.read_bytes()).hexdigest() != document.sha256:
-                    raise ValueError(f"security status PDF digest changed: {document.announcement_id}")
-            inputs = {**reviewed.source_digests, "reviews": sha256(payload).hexdigest()}
+                FileSystem.get_file_size(original_pdf)
             paths = self.pm.processed_object(dataset_name="security_status", version="v1", trade_date=day)
             existing = meta.inspect_output(pm=self.pm, meta_path=paths.meta_path, expected_payload_path=paths.payload_path)
-            if existing is not None:
-                with pq.ParquetFile(existing.payload_path) as parquet:
-                    previous = json.loads(parquet.schema_arrow.metadata[b"security_status_inputs"])
-                if previous == inputs:
-                    logs.info(f"♻️ security status; trade_date={day}")
-                    continue
             schema = pa.schema([("symbol", pa.string()), ("trade_date", pa.string()),
                 ("resolution", pa.string())], metadata={b"security_status_inputs": json.dumps(inputs, sort_keys=True).encode()})
             table = pa.Table.from_pylist([{"symbol": review.symbol, "trade_date": day,
                 "resolution": review.model_dump_json()} for review in sorted(reviewed.reviews, key=lambda row: row.ts_code)],
                 schema=schema)
+            if existing is not None:
+                with pq.ParquetFile(existing.payload_path) as parquet:
+                    unchanged = parquet.read().equals(table, check_metadata=True)
+                if unchanged:
+                    if existing.upstream != (review_path.with_name("meta.json").relative_to(self.pm.storage_root), loaded.size_bytes):
+                        meta.commit(pm=self.pm, payload_path=paths.payload_path, upstream_meta_path=review_path.with_name("meta.json"))
+                    logs.info(f"♻️ security status; trade_date={day}")
+                    continue
             _publish_parquet_object(pm=self.pm, paths=paths, table=table,
                 upstream_meta_path=review_path.parent / "meta.json")
             logs.info(f"✅ security status; trade_date={day} reviews={len(reviewed.reviews)}")

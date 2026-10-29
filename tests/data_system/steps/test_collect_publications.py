@@ -1,5 +1,5 @@
 # filepath: tests/data_system/steps/test_collect_publications.py
-"""Publication discovery covers weekends and preserves earlier source observations."""
+"""Publication discovery covers weekends, new announcements and incomplete queries."""
 
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -14,7 +14,7 @@ from src.data_system.steps.collect_publications import CollectPublicationsStep
 from src.utils.path import PathManager
 
 
-def test_changed_index_is_archived_and_identical_content_is_reused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_new_publication_updates_index_and_identical_content_is_reused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pm = PathManager(tmp_path)
     row = AnnouncementPublication(source="cninfo", announcement_id="1", symbol="002986",
         title="关于相关公告更正的说明", published_date="2026-09-19",
@@ -37,8 +37,7 @@ def test_changed_index_is_archived_and_identical_content_is_reused(tmp_path: Pat
     changed = row.model_copy(update={"announcement_id": "2", "url": row.url.replace("/1.PDF", "/2.PDF")})
     cninfo.announcement_index.return_value = (row, changed)
     step.run(context)
-    archived, = (path.parent / "history").glob("*/index.json")
-    assert archived.read_bytes() == original[0]
+    assert not (path.parent / "history").exists()
     assert len(PublicationIndex.model_validate_json(path.read_bytes()).announcements) == 2
     coverage = PublicationCoverage.model_validate_json((path.parent / "coverage.json").read_bytes())
     assert coverage.index_count == 2

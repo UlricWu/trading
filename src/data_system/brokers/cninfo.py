@@ -3,11 +3,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from datetime import date, datetime, timedelta
-from hashlib import sha256
 import json
 from pathlib import Path
+from uuid import uuid4
 import re
 import time
 from zoneinfo import ZoneInfo
@@ -152,12 +152,11 @@ class CninfoBroker:
                                         data=query, timeout=30) as response:
                     payload = response.content
                     collected_at = self._clock().isoformat()
-                    identity = sha256(json.dumps(query, sort_keys=True).encode() + payload + collected_at.encode()).hexdigest()
+                    identity = uuid4().hex
                     FileSystem.write_bytes_atomic(directory / f"query-{identity}.json", payload)
                     FileSystem.write_bytes_atomic(directory / f"query-{identity}.request.json", json.dumps({
                         "url": "https://www.cninfo.com.cn/new/hisAnnouncement/query", "parameters": query,
                         "collected_at": collected_at, "http_status": response.status_code,
-                        "response_sha256": sha256(payload).hexdigest(),
                     }, ensure_ascii=False, sort_keys=True).encode())
                     if response.status_code in (500, 502, 503, 504) and attempt < 2:
                         time.sleep(attempt + 1)
@@ -216,43 +215,47 @@ class CninfoBroker:
             announcements=tuple(sorted(unique.values(), key=lambda row: (row.timestamp_ms, row.announcement_id))))
 
     def download_distribution_documents(
-        self, *, index: Sequence[_IndexRow], directory: Path,
+        self, *, index: Sequence[_IndexRow], directory: Path, implementation_dates: Collection[date] = (),
     ) -> tuple[AnnouncementFile, ...]:
         """Preserve distribution PDFs and generic corrections; unrelated price adjustments are excluded.
 
         Example:
-            documents = broker.download_distribution_documents(index=index, directory=raw_directory)
+            documents = broker.download_distribution_documents(index=index, directory=raw_directory,
+                implementation_dates=(date(2026, 9, 1),))
         """
         documents = []
         for row in index:
             title = re.sub(r"<[^>]+>", "", row.title)
-            if not is_distribution_evidence(title):
-                continue
-            url = f"https://static.cninfo.com.cn/{row.adjunct_url}"
-            path = directory / f"{row.announcement_id}.pdf"
-            receipt = path.with_suffix(".download.json")
-            if path.exists():
-                payload = path.read_bytes()
-                digest = sha256(payload).hexdigest()
-                saved = AnnouncementFile.model_validate_json(receipt.read_bytes())
-                if saved.url != url or saved.sha256 != digest:
-                    raise ValueError(f"cached announcement identity changed: {row.announcement_id}")
-                fetched_at = saved.fetched_at
-            else:
-                with self._session.get(url, timeout=40) as response:
-                    response.raise_for_status()
-                    payload = response.content
-                if not payload.startswith(b"%PDF"):
-                    raise ValueError(f"announcement is not a PDF: {row.announcement_id}")
-                digest = sha256(payload).hexdigest()
-                FileSystem.write_bytes_atomic(path, payload)
-                fetched_at = self._clock()
-                time.sleep(0.2)
             published = datetime.fromtimestamp(row.timestamp_ms / 1000, ZoneInfo("Asia/Shanghai"))
-            original = AnnouncementFile(announcement_id=row.announcement_id, symbol=row.symbol,
+            if not is_distribution_evidence(title) and published.date() not in implementation_dates:
+                continue
+            publication = AnnouncementPublication(source="cninfo", announcement_id=row.announcement_id, symbol=row.symbol,
                 title=title, published_date=published.date(),
                 published_ts_us=row.timestamp_ms * 1000 if published.time() != datetime.min.time() else None,
-                url=url, sha256=digest, fetched_at=fetched_at)
-            FileSystem.write_bytes_atomic(receipt, original.model_dump_json(indent=2).encode())
-            documents.append(original)
+                url=f"https://static.cninfo.com.cn/{row.adjunct_url}")
+            documents.append(self.download_announcement(publication=publication,
+                path=directory / f"{row.announcement_id}.pdf"))
         return tuple(documents)
+
+    def download_announcement(self, *, publication: AnnouncementPublication, path: Path) -> AnnouncementFile:
+        """Preserve a native PDF and its original download receipt for either data projection.
+
+        Example:
+            original = broker.download_announcement(publication=publication, path=pdf_path)
+        """
+        receipt = path.with_suffix(".download.json")
+        if path.exists():
+            saved = AnnouncementFile.model_validate_json(receipt.read_bytes())
+            if saved.url != publication.url:
+                raise ValueError(f"cached announcement identity changed: {publication.announcement_id}")
+            return saved
+        with self._session.get(publication.url, timeout=40) as response:
+            response.raise_for_status()
+            payload = response.content
+        if not payload.startswith(b"%PDF"):
+            raise ValueError(f"announcement is not a PDF: {publication.announcement_id}")
+        FileSystem.write_bytes_atomic(path, payload)
+        original = AnnouncementFile(**publication.model_dump(exclude={"source"}), fetched_at=self._clock())
+        FileSystem.write_bytes_atomic(receipt, original.model_dump_json(indent=2).encode())
+        time.sleep(0.2)
+        return original

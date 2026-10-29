@@ -22,13 +22,13 @@ class ReleaseDistributedSharesStep:
         state = cast(BacktestState, context.state)
         tick = cast(TickState, context.tick)
         account = state.portfolio_state
-        for action in context.corporate_actions.releases.get(tick.ts_us, ()):
-            entitlement = account.distribution_entitlements.get(action.action_id)
-            if entitlement is None or not entitlement.recognized or entitlement.shares_released:
+        for entitlement in tuple(account.distribution_entitlements.values()):
+            action = entitlement.distribution
+            if (not entitlement.recognized or entitlement.shares_released or action.shares_available_ts_us is None
+                or action.shares_available_ts_us > tick.ts_us
+                or (action.kind == "compensation" and not entitlement.shares_credited)):
                 continue
             account.distribution_entitlements[action.action_id] = entitlement.model_copy(update={"shares_released": True})
             state.corporate_action_records.append(CorporateActionRecord(action.action_id, tick.ts_us,
                 action.symbol, "shares_released", entitlement.eligible_qty, Decimal(0), Decimal(0), 0, action.source_ref))
-            if not entitlement.cash_amount or entitlement.cash_paid:
-                del account.distribution_entitlements[action.action_id]
         return context

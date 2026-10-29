@@ -125,18 +125,14 @@ def test_report_writes_diagnostics_and_paths_to_logs_without_retraining_or_repre
     assert metrics_ref.read_bytes() == original_metrics
 
 
-@pytest.mark.parametrize("mutation", ["label_revision", "model_reference", "decision_time", "prediction_reference"])
+@pytest.mark.parametrize("mutation", ["label_reference", "model_reference", "decision_time", "prediction_reference"])
 def test_report_rejects_mixed_evaluation_evidence(tmp_path: Path, mutation: str) -> None:
     pm = PathManager(tmp_path)
     context = _context(pm)
     metrics_ref = pm.experiment_training_metrics(experiment_name="run")
     payload = json.loads(metrics_ref.read_text())
-    if mutation == "label_revision":
-        label_ref = Path(payload["observations"][0]["label_ref"])
-        frame = pd.read_parquet(label_ref)
-        frame.loc[0, "y_rank_return"] = 0.6
-        frame.to_parquet(label_ref, index=False)
-        meta.commit(pm=pm, payload_path=label_ref)
+    if mutation == "label_reference":
+        payload["observations"][0]["label_ref"] = str(tmp_path / "other-label.parquet")
     elif mutation == "model_reference":
         payload["observations"][0]["model_ref"] = str(tmp_path / "other.joblib")
     elif mutation == "decision_time":

@@ -50,6 +50,7 @@ class PortfolioState:
     buy_qty_today: dict[str, int] = field(default_factory=dict)
     current_day: str | None = None
     distribution_entitlements: dict[str, DistributionEntitlement] = field(default_factory=dict)
+    registration_holdings: dict[str, dict[str, int]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         self.initial_cash = Decimal(str(self.initial_cash))
@@ -59,6 +60,7 @@ class PortfolioState:
         self.avg_cost = {symbol: Decimal(str(cost)) for symbol, cost in self.avg_cost.items()}
         self.buy_qty_today = dict(self.buy_qty_today)
         self.distribution_entitlements = dict(self.distribution_entitlements)
+        self.registration_holdings = {day: dict(positions) for day, positions in self.registration_holdings.items()}
 
     def on_trading_day_start(self, trade_date: str) -> None:
         """Unlock prior-day buys once, preserving initial snapshot restrictions.
@@ -89,7 +91,8 @@ class PortfolioState:
             locked = account.unlisted_shares("600000")
         """
         return sum(item.shares_qty for item in self.distribution_entitlements.values()
-                   if item.distribution.symbol == symbol and item.recognized and not item.shares_released)
+                   if item.distribution.symbol == symbol and item.recognized and not item.shares_released
+                   and (item.distribution.kind == "distribution" or item.shares_credited))
 
     @property
     def dividend_receivable(self) -> Decimal:

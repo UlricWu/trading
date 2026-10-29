@@ -128,7 +128,7 @@ def test_equity_keeps_actual_valuation_times_and_replaced_snapshot(
     curve = context.state.equity_curve
     curve.append(ts_us=1, cash=10_000.0, market_value=10_000.0)
     curve.append(ts_us=3, cash=9_000.0, market_value=7_000.0)
-    curve.append(ts_us=3, cash=9_000.0, market_value=8_000.0)
+    curve.append(ts_us=3, cash=9_000.0, market_value=8_000.0, shares_receivable_value=1000.0)
     original_points = tuple(curve.points)
 
     FactsPersistStep(output_dir=pm.experiment_dir(experiment_name="equity")).run(context)
@@ -136,9 +136,9 @@ def test_equity_keeps_actual_valuation_times_and_replaced_snapshot(
     table = pq.read_table(pm.experiment_backtest_equity(experiment_name="equity"))
     assert table.to_pylist() == [
         {"ts_us": 1, "cash": 10_000.0, "market_value": 10_000.0,
-         "equity": 20_000.0, "peak_equity": 20_000.0, "drawdown": 0.0, "dividend_receivable": 0.0},
+         "equity": 20_000.0, "peak_equity": 20_000.0, "drawdown": 0.0, "dividend_receivable": 0.0, "shares_receivable_value": 0.0},
         {"ts_us": 3, "cash": 9_000.0, "market_value": 8_000.0,
-         "equity": 17_000.0, "peak_equity": 20_000.0, "drawdown": -0.15, "dividend_receivable": 0.0},
+         "equity": 18_000.0, "peak_equity": 20_000.0, "drawdown": -0.1, "dividend_receivable": 0.0, "shares_receivable_value": 1000.0},
     ]
     assert table.schema.field("ts_us").type == pa.int64()
     assert all(field.type == pa.float64() for field in list(table.schema)[1:])
@@ -158,5 +158,5 @@ def test_empty_fact_collections_have_stable_typed_files(
     assert execution.schema.field("ts_us").type == pa.int64()
     assert execution.schema.field("qty").type == pa.int64()
     assert execution.schema.field("commission").type == pa.string()
-    assert equity.column_names == ["ts_us", "cash", "market_value", "equity", "peak_equity", "drawdown", "dividend_receivable"]
+    assert equity.column_names == ["ts_us", "cash", "market_value", "equity", "peak_equity", "drawdown", "dividend_receivable", "shares_receivable_value"]
     assert equity.schema.field("cash").type == pa.float64()

@@ -22,6 +22,7 @@ from src.trading.backtest.steps.prepare_initial_marks import PrepareInitialMarks
 from src.trading.backtest.steps.initialize_account import InitializeAccountStep
 from src.trading.backtest.steps.prepare_corporate_actions import PrepareCorporateActionsStep
 from src.trading.backtest.steps.apply_distributions import ApplyDistributionsStep
+from src.trading.backtest.steps.credit_compensation_shares import CreditCompensationSharesStep
 from src.trading.backtest.steps.update_distribution_terms import UpdateDistributionTermsStep
 from src.trading.backtest.steps.release_distributed_shares import ReleaseDistributedSharesStep
 from src.trading.backtest.steps.record_entitlements import RecordEntitlementsStep
@@ -99,6 +100,8 @@ def run_backtest(
             ValueAccountStep(),
             *decision_steps,
             RecordEntitlementsStep(),
+            CreditCompensationSharesStep(),
+            ReleaseDistributedSharesStep(),
             PayDividendsStep(),
             ObserveCorporateActionIssuesStep(),
             ValueAccountStep(),

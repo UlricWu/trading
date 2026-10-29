@@ -1,0 +1,72 @@
+[
+  {
+    "records": [{
+      "ts_code": "002323.SZ", "symbol": "002323", "end_date": "2021-09-15",
+      "ann_date": "2021-09-30", "div_proc": "实施", "imp_ann_date": "2021-12-27",
+      "record_date": "2021-12-30", "ex_date": "2022-01-06", "pay_date": null,
+      "div_listdate": "2022-01-06", "cash_div_tax": null, "stk_div": "1.844"
+    }],
+    "review": {
+      "candidate_id": "002323.SZ/2021-09-15/2021-12-30",
+      "action_id": "cninfo:1212017890:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2021-12-30", "ex_date": "2022-01-06", "pay_date": null,
+      "div_listdate": "2022-01-06",
+      "terms": [
+        {
+          "published_date": "2021-12-27", "cash_per_share": "0", "shares_per_share": null,
+          "reference_cash_per_share": null, "reference_shares_per_share": null, "reference_price": null
+        },
+        {
+          "published_date": "2021-12-30", "cash_per_share": "0", "shares_per_share": null,
+          "reference_cash_per_share": null, "reference_shares_per_share": null, "reference_price": "2.98"
+        },
+        {
+          "published_date": "2022-01-06", "cash_per_share": "0", "shares_per_share": "1.226058",
+          "reference_cash_per_share": null, "reference_shares_per_share": null, "reference_price": "2.98"
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2021-12-27/1212017890.PDF",
+        "https://static.cninfo.com.cn/finalpage/2021-12-30/1212056746.PDF",
+        "https://static.cninfo.com.cn/finalpage/2022-01-06/1212104022.PDF"
+      ],
+      "reason": "仅适用前十名之外的合资格普通流通股持仓。12月27日实施公告第2、4页明确登记、除权和上市日期，第5页明确无现金红利；普通股东按登记持股占合资格总股数的比例获配，当时未给出分母。12月30日提示公告第4—5页确定参考价2.98元。1月6日进展公告第3页给出参与持股263597347股、调整后的分配总量323185634股及每10股获配12.26058股。使用直接披露比例，不用公司总转增比例；日期型披露在次日可见，不回填。账户零碎股实际分配仍以结算结果为准。"
+    }
+  },
+  {
+    "records": [{
+      "ts_code": "600179.SH", "symbol": "600179", "end_date": "2020-10-14",
+      "ann_date": "2020-10-30", "div_proc": "实施", "imp_ann_date": "2020-12-01",
+      "record_date": "2020-12-04", "ex_date": "2020-12-07", "pay_date": null,
+      "div_listdate": "2020-12-08", "cash_div_tax": null, "stk_div": "1.935"
+    }],
+    "review": {
+      "candidate_id": "600179.SH/2020-10-14/2020-12-04",
+      "action_id": "cninfo:1208820903:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2020-12-04", "ex_date": "2020-12-07", "pay_date": null,
+      "div_listdate": "2020-12-08",
+      "terms": [
+        {
+          "published_date": "2020-12-01", "cash_per_share": "0", "shares_per_share": null,
+          "reference_cash_per_share": null, "reference_shares_per_share": null, "reference_price": null
+        },
+        {
+          "published_date": "2020-12-04", "cash_per_share": "0", "shares_per_share": null,
+          "reference_cash_per_share": null, "reference_shares_per_share": null, "reference_price": "5.09"
+        },
+        {
+          "published_date": "2020-12-08", "cash_per_share": "0", "shares_per_share": "0.3585165",
+          "reference_cash_per_share": null, "reference_shares_per_share": null, "reference_price": "5.09"
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2020-12-01/1208820903.PDF",
+        "https://static.cninfo.com.cn/finalpage/2020-12-04/1208850139.PDF",
+        "https://static.cninfo.com.cn/finalpage/2020-12-08/1208863790.PDF"
+      ],
+      "reason": "仅适用前一百名之外的合资格普通流通股持仓。12月1日实施公告第1—3页明确分配池97495711股、登记、除权和上市日期，第3页明确无现金红利；普通股东分母当时未给出。12月4日提示公告第3页确定参考价5.09元。12月8日进展公告第2页给出参与持股271942050股和预计每10股获配3.585165股，具体分配以法院协助执行通知书为准。使用直接披露比例，不用公司总转增比例；日期型披露在次日可见，不回填，不猜账户零碎股分配。"
+    }
+  }
+]

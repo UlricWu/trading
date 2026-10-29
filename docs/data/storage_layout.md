@@ -130,45 +130,134 @@ labels/<label_set>/<version>/trade_date=<date>/meta.json
 [工程规范](../../AGENTS.md#工程规范)。字段扩充仍更新当前 owner 定义的 `v1` schema；
 已有派生分区需要同步重建，不能通过另开版本目录绕过，也不增加多版本读取或回退。
 
-`dividend/v1` 为保留来源公告与原始行摘要的分配记录；`corporate_actions/v1` 为同登记日的
-解析结果。公开公告和核验使用下列 raw 对象，均按核验事件的股权登记日分区；公告查询
-范围单独存于集合中，不把自然日公告误标成登记日披露：
+`dividend/v1` 保存结构化分配记录并逐行保留重复观察；`corporate_actions/v1` 保存同登记日
+的候选处置。同一候选内等价观察归并后，source_record 保存选中的原始行，其余观察
+仍由同日 dividend 上游定位；不覆盖来源行或另建去重后的 dividend 数据集。普通纯送转
+按数据源 owner 解释零现金时，原始响应、dividend/v1 和 source_record 的现金字段仍为 null；
+账户可执行条款的 cash_per_share 为 0，派息日为空，不增加字段或另设版本。
+公司行动来源可信边界由[数据源 owner](source_contract.md#从来源记录到业务事件)
+定义，当前对象不依赖文件内容摘要或历史快照失效检查。公告和修正使用以下 V1 raw 对象，
+均按股权登记日分区，查询的自然日范围单独保存在集合中：
 
-- `raw/cninfo/corporate_action_announcements/trade_date=<date>/announcements.json` 及 Meta；
-  同目录保存 `<announcement_id>.pdf`、下载回执和原始查询请求/响应，集合保存各自摘要。
-- `raw/bse/corporate_action_announcements/trade_date=<date>/announcements.json` 及 Meta；
-  原文文件名使用原生十六进制或 `manual<数字>` 公告 ID，同目录保存官方新旧代码对照
-  HTML、回执及查询证据；保留源索引给出的 `disclosure/` 或历史 `uploads/` 路径。
-  两个来源的集合在替换前完整归档至各自 `history/<旧集合 SHA-256>/`；它们是审计证据，
-  不作为额外版本或运行时回退输入。
+- `raw/{cninfo,bse}/corporate_action_announcements/trade_date=<date>/announcements.json` 及 Meta；
+  同目录按原生公告 ID 保存 PDF、下载回执和查询请求/响应。集合保存证据文件名、查询覆盖、
+  公告身份与公开时间；北交所另保存官方代码映射 HTML，显式代码映射用 evidence_file 定位原件。
 - `raw/announcements/corporate_action_review_inputs/trade_date=<date>/reviews.json` 及 Meta；
-  显式复核输入以同目录 `collection.sha256` 绑定所核查的公告集合；多渠道时绑定各集合
-  路径和 SHA-256 所组成的有序映射摘要。独立公告来源在同一核验对象中保存原生公告身份、
-  原文摘要和历史公开时间，不新增表或伪造 dividend 行；既有 dividend 分区仍记录实际查询
-  覆盖，包括明确的空结果。后续真实源候选通过 related_sources 关联同一 action_id。
+  保存显式确认的条款与候选关联，不再生成 collection.sha256。独立公告保留原生公告身份、
+  原文 URL 和公开时间，不伪造 dividend 行。既有 dividend 分区记录实际覆盖，包括明确空结果；
+  后续真实候选通过 related_sources 关联同一 action_id。
 - `raw/announcements/corporate_action_reviews/trade_date=<date>/reviews.json` 及 Meta；
-  自动提取流程另保存 `extraction.json`，绑定精确输入、生成代码、核验输出及未解决原因。
+  提取流程另保存 extraction.json，记录输入路径和未解决原因。条款的原版与已知修订版在
+  review.terms 中分别保存公开时间，不依靠文件历史目录决定回放版本。参考值按数据源 owner
+  使用成对公式参数或 reference_price，早期尚未公开参考值的版本保留 null；不得将后来
+  的绝对参考价写进早期版本。按数据源 owner 已确认的待定现金或净获配比例同样在各自
+  cash_per_share、shares_per_share 字段保留 null，后续数值另存带公开时间的版本，不另建
+  事件或升版。回测分配、修订和未结权益快照保留同样字段，以及登记股数和未完成原因。
 
-显式复核输入、自动核验输出及 `corporate_actions/v1` 处置对象被替换前，分别在同目录
-`history/<旧内容摘要>/` 保留原 payload、Meta 与对应的集合绑定或提取清单。核验归档的
-摘要覆盖整组文件，避免结果金额相同而证据或生成代码变化时覆盖旧记录；处置 Parquet
-本身的 schema metadata 已绑定全部输入摘要。归档只供复核与复现，不增加运行时版本选择。
+生产者不为源文件内容变化建立摘要归档。显式修正或重新提取改变已保存的 reviews 时，
+将旧修正、Meta 和提取清单保存在 history/<唯一归档名>/，避免丢失已确认条款及失败解释；
+归档名只定位文件，不是内容指纹。已有历史摘要及冻结复现材料保留。所有归档均不作为
+额外运行时版本或回退输入。
+
+<a id="corporate-action-migration"></a>
+
+采用当前 V1 字段契约前，旧公司行动对象须按本节 schema 整理并重建，不能直接复用旧
+processed 分区或让运行时增加旧格式回退。一次性入口为
+`python -m scripts.migrate_corporate_actions --source-root /absolute/source --output-dir /absolute/new-output`；
+输入为全部已存登记日，不联网，不读取应用密钥，不解析 PDF。输出目录必须尚不存在且与
+来源目录互不包含；脚本只读取来源，将本次公司行动范围的原始对象、历史目录和旧派生
+对象完整复制到 `original/`，在独立 `storage/` 中转换及重建。
+
+整理已确认 review 时，仅移出 source_digest，
+将 related_sources 的候选键保留为列表，将 evidence_refs 中的摘要片段移至历史材料；
+action_id、证券、全部 terms 及公开时间、阶段日期、受益范围和解释必须逐字段保留，不
+重新核验或丢弃已确认修正。公告清单的 request_files 保留旧请求摘要映射的文件名，代码
+对应关系用 evidence_file 指向既有原件；提取清单保留输入路径与 issues。原始 Tushare
+响应、公告原件和历史摘要保留，从 raw 重建 dividend/v1，再消费整理后的修正重建
+corporate_actions/v1。显式 review 输入必须与已提交 review 一致，旧解析中的全部已确认
+review 必须在新解析中逐字段保留；缺少 raw、遗漏候选、修正缺失或冲突均失败，不自动
+舍弃或选取一版。已知缺失、冲突和特殊事件仍由解析规则决定是否未解决。
+
+输出 `inputs.json` 定位原始输入，`report.json` 统计范围、前后状态、普通来源候选、已确认
+候选与独立事件数，`unresolved.json` 列出全部未解决候选。仅完整成功才生成 report.json；
+失败目录保留供定位，修复后使用新目录重跑。原始输入本身用于复现，不额外计算摘要。
+脚本不原地覆盖、不切换 cron、不迁移已有回测账户快照；正式数据切换以及受影响历史账户
+的重跑仍按仓库授权边界执行，不能直接将隔离根替换成包含其他数据的完整存储根。
+
+当前字段迁移的真实输入验证冻结了 `/home/wsw/app/data` 中 2018-01-02 至 2026-09-30
+的 2,123 个分区，保留其中全部 460 个已确认事件及 461 个候选关联，并从普通来源生成
+31,249 个可执行候选；重复构建的 4,246 张表和 42 份 review JSON 业务内容一致。
+精确代码、原始输入、未解决清单、账户回放及验证限制见
+[迁移验收证据](/home/wsw/app/maintenance-evidence/corporate-actions-dividend-20261024-3il6maaf/validation-report.txt)。
+该次输入尚未包含数据源 owner 所引用的部分历史修正。后续按 owner 的逐案最终结论
+整理 192 个事件和 18 个已知问题候选，另补入经源数据核对确认的 22 个 dividend 候选及
+1 个原生公告事件；清单保留采用依据、中间版本及排除原因，不整体采用实验存储根。
+该次材料整合的 246 项处置变化均属于明确清单；3 个原先按普通来源执行的候选因已知
+冲突转为未解决。同一输入再迁移后，4,246 张表（含 metadata）及 363 份 review 文件
+内容一致。逐项来源、材料取舍和旧结果见
+[已确认材料整合验收](/home/wsw/app/maintenance-evidence/corporate-actions-dividend-20261024-3il6maaf/supplement-validation-report.txt)。
+
+在相同的 33,139 个候选上采用等价观察归并、完整记录选择和非季度末纯现金规则后，
+32,720 个 resolved、5 个 not_entitled、414 个 unresolved；直接采用普通来源由 31,163
+增至 32,043，682 个候选关联的 640 个已确认事件及全部此前可执行处置均未改变。
+880 个新增来源事件包括重复观察 830、明确值与缺值并存 19、实施公告日差异 20、
+非季度末现金 11；另有 2 项仅由非标准报告期理由转为同登记日候选未关联，不算已解决。
+全部 2,123 张 dividend 输入表保持原值，重跑的 4,246 个解析文件及 Meta 内容和修改时间
+一致；精确源码、输入、前后处置及账户验证见
+[来源归并验收](/home/wsw/app/maintenance-evidence/corporate-actions-source-merge-20261025-snkwn52s/report.txt)。
+在同一输入上采用普通纯送转的空现金解释后，296 个 missing_distribution_terms 候选转为
+普通来源可执行，总计 33,016 个 resolved、5 个 not_entitled、118 个 unresolved，直接来源
+候选为 32,339。全部此前可执行处置及 640 个已确认事件不变；原始 dividend 文件和 2,123 张
+规范化输入表保持原值，新增事件的 source_record.cash_div_tax 仍为 null。重复构建的
+4,246 个解析文件及 Meta 内容和修改时间一致。剩余项包括非标准送转 90、特殊参考参数 14、
+实施日期缺失 6、同登记日候选未关联 4、金额冲突 2、上市日期歧义和支付年份冲突各 1，
+均未被现金零值规则放行。精确代码、冻结输入、逐项差异及账户验证见
+[普通送转空现金验收](/home/wsw/app/maintenance-evidence/corporate-actions-zero-cash-20261025-6jx4xpsd/report.txt)。
+在该输入上采用合资格普通持仓范围及独立公告参考价后，供销大集、奥园美谷、景峰医药、
+聆达股份、汉马科技五个已复核事件关联的 9 个候选可执行；总计 33,019 个 resolved、
+11 个 not_entitled、109 个 unresolved。普通来源仍为 32,339 个候选，已确认事件为 645 个、
+关联 691 个候选。此前 33,021 个可执行候选的业务条款保持相等；另外 6 个未解决候选
+明确改列参考价公开时间缺口，不再笼统归因于不支持特殊参考价。原始来源与规范化输入不变。
+387 项公司行动回归及 9 个真实日行情场景、38 次回放覆盖版本可见性、净分配、零权益
+除权、真实行情替代和续跑；供销大集 100 股的零碎股情况仍按诊断保留。
+当时扩大检查另有 73 项因未授权的 SHA-256 调用未完成，包含模型预测证据和 PDF 加密相关测试；
+精确代码、五份显式复核输入、逐项变化、公开时间缺口及各次失败保存在
+[合资格普通持仓验收](/home/wsw/app/maintenance-evidence/corporate-actions-qualified-holder-20261025-naj44tn_/report.txt)。
+后续删除预测和证券状态的业务内容摘要依赖，仅保留 PDF 加密格式内部的必要计算，
+原 25 个测试文件及本次影响的训练、报告、信号和证券状态边界共 49 个文件、1,414 项回归通过；
+原范围中受阻的 73 项均通过，运行限制未发现其他 SHA-256 调用。精确源码、测试输入、
+原失败与逐项复验见[业务摘要清理验收](/home/wsw/app/maintenance-evidence/sha256-business-cleanup-20261028-e4pq5elz/report.md)。
+这项验证覆盖所列本地测试，不代表全仓测试或重新执行历史数据补齐。
+这些证据证明明确输入范围的迁移、归并和整合，不表示所有历史公告已核验或未知遗漏已消除。
 
 按披露日发现公告使用 `raw/{cninfo,bse}/corporate_action_publications/trade_date=<自然披露日>/`，
-与上述登记日证据集合分开。`index.json` 及 Meta 保存该来源当日的完整公开索引，
-`coverage.json` 绑定索引 SHA-256、条数、观察时间及原始分页请求/响应摘要；完整空索引
-表示已查询且无披露，不能用缺文件代表空结果。每次查询前写入 `pending.json`，仅在索引、
-覆盖证据和 Meta 全部提交后删除；失败刷新即使保留旧的有效索引，也仍须重试。
-旧索引发生变化时，将原索引、覆盖证据和 Meta 一起归档至 `history/<旧整组摘要>/`，
-原始请求/响应以内容及采集时间生成的唯一文件名保留。此处仍使用 V1。
+与登记日证据分开。index.json 及 Meta 保存该来源当日的完整索引，coverage.json 保存条数、
+观察时间和原始分页请求/响应文件名；完整空索引表示已查询且无披露，缺文件不能代表空结果。
+每次查询前写 pending.json，索引、覆盖记录和 Meta 全部提交后删除；失败刷新仍须重试。
+请求/响应使用唯一请求文件名保留，其名称只用于定位文件，不作为内容指纹。
 
-核验内容、来源摘要与多输入 lineage 由[数据源 owner](source_contract.md#dividend)定义。它们继续使用上述单对象路径与原子发布；重建不改写已入库 Tushare raw。
+与索引同目录的 `documents/<announcement_id>/` 保存 `original.pdf`、`original.download.json`
+及成功提取的 `text.json`。原件下载时间和事实首次观察时间分别保留；不可读原文不发布伪造
+空文本成功缓存。其业务事实写入
+`processed/announcement_facts/v1/trade_date=<自然披露日>/data.parquet` 及 Meta；空结果也提交，
+表示该日已完成当前公司行动候选的物化，不表示全市场没有其他类型事件。
+
+表列为 event_id、symbol、published_date、available_ts_us、observed_at、kind、benefit_state、
+record_date、ex_date、pay_date、shares_credit_date、shares_available_date、cash_per_share、
+shares_per_share、shares_numerator、shares_denominator、facts。日期使用 date32，时间使用 UTC
+微秒；金额/比例和整数公式参数以十进制字符串保留精度，null 仍为未知。facts 是完整 V1
+`AnnouncementFacts` JSON，包含原生来源、字段冲突、解析问题及证据引用。Parquet metadata
+的 announcement_inputs 保存输入索引相对路径。身份、时间语义归数据源 owner，读取校验归
+Access owner。逐日增量和同序历史区间必须产生相同事实，重复发布内容不变时复用文件。
+该表不按登记日分区，因为早期事件可以没有登记日，也不要求 dividend 已有对应候选。
+
+核验内容、来源引用与多输入 lineage 由[数据源 owner](source_contract.md#dividend)定义。它们继续使用上述单对象路径与原子发布；重建不改写已入库 Tushare raw。
 需要留存被替换的派生对象时，将其与精确输入、源码一同归档为验证证据，不作为另一正式版本供运行时读取。
 
 证券状态补充使用 `raw/announcements/security_status_reviews/trade_date=<date>/reviews.json`
 及同目录 Meta、`<announcement_id>.pdf`，分区日期是状态适用的账户日。输出为
 `processed/security_status/v1/trade_date=<date>/data.parquet` 及 Meta；直接 upstream 指向
-对应核验输入 Meta，多输入摘要与状态语义由[数据源 owner](source_contract.md#公告核验的证券状态)拥有。
+对应核验输入 Meta，多输入来源路径与状态语义由[数据源 owner](source_contract.md#公告核验的证券状态)拥有。
 
 `trade_calendar` 不使用单日 processed 分区，固定为：
 
@@ -255,7 +344,7 @@ root 身份。Meta 不记录日志。
 `inspect_output()` 仅供拥有派生输出的 producer 在输入更新后决定重建：校验旧 Meta
 schema、路径身份、旧 payload 字节数及关系字段格式，但不要求旧 upstream 的记录大小
 仍等于当前输入大小。返回旧对象不表示可消费或可复用；producer 须先以普通读取契约
-校验全部当前输入，再比较领域输入摘要、验证业务条件并重新发布。它不将损坏输出转为
+校验全部当前输入，再按所属数据契约比较输入或重新计算、验证业务条件并重新发布。它不将损坏输出转为
 未产出，只有 Meta 缺失返回 `None`。这使合法的输入更新可以重建派生对象，同时
 `find()`、`require()` 及 Access 继续拒绝过期 lineage；不得通过重新提交旧输出的 Meta
 假装它已经使用新输入生成。
@@ -355,10 +444,11 @@ Save 创建必要父目录，在目标同目录创建唯一临时文件，完成
 
 每份预测 Parquet 保留原始完整样本键，以及 int64 decision_ts_us、字符串
 model_ref 和 nullable float64 prediction；输入顺序和行数不因 drop 或缺标签改变。
-Parquet schema metadata 的 prediction_inputs 保存 model_ref、model_sha256、
-feature_sha256、trade_date、decision_ts_us。模型摘要对完整文件字节计算；输入摘要对
-实际同序 Feature 表去除 schema metadata 后的 Arrow IPC stream 计算，包含完整键、
-列序、数值类型和内容。它检测变化，不归档输入。预测记录由使用它的运行选择路径，
+Parquet schema metadata 的 prediction_inputs 保存 model_ref、trade_date、decision_ts_us。
+模型 ref 指向已禁止覆盖发布的具体模型对象；Feature/Label 的数据集、版本与列身份由该
+模型保存，预测行保留完整样本键和顺序。生产和读取不计算模型、特征或标签内容摘要；
+具体引用按可信输入使用，历史可见性仍由训练日期、标签成熟和决策时点约束。
+预测记录由使用它的运行选择路径，
 模型存放目录不自动拥有后续所有预测；本轮逐日训练评价布局如上图。
 Metrics 与 HTML 在模型交付后分别原子写入，不组成多文件事务。它们缺失或失败不表示
 模型不可恢复；模型可加载也不表示评价、报告或整个 workflow 成功。
@@ -375,7 +465,7 @@ experiments/<experiment_name>/
 ├── equity.parquet                          # 事件估值
 ├── valuation-marks.parquet                 # 初始与日终持仓的估值价格依据
 ├── corporate-actions.json                  # 公司行动来源、权益、记账与未解决事项
-├── security-status.json                    # 本次消费的公告核验证券状态与摘要
+├── security-status.json                    # 本次消费的完整公告核验证券状态
 ├── metrics.json
 └── report.html
 ```
@@ -400,8 +490,9 @@ metrics 同时保存实际评价、预测引用、运行参数及 data_quality �
 HTML 由 metrics 生成，不拥有另一份结果。模型目标评价保存在 metrics.signal_eval，
 不再使用旧 metrics.model_evaluation 加 T+1 raw-close 诊断形状。
 
-训练记录仍在模型同目录 schedule.json；预测中的模型/特征摘要及指标中的标签摘要
-不等于完整源码、环境、输入归档或模型历史可用性证明。PathManager 提供 experiment 根目录
+训练记录仍在模型同目录 schedule.json；模型、预测和标签引用用于定位明确对象，不等于
+完整源码、环境、输入归档或模型历史可用性证明。历史摘要与冻结复现材料保留，新记录
+不再生成这些摘要。PathManager 提供 experiment 根目录
 及固定路径方法；`experiment_backtest_predictions_dir(experiment_name=...)` 统一返回本次
 运行的 predictions 目录。Workflow 把根预测目录及本路径的输出目录传给对应 Step；预测按
 交易日期与决策时间生成文件，事实、指标和报告在该路径的输出目录按本节固定名称生成。路径方法只返回路径，所需父目录由实际写入工具创建。不新增接受任意制品

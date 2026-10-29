@@ -37,10 +37,12 @@ class ReportingBundle:
                            "收益与风险指标尚未验证，需核实输入后重跑。")
         sections: list[tuple[str, object]] = []
         if metrics.corporate_actions is not None:
-            sections.append(("公司行动：税前分红", metrics.corporate_actions.model_dump(mode="json")))
+            sections.append(("公司行动：税前分配与补偿", metrics.corporate_actions.model_dump(mode="json")))
             sections.append(("公司行动覆盖", "分红按税前记账，未扣红利税；支付日收盘后现金才可用。"
-                             "普通流通股账户仅消费有公告依据的分配条款及已提供的补充公告；"
-                             "Tushare 快照中未核实的受益人、版本和除权参数不会自动生成权益。"
+                             "普通分红送转以 dividend 为主要来源，优先应用已确认公告修正；"
+                             "来源直接解析不表示逐笔公告核验，缺失、冲突、重复和特殊事件保留诊断。"
+                             "无已确认除权参数时，按普通除权公式临时估值；这是估值假设，真实行情可见后替换。"
+                             "补偿单独确认应收、到账和可卖；补偿赠股没有实际账户分配结果时采用向下取整假设，尾数保留在公司行动事实中。"
                              "现金选择权、换股和退市清偿尚未自动执行；普通卖单不代表行权。"))
         execution_config = metrics.parameters.get("execution", {})
         if execution_config.get("fill", {}).get("type") == "quoted":
@@ -110,9 +112,11 @@ class ReportingBundle:
         lines = [f"模式：{metrics.mode.value}"]
         if metrics.corporate_actions is not None:
             actions = metrics.corporate_actions
-            lines.append(f"公司行动：登记 {actions.registered_count} 项；税前红利到账 {actions.gross_cash_paid:,.2f} 元；"
+            lines.append(f"公司行动：登记 {actions.registered_count} 项；税前现金到账 {actions.gross_cash_paid:,.2f} 元；"
                          f"送转到账 {sum(actions.shares_received.values()):,} 股；未扣红利税。")
-            lines.append("公司行动覆盖：已核实的普通股东分配条款及已提供公告；其他记录仍需核验。")
+            lines.append("公司行动覆盖：dividend 普通分红送转、已确认修正及已提供公告；普通公式临时估值属于假设，异常事项单列诊断。")
+            if actions.compensation_floor_count:
+                lines.append(f"补偿赠股有 {actions.compensation_floor_count} 项采用向下取整假设；理论尾数见公司行动事实，不表示真实整股到账结果。")
         if metrics.data_quality.diagnostic_only:
             lines.append(f"仅供诊断：{quality_summary}")
         if metrics.signal_eval is not None:

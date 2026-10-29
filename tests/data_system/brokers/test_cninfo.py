@@ -82,7 +82,7 @@ def test_conflicting_rows_with_one_announcement_id_are_not_overwritten(transport
                              end=date(2026, 9, 1), directory=tmp_path)
 
 
-def test_pdf_cache_preserves_collection_time_and_rejects_mutation(transport: Mock, tmp_path: Path) -> None:
+def test_pdf_cache_preserves_collection_time_without_content_fingerprints(transport: Mock, tmp_path: Path) -> None:
     transport.post.return_value = _response({"totalAnnouncement": 1, "announcements": [_row(1)]})
     response = _response(None)
     response._content = b"%PDF-original-fact"
@@ -93,9 +93,9 @@ def test_pdf_cache_preserves_collection_time_and_rejects_mutation(transport: Moc
     documents = broker.download_distribution_documents(index=index, directory=tmp_path)
     assert broker.download_distribution_documents(index=index, directory=tmp_path) == documents
     assert transport.get.call_count == 1
-    (tmp_path / "1.pdf").write_bytes(b"%PDF-modified-fact")
-    with pytest.raises(ValueError, match="identity changed"):
-        broker.download_distribution_documents(index=index, directory=tmp_path)
+    assert (tmp_path / "1.pdf").read_bytes() == response.content
+    assert documents[0].sha256 is None
+    assert documents[0].fetched_at == datetime(2026, 10, 17, tzinfo=timezone.utc)
 
 
 @pytest.mark.parametrize("local_time,precise", [("07:41:10", True), ("00:00:00", False)])

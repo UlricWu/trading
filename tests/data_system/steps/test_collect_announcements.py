@@ -2,7 +2,6 @@
 """Exercise evidence publication, source binding and replay-visible dispositions."""
 
 from datetime import datetime, timezone
-from hashlib import sha256
 import json
 from pathlib import Path
 from unittest.mock import Mock
@@ -27,13 +26,12 @@ def test_cninfo_collection_leaves_beijing_candidates_to_the_official_bse_source(
     pm, context, _, _ = evidence
     source = pm.processed_object(dataset_name="dividend", version="v1", trade_date=context.start)
     rows = pq.ParquetFile(source.payload_path).read().to_pylist()
-    rows.append({**rows[0], "symbol": "920879", "ts_code": "920879.BJ", "source_row_id": "1" * 64})
+    rows.append({**rows[0], "symbol": "920879", "ts_code": "920879.BJ"})
     write_parquet_atomic(output_file=source.payload_path, table=pa.Table.from_pylist(rows))
     meta.commit(pm=pm, payload_path=source.payload_path)
     path = pm.raw_payload(broker="cninfo", source_name="corporate_action_announcements", trade_date=context.start,
         payload_file="announcements.json")
-    previous = AnnouncementCollection.model_validate_json(path.read_bytes()).model_copy(update={
-        "dividend_sha256": sha256(source.payload_path.read_bytes()).hexdigest()})
+    previous = AnnouncementCollection.model_validate_json(path.read_bytes())
     FileSystem.write_bytes_atomic(path, previous.model_dump_json().encode())
     meta.commit(pm=pm, payload_path=path)
     broker = Mock()
@@ -67,11 +65,10 @@ def test_explicit_code_identity_preserves_the_original_proof_and_security_code(
         trade_date=context.start, payload_file="announcements.json")
     previous = AnnouncementCollection.model_validate_json(path.read_bytes())
     proof = b"%PDF-original code change notice 000043 to 001914"
-    digest = sha256(proof).hexdigest()
     reference = pm.storage_root / "identity-reviews.json"
     reference.write_text(json.dumps([{"symbol": "001914", "published_symbol": "000043",
-        "evidence_url": "https://static.cninfo.com.cn/finalpage/2019-12-16/99.PDF", "evidence_sha256": digest}]))
-    (reference.parent / f"{digest}.pdf").write_bytes(proof)
+        "evidence_url": "https://static.cninfo.com.cn/finalpage/2019-12-16/99.PDF", "evidence_file": "code-change-99.pdf"}]))
+    (reference.parent / "code-change-99.pdf").write_bytes(proof)
     document = previous.documents[0].model_copy(update={"symbol": "000043"})
     broker = Mock()
     broker.stock_ids.return_value = {"001914": "gssz0000043"}
@@ -85,8 +82,8 @@ def test_explicit_code_identity_preserves_the_original_proof_and_security_code(
     saved = AnnouncementCollection.model_validate_json(path.read_bytes())
     assert saved.documents[0].symbol == "000043"
     assert saved.index_counts == {"001914": 1}
-    assert saved.request_sha256[f"{digest}.pdf"] == digest
-    assert (path.parent / f"{digest}.pdf").read_bytes() == proof
-    (reference.parent / f"{digest}.pdf").write_bytes(b"changed")
-    with pytest.raises(ValueError, match="original digest changed"):
-        step.run(context)
+    assert "code-change-99.pdf" in saved.request_files
+    assert (path.parent / "code-change-99.pdf").read_bytes() == proof
+    before = path.read_bytes()
+    step.run(context)
+    assert path.read_bytes() == before

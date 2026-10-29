@@ -82,9 +82,21 @@ def test_multiple_dates_survive_and_replay_in_a_fresh_process(
     assert pd.read_parquet(second_ref)["trade_date"].eq("2026-07-06").all()
 
 
-@pytest.mark.parametrize("changed", ["features", "model", "prediction"])
-def test_replay_rejects_changed_material_without_overwriting_evidence(
-    recorded_prediction: tuple[PathManager, Path, Path], tmp_path: Path, changed: str,
+def test_prediction_identity_uses_model_and_decision_without_content_digests(
+    recorded_prediction: tuple[PathManager, Path, Path], tmp_path: Path,
+) -> None:
+    pm, ref, _ = recorded_prediction
+    inputs, rows = read_prediction_record(ref)
+    assert inputs.model_dump() == {"model_ref": tmp_path / "model.joblib",
+        "trade_date": "2026-07-03", "decision_ts_us": 100}
+    assert rows["symbol"].tolist() == ["000001", "600000"]
+    assert rows["prediction"].iloc[0] != 0 and np.isnan(rows["prediction"].iloc[1])
+    verify_prediction_record(ref, pm=pm)
+
+
+@pytest.mark.parametrize("changed", ["features", "prediction"])
+def test_replay_rejects_different_predictions_without_overwriting_evidence(
+    recorded_prediction: tuple[PathManager, Path, Path], changed: str,
 ) -> None:
     pm, ref, _ = recorded_prediction
     if changed == "features":
@@ -95,15 +107,24 @@ def test_replay_rejects_changed_material_without_overwriting_evidence(
         frame["factor"] = [2.0, np.nan]
         frame.to_parquet(feature_ref, index=False)
         meta.commit(pm=pm, payload_path=feature_ref)
-    elif changed == "model":
-        (tmp_path / "model.joblib").write_bytes(b"replaced model")
     else:
         with pq.ParquetFile(ref) as source:
             table = source.read()
         table = table.set_column(table.column_names.index("prediction"), "prediction", [[99.0, None]])
         pq.write_table(table, ref)
     original = ref.read_bytes()
-    with pytest.raises((ValueError, AssertionError)):
+    with pytest.raises(AssertionError):
+        verify_prediction_record(ref, pm=pm)
+    assert ref.read_bytes() == original
+
+
+def test_replay_requires_the_referenced_model(
+    recorded_prediction: tuple[PathManager, Path, Path], tmp_path: Path,
+) -> None:
+    pm, ref, _ = recorded_prediction
+    (tmp_path / "model.joblib").unlink()
+    original = ref.read_bytes()
+    with pytest.raises(FileNotFoundError):
         verify_prediction_record(ref, pm=pm)
     assert ref.read_bytes() == original
 

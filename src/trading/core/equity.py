@@ -15,7 +15,7 @@ class EquityPoint:
     Immutable valuation snapshot.
 
     Invariants:
-        equity = cash + market_value + dividend_receivable
+        equity = cash + market_value + dividend_receivable + shares_receivable_value
         peak_equity >= equity
         drawdown <= 0
 
@@ -30,6 +30,7 @@ class EquityPoint:
     peak_equity: float
     drawdown: float
     dividend_receivable: float = 0.0
+    shares_receivable_value: float = 0.0
 
 
 # ==========================================================
@@ -41,7 +42,7 @@ class EquityCurve:
     """Maintain a timestamp-ordered equity and drawdown history.
 
     Guarantees:
-        - equity = cash + market_value + dividend_receivable
+        - equity = cash + market_value + dividend_receivable + shares_receivable_value
         - monotonic time
         - same ts_us -> replace
         - O(1) peak tracking
@@ -71,7 +72,8 @@ class EquityCurve:
     # Write Interface
     # ---------------------------------------------------------
 
-    def append(self, *, ts_us: int, cash: float, market_value: float, dividend_receivable: float = 0.0) -> None:
+    def append(self, *, ts_us: int, cash: float, market_value: float, dividend_receivable: float = 0.0,
+               shares_receivable_value: float = 0.0) -> None:
         """Append or replace a valuation with constant-time rolling statistics.
 
         Example:
@@ -80,10 +82,10 @@ class EquityCurve:
         ts_us = int(ts_us)
         cash = float(cash)
         market_value = float(market_value)
-        if not all(math.isfinite(value) for value in (cash, market_value, dividend_receivable)):
-            raise ValueError("cash, market_value and dividend_receivable must be finite")
+        if not all(math.isfinite(value) for value in (cash, market_value, dividend_receivable, shares_receivable_value)):
+            raise ValueError("cash, market value and receivables must be finite")
 
-        equity = cash + market_value + dividend_receivable
+        equity = cash + market_value + dividend_receivable + shares_receivable_value
 
         if self.points:
             last_ts = int(self.points[-1].ts_us)
@@ -120,6 +122,7 @@ class EquityCurve:
             peak_equity=peak,
             drawdown=drawdown,
             dividend_receivable=dividend_receivable,
+            shares_receivable_value=shares_receivable_value,
         )
 
         if replacing:

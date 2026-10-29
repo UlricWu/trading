@@ -4,7 +4,6 @@
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime
-from hashlib import sha256
 from pathlib import Path
 
 import pyarrow.parquet as pq
@@ -13,10 +12,11 @@ import requests
 
 from src import logs
 from src.access import meta
-from src.data_system.announcement_evidence import AnnouncementCollection, SecurityIdentity, preserve_announcement_collection
+from src.data_system.announcement_evidence import AnnouncementCollection, SecurityIdentity
 from src.data_system.announcement_publications import AnnouncementPublication
 from src.data_system.brokers.cninfo import CninfoBroker
 from src.data_system.context import DataContext
+from src.data_system.distribution_announcements import ReviewExtractionManifest
 from src.data_system.corporate_actions import CorporateActionReview, DividendRecord
 from src.utils.filesystem import FileSystem
 from src.utils.path import PathManager
@@ -54,19 +54,16 @@ class CollectAnnouncementsStep:
             for identity in TypeAdapter(tuple[SecurityIdentity, ...]).validate_json(ref.read_bytes()):
                 if identity.published_symbol in supplied and supplied[identity.published_symbol] != identity:
                     raise ValueError(f"conflicting historical security identity: {identity.published_symbol}")
-                original = ref.parent / f"{identity.evidence_sha256}.pdf"
+                original = ref.parent / identity.evidence_file
                 payload = original.read_bytes()
-                if sha256(payload).hexdigest() != identity.evidence_sha256:
-                    raise ValueError(f"security identity original digest changed: {original}")
                 supplied[identity.published_symbol] = identity
-                originals[identity.evidence_sha256] = payload
+                originals[identity.evidence_file] = payload
         with requests.Session() as session:
             broker = CninfoBroker(session=session, clock=self.clock)
             organizations = None
             for day in context.trade_dates:
                 source = self.pm.processed_object(dataset_name="dividend", version="v1", trade_date=day)
                 loaded = meta.require(pm=self.pm, meta_path=source.meta_path, expected_payload_path=source.payload_path)
-                digest = sha256(loaded.payload_path.read_bytes()).hexdigest()
                 with pq.ParquetFile(loaded.payload_path) as parquet:
                     rows = TypeAdapter(tuple[DividendRecord, ...]).validate_python(parquet.read().to_pylist())
                 all_symbols = {row.symbol for row in rows if row.div_proc == "实施"}
@@ -87,6 +84,13 @@ class CollectAnnouncementsStep:
                 path = self.pm.raw_payload(broker="cninfo", source_name="corporate_action_announcements",
                     trade_date=day, payload_file="announcements.json")
                 committed = meta.find(pm=self.pm, meta_path=path.parent / "meta.json", expected_payload_path=path)
+                extraction_path = self.pm.raw_payload(broker="announcements", source_name="corporate_action_reviews",
+                    trade_date=day, payload_file="reviews.json").parent / "extraction.json"
+                retry_symbols = set()
+                if extraction_path.exists():
+                    issues = ReviewExtractionManifest.model_validate_json(extraction_path.read_bytes()).issues
+                    retry_symbols = {candidate.split(".", maxsplit=1)[0] for candidate, reason in issues.items()
+                        if reason in {"missing_implementation", "implementation_event_not_matched"}}
                 documents = []
                 counts = {}
                 identities = {code: identity for code, identity in supplied.items() if identity.symbol in symbols}
@@ -101,29 +105,23 @@ class CollectAnnouncementsStep:
                              for row in saved.documents}
                     observation_matches = all(known.get(row.announcement_id) ==
                         (row.symbol, row.title, row.published_date, row.published_ts_us, row.url) for row in self.observed_publications)
-                    if (saved.dividend_sha256 == digest and saved.announcement_start == self.announcement_start
-                        and saved.announcement_end == self.announcement_end):
-                        for document in saved.documents:
-                            original = path.parent / f"{document.announcement_id}.pdf"
-                            if sha256(original.read_bytes()).hexdigest() != document.sha256:
-                                raise ValueError(f"announcement PDF digest changed: {original}")
-                        for name, expected in saved.request_sha256.items():
-                            if sha256((path.parent / name).read_bytes()).hexdigest() != expected:
-                                raise ValueError(f"announcement request evidence changed: {name}")
-                        if not set(saved.index_counts) <= all_symbols:
-                            raise ValueError(f"announcement collection includes unrelated source candidates: {day}")
+                    if (saved.announcement_start == self.announcement_start
+                        and saved.announcement_end == self.announcement_end
+                        and set(saved.index_counts) <= all_symbols):
                         if (symbols <= saved.index_counts.keys() and set(identities.values()) == set(saved.security_identities)
-                            and observation_matches):
+                            and observation_matches and not symbols.intersection(retry_symbols)):
                             logs.info(f"♻️ announcement collection; record_date={day} documents={len(saved.documents)}")
                             continue
                         if observation_matches:
-                            documents.extend(saved.documents)
-                            counts.update(saved.index_counts)
-                    preserve_announcement_collection(path=path, collection=saved)
+                            retry_codes = retry_symbols | {row.published_symbol for row in identities.values()
+                                if row.symbol in retry_symbols}
+                            documents.extend(row for row in saved.documents if row.symbol not in retry_codes)
+                            counts.update({symbol: count for symbol, count in saved.index_counts.items()
+                                if symbol not in retry_symbols})
                 for identity in identities.values():
-                    if identity.evidence_sha256 in originals:
-                        FileSystem.write_bytes_atomic(path.parent / f"{identity.evidence_sha256}.pdf",
-                            originals[identity.evidence_sha256])
+                    if identity.evidence_file in originals:
+                        FileSystem.write_bytes_atomic(path.parent / identity.evidence_file,
+                            originals[identity.evidence_file])
                 missing_symbols = symbols - counts.keys()
                 if missing_symbols and organizations is None:
                     organizations = broker.stock_ids(directory=path.parent)
@@ -136,14 +134,15 @@ class CollectAnnouncementsStep:
                     if not index:
                         raise ValueError(f"announcement index empty for implemented dividend: {symbol}/{day}")
                     counts[symbol] = len(index)
-                    documents.extend(broker.download_distribution_documents(index=index, directory=path.parent))
-                collection = AnnouncementCollection(version="v1", dividend_sha256=digest,
+                    documents.extend(broker.download_distribution_documents(index=index, directory=path.parent,
+                        implementation_dates=frozenset(row.imp_ann_date for row in rows
+                            if row.symbol == symbol and row.imp_ann_date is not None)))
+                collection = AnnouncementCollection(version="v1",
                     announcement_start=self.announcement_start, announcement_end=self.announcement_end,
                     collected_at=self.clock(), documents=tuple(documents), index_counts=counts,
                     security_identities=tuple(identities.values()),
-                    request_sha256={**{request.name: sha256(request.read_bytes()).hexdigest()
-                                      for request in sorted(path.parent.glob("query-*.json"))},
-                                    **{f"{row.evidence_sha256}.pdf": row.evidence_sha256 for row in identities.values()}})
+                    request_files=tuple(sorted({request.name for request in path.parent.glob("query-*.json")}
+                        | {row.evidence_file for row in identities.values()})))
                 FileSystem.write_bytes_atomic(path, collection.model_dump_json(indent=2).encode())
                 meta.commit(pm=self.pm, payload_path=path)
                 logs.info(f"✅ announcement collection; record_date={day} symbols={len(symbols)} documents={len(documents)}")

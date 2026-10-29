@@ -2,9 +2,10 @@
 """Exercise evidence publication, source binding and replay-visible dispositions."""
 
 from datetime import datetime, timezone
-from hashlib import sha256
 import json
 from pathlib import Path
+
+from tests.fixtures.distributions import verified_distributions
 
 import pyarrow as pa
 from pypdf import PdfWriter
@@ -20,7 +21,7 @@ from src.utils.path import PathManager
 
 @pytest.fixture
 def evidence(tmp_path: Path) -> tuple[PathManager, DataContext, Path, Path]:
-    case = json.loads((Path(__file__).parent / "corporate_actions/verified_distributions.json").read_text())[1]
+    case = verified_distributions()[1]
     day = case["review"]["record_date"]
     pm = PathManager(tmp_path)
     source = pm.processed_object(dataset_name="dividend", version="v1", trade_date=day)
@@ -36,14 +37,14 @@ def evidence(tmp_path: Path) -> tuple[PathManager, DataContext, Path, Path]:
     document = AnnouncementFile(announcement_id="1", symbol=case["records"][0]["symbol"],
         title="fixture", published_date=case["review"]["terms"][0]["published_date"],
         url="https://static.cninfo.com.cn/finalpage/2024-07-18/1.PDF",
-        sha256=sha256(pdf.read_bytes()).hexdigest(), fetched_at=datetime(2026, 10, 17, tzinfo=timezone.utc))
-    collection = AnnouncementCollection(version="v1", dividend_sha256=sha256(source.payload_path.read_bytes()).hexdigest(),
+        fetched_at=datetime(2026, 10, 17, tzinfo=timezone.utc))
+    collection = AnnouncementCollection(version="v1",
         announcement_start="2024-01-01", announcement_end="2026-10-17",
         collected_at=datetime(2026, 10, 17, tzinfo=timezone.utc), documents=(document,),
-        index_counts={document.symbol: 1}, request_sha256={})
+        index_counts={document.symbol: 1}, request_files=())
     FileSystem.write_bytes_atomic(path, collection.model_dump_json().encode())
     meta.commit(pm=pm, payload_path=path)
-    case["review"]["evidence_refs"] = [document.url + "#sha256=" + document.sha256]
+    case["review"]["evidence_refs"] = [document.url]
     supplied = tmp_path / "review-input.json"
     supplied.write_text(json.dumps([case["review"]]))
     return pm, DataContext(start=day, end=day, trade_dates=(day,)), supplied, pdf

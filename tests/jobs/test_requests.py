@@ -15,14 +15,13 @@ from src.jobs.requests import (
     FeatureBackfillSubmission,
     InvalidJobRequest,
     Level2MinuteBackfillSubmission,
-    StandardFactBootstrapSubmission,
     Stock1430BackfillSubmission,
     Stock1430FusionBackfillSubmission,
     TrainingSubmission,
     build_cli_command,
     create_feature_backfill_submission,
     create_level2_minute_backfill_submission,
-    create_standard_fact_bootstrap_submission,
+    create_data_submission,
     create_stock_1430_backfill_submission,
     create_stock_1430_fusion_backfill_submission,
     parse_job_request,
@@ -80,10 +79,10 @@ def test_training_range_creates_one_submission() -> None:
 
 
 def test_cli_only_data_ranges_create_distinct_submissions() -> None:
-    assert create_standard_fact_bootstrap_submission(
-        "2019-01-01",
+    assert create_data_submission(
+        "data-standard", "2019-01-01",
         "2019-04-03",
-    ) == StandardFactBootstrapSubmission(
+    ) == DataSubmission(kind="data-standard",
         start="2019-01-01",
         end="2019-04-03",
     )

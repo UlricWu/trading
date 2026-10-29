@@ -94,7 +94,7 @@ def _create_account_state(initial: InitialAccount) -> BacktestState:
     entitlements = {item.distribution.action_id: item for item in initial.distribution_entitlements}
     locked: dict[str, int] = {}
     for item in entitlements.values():
-        if item.recognized and not item.shares_released:
+        if item.recognized and not item.shares_released and (item.distribution.kind == "distribution" or item.shares_credited):
             symbol = item.distribution.symbol
             locked[symbol] = locked.get(symbol, 0) + item.shares_qty
     account = PortfolioState(
@@ -104,15 +104,18 @@ def _create_account_state(initial: InitialAccount) -> BacktestState:
                        for symbol, qty in initial.positions.items()},
         current_day=initial.trade_date,
         distribution_entitlements=entitlements,
+        registration_holdings=initial.registration_holdings,
     )
     state = BacktestState(account, equity_curve=EquityCurve(starting_peak_equity=initial.peak_equity),
-        distribution_terms={key: item.distribution for key, item in entitlements.items()})
+        distribution_terms={key: item.distribution for key, item in entitlements.items()},
+        corporate_action_issues={(issue.source_ref, issue.action_id, issue.reason): issue
+            for issue in initial.corporate_action_issues})
     for item in entitlements.values():
         if item.recognition_issue is not None:
             action = item.distribution
             issue = CorporateActionIssue(ts_us=initial.ts_us, symbol=action.symbol,
                 action_id=action.action_id, reason=item.recognition_issue, source_ref=action.source_ref)
-            state.corporate_action_issues[(issue.source_ref, issue.action_id, issue.reason)] = issue
+            state.corporate_action_issues.setdefault((issue.source_ref, issue.action_id, issue.reason), issue)
     return state
 
 

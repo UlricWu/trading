@@ -121,7 +121,7 @@ execution.fill 固定为 quoted；risk 另填写 riskRulesJson。变量内账户
 
 请求 body 必须是 JSON object，`kind` 是唯一判别字段，额外字段必须拒绝：
 
-CLI-only 的 `data-calendar`、`data-standard-bootstrap`、`data-level2-minute-backfill`、
+CLI-only 的 `data-calendar`、`data-level2-minute-backfill`、
 `data-stock-1430-backfill`、`data-stock-1430-fusion-backfill`、`data-previous-day-backfill` 与 `data-feature-backfill`
 不属于 Job kind；`POST /jobs` 必须将
 它们作为不支持的 kind 拒绝。

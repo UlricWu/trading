@@ -4,7 +4,6 @@
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
-from hashlib import sha256
 import json
 
 import requests
@@ -21,7 +20,7 @@ from src.utils.path import PathManager
 
 @dataclass(frozen=True, slots=True)
 class CollectPublicationsStep:
-    """Refresh both public indexes and retain earlier observations when source content changes.
+    """Refresh both public indexes and record complete query coverage.
 
     Example:
         context = CollectPublicationsStep(pm, utc_now).run(DataContext(start="2026-09-19", end="2026-09-19"))
@@ -47,7 +46,9 @@ class CollectPublicationsStep:
             for partition in partitions:
                 if any(not (root / partition / "meta.json").exists() or (root / partition / "pending.json").exists()
                     for root in source_roots):
-                    days.add(date.fromisoformat(partition.removeprefix("trade_date=")))
+                    retry_day = date.fromisoformat(partition.removeprefix("trade_date="))
+                    if retry_day <= end:
+                        days.add(retry_day)
             for day in sorted(days):
                 for provider, broker in brokers:
                     path = self.pm.raw_payload(broker=provider, source_name="corporate_action_publications",
@@ -60,15 +61,8 @@ class CollectPublicationsStep:
                         announcements=tuple(sorted(rows, key=lambda row: row.announcement_id)))
                     payload = index.model_dump_json(indent=2).encode()
                     coverage_path = path.parent / "coverage.json"
-                    coverage = PublicationCoverage(index_sha256=sha256(payload).hexdigest(), index_count=len(rows),
-                        observed_at=self.clock(), request_sha256={item.name: sha256(item.read_bytes()).hexdigest()
-                            for item in sorted(path.parent.glob("query-*.json"))})
-                    if existing is not None and path.read_bytes() != payload:
-                        originals = {item.name: item.read_bytes() for item in
-                            (path, path.parent / "meta.json", coverage_path) if item.exists()}
-                        archive_id = sha256(b"".join(originals[name] for name in sorted(originals))).hexdigest()
-                        for name, original in originals.items():
-                            FileSystem.write_bytes_atomic(path.parent / "history" / archive_id / name, original)
+                    coverage = PublicationCoverage(index_count=len(rows),
+                        observed_at=self.clock(), request_files=tuple(item.name for item in sorted(path.parent.glob("query-*.json"))))
                     if existing is None or path.read_bytes() != payload:
                         FileSystem.write_bytes_atomic(path, payload)
                         FileSystem.write_bytes_atomic(coverage_path, coverage.model_dump_json(indent=2).encode())
@@ -77,4 +71,5 @@ class CollectPublicationsStep:
                         FileSystem.write_bytes_atomic(coverage_path, coverage.model_dump_json(indent=2).encode())
                     FileSystem.remove(pending)
                     logs.info(f"✅ publication index; source={provider} day={day} entries={len(rows)}")
+        context.publication_dates = tuple(day.isoformat() for day in sorted(days))
         return context

@@ -64,10 +64,22 @@ def test_pagination_honors_returned_size_and_preserves_native_identity(transport
     assert documents[0].url == "https://www.bse.cn/disclosure/2019/2019-05-13/1557737525_1.pdf"
     assert broker.download_distribution_documents(index=rows, directory=tmp_path) == documents
     assert transport.get.call_count == 3
-    (tmp_path / f"{documents[0].announcement_id}.pdf").write_bytes(b"%PDF-modified-BSE-evidence")
-    with pytest.raises(ValueError, match="cached BSE announcement identity changed"):
-        broker.download_distribution_documents(index=rows, directory=tmp_path)
+    assert (tmp_path / f"{documents[0].announcement_id}.pdf").read_bytes() == b"%PDF-original-BSE-evidence"
+    assert documents[0].sha256 is None
     assert transport.get.call_count == 3
+
+
+def test_source_implementation_date_keeps_generic_titles_for_body_matching(transport: Mock, tmp_path: Path) -> None:
+    row = {**_row(1), "disclosureTitle": "[临时公告]新芝生物:提示性公告"}
+    transport.post.return_value = _page([row], number=0, total=1)
+    transport.get.return_value = _response(b"%PDF-body-matching-fixture")
+    broker = BseBroker(session=transport, clock=lambda: datetime(2026, 10, 27, tzinfo=timezone.utc))
+    index = broker.company_index(symbol="430685", start=date(2019, 5, 13), end=date(2019, 5, 13), directory=tmp_path)
+    assert broker.download_distribution_documents(index=index, directory=tmp_path) == ()
+    document, = broker.download_distribution_documents(index=index, directory=tmp_path,
+        implementation_dates=frozenset({date(2019, 5, 13)}))
+    assert document.published_date == date(2019, 5, 13)
+    assert transport.get.call_count == 1
 
 
 def test_manual_source_identity_and_legacy_upload_path_are_preserved(transport: Mock, tmp_path: Path) -> None:

@@ -56,7 +56,6 @@ class CorporateActionSchedule:
 
     distributions: tuple[Distribution, ...] = ()
     notices: tuple[CorporateActionNotice, ...] = ()
-    input_digests: dict[str, str] = field(default_factory=dict)
     issues: tuple[CorporateActionIssue, ...] = ()
     revisions: tuple[Distribution, ...] = ()
     resolutions: tuple[CorporateActionResolution, ...] = ()
@@ -67,31 +66,35 @@ class CorporateActionSchedule:
     versions: tuple[Distribution, ...] = field(default=(), init=False)
 
     def __post_init__(self) -> None:
-        self.input_digests = dict(self.input_digests)
         self.versions = tuple(sorted((*self.distributions, *self.revisions), key=lambda action: action.announced_ts_us))
         initial = {action.action_id: action for action in self.distributions}
-        if len(initial) != len(self.distributions) or any(action.announced_ts_us > action.ex_ts_us for action in self.distributions):
-            raise ValueError("distributions require distinct initial events known by their ex time")
+        if len(initial) != len(self.distributions):
+            raise ValueError("distributions require distinct event identities")
         previous = dict(initial)
         for action in sorted(self.revisions, key=lambda item: item.announced_ts_us):
             prior = previous.get(action.action_id)
-            if (prior is None or action.announced_ts_us <= prior.announced_ts_us
-                or (action.symbol, action.record_ts_us, action.ex_ts_us, action.pay_ts_us, action.shares_available_ts_us)
-                != (prior.symbol, prior.record_ts_us, prior.ex_ts_us, prior.pay_ts_us, prior.shares_available_ts_us)):
-                raise ValueError("distribution revisions require an earlier event with unchanged phase dates")
-            if action.announced_ts_us > action.ex_ts_us and (
-                action.cash_per_share != prior.cash_per_share or action.shares_per_share != prior.shares_per_share
-            ):
-                raise ValueError("late distribution revisions must not change cash or shares")
+            if (prior is None or action.kind != prior.kind or action.announced_ts_us <= prior.announced_ts_us
+                or (action.symbol, action.record_ts_us) != (prior.symbol, prior.record_ts_us)):
+                raise ValueError("distribution revisions require stable identity and increasing availability")
+            if any(old is not None and new is None for old, new in (
+                (prior.cash_per_share, action.cash_per_share), (prior.shares_per_share, action.shares_per_share),
+            )):
+                raise ValueError("known distribution amounts cannot become unknown")
             previous[action.action_id] = action
-        for action in self.distributions:
-            if action.cash_per_share or action.shares_per_share:
-                self.registrations.setdefault(action.record_ts_us, []).append(action)
-            self.recognitions.setdefault(action.ex_ts_us, []).append(action)
-            if action.pay_ts_us is not None:
-                self.payments.setdefault(action.pay_ts_us, []).append(action)
-            if action.shares_available_ts_us is not None:
-                self.releases.setdefault(action.shares_available_ts_us, []).append(action)
+        for action in self.versions:
+            phases = (
+                (self.registrations, action.record_ts_us),
+                (self.recognitions, action.ex_ts_us),
+                (self.payments, action.pay_ts_us),
+                (self.releases, action.shares_available_ts_us),
+            )
+            for index, stamp in phases:
+                if index is self.registrations and action.cash_per_share == 0 and action.shares_per_share == 0:
+                    continue
+                if stamp is not None and action.announced_ts_us <= stamp:
+                    bucket = index.setdefault(stamp, [])
+                    if not any(item.action_id == action.action_id for item in bucket):
+                        bucket.append(action)
 
     def timestamps(self, sessions: tuple[ReplaySession, ...]) -> tuple[int, ...]:
         """Include events even when there is neither market data nor a new order.
@@ -107,6 +110,14 @@ class CorporateActionSchedule:
                     notice_times.add(max(visible, session.start_ts_us))
                     break
         for action in (*self.distributions, *self.revisions):
+            if action.kind == "compensation":
+                for stamp in (action.record_ts_us + 1, action.pay_ts_us,
+                    action.shares_credit_ts_us, action.shares_available_ts_us):
+                    if stamp is not None and stamp >= action.announced_ts_us:
+                        for session in sessions:
+                            if stamp <= session.close_ts_us:
+                                notice_times.add(max(stamp, session.start_ts_us))
+                                break
             for session in sessions:
                 if action.announced_ts_us <= session.close_ts_us:
                     notice_times.add(max(action.announced_ts_us, session.start_ts_us))

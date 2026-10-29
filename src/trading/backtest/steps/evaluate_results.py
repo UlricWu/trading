@@ -49,7 +49,12 @@ class EvaluateResultsStep:
         metrics.corporate_actions = CorporateActionSummary(
             distribution_count=len(context.corporate_actions.distributions),
             registered_count=sum(record.event == "registered" for record in records),
-            gross_cash_paid=sum((record.cash_delta for record in records), Decimal(0)), shares_received=shares)
+            gross_cash_paid=sum((record.cash_delta for record in records), Decimal(0)), shares_received=shares,
+            compensation_floor_count=len({record.action_id for record in records
+                if record.allocation_basis == "floor_assumption" and record.fractional_shares}
+                | {item.distribution.action_id for item in state.portfolio_state.distribution_entitlements.values()
+                    if item.distribution.kind == "compensation" and item.recognized and item.actual_shares_qty is None
+                    and item.theoretical_shares_qty != item.shares_qty}))
         if not isinstance(cast(BacktestInputs, context.inputs).decisions, OrderCommandSchedule):
             observations = evaluate_prediction_records(state.prediction_refs, pm=self.pm)
             metrics.signal_eval = evaluate_signals(observations, decision_dates=state.decision_dates)
@@ -68,6 +73,9 @@ class EvaluateResultsStep:
             average_cost=account.avg_cost, trade_date=cast(str, account.current_day),
             equity=state.equity_curve.points[-1].equity, pending_order_ids=tuple(state.pending_orders),
             dividend_receivable=account.dividend_receivable,
+            shares_receivable_value=state.equity_curve.points[-1].shares_receivable_value,
+            registration_holdings=account.registration_holdings,
+            corporate_action_issues=corporate_issues,
             distribution_entitlements=tuple(account.distribution_entitlements.values()))
         metrics.prediction_refs = tuple(str(ref) for ref in state.prediction_refs)
         return context

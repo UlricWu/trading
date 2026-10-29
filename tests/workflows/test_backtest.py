@@ -7,8 +7,9 @@ from copy import deepcopy
 from dataclasses import replace
 from datetime import date, time, timedelta
 from decimal import Decimal
-from hashlib import sha256
 from pathlib import Path
+
+from tests.fixtures.distributions import verified_distributions
 from typing import Literal
 from unittest.mock import Mock
 
@@ -21,8 +22,12 @@ from pytest_mock import MockerFixture
 from pydantic import TypeAdapter
 
 from src import logs
-from src.data_system.corporate_actions import CorporateActionReview, CorporateActionResolution
+from src.data_system.corporate_actions import (
+    CorporateActionReview, CorporateActionResolution, DividendRecord, resolve_corporate_actions,
+)
 from src.data_system.context import DataContext
+from src.data_system.announcement_facts import AnnouncementFacts
+from src.data_system.announcement_publications import AnnouncementPublication
 from src.data_system.steps.resolve_security_status import ResolveSecurityStatusStep
 from src.access import Access, meta
 from src.data_system.builders.level2_stock_trade_1m import STOCK_TRADE_1M_SCHEMA
@@ -78,6 +83,7 @@ def delivery(
     pm = PathManager(tmp_path)
     days = ("2026-07-01", "2026-07-02", "2026-07-03", "2026-07-06", "2026-07-07")
     access = Mock(spec=Access)
+    access.announcement_history.return_value = ()
     access.corporate_actions.return_value = ()
     access.security_status.return_value = ()
     access.corporate_action_notices.return_value = None
@@ -383,7 +389,7 @@ def test_trading_preparation_reads_each_prediction_and_model_once(
         fields["execution"]["fill"] = {"type": "quoted"}
     submission = create_backtest_submission(mode=mode, **fields)
     read_record = mocker.spy(signals, "read_prediction_record")
-    load_model = mocker.spy(signals, "load_prediction_model")
+    load_model = mocker.spy(signals, "load")
     metrics = BacktestMetrics(mode=submission.mode, parameters=submission.model_dump(mode="json"), not_run={})
 
     run_backtest(submission=submission, path_manager=pm,
@@ -912,7 +918,8 @@ def test_single_account_modes_measure_the_complete_chain_before_success(
                  + (['ApplyRiskStep'] if mode in ('full_backtest', 'risk_rule_eval') else [])
                  + ['SubmitTargetsStep'])
     tick_steps = (['UpdateMarketStep', 'UpdateDistributionTermsStep', 'ApplyDistributionsStep', 'ReleaseDistributedSharesStep', 'ObserveCorporateActionIssuesStep', 'AdvanceOrdersStep', 'ValueAccountStep'] + decisions
-                  + ['RecordEntitlementsStep', 'PayDividendsStep', 'ObserveCorporateActionIssuesStep', 'ValueAccountStep']
+                  + ['RecordEntitlementsStep', 'CreditCompensationSharesStep', 'ReleaseDistributedSharesStep',
+                     'PayDividendsStep', 'ObserveCorporateActionIssuesStep', 'ValueAccountStep']
                   + (['CompleteRiskObservationStep'] if mode in ('full_backtest', 'risk_rule_eval') else [])
                   + ['ScheduleWakeupsStep'])
     assert measured == (['PrepareReplaySessionsStep', 'PrepareReplaySymbolsStep', 'BuildMinuteReplayInputStep', 'PrepareInputsStep', 'PrepareCorporateActionsStep', 'PrepareInitialMarksStep', 'InitializeAccountStep'] + tick_steps * tick_count
@@ -1488,20 +1495,22 @@ def _distribution_case(
     pm: PathManager, payload_factory: Callable[[str], dict[str, object]], *, frequency: str,
     cash_per_share: str = "1", shares_per_share: str = "0.5", orders: tuple[OrderIntent, ...] = (),
     end: int | None = None, initial_account: dict[str, object] | None = None, name: str = "distribution",
+    resolution: CorporateActionResolution | None = None,
 ) -> BacktestMetrics:
     distribution = {"symbol": "600000", "end_date": "2026-06-30", "div_proc": "实施",
         "imp_ann_date": "2026-07-16", "record_date": _DAYS[0], "ex_date": _DAYS[1],
         "pay_date": _DAYS[2] if Decimal(cash_per_share) else None,
         "div_listdate": _DAYS[2] if Decimal(shares_per_share) else None,
         "cash_div_tax": cash_per_share, "stk_div": shares_per_share}
-    review = CorporateActionReview(candidate_id="600000.SH/2026-06-30/2026-07-17", source_digest="0" * 64,
-        action_id="dividend/600000/2026-06-30/2026-07-17", shareholder_scope="ordinary_shareholder",
-        record_date=_DAYS[0], ex_date=_DAYS[1], pay_date=distribution["pay_date"], div_listdate=distribution["div_listdate"],
-        terms=[dict(published_date="2026-07-16", cash_per_share=cash_per_share, shares_per_share=shares_per_share,
-                    reference_cash_per_share=cash_per_share, reference_shares_per_share=shares_per_share)],
-        evidence_refs=["fixture://ordinary-distribution"], reason="explicit_test_terms")
-    resolution = CorporateActionResolution(candidate_id=review.candidate_id, symbol="600000", record_date=_DAYS[0],
-        source_digest=review.source_digest, source_row_ids=("0" * 64,), status="resolved", reason=review.reason, review=review)
+    if resolution is None:
+        review = CorporateActionReview(candidate_id="600000.SH/2026-06-30/2026-07-17",
+            action_id="dividend/600000/2026-06-30/2026-07-17", shareholder_scope="ordinary_shareholder",
+            record_date=_DAYS[0], ex_date=_DAYS[1], pay_date=distribution["pay_date"], div_listdate=distribution["div_listdate"],
+            terms=[dict(published_date="2026-07-16", cash_per_share=cash_per_share, shares_per_share=shares_per_share,
+                        reference_cash_per_share=cash_per_share, reference_shares_per_share=shares_per_share)],
+            evidence_refs=["fixture://ordinary-distribution"], reason="explicit_test_terms")
+        resolution = CorporateActionResolution(candidate_id=review.candidate_id, symbol="600000", record_date=_DAYS[0],
+            status="resolved", reason=review.reason, review=review)
     _write_source(pm, pm.processed_object(dataset_name="corporate_actions", version="v1", trade_date=_DAYS[0]).payload_path,
                   pa.Table.from_pylist([dict(symbol="600000", record_date=_DAYS[0], resolution=resolution.model_dump_json())]))
     ex_price = float((Decimal(10) - Decimal(cash_per_share)) / (1 + Decimal(shares_per_share)))
@@ -1532,6 +1541,338 @@ def _distribution_case(
 
 
 @pytest.mark.parametrize("frequency", ["daily", "minute"])
+@pytest.mark.parametrize("benefit", ["cash", "shares"])
+@pytest.mark.parametrize("late_eligibility", [False, True])
+def test_compensation_separates_visible_rights_credit_and_trading_without_ex_date(
+    market_sources: PathManager, backtest_payload: Callable[[str], dict[str, object]],
+    frequency: str, benefit: str, late_eligibility: bool,
+) -> None:
+    calendar = market_sources.processed_year_object(dataset_name="trade_calendar", version="v1", calendar_year=2026).payload_path
+    _write_source(market_sources, calendar, pa.concat_tables([
+        pa.table({"trade_date": ["2026-07-16"], "is_open": [True]}), pq.ParquetFile(calendar).read()]))
+    _write_source(market_sources, market_sources.processed_object(
+        dataset_name="daily_bar", version="v1", trade_date="2026-07-16").payload_path,
+        pa.table({"symbol": ["600000"], "trade_date": ["2026-07-16"], "close": [10.0], "vol": [1000.0]}))
+    first = dict(published_date="2026-07-18" if late_eligibility else "2026-07-16",
+        benefit_state="conditional", cash_per_share=None if benefit == "cash" else "0",
+        shares_per_share=None if benefit == "shares" else "0", reference_cash_per_share=None,
+        reference_shares_per_share=None)
+    known = {**first, "published_date": "2026-07-19", "benefit_state": "confirmed",
+        "cash_per_share": "1" if benefit == "cash" else "0", "shares_per_share": "0.0335" if benefit == "shares" else "0"}
+    if benefit == "shares":
+        known.update(shares_numerator=8479892, shares_denominator=252967347,
+            shares_credit_date=_DAYS[1], shares_available_date=_DAYS[2])
+    final = {**known, "published_date": _DAYS[2], "published_ts_us": _ts(_DAYS[2], 10)}
+    if benefit == "cash":
+        final["pay_date"] = _DAYS[1]
+    review = CorporateActionReview(candidate_id="600000.SH/2026-06-30/2026-07-17",
+        action_id="fixture/compensation", shareholder_scope="ordinary_shareholder", kind="compensation",
+        record_date=_DAYS[0], ex_date=None, pay_date=None, div_listdate=None, terms=[first, known, final],
+        evidence_refs=["fixture://compensation"], reason="confirmed_compensation")
+    resolution = CorporateActionResolution(candidate_id=review.candidate_id, symbol="600000", record_date=_DAYS[0],
+        status="resolved", reason=review.reason, review=review)
+    starting = {"ts_us": _ts(_DAYS[0], 14, 59), "trade_date": _DAYS[0], "cash": "0",
+        "positions": {"600000": 200}, "sellable": {"600000": 200},
+        "average_cost": {"600000": "10"}, "peak_equity": 2000}
+    prefix = _distribution_case(market_sources, backtest_payload, frequency=frequency, resolution=resolution,
+        cash_per_share="0", shares_per_share="0", initial_account=starting,
+        end=_ts(_DAYS[0], 15), name="compensation-prefix")
+    assert prefix.final_account.positions == {"600000": 200}
+    assert prefix.final_account.cash == prefix.final_account.dividend_receivable == 0
+    assert prefix.final_account.registration_holdings[_DAYS[0]] == {"600000": 200}
+    truncated_review = review.model_copy(update={"terms": review.terms[:1]})
+    truncated = resolution.model_copy(update={"review": truncated_review})
+    no_future = _distribution_case(market_sources, backtest_payload, frequency=frequency, resolution=truncated,
+        cash_per_share="0", shares_per_share="0", initial_account=starting,
+        end=_ts(_DAYS[0], 15), name="compensation-no-future")
+    assert prefix.final_account == no_future.final_account
+    initial = {field: getattr(prefix.final_account, field) for field in
+        ("cash", "positions", "sellable", "average_cost", "trade_date", "distribution_entitlements", "registration_holdings")}
+    initial.update(ts_us=_ts(_DAYS[0], 15), peak_equity=2000)
+    resumed = _distribution_case(market_sources, backtest_payload, frequency=frequency, resolution=resolution,
+        cash_per_share="0", shares_per_share="0", initial_account=initial, name="compensation-resumed")
+    full = _distribution_case(market_sources, backtest_payload, frequency=frequency, resolution=resolution,
+        cash_per_share="0", shares_per_share="0", initial_account=starting, name="compensation-full")
+    assert full.final_account == resumed.final_account
+    assert full.final_account.positions == full.final_account.sellable == {"600000": 206 if benefit == "shares" else 200}
+    assert full.final_account.cash == (200 if benefit == "cash" else 0)
+    assert full.final_account.equity == (2200 if benefit == "cash" else 2060)
+    assert full.final_account.shares_receivable_value == full.final_account.dividend_receivable == 0
+    facts = json.loads((market_sources.experiment_dir(experiment_name="compensation-full") / "corporate-actions.json").read_text())
+    assert facts["outstanding_entitlements"] == []
+    events = facts["records"]
+    assert sum(row["event"] == "registered" for row in events) == 1
+    assert sum(row["event"] == "recognized" for row in events) == 1
+    assert not any(row["event"] == "reference_updated" for row in events)
+    if benefit == "shares":
+        credited, = [row for row in events if row["event"] == "shares_credited"]
+        released, = [row for row in events if row["event"] == "shares_released"]
+        assert credited["ts_us"] == _ts(_DAYS[1], 15)
+        assert released["ts_us"] == _ts(_DAYS[2], 9, 30)
+        assert full.corporate_actions.compensation_floor_count == 1
+        equity = pq.read_table(market_sources.experiment_dir(experiment_name="compensation-full") / "equity.parquet").to_pylist()
+        assert any(row["shares_receivable_value"] == 60 and row["market_value"] == 2000 for row in equity)
+    else:
+        paid, = [row for row in events if row["event"] == "cash_paid"]
+        assert paid["ts_us"] == _ts(_DAYS[2], 10)
+        assert not any(row["event"] == "shares_credited" for row in events)
+    settled = _distribution_case(market_sources, backtest_payload, frequency=frequency, resolution=resolution,
+        cash_per_share="0", shares_per_share="0", initial_account=starting,
+        end=_ts(_DAYS[2], 12), name="compensation-settled")
+    continuation = {field: getattr(settled.final_account, field) for field in
+        ("cash", "positions", "sellable", "average_cost", "trade_date", "distribution_entitlements", "registration_holdings")}
+    continuation.update(ts_us=_ts(_DAYS[2], 12), peak_equity=settled.final_account.equity,
+        corporate_action_issues=settled.data_quality.corporate_action_issues)
+    after_settlement = _distribution_case(market_sources, backtest_payload, frequency=frequency, resolution=resolution,
+        cash_per_share="0", shares_per_share="0", initial_account=continuation, name="compensation-after-settlement")
+    assert after_settlement.final_account == full.final_account
+    assert after_settlement.data_quality.corporate_action_issues == full.data_quality.corporate_action_issues
+    assert after_settlement.corporate_actions.compensation_floor_count == full.corporate_actions.compensation_floor_count
+    assert after_settlement.corporate_actions.gross_cash_paid == 0
+    assert after_settlement.corporate_actions.shares_received == {}
+
+
+@pytest.mark.parametrize("frequency", ["daily", "minute"])
+@pytest.mark.parametrize("credit_day", [None, "2026-07-20", "2026-07-21"])
+def test_listed_compensation_stays_receivable_until_credit_is_confirmed(
+    market_sources: PathManager, backtest_payload: Callable[[str], dict[str, object]],
+    frequency: str, credit_day: str | None,
+) -> None:
+    initial_terms = dict(published_date="2026-07-16", cash_per_share="0", shares_per_share="0.5",
+        reference_cash_per_share=None, reference_shares_per_share=None, shares_available_date=_DAYS[1])
+    final_terms = {**initial_terms, "published_date": _DAYS[2], "published_ts_us": _ts(_DAYS[2], 10),
+        "shares_credit_date": credit_day}
+    review = CorporateActionReview(candidate_id="600000.SH/2026-06-30/2026-07-17",
+        action_id="fixture/listed-compensation", shareholder_scope="ordinary_shareholder", kind="compensation",
+        record_date=_DAYS[0], ex_date=None, pay_date=None, div_listdate=None,
+        terms=[initial_terms, final_terms], evidence_refs=["fixture://listed-compensation"], reason="confirmed_compensation")
+    resolution = CorporateActionResolution(candidate_id=review.candidate_id, symbol="600000", record_date=_DAYS[0],
+        status="resolved", reason=review.reason, review=review)
+    prefix = _distribution_case(market_sources, backtest_payload, frequency=frequency, resolution=resolution,
+        cash_per_share="0", shares_per_share="0", end=_ts(_DAYS[1], 15), name="listed-prefix")
+    assert prefix.final_account.positions == prefix.final_account.sellable == {"600000": 200}
+    assert prefix.final_account.shares_receivable_value == 1000
+    assert {row.reason for row in prefix.data_quality.corporate_action_issues} == {
+        "missing_compensation_mark", "pending_compensation_credit"}
+    truncated = resolution.model_copy(update={"review": review.model_copy(update={"terms": review.terms[:1]})})
+    no_future = _distribution_case(market_sources, backtest_payload, frequency=frequency, resolution=truncated,
+        cash_per_share="0", shares_per_share="0", end=_ts(_DAYS[1], 15), name="listed-no-future")
+    assert prefix.final_account == no_future.final_account
+    assert prefix.data_quality.corporate_action_issues == no_future.data_quality.corporate_action_issues
+    initial = {field: getattr(prefix.final_account, field) for field in
+        ("cash", "positions", "sellable", "average_cost", "trade_date", "distribution_entitlements", "registration_holdings")}
+    initial.update(ts_us=_ts(_DAYS[1], 15), peak_equity=prefix.final_account.equity,
+        corporate_action_issues=prefix.data_quality.corporate_action_issues)
+    resumed = _distribution_case(market_sources, backtest_payload, frequency=frequency, resolution=resolution,
+        cash_per_share="0", shares_per_share="0", initial_account=initial, name="listed-resumed")
+    full = _distribution_case(market_sources, backtest_payload, frequency=frequency, resolution=resolution,
+        cash_per_share="0", shares_per_share="0", name="listed-full")
+    assert full.final_account == resumed.final_account
+    assert full.data_quality.corporate_action_issues == resumed.data_quality.corporate_action_issues
+    assert full.final_account.positions == full.final_account.sellable == {"600000": 200 if credit_day is None else 300}
+    assert full.final_account.shares_receivable_value == (1000 if credit_day is None else 0)
+    assert full.final_account.equity == 3000 and full.final_account.cash == 0
+    facts = json.loads((market_sources.experiment_dir(experiment_name="listed-full") / "corporate-actions.json").read_text())
+    credit = [row for row in facts["records"] if row["event"] == "shares_credited"]
+    release = [row for row in facts["records"] if row["event"] == "shares_released"]
+    assert len(credit) == len(release) == int(credit_day is not None)
+    if credit_day is not None:
+        expected = max(_ts(credit_day, 15), _ts(_DAYS[2], 10))
+        assert credit[0]["ts_us"] == release[0]["ts_us"] == expected
+
+
+@pytest.mark.parametrize("frequency", ["daily", "minute"])
+@pytest.mark.parametrize("shares", ["0.5", "0"])
+def test_special_reference_is_published_after_registration_and_never_becomes_account_cash(
+    market_sources: PathManager, backtest_payload: Callable[[str], dict[str, object]], frequency: str, shares: str,
+) -> None:
+    calendar = market_sources.processed_year_object(dataset_name="trade_calendar", version="v1", calendar_year=2026).payload_path
+    _write_source(market_sources, calendar, pa.concat_tables([
+        pa.table({"trade_date": ["2026-07-16"], "is_open": [True]}), pq.ParquetFile(calendar).read()]))
+    _write_source(market_sources, market_sources.processed_object(
+        dataset_name="daily_bar", version="v1", trade_date="2026-07-16").payload_path,
+        pa.table({"symbol": ["600000"], "trade_date": ["2026-07-16"], "close": [10.0], "vol": [1000.0]}))
+    review = CorporateActionReview(candidate_id="600000.SH/2026-06-30/2026-07-17",
+        action_id="fixture/reorganization", shareholder_scope="ordinary_shareholder", record_date=_DAYS[0],
+        ex_date=_DAYS[1], pay_date=None, div_listdate=_DAYS[2] if Decimal(shares) else None,
+        terms=[dict(published_date="2026-07-16", cash_per_share="0", shares_per_share=shares,
+                    reference_cash_per_share=None, reference_shares_per_share=None),
+               dict(published_date="2026-07-19", cash_per_share="0", shares_per_share=shares,
+                    reference_cash_per_share=None, reference_shares_per_share=None, reference_price="1.80")],
+        evidence_refs=["fixture://qualified-reorganization"], reason="qualified_ordinary_holdings")
+    resolution = CorporateActionResolution(candidate_id=review.candidate_id, symbol="600000", record_date=_DAYS[0],
+        status="resolved" if Decimal(shares) else "not_entitled", reason=review.reason, review=review)
+    full = _distribution_case(market_sources, backtest_payload, frequency=frequency, resolution=resolution,
+        cash_per_share="0", shares_per_share=shares)
+    quantity = 300 if Decimal(shares) else 200
+    assert full.final_account.positions == full.final_account.sellable == {"600000": quantity}
+    assert full.final_account.cash == full.final_account.dividend_receivable == full.corporate_actions.gross_cash_paid == 0
+    assert full.corporate_actions.registered_count == int(bool(Decimal(shares)))
+    assert not full.data_quality.diagnostic_only
+    output = market_sources.experiment_dir(experiment_name="distribution")
+    equity = pq.read_table(output / "equity.parquet").to_pylist()
+    assert next(row for row in equity if row["ts_us"] == _ts(_DAYS[1], 0))["equity"] == quantity * 1.8
+    assert equity[-1]["equity"] == 2000
+    facts = json.loads((output / "corporate-actions.json").read_bytes())
+    assert facts["distributions"][0]["reference_price"] is None
+    assert Decimal(facts["revisions"][0]["reference_price"]) == Decimal("1.80")
+    assert not any(row["event"] == "cash_paid" for row in facts["records"])
+    first = _distribution_case(market_sources, backtest_payload, frequency=frequency, resolution=resolution,
+        cash_per_share="0", shares_per_share=shares, end=_ts(_DAYS[0], 15), name="special-first",
+        initial_account={"ts_us": _ts(_DAYS[0], 14, 59), "trade_date": _DAYS[0], "cash": "0",
+            "positions": {"600000": 200}, "sellable": {"600000": 200},
+            "average_cost": {"600000": "10"}, "peak_equity": 2000})
+    if Decimal(shares):
+        assert first.final_account.distribution_entitlements[0].distribution.reference_price is None
+    initial = {field: getattr(first.final_account, field)
+        for field in ("cash", "positions", "sellable", "average_cost", "trade_date", "distribution_entitlements")}
+    initial.update(ts_us=_ts(_DAYS[0], 15), peak_equity=2000)
+    resumed = _distribution_case(market_sources, backtest_payload, frequency=frequency, resolution=resolution,
+        cash_per_share="0", shares_per_share=shares, initial_account=initial, name="special-resumed")
+    assert resumed.final_account.positions == full.final_account.positions
+    assert resumed.final_account.cash == full.final_account.cash
+    assert resumed.corporate_actions.registered_count == 0
+
+
+@pytest.mark.parametrize("frequency", ["daily", "minute"])
+@pytest.mark.parametrize("reference_publication", [None, "intraday", "date_only", "date_only_unchanged"])
+def test_zero_entitlements_run_without_reference_and_keep_only_observed_price_gaps(
+    market_sources: PathManager, backtest_payload: Callable[[str], dict[str, object]],
+    frequency: str, reference_publication: str | None,
+) -> None:
+    terms = [dict(published_date="2026-07-16", cash_per_share="0", shares_per_share="0",
+        reference_cash_per_share=None, reference_shares_per_share=None)]
+    if reference_publication is not None:
+        reference = ({"reference_cash_per_share": "0", "reference_shares_per_share": "0"}
+            if reference_publication == "date_only_unchanged" else {"reference_price": "7"})
+        terms.append({**terms[0], "published_date": _DAYS[1], **reference})
+        if reference_publication == "intraday":
+            terms[-1]["published_ts_us"] = _ts(_DAYS[1], 9)
+    review = CorporateActionReview(candidate_id="600000.SH/2026-06-30/2026-07-17",
+        action_id="fixture/zero-rights", shareholder_scope="ordinary_shareholder", record_date=_DAYS[0],
+        ex_date=_DAYS[1], pay_date=None, div_listdate=None, terms=terms,
+        evidence_refs=["fixture://zero-rights"], reason="confirmed_zero_ordinary_entitlements")
+    resolution = CorporateActionResolution(candidate_id=review.candidate_id, symbol="600000", record_date=_DAYS[0],
+        status="not_entitled", reason=review.reason, review=review)
+    metrics = _distribution_case(market_sources, backtest_payload, frequency=frequency, resolution=resolution,
+        cash_per_share="0", shares_per_share="0")
+    assert metrics.final_account.positions == metrics.final_account.sellable == {"600000": 200}
+    assert metrics.final_account.average_cost == {"600000": Decimal(10)}
+    assert metrics.final_account.cash == metrics.final_account.dividend_receivable == 0
+    assert not metrics.final_account.distribution_entitlements
+    assert metrics.corporate_actions.registered_count == 0 and metrics.corporate_actions.gross_cash_paid == 0
+    assert metrics.data_quality.diagnostic_only
+    issue, = metrics.data_quality.corporate_action_issues
+    assert issue.reason == "missing_ex_reference" and issue.ts_us == _ts(_DAYS[1], 0)
+    output = market_sources.experiment_dir(experiment_name="distribution")
+    facts = json.loads((output / "corporate-actions.json").read_text())
+    assert facts["source_resolutions"][0]["status"] == "not_entitled"
+    if reference_publication == "date_only_unchanged":
+        revision, = facts["revisions"]
+        assert revision["announced_ts_us"] == _ts(_DAYS[2], 0)
+        assert Decimal(revision["reference_cash_per_share"]) == Decimal(revision["reference_shares_per_share"]) == 0
+    assert not any(row["event"] in {"registered", "recognized", "cash_paid", "shares_released"}
+        for row in facts["records"])
+    equity = pq.read_table(output / "equity.parquet").to_pylist()
+    assert next(row for row in equity if row["ts_us"] == _ts(_DAYS[1], 0))["equity"] == 2000
+    if reference_publication == "intraday":
+        assert next(row for row in equity if row["ts_us"] == _ts(_DAYS[1], 9))["equity"] == 1400
+    assert equity[-1]["equity"] == 2000
+    assert sum(row["event"] == "reference_updated" for row in facts["records"]) == int(reference_publication == "intraday")
+
+
+@pytest.mark.parametrize("frequency", ["daily", "minute"])
+@pytest.mark.parametrize("observation_changes", [None, {}, {"ann_date": "2026-07-09"},
+    {"imp_ann_date": "2026-07-15"}, {"cash_div_tax": None}])
+def test_ordinary_dividend_without_announcement_pays_cash_and_releases_shares_once(
+    market_sources: PathManager, backtest_payload: Callable[[str], dict[str, object]], frequency: str,
+    observation_changes: dict[str, object] | None,
+) -> None:
+    row = DividendRecord.model_validate_json(
+        (Path(__file__).parents[1] / "fixtures/corporate_actions/ordinary_dividend.json").read_bytes())
+    observations = (row,) if observation_changes is None else (
+        DividendRecord.model_validate({**row.model_dump(), **observation_changes}), row)
+    source, = resolve_corporate_actions(observations, ())
+    metrics = _distribution_case(market_sources, backtest_payload, frequency=frequency, resolution=source)
+    assert metrics.final_account.cash == 200
+    assert metrics.final_account.positions == {"600000": 300}
+    assert metrics.final_account.sellable == {"600000": 300}
+    assert metrics.corporate_actions.registered_count == 1
+    assert metrics.corporate_actions.gross_cash_paid == 200
+    output = market_sources.experiment_dir(experiment_name="distribution")
+    equity = pq.read_table(output / "equity.parquet").to_pylist()
+    assert all(entry["equity"] == 2000 for entry in equity)
+    assert next(entry for entry in equity if entry["ts_us"] == _ts(_DAYS[1], 0))["dividend_receivable"] == 200
+    facts = json.loads((output / "corporate-actions.json").read_bytes())
+    assert facts["distributions"][0]["reference_basis"] == "ordinary_formula_assumption"
+    assert facts["source_resolutions"][0]["review"] is None
+    assert facts["source_resolutions"][0]["source_record"] == row.model_dump(mode="json")
+    assert [entry["event"] for entry in facts["records"]].count("cash_paid") == 1
+    assert [entry["event"] for entry in facts["records"]].count("shares_released") == 1
+    assert "普通分红送转以 dividend 为主要来源" in (output / "report.html").read_text()
+    assert "这是估值假设" in (output / "report.html").read_text()
+
+
+@pytest.mark.parametrize("frequency", ["daily", "minute"])
+def test_null_cash_stock_distribution_preserves_source_and_resumes_without_cash(
+    market_sources: PathManager, backtest_payload: Callable[[str], dict[str, object]], frequency: str,
+) -> None:
+    row = DividendRecord.model_validate_json(
+        (Path(__file__).parents[1] / "fixtures/corporate_actions/ordinary_dividend.json").read_bytes())
+    row = row.model_copy(update={"cash_div_tax": None, "pay_date": None})
+    source, = resolve_corporate_actions((row, row), ())
+    full = _distribution_case(market_sources, backtest_payload, frequency=frequency,
+        cash_per_share="0", resolution=source)
+    assert full.final_account.cash == full.final_account.dividend_receivable == 0
+    assert full.final_account.positions == full.final_account.sellable == {"600000": 300}
+    assert full.corporate_actions.registered_count == 1
+    assert full.corporate_actions.gross_cash_paid == 0
+    output = market_sources.experiment_dir(experiment_name="distribution")
+    facts = json.loads((output / "corporate-actions.json").read_bytes())
+    assert facts["source_resolutions"][0]["source_record"] == row.model_dump(mode="json")
+    assert Decimal(facts["distributions"][0]["cash_per_share"]) == 0
+    assert facts["distributions"][0]["pay_ts_us"] is None
+    events = [entry["event"] for entry in facts["records"]]
+    assert "cash_paid" not in events
+    assert events.count("registered") == events.count("recognized") == events.count("shares_released") == 1
+    assert all(entry["equity"] == 2000 for entry in pq.read_table(output / "equity.parquet").to_pylist())
+    first = _distribution_case(market_sources, backtest_payload, frequency=frequency, cash_per_share="0",
+        resolution=source, end=_ts(_DAYS[1], 15), name="null-cash-first")
+    initial = {field: getattr(first.final_account, field)
+        for field in ("cash", "positions", "sellable", "average_cost", "trade_date", "distribution_entitlements")}
+    initial.update(ts_us=_ts(_DAYS[1], 15), peak_equity=2000)
+    resumed = _distribution_case(market_sources, backtest_payload, frequency=frequency, cash_per_share="0",
+        resolution=source, initial_account=initial, name="null-cash-resumed")
+    assert resumed.corporate_actions.registered_count == 0
+    assert resumed.corporate_actions.shares_received == {}
+    assert resumed.corporate_actions.gross_cash_paid == 0
+    assert resumed.final_account.cash == 0
+    assert resumed.final_account.positions == full.final_account.positions
+    assert resumed.final_account.sellable == full.final_account.sellable
+
+
+def test_source_based_pending_entitlement_resumes_without_registering_again(
+    market_sources: PathManager, backtest_payload: Callable[[str], dict[str, object]],
+) -> None:
+    row = DividendRecord.model_validate_json(
+        (Path(__file__).parents[1] / "fixtures/corporate_actions/ordinary_dividend.json").read_bytes())
+    source, = resolve_corporate_actions((row,), ())
+    first = _distribution_case(market_sources, backtest_payload, frequency="daily", resolution=source,
+        end=_ts(_DAYS[1], 15))
+    initial = {field: getattr(first.final_account, field)
+        for field in ("cash", "positions", "sellable", "average_cost", "trade_date", "distribution_entitlements")}
+    initial.update(ts_us=_ts(_DAYS[1], 15), peak_equity=2000)
+    resumed = _distribution_case(market_sources, backtest_payload, frequency="daily", resolution=source,
+        initial_account=initial, name="source-resumed")
+    assert first.final_account.dividend_receivable == 200
+    assert resumed.corporate_actions.registered_count == 0
+    assert resumed.corporate_actions.shares_received == {}
+    assert resumed.corporate_actions.gross_cash_paid == 200
+    assert resumed.final_account.cash == 200
+    assert resumed.final_account.positions == resumed.final_account.sellable == {"600000": 300}
+
+
+@pytest.mark.parametrize("frequency", ["daily", "minute"])
 def test_distributions_preserve_nav_and_separate_registration_payment_and_listing(
     market_sources: PathManager, backtest_payload: Callable[[str], dict[str, object]], frequency: str,
 ) -> None:
@@ -1548,7 +1889,8 @@ def test_distributions_preserve_nav_and_separate_registration_payment_and_listin
     assert metrics.final_account.average_cost["600000"] * 300 == Decimal(2000)
     assert metrics.final_account.cash == 200
     assert metrics.final_account.dividend_receivable == 0
-    assert metrics.final_account.distribution_entitlements == ()
+    completed, = metrics.final_account.distribution_entitlements
+    assert completed.recognized and completed.cash_paid and completed.shares_released
     assert metrics.corporate_actions.gross_cash_paid == 200
     assert metrics.corporate_actions.shares_received == {"600000": 100}
     assert not metrics.data_quality.diagnostic_only
@@ -1881,17 +2223,14 @@ def publish_security_status(market_sources: PathManager) -> Callable[[str, list[
         for index, state in enumerate(states):
             identity = f"{day.replace('-', '')}{index:02d}"
             payload = f"%PDF-1.4 fixed evidence {identity}".encode()
-            digest = sha256(payload).hexdigest()
             url = f"https://example.org/{identity}.pdf"
             FileSystem.write_bytes_atomic(path.parent / f"{identity}.pdf", payload)
             documents.append({"announcement_id": identity, "symbol": state["ts_code"].split(".")[0],
                 "title": "Reviewed security state", "published_date": str(date.fromisoformat(day) - timedelta(days=1)),
-                "url": url, "sha256": digest, "fetched_at": "2026-10-18T00:00:00Z"})
+                "url": url, "fetched_at": "2026-10-18T00:00:00Z"})
             reviews.append({**state, "trade_date": day, "available_ts_us": _ts(day, 0, 0),
-                "evidence_refs": [f"{url}#sha256={digest}"], "reason": "Fixed dated status evidence"})
-        inputs = {"version": "v1", "documents": documents, "reviews": reviews, "source_digests": {
-            name: sha256(pm.processed_object(dataset_name=name, version="v1", trade_date=day).payload_path.read_bytes()).hexdigest()
-            for name in ("stock_basic", "suspend_d")}}
+                "evidence_refs": [url], "reason": "Fixed dated status evidence"})
+        inputs = {"version": "v1", "documents": documents, "reviews": reviews}
         FileSystem.write_bytes_atomic(path, json.dumps(inputs).encode())
         meta.commit(pm=pm, payload_path=path)
         ResolveSecurityStatusStep(pm=pm).run(DataContext(start=day, end=day, trade_dates=(day,)))
@@ -1945,7 +2284,11 @@ def test_reviewed_prelisting_and_suspension_preserve_holdings_without_inventing_
     suspended = [row for row in marks if row["reason"] == "suspension"]
     assert len(suspended) == 2 and all(row["price_trade_date"] == "2026-07-16" for row in suspended)
     evidence = json.loads((output / "security-status.json").read_text())
-    assert len(evidence["statuses"]) == 5 and len(evidence["input_digests"]) == 3
+    assert set(evidence) == {"version", "statuses"} and evidence["version"] == "v1"
+    assert len(evidence["statuses"]) == 5
+    assert {row["trade_date"] for row in evidence["statuses"]} == set(_DAYS)
+    assert all(row["available_ts_us"] == _ts(row["trade_date"], 0, 0) and row["evidence_refs"]
+               for row in evidence["statuses"])
 
 
 @pytest.mark.parametrize("frequency", ["daily", "minute"])
@@ -2242,6 +2585,7 @@ def test_source_symbols_must_cover_initial_holdings_before_replay(
     (0, 100, "24.7", 100), (1, 100, "31.58", 0), (2, 100, "140", 0),
     (3, 100, "0", 0), (4, 10_000_000, "2814904", 3_992_772),
     (5, 100, "231.7", 0),
+    (6, 1000, "300", 0),
 ])
 def test_verified_real_announcements_drive_one_account_event_and_separate_reference_prices(
     tmp_path: Path, backtest_payload: Callable[[str], dict[str, object]], frequency: str,
@@ -2250,7 +2594,12 @@ def test_verified_real_announcements_drive_one_account_event_and_separate_refere
     from src.data_system.context import DataContext
     from src.data_system.steps.resolve_corporate_actions import ResolveCorporateActionsStep
 
-    case = json.loads((Path(__file__).parents[1] / "fixtures/corporate_actions/verified_distributions.json").read_text())[case_index]
+    if case_index == 6:
+        cases = json.loads((Path(__file__).parents[1] /
+            "fixtures/corporate_actions/confirmed_ordinary_entitlements.json").read_text())
+        case = next(item for item in cases if item["records"][0]["symbol"] == "605299")
+    else:
+        case = verified_distributions()[case_index]
     review = CorporateActionReview.model_validate(case["review"])
     day, ex_day = str(review.record_date), str(review.ex_date)
     symbol = case["records"][0]["symbol"]
@@ -2268,6 +2617,8 @@ def test_verified_real_announcements_drive_one_account_event_and_separate_refere
         terms = review.terms[-1]
         price = (Decimal(10) if session == day else
                  (Decimal(10) - terms.reference_cash_per_share) / (1 + terms.reference_shares_per_share))
+        if case_index == 6 and session == ex_day:
+            price = Decimal("9.90")
         _write_source(pm, pm.processed_object(dataset_name="daily_bar", version="v1", trade_date=session).payload_path,
             pa.table({"symbol": [symbol], "trade_date": [session], "close": [float(price)], "vol": [1000000.0]}))
         rows = [{"symbol": symbol, "trade_date": session, "minute_start_ts_utc": _ts(session, 9, 30),
@@ -2308,6 +2659,12 @@ def test_verified_real_announcements_drive_one_account_event_and_separate_refere
     expected_market_value = float((Decimal(10) - review.terms[-1].reference_cash_per_share)
                                  / (1 + review.terms[-1].reference_shares_per_share) * (quantity + added))
     assert at_ex["market_value"] == pytest.approx(expected_market_value)
+    if case_index == 6:
+        assert review.terms[0].cash_per_share == Decimal("0.30")
+        assert review.terms[0].reference_cash_per_share == Decimal("0.2974")
+        assert metrics.corporate_actions.gross_cash_paid == 300
+        assert at_ex["market_value"] == pytest.approx(9702.6)
+        assert equity[-1]["market_value"] == 9900
     if case_index == 4:
         assert len(facts["revisions"]) == 1
         changes = [row for row in records if row["event"] == "terms_updated"]
@@ -2315,6 +2672,123 @@ def test_verified_real_announcements_drive_one_account_event_and_separate_refere
         assert changes[1]["ts_us"] == _ts(ex_day, 0)
         assert changes[1]["eligible_qty"] == quantity
         assert sum(row["event"] == "registered" for row in records) == 1
+
+
+@pytest.mark.parametrize("case_index", range(6))
+def test_confirmed_compensations_execute_their_original_publication_and_settlement_history(
+    tmp_path: Path, backtest_payload: Callable[[str], dict[str, object]], case_index: int,
+) -> None:
+    from src.data_system.steps.resolve_corporate_actions import ResolveCorporateActionsStep
+
+    case = json.loads((Path(__file__).parents[1] /
+        "fixtures/corporate_actions/confirmed_compensations.json").read_text())[case_index]
+    review = CorporateActionReview.model_validate(case["review"])
+    symbol = case["records"][0]["symbol"]
+    day = str(review.record_date)
+    dates = {review.record_date}
+    if review.ex_date is not None:
+        dates.add(review.ex_date)
+    if symbol == "300116":
+        dates.add(date(2020, 5, 19))
+    for terms in review.terms:
+        visible = terms.published_date + timedelta(days=1)
+        while visible.weekday() >= 5:
+            visible += timedelta(days=1)
+        dates.add(visible)
+        dates.update(value for value in (terms.pay_date, terms.shares_credit_date, terms.shares_available_date)
+            if value is not None)
+    sessions = tuple(str(value) for value in sorted(dates) if value >= review.record_date)
+    end = sessions[-1]
+    pm = PathManager(tmp_path)
+    _write_source(pm, pm.processed_year_object(dataset_name="trade_calendar", version="v1",
+        calendar_year=review.record_date.year).payload_path,
+        pa.table({"trade_date": sessions, "is_open": [True] * len(sessions)}))
+    source_table = pa.Table.from_pylist(case["records"])
+    for session in sessions:
+        _write_source(pm, pm.processed_object(dataset_name="dividend", version="v1", trade_date=session).payload_path,
+            source_table if session == day else source_table.slice(0, 0))
+        _write_source(pm, pm.processed_object(dataset_name="suspend_d", version="v1", trade_date=session).payload_path,
+            pa.table({"symbol": pa.array([], type=pa.string())}))
+        _write_source(pm, pm.processed_object(dataset_name="daily_bar", version="v1", trade_date=session).payload_path,
+            pa.table({"symbol": [symbol], "trade_date": [session], "close": [10.0], "vol": [1000000.0]}))
+    ref = pm.raw_payload(broker="announcements", source_name="corporate_action_reviews", trade_date=day, payload_file="reviews.json")
+    FileSystem.write_bytes_atomic(ref, json.dumps([case["review"]]).encode())
+    meta.commit(pm=pm, payload_path=ref)
+    ResolveCorporateActionsStep(pm).run(DataContext(start=day, end=end, trade_dates=sessions))
+    orders = tmp_path / "orders.json"
+    orders.write_text("[]")
+    payload = backtest_payload("execution_eval")
+    payload.update(start=day, end=end, order_refs=[str(orders)],
+        initial_account={"ts_us": _ts(day, 15), "trade_date": day, "cash": "0", "positions": {symbol: 10000},
+            "sellable": {symbol: 10000}, "average_cost": {symbol: "10"}, "peak_equity": 100000})
+    payload["execution"].update(market_source={"frequency": "daily", "start": day, "end": end, "symbols": [symbol]},
+        end_ts_us=_ts(end, 15))
+    payload.pop("kind")
+    submission = create_backtest_submission(**payload)
+    metrics = BacktestMetrics(mode=submission.mode, parameters=submission.model_dump(mode="json"), not_run={})
+    run_backtest(submission=submission, path_manager=pm, experiment_name="compensation-real-terms", metrics=metrics)
+    result = metrics.final_account
+    assert result.positions == result.sellable == {symbol: {0: 10335, 5: 17503}.get(case_index, 10000)}
+    assert result.cash == 10000 * review.terms[-1].cash_per_share
+    assert result.dividend_receivable == 0
+    assert result.shares_receivable_value == {3: 122910, 4: 5000}.get(case_index, 0)
+    assert metrics.execution_eval.order_count == 0
+    directory = pm.experiment_dir(experiment_name="compensation-real-terms")
+    facts = json.loads((directory / "corporate-actions.json").read_text())
+    events = facts["records"]
+    assert sum(row["event"] == "registered" for row in events) == 1
+    assert sum(row["event"] == "recognized" for row in events) == 1
+    assert not any(row["event"] == "reference_updated" for row in events)
+    if case_index == 4:
+        entitlement, = result.distribution_entitlements
+        assert entitlement.shares_qty == 500 and entitlement.recognized
+        assert not entitlement.shares_credited and not entitlement.shares_released
+        assert entitlement.distribution.shares_credit_ts_us is entitlement.distribution.shares_available_ts_us is None
+        assert not any(row["event"] in ("shares_credited", "shares_released", "cash_paid") for row in events)
+        assert len(review.terms) == 1
+    elif case_index == 5:
+        credited, = [row for row in events if row["event"] == "shares_credited"]
+        released, = [row for row in events if row["event"] == "shares_released"]
+        assert credited["ts_us"] == _ts("2021-12-21", 15) and credited["shares_delta"] == 7503
+        assert released["ts_us"] == _ts("2021-12-23", 9, 30)
+        registered, = [row for row in events if row["event"] == "registered"]
+        assert registered["eligible_qty"] == 10000
+        assert metrics.corporate_actions.compensation_floor_count == 1
+        equity = pq.read_table(directory / "equity.parquet").to_pylist()
+        at_registration, = [row for row in equity if row["ts_us"] == _ts(day, 15)]
+        assert at_registration["market_value"] == 175030
+        assert at_registration["shares_receivable_value"] == 0
+        assert "late_compensation_settlement" not in {row["reason"] for row in facts["unresolved"]}
+    elif case_index == 3:
+        entitlement, = result.distribution_entitlements
+        assert entitlement.shares_qty == 12291 and entitlement.recognized
+        assert not entitlement.shares_credited and not entitlement.shares_released
+        assert entitlement.distribution.shares_credit_ts_us is None
+        assert entitlement.distribution.shares_available_ts_us == _ts("2022-02-25", 9, 30)
+        recognized, = [row for row in events if row["event"] == "recognized"]
+        assert recognized["ts_us"] == _ts("2022-02-28", 0)
+        assert recognized["shares_receivable_delta"] == 12291
+        assert not any(row["event"] in ("shares_credited", "shares_released", "cash_paid") for row in events)
+        assert "pending_compensation_credit" in {row["reason"] for row in facts["unresolved"]}
+        assert metrics.corporate_actions.compensation_floor_count == 1
+        equity = pq.read_table(directory / "equity.parquet").to_pylist()
+        assert all(row["shares_receivable_value"] == 0 for row in equity
+            if row["ts_us"] < review.terms[-1].available_ts_us)
+    elif case_index == 0:
+        credited, = [row for row in events if row["event"] == "shares_credited"]
+        assert credited["ts_us"] == _ts("2018-05-17", 15) and credited["shares_delta"] == 335
+        assert metrics.corporate_actions.compensation_floor_count == 1
+    else:
+        paid, = [row for row in events if row["event"] == "cash_paid"]
+        assert paid["ts_us"] >= review.terms[-1].available_ts_us
+        equity = pq.read_table(directory / "equity.parquet").to_pylist()
+        before_publication = [row for row in equity if row["ts_us"] < review.terms[-1].available_ts_us]
+        assert all(row["cash"] == 0 for row in before_publication)
+        assert "late_compensation_settlement" in {row["reason"] for row in facts["unresolved"]}
+    if case_index == 1:
+        adjustment, = [row for row in events if row["event"] == "entitlement_revised"]
+        assert adjustment["ts_us"] >= review.terms[2].available_ts_us
+        assert Decimal(adjustment["receivable_delta"]) == 10000 * review.terms[2].cash_per_share - 10000 * review.terms[1].cash_per_share
 
 
 def test_unresolved_registered_allocation_survives_resume_without_cash_or_stock_credit(
@@ -2337,3 +2811,159 @@ def test_unresolved_registered_allocation_survives_resume_without_cash_or_stock_
     assert resumed.data_quality.diagnostic_only
     assert [issue.reason for issue in resumed.data_quality.corporate_action_issues] == ["fractional_shares"]
     assert resumed.final_account.distribution_entitlements[0].eligible_qty == 200
+
+
+@pytest.mark.parametrize("frequency", ["daily", "minute"])
+@pytest.mark.parametrize("publication", [None, "2026-07-20", "2026-07-21"])
+@pytest.mark.parametrize("benefit", ["shares", "cash"])
+def test_pending_distribution_records_holdings_and_waits_for_public_allocation(
+    market_sources: PathManager, backtest_payload: Callable[[str], dict[str, object]],
+    frequency: str, publication: str | None, benefit: str,
+) -> None:
+    terms = [dict(published_date="2026-07-16", cash_per_share=None if benefit == "cash" else "0",
+        shares_per_share=None if benefit == "shares" else "0",
+        reference_cash_per_share=None, reference_shares_per_share=None, reference_price="6")]
+    if publication is not None:
+        terms.append({**terms[0], "published_date": publication,
+            "cash_per_share": "1" if benefit == "cash" else "0",
+            "shares_per_share": "0.5" if benefit == "shares" else "0"})
+        if publication == "2026-07-21":
+            terms[-1]["published_ts_us"] = _ts(publication, 10)
+    review = CorporateActionReview(candidate_id="600000.SH/2026-06-30/2026-07-17",
+        action_id="fixture/pending-allocation", shareholder_scope="ordinary_shareholder", record_date=_DAYS[0],
+        ex_date=_DAYS[1], pay_date=_DAYS[1] if benefit == "cash" else None,
+        div_listdate=_DAYS[2] if benefit == "shares" else None, terms=terms,
+        evidence_refs=["fixture://pending-allocation"], reason="announced_allocation_pending_registration_total")
+    resolution = CorporateActionResolution(candidate_id=review.candidate_id, symbol="600000", record_date=_DAYS[0],
+        status="resolved", reason=review.reason, review=review)
+    first = _distribution_case(market_sources, backtest_payload, frequency=frequency, resolution=resolution,
+        cash_per_share="0", end=_ts(_DAYS[1], 15), name="pending-first")
+    entitlement, = first.final_account.distribution_entitlements
+    assert entitlement.eligible_qty == 200
+    assert getattr(entitlement.distribution, f"{benefit}_per_share") is None
+    assert entitlement.recognition_issue == "pending_distribution_terms"
+    assert first.final_account.positions == first.final_account.sellable == {"600000": 200}
+    assert first.final_account.cash == first.final_account.dividend_receivable == 0
+    initial = {field: getattr(first.final_account, field) for field in
+        ("cash", "positions", "sellable", "average_cost", "trade_date", "distribution_entitlements")}
+    initial.update(ts_us=_ts(_DAYS[1], 15), peak_equity=2000)
+    resumed = _distribution_case(market_sources, backtest_payload, frequency=frequency, resolution=resolution,
+        cash_per_share="0", initial_account=initial, name="pending-resumed")
+    full = _distribution_case(market_sources, backtest_payload, frequency=frequency, resolution=resolution,
+        cash_per_share="0", name="pending-full")
+    expected_qty = 300 if publication is not None and benefit == "shares" else 200
+    assert full.final_account.positions == resumed.final_account.positions == {"600000": expected_qty}
+    assert full.final_account.sellable == resumed.final_account.sellable == {"600000": expected_qty}
+    assert full.final_account.cash == resumed.final_account.cash == (200 if publication is not None and benefit == "cash" else 0)
+    assert full.data_quality.diagnostic_only and resumed.data_quality.diagnostic_only
+    facts = json.loads((market_sources.experiment_dir(experiment_name="pending-full") / "corporate-actions.json").read_text())
+    assert sum(row["event"] == "registered" for row in facts["records"]) == 1
+    recognition = [row for row in facts["records"] if row["event"] == "recognized"]
+    releases = [row for row in facts["records"] if row["event"] == "shares_released"]
+    payments = [row for row in facts["records"] if row["event"] == "cash_paid"]
+    if publication is None:
+        assert not recognition and not releases and not payments
+    else:
+        assert len(recognition) == 1
+        assert recognition[0]["ts_us"] == _ts("2026-07-21", 10 if publication == "2026-07-21" else 0)
+        if benefit == "shares":
+            assert len(releases) == 1 and not payments
+            assert releases[0]["ts_us"] == (_ts("2026-07-21", 10) if publication == "2026-07-21"
+                else _ts("2026-07-21", 9, 30))
+            assert recognition[0]["shares_delta"] == 100
+        else:
+            assert len(payments) == 1 and not releases
+            assert payments[0]["ts_us"] == recognition[0]["ts_us"]
+            assert Decimal(payments[0]["cash_delta"]) == 200
+        completed, = full.final_account.distribution_entitlements
+        assert completed.recognized
+        assert completed.shares_released if benefit == "shares" else completed.cash_paid
+
+
+@pytest.mark.parametrize("frequency", ["daily", "minute"])
+@pytest.mark.parametrize("benefit", ["cash", "shares"])
+def test_announcement_stream_preserves_early_eligibility_late_settlement_and_completed_resume(
+    market_sources: PathManager, backtest_payload: Callable[[str], dict[str, object]], frequency: str, benefit: str,
+) -> None:
+    pm = market_sources
+    calendar_path = pm.processed_year_object(dataset_name="trade_calendar", version="v1", calendar_year=2026).payload_path
+    calendar = pq.ParquetFile(calendar_path).read().to_pylist()
+    calendar = [{"trade_date": "2026-07-16", "is_open": True}, *calendar,
+        {"trade_date": "2026-07-22", "is_open": True}]
+    _write_source(pm, calendar_path, pa.Table.from_pylist(calendar))
+    for day in ("2026-07-16", "2026-07-22"):
+        _write_source(pm, pm.processed_object(dataset_name="daily_bar", version="v1", trade_date=day).payload_path,
+            pa.table({"symbol": _SYMBOLS, "trade_date": [day] * 2, "close": [14.0, 14.0], "vol": [100.0, 100.0]}))
+    for dataset in ("suspend_d", "corporate_actions", "sh_stock_trade_1m", "sz_stock_trade_1m"):
+        original = pm.processed_object(dataset_name=dataset, version="v1", trade_date=_DAYS[-1]).payload_path
+        _write_source(pm, pm.processed_object(dataset_name=dataset, version="v1", trade_date="2026-07-22").payload_path,
+            pq.ParquetFile(original).read().slice(0, 0))
+    facts = []
+    for identity, publication_day, changes in (
+        ("1", "2026-07-15", {"benefit_state": "announced"}),
+        ("2", "2026-07-16", {"benefit_state": "confirmed", "record_date": _DAYS[0],
+            "cash_per_share": "0" if benefit == "shares" else None,
+            "shares_per_share": "0" if benefit == "cash" else None}),
+        ("3", "2026-07-19", {"ex_date": _DAYS[1], "cash_per_share": "1" if benefit == "cash" else "0",
+            "shares_per_share": "0.5" if benefit == "shares" else "0"}),
+        ("4", "2026-07-20", {"pay_date" if benefit == "cash" else "shares_available_date": _DAYS[2]}),
+    ):
+        publication = AnnouncementPublication(source="cninfo", announcement_id=identity, symbol="600000",
+            title="权益分派补充公告", published_date=publication_day, url=f"https://example.test/{identity}.pdf")
+        row = AnnouncementFacts(event_id="cninfo:1", publication=publication, observed_at="2026-10-28T00:00:00Z",
+            kind="distribution", evidence_refs=(publication.url,), **changes)
+        facts.append(row)
+        _write_source(pm, pm.processed_object(dataset_name="announcement_facts", version="v1",
+            trade_date=publication_day).payload_path, pa.Table.from_pylist([{
+                "event_id": row.event_id, "symbol": "600000", "available_ts_us": row.available_ts_us,
+                "observed_at": row.observed_at, "facts": row.model_dump_json(),
+            }]))
+    order_ref = pm.storage_root / "stream-orders.json"
+    order_ref.write_text("[]")
+    fields = backtest_payload("execution_eval")
+    fields.pop("kind")
+    fields.update(start=_DAYS[0], end=_DAYS[-1], order_refs=[str(order_ref)])
+    fields["initial_account"] = {"ts_us": _ts(_DAYS[0], 15) - 1, "trade_date": _DAYS[0],
+        "cash": "0", "positions": {"600000": 200}, "sellable": {"600000": 200},
+        "average_cost": {"600000": "10"}, "peak_equity": 2000}
+    fields["execution"].update(market_source={"frequency": frequency, "start": _DAYS[0], "end": _DAYS[-1],
+        "symbols": _SYMBOLS}, end_ts_us=_ts(_DAYS[0], 15))
+    snapshots = []
+    results = []
+    for name, end, initial in (
+        ("stream-prefix", _ts(_DAYS[0], 15), None),
+        ("stream-full", _ts(_DAYS[-1], 15), None),
+        ("stream-resumed", _ts(_DAYS[-1], 15), 0),
+        ("stream-completed", _ts("2026-07-22", 15), 1),
+    ):
+        case = deepcopy(fields)
+        case["execution"]["end_ts_us"] = end
+        if name == "stream-completed":
+            case["end"] = case["execution"]["market_source"]["end"] = "2026-07-22"
+        if initial is not None:
+            case["initial_account"] = snapshots[initial]
+        submission = create_backtest_submission(**case)
+        metrics = BacktestMetrics(mode=submission.mode, parameters=submission.model_dump(mode="json"), not_run={})
+        run_backtest(submission=submission, path_manager=pm, experiment_name=name, metrics=metrics)
+        account = metrics.final_account
+        snapshot = {key: getattr(account, key) for key in ("cash", "positions", "sellable", "average_cost", "trade_date",
+            "distribution_entitlements", "registration_holdings", "corporate_action_issues")}
+        snapshot.update(ts_us=end, peak_equity=account.equity)
+        snapshots.append(snapshot)
+        results.append(account)
+    early = results[0]
+    pending, = early.distribution_entitlements
+    assert not pending.recognized and pending.eligible_qty == 200 and pending.distribution.ex_ts_us is None
+    assert early.cash == 0 and early.positions == {"600000": 200}
+    assert early.registration_holdings[_DAYS[0]] == {"600000": 200}
+    assert results[1] == results[2]
+    assert results[3].cash == results[1].cash and results[3].positions == results[1].positions
+    assert results[3].distribution_entitlements == results[1].distribution_entitlements
+    final = results[1]
+    assert final.cash == (200 if benefit == "cash" else 0)
+    assert final.positions == final.sellable == {"600000": 300 if benefit == "shares" else 200}
+    records = json.loads((pm.experiment_dir(experiment_name="stream-full") / "corporate-actions.json").read_text())
+    assert records["outstanding_entitlements"] == [] and len(records["entitlements"]) == 1
+    assert sum(row["event"] == "recognized" for row in records["records"]) == 1
+    completed = json.loads((pm.experiment_dir(experiment_name="stream-completed") / "corporate-actions.json").read_text())
+    assert completed["records"] == []

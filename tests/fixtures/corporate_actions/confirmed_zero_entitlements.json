@@ -1,0 +1,1622 @@
+[
+  {
+    "records": [
+      {
+        "ts_code": "002200.SZ",
+        "symbol": "002200",
+        "end_date": "2025-07-26",
+        "ann_date": "2025-08-15",
+        "div_proc": "实施",
+        "imp_ann_date": "2025-12-06",
+        "record_date": "2025-12-11",
+        "ex_date": "2025-12-12",
+        "pay_date": null,
+        "div_listdate": "2025-12-12",
+        "cash_div_tax": null,
+        "stk_div": "1.45"
+      }
+    ],
+    "review": {
+      "candidate_id": "002200.SZ/2025-07-26/2025-12-11",
+      "related_sources": [],
+      "action_id": "cninfo:1224855300:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2025-12-11",
+      "ex_date": "2025-12-12",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2025-12-06",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": null
+        },
+        {
+          "published_date": "2025-12-12",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": "6.94"
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2025-12-06/1224855300.PDF",
+        "https://static.cninfo.com.cn/finalpage/2025-12-12/1224869457.PDF"
+      ],
+      "reason": "confirmed_zero_ordinary_entitlements"
+    },
+    "basis": {
+      "cash": "实施公告或同日专项意见明确本次不涉及现金红利，见cash_evidence。",
+      "cash_evidence": [
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2025-12-06/1224855300.PDF",
+          "page": 5,
+          "text": "原股东分配导致股份增加数）。上述公式中，不涉及现金红利，现金红利为0.00元/股。转增前总股本为"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2025-12-06/1224855300.PDF",
+          "page": 5,
+          "text": "份增加数）。上述公式中，不涉及现金红利，现金红利为0.00元/股。转增前总股本为"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2025-12-12/1224869457.PDF",
+          "page": 5,
+          "text": "原股东分配导致股份增加数）。上述公式中，不涉及现金红利，现金红利为0.00元/股。转增前总股本为184,132,890股。截至本公告披露日，债权人的普通债"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2025-12-12/1224869457.PDF",
+          "page": 5,
+          "text": "份增加数）。上述公式中，不涉及现金红利，现金红利为0.00元/股。转增前总股本为184,132,890股。截至本公告披露日，债权人的普通债权清偿方案选择情况已"
+        }
+      ],
+      "shares": [
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2025-12-06/1224855300.PDF",
+          "page": 1,
+          "text": "确股票数量以中国证券登记结算有限责任公司深圳分公司实际登记确认的数量为准）。前述转增的股票不向原股东分配，全部用于清偿债务和引入重整投资人。2.由于本次资本公积金转增股本系重整程序中出资人权益调整的一部分，不同于一般意义上为了分红而单纯增发股票的行为，公司依据《深圳证券交易"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2025-12-06/1224855300.PDF",
+          "page": 3,
+          "text": "结算有限责任公司深圳分公司实际登记确认的数量为准）。前述转增的266,992,691股股票不向原出资人进行分配，全部按照如下规定进行分配和处理：1.产业投资人云南省交通投资建设集团有限公司以135,450,000元受让35,000,000股转增股票。本次重整后，公司控制权未发生变"
+        }
+      ],
+      "dates": "登记日与dividend一致；ex_date沿用该实施来源日期。零权益不建立账户支付或股份上市日程。",
+      "reference": [
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2025-12-12/1224869457.PDF",
+          "page": 1,
+          "text": "份有限公司调整资本公积金转增股本除权参考价格的计算结果的专项意见》，按照公司调整后的除权参考价格的计算公式进行除权调整为6.94元/股。"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2025-12-12/1224869457.PDF",
+          "page": 6,
+          "text": "交易日（2025年12月12日）的股票开盘参考价依据公司调整后的除权（息）参考价格计算公式计算得出的除权（息）参考价格为6.94元/股。太平洋证券股份有限公司为公司调整资本公积金转增股本除权参考价格的计算结果出具了专项意见。具体内容详见公司于同日对外披露"
+        }
+      ],
+      "visibility": "权益和后续参考结果分版本保存；日期型披露在下一自然日00:00可见，不提前回填。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "300506.SZ",
+        "symbol": "300506",
+        "end_date": "2025-10-25",
+        "ann_date": "2025-10-25",
+        "div_proc": "实施",
+        "imp_ann_date": "2025-12-15",
+        "record_date": "2025-12-19",
+        "ex_date": "2025-12-22",
+        "pay_date": null,
+        "div_listdate": "2025-12-22",
+        "cash_div_tax": "0.0",
+        "stk_div": "1.05"
+      },
+      {
+        "ts_code": "300506.SZ",
+        "symbol": "300506",
+        "end_date": "2025-02-28",
+        "ann_date": "2025-11-12",
+        "div_proc": "实施",
+        "imp_ann_date": "2025-12-15",
+        "record_date": "2025-12-19",
+        "ex_date": "2025-12-22",
+        "pay_date": null,
+        "div_listdate": "2025-12-22",
+        "cash_div_tax": null,
+        "stk_div": "1.05"
+      }
+    ],
+    "review": {
+      "candidate_id": "300506.SZ/2025-02-28/2025-12-19",
+      "related_sources": [
+        "300506.SZ/2025-10-25/2025-12-19"
+      ],
+      "action_id": "cninfo:1224877791:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2025-12-19",
+      "ex_date": "2025-12-22",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2025-12-15",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": null
+        },
+        {
+          "published_date": "2025-12-22",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": "3.16"
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2025-12-15/1224877791.PDF",
+        "https://static.cninfo.com.cn/finalpage/2025-12-22/1224888773.PDF"
+      ],
+      "reason": "confirmed_zero_ordinary_entitlements"
+    },
+    "basis": {
+      "cash": "dividend同一实施事件有明确现金0、无派息日；实施公告完整转增用途为引资和清债，没有普通股东现金分配。",
+      "cash_evidence": [],
+      "shares": [
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2025-12-15/1224877791.PDF",
+          "page": 2,
+          "text": "券登记结算有限责任公司深圳分公司实际登记确认的数量为准）。（二）转增股票的用途前述转增股票不向原股东进行分配，专项用于引进重整投资人及清偿名家汇债务，根据《重整计划》作如下安排：1、转增股票中，664,000,000股股票由重整投资人有条件受让，重整投资人合计支付1,203,4"
+        }
+      ],
+      "dates": "登记日与dividend一致；ex_date沿用该实施来源日期。零权益不建立账户支付或股份上市日程。",
+      "reference": [
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2025-12-22/1224888773.PDF",
+          "page": 1,
+          "text": "记日次一交易日（2025年12月22日）的股票开盘参考价将进行调整，按照公司调整后的除权参考价格的计算公式进行除权调整为3.16元/股。一、法院裁定批准公司重整计划2025年9月26日，广东省高级人民法院（以下简称“广东省高院”）作出“（2025）粤申破"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2025-12-22/1224888773.PDF",
+          "page": 4,
+          "text": "，公司股权登记日次一交易日（2025年12月22日）的股票开盘参考价按照公司调整后的除权参考价格的计算公式进行除权调整为3.16元/股。中天国富证券有限公司作为公司本次重整的财务顾问，为公司调整资本公积金转增股本除权参考价格事项出具了专项意见，相关具体内"
+        }
+      ],
+      "visibility": "权益和后续参考结果分版本保存；日期型披露在下一自然日00:00可见，不提前回填。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "000912.SZ",
+        "symbol": "000912",
+        "end_date": "2018-06-14",
+        "ann_date": "2018-06-29",
+        "div_proc": "实施",
+        "imp_ann_date": "2018-07-24",
+        "record_date": "2018-07-27",
+        "ex_date": "2018-07-30",
+        "pay_date": null,
+        "div_listdate": null,
+        "cash_div_tax": null,
+        "stk_div": "1.6803419"
+      }
+    ],
+    "review": {
+      "candidate_id": "000912.SZ/2018-06-14/2018-07-27",
+      "related_sources": [],
+      "action_id": "cninfo:1205225283:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2018-07-27",
+      "ex_date": "2018-07-30",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2018-07-24",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": null
+        },
+        {
+          "published_date": "2018-09-28",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": "0",
+          "reference_shares_per_share": "0",
+          "reference_price": null
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2018-07-24/1205225283.PDF",
+        "https://static.cninfo.com.cn/finalpage/2018-09-28/1205472388.PDF"
+      ],
+      "reason": "confirmed_zero_ordinary_entitlements"
+    },
+    "basis": {
+      "cash": "实施公告完整资本公积转增方案仅向管理人交付股票并列明清债、引资和公司经营用途；普通股东不获配，原持股数量不变；无普通持仓现金分配。本次确认以完整方案为依据，不由源行空现金单独推断，也不要求额外零现金句子。",
+      "cash_evidence": [],
+      "shares": [
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2018-07-24/1205225283.PDF",
+          "page": 1,
+          "text": "天化股份总股本由585,000,000股增至1,568,000,000股。2.前述转增股票不向股东分配，全部由管理人按照重整计划的规定进行分配和处置，其中：约274，730,000股将分配给泸天化股份的债权人用于清偿债务，不超过219，270,000股将提供给和宁公司用于"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2018-07-24/1205225283.PDF",
+          "page": 1,
+          "text": "持续经营能力等。3.股权登记日：2018年7月27日4.对股东的影响：本次资本公积转增股本不向股东分配，全部由管理人按照重整计划的规定进行分配和处置。原股东持股数量不变，持股比例相应调整。本公司及董事会全体成员保证信息披露内容的真实、准确和完整，没有虚假记载、误导性陈述或"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2018-07-24/1205225283.PDF",
+          "page": 2,
+          "text": ",800万股（最终转增的准确股票数量以中登深圳分公司实际登记确认的数量为准）。前述转增股票不向股东分配，全部由管理人按照重整计划的规定进行分配和处置，其中：约274，730,000股将分配给泸天化股份的债权人用于清偿债务，不超过219，270,000股将提供给和宁公司用于"
+        }
+      ],
+      "dates": "登记日与dividend一致；ex_date沿用该实施来源日期。零权益不建立账户支付或股份上市日程。",
+      "reference": [
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2018-09-28/1205472388.PDF",
+          "page": 1,
+          "text": "证券简称：*ST天化证券代码：000912公告编号：2018-099四川泸天化股份有限公司关于公司复牌后不进行除权的公告重要内容提示：根据《重整计划》实施的本次资本公积金转增股本在增加股本的同时每股对应的资产相应增加。此外，由于重整"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2018-09-28/1205472388.PDF",
+          "page": 1,
+          "text": "加。此外，由于重整投资人的业绩承诺对公司股票价格的影响无法进行量化，除权调整亦不具有可操作性。综合上述情况，公司复牌后将不进行除权调整。由于公司不进行除权调整，且重整时间较长，公司复牌后股价可能出现大幅波动，请广大投资者关注风险。2017年12月13日"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2018-09-28/1205472388.PDF",
+          "page": 1,
+          "text": "业绩承诺对公司股票价格的影响无法进行量化，除权调整亦不具有可操作性。综合上述情况，公司复牌后将不进行除权调整。由于公司不进行除权调整，且重整时间较长，公司复牌后股价可能出现大幅波动，请广大投资者关注风险。2017年12月13日，四川省泸州市中级人民法院"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2018-09-28/1205472388.PDF",
+          "page": 1,
+          "text": "重整计划》”），并终止公司重整程序。2018年9月27日，公司法律顾问出具《关于四川泸天化股份有限公司复牌后股票价格可以不进行除权调整的专项法律意见书》（以下简称“法律意见书”），就公司复牌后可以不进行除权的相关情况发本公司及董事会全体成员保证信息披露内"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2018-09-28/1205472388.PDF",
+          "page": 1,
+          "text": "关于四川泸天化股份有限公司复牌后股票价格可以不进行除权调整的专项法律意见书》（以下简称“法律意见书”），就公司复牌后可以不进行除权的相关情况发本公司及董事会全体成员保证信息披露内容的真实、准确和完整，没有虚假记载、误导性陈述或重大遗漏。"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2018-09-28/1205472388.PDF",
+          "page": 5,
+          "text": "诺对公司股票价格的影响无法进行量化，除权调整亦不具有可操作性。因此，本所律师经核查后认为：泸天化股份复牌后的股票价格可以不进行除权调整。五、风险提示由于公司不进行除权调整，且重整时间较长，公司复牌后股价可能出现大幅波动，请广大投资者关注风险。鉴于重整事项"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2018-09-28/1205472388.PDF",
+          "page": 5,
+          "text": "除权调整亦不具有可操作性。因此，本所律师经核查后认为：泸天化股份复牌后的股票价格可以不进行除权调整。五、风险提示由于公司不进行除权调整，且重整时间较长，公司复牌后股价可能出现大幅波动，请广大投资者关注风险。鉴于重整事项存在重大不确定性，公司提醒广大投资者"
+        }
+      ],
+      "visibility": "权益和后续参考结果分版本保存；日期型披露在下一自然日00:00可见，不提前回填。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "300256.SZ",
+        "symbol": "300256",
+        "end_date": "2022-07-13",
+        "ann_date": "2022-07-29",
+        "div_proc": "实施",
+        "imp_ann_date": "2022-08-25",
+        "record_date": "2022-08-30",
+        "ex_date": "2022-08-31",
+        "pay_date": null,
+        "div_listdate": "2022-08-31",
+        "cash_div_tax": null,
+        "stk_div": "1.368"
+      }
+    ],
+    "review": {
+      "candidate_id": "300256.SZ/2022-07-13/2022-08-30",
+      "related_sources": [],
+      "action_id": "cninfo:1214388605:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2022-08-30",
+      "ex_date": "2022-08-31",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2022-08-25",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": null
+        },
+        {
+          "published_date": "2022-08-31",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": "0",
+          "reference_shares_per_share": "0",
+          "reference_price": null
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2022-08-25/1214388605.PDF",
+        "https://static.cninfo.com.cn/finalpage/2022-08-31/1214470272.PDF"
+      ],
+      "reason": "confirmed_zero_ordinary_entitlements"
+    },
+    "basis": {
+      "cash": "实施公告或同日专项意见明确本次不涉及现金红利，见cash_evidence。",
+      "cash_evidence": [
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2022-08-25/1214388605.PDF",
+          "page": 4,
+          "text": "0股，向原股东分配导致流通股增加数为0，不涉及现金红利。综合计算下，星星科技本次资本公积金转增股本的平均价格=（转增股票抵偿公司及协同重整企业债务的金额+"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2022-08-31/1214470272.PDF",
+          "page": 3,
+          "text": "0股，向原股东分配导致流通股增加数为0，不涉及现金红利。综合计算下，星星科技本次资本公积金转增股本的平均价格=（转增股票抵偿公司及协同重整企业债务的金额+"
+        }
+      ],
+      "shares": [
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2022-08-25/1214388605.PDF",
+          "page": 1,
+          "text": ",396股增加至2,268,393,386股。2、上述转增股票1,310,456,990股不向原股东分配，其中775,000,000股股票由重整投资人以705,000,000元现金受让，为首发后限售条件流通股；剩余的535,456,990股股票用于清偿星星科技及协同重整的核"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2022-08-25/1214388605.PDF",
+          "page": 2,
+          "text": "股增加至2,268,393,386股。上述资本公积金转增股本的1,310,456,990股不向原股东分配，用于引入重整投资人和清偿星星科技及协同重整的核心子公司债务，具体如下：1、转增股票中的775,000,000股由重整投资人以705,000,000元现金受让，为首"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2022-08-25/1214388605.PDF",
+          "page": 4,
+          "text": "》。五、转增股本实施办法根据重整计划及法院出具的《协助执行通知书》，本次资本公积金转增股票不向原股东分配，全部登记至管理人证券账户（证券账户名称：江西星星科技股份有限公司破产企业财产处置专用账户，证券账户号：089****190）。本次登记至管理人证券账户的股票，后续将由法"
+        }
+      ],
+      "dates": "登记日与dividend一致；ex_date沿用该实施来源日期。零权益不建立账户支付或股份上市日程。",
+      "reference": [
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2022-08-31/1214470272.PDF",
+          "page": 1,
+          "text": "56证券简称：*ST星星公告编号：2022-118江西星星科技股份有限公司关于资本公积转增股本实施后首个交易日开盘参考价不作调整的提示性公告本公司及董事会全体成员保证信息披露的内容真实、准确、完整，没有虚假记载、误导性陈述或重大遗漏。重要提示：鉴于"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2022-08-31/1214470272.PDF",
+          "page": 1,
+          "text": "3元/股，该收盘价低于转增股本的平均价格3.81元/股，公司股权登记日次一交易日（2022年8月31日）的股票开盘参考价不作调整。一、法院裁定批准公司重整计划2022年5月25日，江西省萍乡市中级人民法院（以下简称“萍乡中院”）作出（2021）赣0"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2022-08-31/1214470272.PDF",
+          "page": 3,
+          "text": "当日（2022年8月30日）停牌1个交易日，将于2022年8月31日复牌。五、资本公积转增股本实施后首个交易日开盘参考价不作调整的说明根据《深圳证券交易所交易规则（2021年3月修订）》第4.4.2条的规定，公司经审慎研究后认为，本次实施资本公积金"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2022-08-31/1214470272.PDF",
+          "page": 3,
+          "text": "3元/股，该收盘价低于转增股本的平均价格3.81元/股，公司股权登记日次一交易日（2022年8月31日）的股票开盘参考价不作调整。"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2022-08-31/1214470272.PDF",
+          "page": 4,
+          "text": "太平洋证券股份有限公司作为公司本次重整中的财务顾问，为公司股权登记日次一交易日股票开盘参考价不作调整出具了专项意见，具体详见公司于2022年8月31日在巨潮资讯网披露的《太平洋证券股份有限公司关于公司不调整资本公积金转增"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2022-08-31/1214470272.PDF",
+          "page": 4,
+          "text": "票开盘参考价不作调整出具了专项意见，具体详见公司于2022年8月31日在巨潮资讯网披露的《太平洋证券股份有限公司关于公司不调整资本公积金转增股本股权登记日次一交易日股票开盘参考价格的专项意见》。六、风险提示1、公司2020年度归属于上市公司股东的"
+        }
+      ],
+      "visibility": "权益和后续参考结果分版本保存；日期型披露在下一自然日00:00可见，不提前回填。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "300370.SZ",
+        "symbol": "300370",
+        "end_date": "2022-06-21",
+        "ann_date": "2022-11-03",
+        "div_proc": "实施",
+        "imp_ann_date": "2022-12-13",
+        "record_date": "2022-12-19",
+        "ex_date": "2022-12-20",
+        "pay_date": null,
+        "div_listdate": "2022-12-20",
+        "cash_div_tax": "0.0",
+        "stk_div": "0.64816"
+      },
+      {
+        "ts_code": "300370.SZ",
+        "symbol": "300370",
+        "end_date": "2022-06-21",
+        "ann_date": "2022-11-18",
+        "div_proc": "实施",
+        "imp_ann_date": "2022-12-13",
+        "record_date": "2022-12-19",
+        "ex_date": "2022-12-20",
+        "pay_date": null,
+        "div_listdate": "2022-12-20",
+        "cash_div_tax": null,
+        "stk_div": "0.64816"
+      }
+    ],
+    "review": {
+      "candidate_id": "300370.SZ/2022-06-21/2022-12-19",
+      "related_sources": [],
+      "action_id": "cninfo:1215342892:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2022-12-19",
+      "ex_date": "2022-12-20",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2022-12-13",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": null
+        },
+        {
+          "published_date": "2022-12-20",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": "2.64"
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2022-12-13/1215342892.PDF",
+        "https://static.cninfo.com.cn/finalpage/2022-12-20/1215399349.PDF"
+      ],
+      "reason": "confirmed_zero_ordinary_entitlements"
+    },
+    "basis": {
+      "cash": "实施公告或同日专项意见明确本次不涉及现金红利，见cash_evidence。",
+      "cash_evidence": [
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2022-12-13/1215342892.PDF",
+          "page": 4,
+          "text": "9股，向原股东分配导致流通股增加数为0，不涉及现金红利。综合计算下，本次重整安控科技资本公积金转增股本的平均价=（重整投资人受让转增股份支付的现金+转增股"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2022-12-20/1215399349.PDF",
+          "page": 4,
+          "text": "9股，向原股东分配导致流通股增加数为0，不涉及现金红利。综合计算下，本次重整安控科技资本公积金转增股本的平均价=（重整投资人受让转增股份支付的现金+转增股"
+        }
+      ],
+      "shares": [
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2022-12-13/1215342892.PDF",
+          "page": 1,
+          "text": "算有限责任公司深圳分公司实际登记确认的数量为准）。2、上述转增股票620,380,055股不向原股东分配，其中437,859,476股股票由重整投资人以737,701,671元现金受让，为首发后限售条件流通股；剩余的182,520,579股股票用于清偿公司债务，为无限售条件"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2022-12-13/1215342892.PDF",
+          "page": 3,
+          "text": "任公司深圳分公司实际登记确认的数量为准）。上述资本公积金转增的股票620,380,055股不向原股东分配，用于引入投资人和抵偿公司的债务，具体如下：1、转增股票中的437,859,476股用于引入投资人，由投资人有条件受让：宜宾市叙州区创益产业投资有限公司（以下简称“创益产"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2022-12-13/1215342892.PDF",
+          "page": 5,
+          "text": "》。五、转增股本实施办法根据重整计划及法院出具的《协助执行通知书》，本次资本公积金转增股票不向原股东分配，全部登记至管理人证券账户（证券账户名称：四川安控科技股份有限公司破产企业财产处置专用账户，证券账户号：0899356945）。本次登记至管理人证券账户的股票，后续将由法"
+        }
+      ],
+      "dates": "登记日与dividend一致；ex_date沿用该实施来源日期。零权益不建立账户支付或股份上市日程。",
+      "reference": [
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2022-12-20/1215399349.PDF",
+          "page": 1,
+          "text": "记日次一交易日（2022年12月20日）的股票开盘股价应当依据公司本次调整后的除权参考价格的计算公式进行除权调整，调整为2.64元/股。一、法院裁定批准公司重整计划公司于2022年10月25日在巨潮资讯网（www.cninfo.com.cn）上披露了《关"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2022-12-20/1215399349.PDF",
+          "page": 4,
+          "text": "记日次一交易日（2022年12月20日）的股票开盘股价应当依据公司本次调整后的除权参考价格的计算公式进行除权调整，调整为2.64元/股。针对上述除权事项，中国国际金融股份有限公司和北京市大地律师事务所为公司本次资本公积金转增股本除权参考价格的计算结果出具"
+        }
+      ],
+      "visibility": "权益和后续参考结果分版本保存；日期型披露在下一自然日00:00可见，不提前回填。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "002122.SZ",
+        "symbol": "002122",
+        "end_date": "2022-11-11",
+        "ann_date": "2022-11-11",
+        "div_proc": "实施",
+        "imp_ann_date": "2022-12-16",
+        "record_date": "2022-12-21",
+        "ex_date": "2022-12-22",
+        "pay_date": null,
+        "div_listdate": "2022-12-22",
+        "cash_div_tax": "0.0",
+        "stk_div": "0.628"
+      },
+      {
+        "ts_code": "002122.SZ",
+        "symbol": "002122",
+        "end_date": "2022-11-11",
+        "ann_date": "2022-12-06",
+        "div_proc": "实施",
+        "imp_ann_date": "2022-12-16",
+        "record_date": "2022-12-21",
+        "ex_date": "2022-12-22",
+        "pay_date": null,
+        "div_listdate": "2022-12-22",
+        "cash_div_tax": null,
+        "stk_div": "0.628"
+      }
+    ],
+    "review": {
+      "candidate_id": "002122.SZ/2022-11-11/2022-12-21",
+      "related_sources": [],
+      "action_id": "cninfo:1215367221:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2022-12-21",
+      "ex_date": "2022-12-22",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2022-12-16",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": null
+        },
+        {
+          "published_date": "2022-12-22",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": "0",
+          "reference_shares_per_share": "0",
+          "reference_price": null
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2022-12-16/1215367221.PDF",
+        "https://static.cninfo.com.cn/finalpage/2022-12-22/1215416524.PDF"
+      ],
+      "reason": "confirmed_zero_ordinary_entitlements"
+    },
+    "basis": {
+      "cash": "实施公告或同日专项意见明确本次不涉及现金红利，见cash_evidence。",
+      "cash_evidence": [
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2022-12-16/1215367221.PDF",
+          "page": 3,
+          "text": "向原股东分配导致股份增加数）上述公式中，现金红利为0.00元/股，转增前总股本为1,218,807,125股，转增股份抵偿债务的价格为8.926582713元"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2022-12-16/1215367221.PDF",
+          "page": 3,
+          "text": "00股，向原股东分配导致股份增加数为0，不涉及现金红利。综合计算下，天马股份资本公积金转增股本的平均价=（转增股票抵偿上市公司债务的金额+重整投资人受让转"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2022-12-22/1215416524.PDF",
+          "page": 3,
+          "text": "配导致股份增加数）上述公式中，现金红利为0.00元/股，转增前总股本为1,218,807,125股，转增股份抵偿债务的价格为8.926582713元"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2022-12-22/1215416524.PDF",
+          "page": 3,
+          "text": "00股，向原股东分配导致股份增加数为0，不涉及现金红利。综合计算下，天马股份资本公积金转增股本的平均价=（转增股票抵偿上市公司债务的金额+重整投资人受让转"
+        }
+      ],
+      "shares": [
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2022-12-16/1215367221.PDF",
+          "page": 2,
+          "text": "有限责任公司深圳分公司实际登记确认的数量为准），股份性质均为无限售条件流通股。前述转增股票不向原股东分配，全部按照重整计划的规定进行分配和处理。其中：34,590万股分配给天马股份的债权人用于清偿债务；41,930万股由重整投资人有条件受让。三、股权登记日本次资本公积转增股"
+        }
+      ],
+      "dates": "登记日与dividend一致；ex_date沿用该实施来源日期。零权益不建立账户支付或股份上市日程。",
+      "reference": [
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2022-12-22/1215416524.PDF",
+          "page": 1,
+          "text": "22证券简称：*ST天马公告编号：2022-110天马轴承集团股份有限公司关于资本公积转增股本实施后首个交易日开盘参考价不作调整的提示性公告本公司及董事会全体成员保证信息披露的内容真实、准确、完整，没有虚假记载、误导性陈述或重大遗漏。重要提示：鉴于"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2022-12-22/1215416524.PDF",
+          "page": 1,
+          "text": "元/股，该收盘价低于转增股本的平均价格4.58元/股，公司股权登记日次一交易日（2022年12月22日）的股票开盘参考价不作调整。一、法院裁定批准公司重整计划2022年10月30日，衢州市中级人民法院（以下简称“衢州中院”）裁定受理债权人对天马轴承"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2022-12-22/1215416524.PDF",
+          "page": 2,
+          "text": "（2022年12月21日）停牌1个交易日，将于2022年12月22日复牌。五、资本公积转增股本实施后首个交易日开盘参考价不作调整的说明根据《深圳证券交易所交易规则（2021年3月修订）》第4.4.2条的规定：“除权（息）参考价计算公式为：除权（息）"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2022-12-22/1215416524.PDF",
+          "page": 3,
+          "text": "元/股，该收盘价低于转增股本的平均价格4.58元/股，公司股权登记日次一交易日（2022年12月22日）的股票开盘参考价不作调整。太平洋证券股份有限公司作为公司本次重整中的财务顾问，为公司调整资本公积转增股本除权参考价格计算公式出具了专项意见，具体"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2022-12-22/1215416524.PDF",
+          "page": 3,
+          "text": "具了专项意见，具体详见公司于2022年12月22日在巨潮资讯网披露的《太平洋证券股份有限公司关于天马轴承集团股份有限公司不调整资本公积金转增股本股权登记日次一交易日股票开盘参考价格的专项意见》。六、风险提示1、公司于2022年4月29日发布《20"
+        }
+      ],
+      "visibility": "权益和后续参考结果分版本保存；日期型披露在下一自然日00:00可见，不提前回填。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "002366.SZ",
+        "symbol": "002366",
+        "end_date": "2022-11-12",
+        "ann_date": "2022-11-29",
+        "div_proc": "实施",
+        "imp_ann_date": "2022-12-16",
+        "record_date": "2022-12-21",
+        "ex_date": "2022-12-22",
+        "pay_date": null,
+        "div_listdate": "2022-12-22",
+        "cash_div_tax": null,
+        "stk_div": "1.4"
+      }
+    ],
+    "review": {
+      "candidate_id": "002366.SZ/2022-11-12/2022-12-21",
+      "related_sources": [],
+      "action_id": "cninfo:1215368236:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2022-12-21",
+      "ex_date": "2022-12-22",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2022-12-16",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": null
+        },
+        {
+          "published_date": "2022-12-22",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": "0",
+          "reference_shares_per_share": "0",
+          "reference_price": null
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2022-12-16/1215368236.PDF",
+        "https://static.cninfo.com.cn/finalpage/2022-12-22/1215418604.PDF"
+      ],
+      "reason": "confirmed_zero_ordinary_entitlements"
+    },
+    "basis": {
+      "cash": "实施公告或同日专项意见明确本次不涉及现金红利，见cash_evidence。",
+      "cash_evidence": [
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2022-12-16/1215368236.PDF",
+          "page": 4,
+          "text": "数）。上述计算公式中，已确定的参数包括：不涉及现金红利，转增前总股本为8.67亿股，转增股份抵偿公司及核心子公司债务的金额为41.02亿元（2.93亿股×"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2022-12-22/1215418604.PDF",
+          "page": 4,
+          "text": "亿股，向原股东分配导致流通股增加数为0，不涉及现金红利。如果股权登记日公司股票收盘价高于转增股票平均价5.35元/股，公司股票按照前述计算公式于股权登记日"
+        }
+      ],
+      "shares": [
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2022-12-16/1215368236.PDF",
+          "page": 1,
+          "text": "7,350股增至2,080,937,640股。2.上述转增股票1,213,880,290股不向原股东分配，其中920,956,586股股票由重整投资人以合计23.87亿元现金受让，为有限售条件流通股；剩余的292,923,704股股票用于清偿台海核电及核心子公司债务，抵债价"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2022-12-16/1215368236.PDF",
+          "page": 3,
+          "text": "，台海核电总股本将由867,057,350股增至2,080,937,640股。前述转增股票不向原股东分配，用于引入重整投资人和清偿台海核电及核心子公司的债务，具体如下：1.约561,853,163股转增股票，由产业投资人青岛军民融合发展集团有限公司按照2.14元/股的对价有"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2022-12-16/1215368236.PDF",
+          "page": 5,
+          "text": "。五、转增实施办法根据重整计划及莱山区法院出具的《协助执行通知书》,本次资本公积金转增股票不向原股东分配，全部登记至管理人证券账户（证券账户名称：台海玛努尔核电设备股份有限公司破产企业财产处置专用账户，证券账户号码：08******09）。公司及管理人后续将根据重整计划的规"
+        }
+      ],
+      "dates": "登记日与dividend一致；ex_date沿用该实施来源日期。零权益不建立账户支付或股份上市日程。",
+      "reference": [
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2022-12-22/1215418604.PDF",
+          "page": 1,
+          "text": "盘参考价，如果股权登记日公司股票收盘价低于或等于转增股票的平均价格5.35元/股，股权登记日次一交易日公司股票开盘参考价不作调整。鉴于本次资本公积转增股本股权登记日当日（2022年12月21日）停牌，股权登记日公司股票收盘价为股权登记日前一交易日（"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2022-12-22/1215418604.PDF",
+          "page": 1,
+          "text": "元/股，该收盘价低于转增股本的平均价格5.35元/股，公司股权登记日次一交易日（2022年12月22日）的股票开盘参考价不作调整。一、法院裁定批准重整计划山东省烟台市中级人民法院（以下简称“烟台中院”）已于2022年8月18日裁定受理台海核电破产重"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2022-12-22/1215418604.PDF",
+          "page": 3,
+          "text": "（2022年12月21日）停牌1个交易日，将于2022年12月22日复牌。五、资本公积转增股本实施后次一交易日开盘参考价不作调整的相关说明根据《深圳证券交易所交易规则》第4.4.2条的规定：“除权（息）参考价计算公式为：除权（息）参考价=[（前收盘"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2022-12-22/1215418604.PDF",
+          "page": 4,
+          "text": "票开盘参考价，如果股权登记日公司股票收盘价低于或等于转增股票平均价5.35元/股，股权登记日次一交易日公司股票开盘参考价不作调整。鉴于本次资本公积转增股本股权登记日当日（2022年12月21日）停牌，股权登记日公司股票收盘价为股权登记日前一交易日（"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2022-12-22/1215418604.PDF",
+          "page": 4,
+          "text": "元/股，该收盘价低于转增股本的平均价格5.35元/股，公司股权登记日次一交易日（2022年12月22日）的股票开盘参考价不作调整。中信建投证券股份有限公司作为公司本次重整中的财务顾问，为公司股权登记日次一交易日股票开盘参考价调整事项的相关情况出具了"
+        }
+      ],
+      "visibility": "权益和后续参考结果分版本保存；日期型披露在下一自然日00:00可见，不提前回填。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "002251.SZ",
+        "symbol": "002251",
+        "end_date": "2024-05-09",
+        "ann_date": "2024-07-02",
+        "div_proc": "实施",
+        "imp_ann_date": "2024-07-30",
+        "record_date": "2024-08-01",
+        "ex_date": "2024-08-02",
+        "pay_date": null,
+        "div_listdate": "2024-08-02",
+        "cash_div_tax": null,
+        "stk_div": "2.2"
+      }
+    ],
+    "review": {
+      "candidate_id": "002251.SZ/2024-05-09/2024-08-01",
+      "related_sources": [],
+      "action_id": "cninfo:1220746948:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2024-08-01",
+      "ex_date": "2024-08-02",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2024-07-30",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": null
+        },
+        {
+          "published_date": "2024-08-02",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": "0",
+          "reference_shares_per_share": "0",
+          "reference_price": null
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2024-07-30/1220746948.PDF",
+        "https://static.cninfo.com.cn/finalpage/2024-08-02/1220779272.PDF"
+      ],
+      "reason": "confirmed_zero_ordinary_entitlements"
+    },
+    "basis": {
+      "cash": "实施公告或同日专项意见明确本次不涉及现金红利，见cash_evidence。",
+      "cash_evidence": [
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2024-07-30/1220746948.PDF",
+          "page": 4,
+          "text": "分转增股份用于支付各项重整费用。本次重整不涉及现金红利。综合计算下，本次重整步步高股份资本公积金转增股本的平均价=（重整投资人受让转增股份支付的现金+转增"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2024-08-02/1220779272.PDF",
+          "page": 4,
+          "text": "分转增股份用于支付各项重整费用。本次重整不涉及现金红利。综合计算下，本次重整步步高股份资本公积金转增股本的平均价=（重整投资人受让转增股份支付的现金+转增"
+        }
+      ],
+      "shares": [
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2024-07-30/1220746948.PDF",
+          "page": 1,
+          "text": "股份总股本将由840,218,653股增加至2,688,699,689股。2、上述转增股票不向原股东进行分配，其中1,175,316,633股股票用于有条件引入重整投资人，673,164,403股转增股票用于按照重整计划的规定支付相关重整费用及清偿各类债权。3、由于本次资本公积"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2024-07-30/1220746948.PDF",
+          "page": 3,
+          "text": "步高股份总股本将由840,218,653股增加至2,688,699,689股。上述转增股票不向原股东进行分配，其中1,175,316,633股股票用于有条件引入重整投资人，673,164,403股转增股票用于按照重整计划的规定清偿各类债权及支付相关重整费用。用于引入重整投资人的"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2024-07-30/1220746948.PDF",
+          "page": 4,
+          "text": "步高股份转增前总股本为840,218,653股；本次转增股票1,848,481,036股，不向原股东分配，全部用于引入重整投资人、清偿各类债权及支付相关重整费用。其中，1,175,316,633股用于引入重整投资人，重整投资人受让转增股份支付的现金合计为2,499,999,"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2024-07-30/1220746948.PDF",
+          "page": 5,
+          "text": "转增股本实施办法根据《重整计划》及湘潭中院出具的《协助执行通知书》，本次资本公积金转增股票不向原股东分配，全部登记至管理人开立的步步高股份破产企业财产处置专用账户。本次登记至步步高股份破产企业财产处置专用账户的股票，后续将由法院根据申请另行扣划至重整投资人及债权人指定账户。"
+        }
+      ],
+      "dates": "登记日与dividend一致；ex_date沿用该实施来源日期。零权益不建立账户支付或股份上市日程。",
+      "reference": [
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2024-08-02/1220779272.PDF",
+          "page": 1,
+          "text": "票代码：002251公告编号：2024-080步步高商业连锁股份有限公司关于资本公积金转增股本实施后首个交易日开盘参考价不作调整的提示性公告本公司及董事会全体成员保证公告内容的真实、准确和完整，不存在虚假记载、误导性陈述或重大遗漏。特别提示：鉴于本"
+        }
+      ],
+      "visibility": "权益和后续参考结果分版本保存；日期型披露在下一自然日00:00可见，不提前回填。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "300209.SZ",
+        "symbol": "300209",
+        "end_date": "2024-11-16",
+        "ann_date": "2024-12-02",
+        "div_proc": "实施",
+        "imp_ann_date": "2024-12-13",
+        "record_date": "2024-12-19",
+        "ex_date": "2024-12-20",
+        "pay_date": null,
+        "div_listdate": "2024-12-20",
+        "cash_div_tax": null,
+        "stk_div": "1.2"
+      }
+    ],
+    "review": {
+      "candidate_id": "300209.SZ/2024-11-16/2024-12-19",
+      "related_sources": [],
+      "action_id": "cninfo:1222018079:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2024-12-19",
+      "ex_date": "2024-12-20",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2024-12-13",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": null
+        },
+        {
+          "published_date": "2024-12-20",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": "4.79"
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2024-12-13/1222018079.PDF",
+        "https://static.cninfo.com.cn/finalpage/2024-12-20/1222076531.PDF",
+        "https://static.cninfo.com.cn/finalpage/2024-12-13/1222018078.PDF"
+      ],
+      "reason": "confirmed_zero_ordinary_entitlements"
+    },
+    "basis": {
+      "cash": "实施公告或同日专项意见明确本次不涉及现金红利，见cash_evidence。",
+      "cash_evidence": [
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2024-12-13/1222018078.PDF",
+          "page": 3,
+          "text": "于后续清偿破产费用及未申报债权。本次重整不涉及现金红利。综合计算下，本次重整有棵树公司资本公积转增股本的平均价=（重整投资人受让转增股份支付的现金+转增股"
+        }
+      ],
+      "shares": [
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2024-12-13/1222018079.PDF",
+          "page": 1,
+          "text": "107,330股增加至928,636,126股。2、上述转增的506,528,796股股票不向原股东分配，全部用于引入重整投资人及清偿债务。具体安排为：（1）185,727,225股股票由产业投资人有条件受让，其中：深圳市天行云供应链有限公司及其指定主体以及其他产业联合体受"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2024-12-13/1222018079.PDF",
+          "page": 3,
+          "text": "2,107,330股增加至928,636,126股。上述转增的506,528,796股股票不向原股东分配，全部用于引入重整投资人及清偿债务。具体安排为：（1）185,727,225股股票由产业投资人有条件受让，其中：深圳市天行云供应链有限公司及其指定主体以及其他产业联合体受"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2024-12-13/1222018079.PDF",
+          "page": 6,
+          "text": "上述公式中，转增前总股本为422,107,330股；本次转增股票506,528,796股，不向原股东分配，主要用于引入重整投资人及清偿债务等。其中，185,727,225股用于引入产业投资人，230,042,875股用于引入财务投资人，产业投资人和财务投资人受让转增股份支付"
+        }
+      ],
+      "dates": "登记日与dividend一致；ex_date沿用该实施来源日期。零权益不建立账户支付或股份上市日程。",
+      "reference": [
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2024-12-20/1222076531.PDF",
+          "page": 1,
+          "text": "日次一交易日（2024年12月20日）的股票开盘参考价应当依据公司本次调整后的除权参考价格的计算公式进行除权调整，调整为4.79元/股。一、法院裁定批准公司重整计划2024年9月30日，公司收到长沙中院送达的《民事裁定书》（（2024）湘01破申19号）"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2024-12-20/1222076531.PDF",
+          "page": 4,
+          "text": "日前一交易日（2024年12月18日）公司股票收盘价，即6.29元/股。根据上述公式计算得出的调整后除权（息）参考价格为4.79元/股。针对上述除权事项，国泰君安证券股份有限公司为公司本次资本公积金转增股本除权参考价格的计算结果出具了专项意见，详见公司同"
+        }
+      ],
+      "visibility": "权益和后续参考结果分版本保存；日期型披露在下一自然日00:00可见，不提前回填。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "002647.SZ",
+        "symbol": "002647",
+        "end_date": "2025-01-24",
+        "ann_date": "2025-02-14",
+        "div_proc": "实施",
+        "imp_ann_date": "2025-03-06",
+        "record_date": "2025-03-12",
+        "ex_date": "2025-03-13",
+        "pay_date": null,
+        "div_listdate": "2025-03-13",
+        "cash_div_tax": null,
+        "stk_div": "1.0186063"
+      }
+    ],
+    "review": {
+      "candidate_id": "002647.SZ/2025-01-24/2025-03-12",
+      "related_sources": [],
+      "action_id": "cninfo:1222720591:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2025-03-12",
+      "ex_date": "2025-03-13",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2025-03-06",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": null
+        },
+        {
+          "published_date": "2025-03-13",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": "5.25"
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2025-03-06/1222720591.PDF",
+        "https://static.cninfo.com.cn/finalpage/2025-03-13/1222777924.PDF"
+      ],
+      "reason": "confirmed_zero_ordinary_entitlements"
+    },
+    "basis": {
+      "cash": "实施公告或同日专项意见明确本次不涉及现金红利，见cash_evidence。",
+      "cash_evidence": [
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2025-03-06/1222720591.PDF",
+          "page": 3,
+          "text": "东分配导致流通股增加数）上述公式中，由于不涉及现金红利、股票红利及配股，公式中现金红利为0。公司股份抵偿公司债务的金额为1,766,990,070.00元"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2025-03-06/1222720591.PDF",
+          "page": 3,
+          "text": "于不涉及现金红利、股票红利及配股，公式中现金红利为0。公司股份抵偿公司债务的金额为1,766,990,070.00元，重整投资人受让转增股份支付的现金为"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2025-03-13/1222777924.PDF",
+          "page": 3,
+          "text": "东分配导致流通股增加数）上述公式中，由于不涉及现金红利、股票红利及配股，公式中现金红利为0。公司股份抵偿公司债务的金额为1,766,990,070.00元"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2025-03-13/1222777924.PDF",
+          "page": 3,
+          "text": "于不涉及现金红利、股票红利及配股，公式中现金红利为0。公司股份抵偿公司债务的金额为1,766,990,070.00元，重整投资人受让转增股份支付的现金为"
+        }
+      ],
+      "shares": [
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2025-03-06/1222720591.PDF",
+          "page": 2,
+          "text": "后，仁东控股总股本将增至1,130,291,657股。前述570,355,007股转增股票不向原股东进行分配，全部用于清偿债务和引入重整投资人，具体如下：（1）452,555,669股由重整投资人有条件受让，其中战略投资人受让115,000,000股，财务投资人受让337,55"
+        }
+      ],
+      "dates": "登记日与dividend一致；ex_date沿用该实施来源日期。零权益不建立账户支付或股份上市日程。",
+      "reference": [
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2025-03-13/1222777924.PDF",
+          "page": 1,
+          "text": "股份有限公司调整资本公积转增股本除权参考价格的计算结果的专项意见》，按照公司调整后的除权参考价格的计算公式进行除权调整为5.25元/股。一、法院裁定批准公司重整计划2024年12月30日，公司收到广东省广州市中级人民法院（以下简称“广州中院”或“法院”）"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2025-03-13/1222777924.PDF",
+          "page": 4,
+          "text": "登记日次一交易日（2025年3月13日）的股票开盘参考价依据公司调整后的除权参考价格计算公式计算得出的除权（息）参考价为5.25元/股。中信证券股份有限公司作为公司本次重整的财务顾问，为公司调整资本公积金转增股本除权参考价格事项出具了专项意见，相关具体内"
+        }
+      ],
+      "visibility": "权益和后续参考结果分版本保存；日期型披露在下一自然日00:00可见，不提前回填。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "000697.SZ",
+        "symbol": "000697",
+        "end_date": "2025-10-11",
+        "ann_date": "2025-10-28",
+        "div_proc": "实施",
+        "imp_ann_date": "2025-11-25",
+        "record_date": "2025-11-27",
+        "ex_date": "2025-11-28",
+        "pay_date": null,
+        "div_listdate": "2025-11-28",
+        "cash_div_tax": null,
+        "stk_div": "0.599"
+      }
+    ],
+    "review": {
+      "candidate_id": "000697.SZ/2025-10-11/2025-11-27",
+      "related_sources": [],
+      "action_id": "cninfo:1224824312:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2025-11-27",
+      "ex_date": "2025-11-28",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2025-11-25",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": null
+        },
+        {
+          "published_date": "2025-11-28",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": "8.05"
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2025-11-25/1224824312.pdf",
+        "https://static.cninfo.com.cn/finalpage/2025-11-28/1224831705.PDF"
+      ],
+      "reason": "confirmed_zero_ordinary_entitlements"
+    },
+    "basis": {
+      "cash": "实施公告或同日专项意见明确本次不涉及现金红利，见cash_evidence。",
+      "cash_evidence": [
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2025-11-25/1224824312.pdf",
+          "page": 3,
+          "text": "东分配导致流通股增加数）上述公式中，由于不涉及现金红利、股票红利及配股，公式中现金红利为0。公司股份抵偿公司债务的金额为2,558,060,398.08元"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2025-11-25/1224824312.pdf",
+          "page": 3,
+          "text": "于不涉及现金红利、股票红利及配股，公式中现金红利为0。公司股份抵偿公司债务的金额为2,558,060,398.08元，重整投资人受让转增股份支付的现金为"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2025-11-28/1224831705.PDF",
+          "page": 3,
+          "text": "东分配导致流通股增加数）上述公式中，由于不涉及现金红利、股票红利及配股，公式中现金红利为0。公司股份抵偿公司债务的金额为2,558,060,398.08元"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2025-11-28/1224831705.PDF",
+          "page": 3,
+          "text": "于不涉及现金红利、股票红利及配股，公式中现金红利为0。公司股份抵偿公司债务的金额为2,558,060,398.08元，重整投资人受让转增股份支付的现金为"
+        }
+      ],
+      "shares": [
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2025-11-25/1224824312.pdf",
+          "page": 2,
+          "text": "数量以中登深圳实际登记确认的为准）。2．转增股票的用途前述522,987,424股转增股票不向原股东进行分配，全部由管理人按照重整计划的规定进行分配和处置，具体如下：（1）转增股票中200,000,000股用于引入重整投资人根据《重整投资协议》约定，重整投资人总计以1,238,"
+        }
+      ],
+      "dates": "登记日与dividend一致；ex_date沿用该实施来源日期。零权益不建立账户支付或股份上市日程。",
+      "reference": [
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2025-11-28/1224831705.PDF",
+          "page": 1,
+          "text": "股份有限公司调整资本公积转增股本除权参考价格的计算结果的专项意见》，按照公司调整后的除权参考价格的计算公式进行除权调整为8.05元/股。一、法院裁定批准公司重整计划2025年9月23日，四川省成都市中级人民法院（以下简称“成都中院”或“法院”）依法裁定受"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2025-11-28/1224831705.PDF",
+          "page": 4,
+          "text": "记日次一交易日（2025年11月28日）的股票开盘参考价依据公司调整后的除权参考价格计算公式计算得出的除权（息）参考价为8.05元/股。中信证券股份有限公司作为公司本次重整的财务顾问，为公司调整资本公积金转增股本除权参考价格事项出具了专项意见，相关具体内"
+        }
+      ],
+      "visibility": "权益和后续参考结果分版本保存；日期型披露在下一自然日00:00可见，不提前回填。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "002742.SZ",
+        "symbol": "002742",
+        "end_date": "2025-01-09",
+        "ann_date": "2025-03-04",
+        "div_proc": "实施",
+        "imp_ann_date": "2025-12-05",
+        "record_date": "2025-12-09",
+        "ex_date": "2025-12-10",
+        "pay_date": null,
+        "div_listdate": "2025-12-10",
+        "cash_div_tax": null,
+        "stk_div": "0.58356954"
+      },
+      {
+        "ts_code": "002742.SZ",
+        "symbol": "002742",
+        "end_date": "2024-12-19",
+        "ann_date": "2024-12-19",
+        "div_proc": "实施",
+        "imp_ann_date": "2025-12-05",
+        "record_date": "2025-12-09",
+        "ex_date": "2025-12-10",
+        "pay_date": null,
+        "div_listdate": "2025-12-10",
+        "cash_div_tax": "0.0",
+        "stk_div": "0.58356954"
+      }
+    ],
+    "review": {
+      "candidate_id": "002742.SZ/2024-12-19/2025-12-09",
+      "related_sources": [
+        "002742.SZ/2025-01-09/2025-12-09"
+      ],
+      "action_id": "cninfo:1224850420:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2025-12-09",
+      "ex_date": "2025-12-10",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2025-12-05",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": null
+        },
+        {
+          "published_date": "2025-12-10",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": "4.64"
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2025-12-05/1224850420.PDF",
+        "https://static.cninfo.com.cn/finalpage/2025-12-10/1224861634.PDF"
+      ],
+      "reason": "confirmed_zero_ordinary_entitlements"
+    },
+    "basis": {
+      "cash": "实施公告或同日专项意见明确本次不涉及现金红利，见cash_evidence。",
+      "cash_evidence": [
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2025-12-05/1224850420.PDF",
+          "page": 4,
+          "text": "0股，向原股东分配导致流通股增加数为0，不涉及现金红利。"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2025-12-10/1224861634.PDF",
+          "page": 4,
+          "text": "0股，向原股东分配导致流通股增加数为0，不涉及现金红利。西南证券作为公司本次重整的财务顾问，为公司调整资本公积转增股本除权参考价格计算公式出具了专项意见。"
+        }
+      ],
+      "shares": [
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2025-12-05/1224850420.PDF",
+          "page": 1,
+          "text": "完成后，三圣股份的总股本增至684,102,041股。前述252,102,041股转增股票不向原股东分配，其中160,000,000股用于引入重整投资人，92,102,041股用于清偿债务。2、由于本次资本公积转增股本是重整程序中出资人权益调整的一部分，与一般情形下的上市公"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2025-12-05/1224850420.PDF",
+          "page": 3,
+          "text": "完成后，三圣股份的总股本增至684,102,041股。前述252,102,041股转增股票不向原股东分配，全部按照《重整计划》的规定进行分配，具体如下：（一）转增股票中的160,000,000股用于引入重整投资人河北冀衡集团有限公司（以下简称“冀衡集团”）作为产业投资人，联"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2025-12-05/1224850420.PDF",
+          "page": 4,
+          "text": "上为了分红而单纯增发股票的行为。本次资本公积金转增股本是经过法院裁定批准后执行的，转增股本不向原股东分配，全部用于清偿债务和引入重整投资人。本次转增后，公司在总股本扩大的同时，所有者权益明显增加。公司原中小股东所持股票所代表的企业实际价值（以每股净资产计算）较重整前显著提升"
+        }
+      ],
+      "dates": "登记日与dividend一致；ex_date沿用该实施来源日期。零权益不建立账户支付或股份上市日程。",
+      "reference": [
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2025-12-10/1224861634.PDF",
+          "page": 1,
+          "text": "见》，需要根据调整后的除权参考价格计算公式对股权登记日次一交易日的股票开盘参考价进行调整，计算得出的调整后除权参考价格为4.64元/股。"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2025-12-10/1224861634.PDF",
+          "page": 5,
+          "text": "需要根据前述公式对股权登记日次一交易日（2025年12月10日）的股票开盘参考价进行调整，计算得出的调整后除权参考价格为4.64元/股。西南证券作为公司本次重整的财务顾问，为公司调整资本公积转增股本除权参考价格事项出具了专项意见。相关内容详见公司于同日披"
+        }
+      ],
+      "visibility": "权益和后续参考结果分版本保存；日期型披露在下一自然日00:00可见，不提前回填。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "002713.SZ",
+        "symbol": "002713",
+        "end_date": "2025-12-04",
+        "ann_date": "2025-12-22",
+        "div_proc": "实施",
+        "imp_ann_date": "2025-12-24",
+        "record_date": "2025-12-29",
+        "ex_date": "2025-12-30",
+        "pay_date": null,
+        "div_listdate": "2025-12-30",
+        "cash_div_tax": null,
+        "stk_div": "1.26775047"
+      },
+      {
+        "ts_code": "002713.SZ",
+        "symbol": "002713",
+        "end_date": "2025-10-10",
+        "ann_date": "2025-10-10",
+        "div_proc": "实施",
+        "imp_ann_date": "2025-12-24",
+        "record_date": "2025-12-29",
+        "ex_date": "2025-12-30",
+        "pay_date": null,
+        "div_listdate": "2025-12-30",
+        "cash_div_tax": "0.0",
+        "stk_div": "1.26775047"
+      }
+    ],
+    "review": {
+      "candidate_id": "002713.SZ/2025-10-10/2025-12-29",
+      "related_sources": [
+        "002713.SZ/2025-12-04/2025-12-29"
+      ],
+      "action_id": "cninfo:1224894734:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2025-12-29",
+      "ex_date": "2025-12-30",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2025-12-24",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": null
+        },
+        {
+          "published_date": "2025-12-30",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": "8.14"
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2025-12-24/1224894734.PDF",
+        "https://static.cninfo.com.cn/finalpage/2025-12-30/1224906744.PDF"
+      ],
+      "reason": "confirmed_zero_ordinary_entitlements"
+    },
+    "basis": {
+      "cash": "实施公告或同日专项意见明确本次不涉及现金红利，见cash_evidence。",
+      "cash_evidence": [
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2025-12-24/1224894734.PDF",
+          "page": 3,
+          "text": "以下简称“调整公式”）。调整公式中，由于不涉及现金红利、股票红利及配股，公式中现金红利为0。重整投资人受让转增股份支付的现金为1,412,472,816."
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2025-12-24/1224894734.PDF",
+          "page": 3,
+          "text": "于不涉及现金红利、股票红利及配股，公式中现金红利为0。重整投资人受让转增股份支付的现金为1,412,472,816.00元，转增股份所解决的债务金额为1"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2025-12-30/1224906744.PDF",
+          "page": 3,
+          "text": "东分配导致流通股增加数）上述公式中，由于不涉及现金红利、股票红利及配股，公式中现金红利为0。重整投资人受让转增股份支付的现金为1,412,472,816."
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2025-12-30/1224906744.PDF",
+          "page": 3,
+          "text": "于不涉及现金红利、股票红利及配股，公式中现金红利为0。重整投资人受让转增股份支付的现金为1,412,472,816.00元，转增股份所解决的债务金额为1"
+        }
+      ],
+      "shares": [
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2025-12-24/1224894734.PDF",
+          "page": 2,
+          "text": "增531,868,204股。转增后公司总股本将增加至951,405,184股。前述转增股票不向原股东进行分配，专项用于清偿东易日盛债务及引进投资人，具体安排如下：1、其中416,868,204股由重整投资人有条件受让，重整投资人受让转增股份支付的现金为1,412,472,816"
+        }
+      ],
+      "dates": "登记日与dividend一致；ex_date沿用该实施来源日期。零权益不建立账户支付或股份上市日程。",
+      "reference": [
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2025-12-30/1224906744.PDF",
+          "page": 1,
+          "text": "股份有限公司调整资本公积转增股本除权参考价格的计算结果的专项意见》，按照公司调整后的除权参考价格的计算公式进行除权调整为8.14元/股。一、法院裁定批准公司重整计划2025年11月19日，北京市第一中级人民法院（以下简称“北京一中院”或“法院”）裁定受理"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2025-12-30/1224906744.PDF",
+          "page": 4,
+          "text": "记日次一交易日（2025年12月30日）的股票开盘参考价依据公司调整后的除权参考价格计算公式计算得出的除权（息）参考价为8.14元/股。中国国际金融股份有限公司作为公司本次重整的财务顾问，为公司调整资本公积金转增股本除权参考价格事项出具了专项意见，具体内"
+        }
+      ],
+      "visibility": "权益和后续参考结果分版本保存；日期型披露在下一自然日00:00可见，不提前回填。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "002822.SZ",
+        "symbol": "002822",
+        "end_date": "2025-11-22",
+        "ann_date": "2025-12-17",
+        "div_proc": "实施",
+        "imp_ann_date": "2025-12-24",
+        "record_date": "2025-12-29",
+        "ex_date": "2025-12-30",
+        "pay_date": null,
+        "div_listdate": "2025-12-30",
+        "cash_div_tax": null,
+        "stk_div": "1.031"
+      }
+    ],
+    "review": {
+      "candidate_id": "002822.SZ/2025-11-22/2025-12-29",
+      "related_sources": [],
+      "action_id": "cninfo:1224894737:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2025-12-29",
+      "ex_date": "2025-12-30",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2025-12-24",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": null
+        },
+        {
+          "published_date": "2025-12-30",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": "3.84"
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2025-12-24/1224894737.PDF",
+        "https://static.cninfo.com.cn/finalpage/2025-12-30/1224906788.PDF"
+      ],
+      "reason": "confirmed_zero_ordinary_entitlements"
+    },
+    "basis": {
+      "cash": "实施公告或同日专项意见明确本次不涉及现金红利，见cash_evidence。",
+      "cash_evidence": [
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2025-12-24/1224894737.PDF",
+          "page": 4,
+          "text": "以下简称“调整公式”）。上述公式中，由于不涉及现金红利、股票红利及配股，公式中现金红利为0。转增股份抵偿公司重整债务的金额为250,000,000股×股票"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2025-12-24/1224894737.PDF",
+          "page": 4,
+          "text": "于不涉及现金红利、股票红利及配股，公式中现金红利为0。转增股份抵偿公司重整债务的金额为250,000,000股×股票抵偿价格8.98元/股=2,245,"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2025-12-30/1224906788.PDF",
+          "page": 3,
+          "text": "东分配导致流通股增加数）上述公式中，由于不涉及现金红利、股票红利及配股，公式中现金红利为0。转增股份抵偿公司债务的金额为250,000,000股×股票抵偿"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2025-12-30/1224906788.PDF",
+          "page": 3,
+          "text": "于不涉及现金红利、股票红利及配股，公式中现金红利为0。转增股份抵偿公司债务的金额为250,000,000股×股票抵偿价格8.98元/股=2,245,00"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2025-12-30/1224906788.PDF",
+          "page": 5,
+          "text": "以下简称“调整公式”）。上述公式中，由于不涉及现金红利、股票红利及配股，公式中现金红利为0。转增股份抵偿公司重整债务的金额为250,000,000股×股票"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2025-12-30/1224906788.PDF",
+          "page": 5,
+          "text": "于不涉及现金红利、股票红利及配股，公式中现金红利为0。转增股份抵偿公司重整债务的金额为250,000,000股×股票抵偿价格8.98元/股=2,245,"
+        }
+      ],
+      "shares": [
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2025-12-24/1224894737.PDF",
+          "page": 3,
+          "text": "库存股，最终转增的准确股票数量以中登深圳分公司实际登记确认的数量为准）。资本公积金转增股票不向原股东进行分配，将用于引进重整投资人及清偿债务，具体如下：1、转增股票中的739,864,007股用于引入重整投资人。由上海康恒环境股份有限公司（以下简称“康恒环境”）、上海恒涔企业管"
+        }
+      ],
+      "dates": "登记日与dividend一致；ex_date沿用该实施来源日期。零权益不建立账户支付或股份上市日程。",
+      "reference": [
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2025-12-30/1224906788.PDF",
+          "page": 2,
+          "text": "见》，需要根据调整后的除权参考价格计算公式对股权登记日次一交易日的股票开盘参考价进行调整，计算得出的调整后除权参考价格为3.84元/股。一、法院裁定批准公司重整计划中装建设分别于2025年8月20日和2025年8月21日披露了《关于法院裁定受理公司重整暨"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2025-12-30/1224906788.PDF",
+          "page": 4,
+          "text": "37,236,412.95元]÷（961,078,193股+250,000,000股+739,864,007股+0股）=3.84元/股，即计算得出的调整后除权参考价格为3.84元/股，除权后每股收益为-0.92元。三、股权登记日本次资本公积金转增股本的股"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2025-12-30/1224906788.PDF",
+          "page": 4,
+          "text": ",193股+250,000,000股+739,864,007股+0股）=3.84元/股，即计算得出的调整后除权参考价格为3.84元/股，除权后每股收益为-0.92元。三、股权登记日本次资本公积金转增股本的股权登记日为2025年12月29日，除权除息日为2"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2025-12-30/1224906788.PDF",
+          "page": 6,
+          "text": "见》，需要根据调整后的除权参考价格计算公式对股权登记日次一交易日的股票开盘参考价进行调整，计算得出的调整后除权参考价格为3.84元/股。六、风险提示1、公司股票被实施退市风险警示根据《深圳证券交易所股票上市规则》（2025年修订）第9.4.1条相关规定，"
+        }
+      ],
+      "visibility": "权益和后续参考结果分版本保存；日期型披露在下一自然日00:00可见，不提前回填。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "300091.SZ",
+        "symbol": "300091",
+        "end_date": "2026-01-16",
+        "ann_date": "2026-02-03",
+        "div_proc": "实施",
+        "imp_ann_date": "2026-02-09",
+        "record_date": "2026-02-11",
+        "ex_date": "2026-02-12",
+        "pay_date": null,
+        "div_listdate": "2026-02-12",
+        "cash_div_tax": null,
+        "stk_div": "0.908"
+      }
+    ],
+    "review": {
+      "candidate_id": "300091.SZ/2026-01-16/2026-02-11",
+      "related_sources": [],
+      "action_id": "cninfo:1224973868:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2026-02-11",
+      "ex_date": "2026-02-12",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2026-02-09",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": null
+        },
+        {
+          "published_date": "2026-02-12",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": "2.79"
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2026-02-09/1224973868.PDF",
+        "https://static.cninfo.com.cn/finalpage/2026-02-12/1224977287.PDF"
+      ],
+      "reason": "confirmed_zero_ordinary_entitlements"
+    },
+    "basis": {
+      "cash": "实施公告或同日专项意见明确本次不涉及现金红利，见cash_evidence。",
+      "cash_evidence": [
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2026-02-09/1224973868.PDF",
+          "page": 3,
+          "text": "由重整投资人受让的转增股份数）。本次重整不涉及现金红利。转增股票抵偿公司债务的金额为抵偿公司债务的股票数量146,257,602股×转增股票抵债价格为5."
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2026-02-12/1224977287.PDF",
+          "page": 3,
+          "text": "由重整投资人受让的转增股份数）。本次重整不涉及现金红利。转增股票中146,257,602股用于抵偿债务，抵债价格为5.76元/股，抵债金额为842,280"
+        }
+      ],
+      "shares": [
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2026-02-09/1224973868.PDF",
+          "page": 1,
+          "text": "有限责任公司深圳分公司（以下简称“中证登深圳分公司”）实际登记确认的数量为准。前述转增股票不向原股东分配，全部用于清偿公司债务，引进投资人，其中：转增股份中1,206,623,251股用于引进重整投资人；转增股份中146,257,602股将向普通债权人实施以股抵债。2.由于"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2026-02-09/1224973868.PDF",
+          "page": 2,
+          "text": "52,880,853股，转增后公司总股本将上升至2,842,045,067股，上述转增股票不向原股东分配，全部用于清偿公司债务，引进投资人，其中：转增股份中约1,206,623,251股用于引进重整投资人，投资人受让对价将用于清偿各类债务，剩余现金用于补充重整后公司流动资金"
+        }
+      ],
+      "dates": "登记日与dividend一致；ex_date沿用该实施来源日期。零权益不建立账户支付或股份上市日程。",
+      "reference": [
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2026-02-12/1224977287.PDF",
+          "page": 1,
+          "text": "记日次一交易日（2026年2月12日）的股票开盘参考价应当依据公司本次调整后的除权参考价格的计算公式进行除权调整，调整为2.79元/股。一、法院裁定批准重整计划情况2025年12月31日，江苏省南通市中级人民法院（以下简称“南通中院”或“法院”）裁定受理"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2026-02-12/1224977287.PDF",
+          "page": 3,
+          "text": "记日次一交易日（2026年2月12日）的股票开盘参考价应当依据公司本次调整后的除权参考价格的计算公式进行除权调整，调整为2.79元/股。针对上述除权事项，华泰联合证券有限责任公司为公司本次重整调整资本公积金转增股本股权登记日次一交易日股票开盘参考价格出具"
+        }
+      ],
+      "visibility": "权益和后续参考结果分版本保存；日期型披露在下一自然日00:00可见，不提前回填。"
+    }
+  }
+]
