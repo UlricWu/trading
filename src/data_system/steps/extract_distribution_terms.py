@@ -101,7 +101,8 @@ class ExtractDistributionTermsStep:
                      for document in collection.documents}
             known.update(identity.evidence_url
                          for collection in collections.values() for identity in collection.security_identities)
-            for review in manual.values():
+            # Original evidence is checked when a correction enters; committed inputs are reused by identity.
+            for review in additions.values():
                 if not all(ref in known for ref in review.evidence_refs):
                     raise ValueError(f"review evidence does not match collected announcements: {review.candidate_id}")
                 if review.announcement_source is not None and not any(

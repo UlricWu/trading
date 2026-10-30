@@ -115,7 +115,7 @@ def test_migration_merges_equivalent_observations_and_preserves_real_conflicts(s
     assert values[0].source_record.cash_div_tax == Decimal("1")
     assert values[0].source_record.stk_div == Decimal("0.5")
     assert values[1].source_record is None
-    assert values[2].source_record.model_dump(mode="json") == row
+    assert values[2].source_record.model_dump(mode="json") == {**row, "base_date": None, "base_share": None}
     assert (output / "original" / raw.relative_to(source.storage_root)).read_bytes() == raw.read_bytes()
 
 

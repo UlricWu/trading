@@ -202,6 +202,26 @@ def test_manual_confirmation_uses_announcement_identity_without_a_content_digest
     assert set(manifest) == {"inputs", "issues"}
 
 
+def test_committed_confirmation_is_reused_without_requiring_its_collection_again(
+    evidence: tuple[PathManager, DataContext, Path, Path],
+) -> None:
+    pm, context, supplied, pdf = evidence
+    ExtractDistributionTermsStep(pm, (supplied,)).run(context)
+    ResolveCorporateActionsStep(pm).run(context)
+    access = Access(pm=pm, processed_version="v1")
+    confirmed = access.corporate_actions(record_date=context.start)
+    (pdf.parent / "announcements.json").unlink()
+    (pdf.parent / "meta.json").unlink()
+
+    ExtractDistributionTermsStep(pm).run(context)
+    ResolveCorporateActionsStep(pm).run(context)
+
+    assert access.corporate_actions(record_date=context.start) == confirmed
+    with pytest.raises(ValueError, match="evidence does not match"):
+        ExtractDistributionTermsStep(pm, (supplied,)).run(context)
+    assert access.corporate_actions(record_date=context.start) == confirmed
+
+
 def test_confirmed_facts_do_not_require_reparsing_every_related_pdf(
     evidence: tuple[PathManager, DataContext, Path, Path], monkeypatch: pytest.MonkeyPatch,
 ) -> None:
