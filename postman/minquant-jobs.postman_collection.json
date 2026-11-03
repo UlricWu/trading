@@ -2,307 +2,774 @@
   "info": {
     "_postman_id": "fc39e20c-21d1-44c2-abe1-9771b39af721",
     "name": "MinQuant Jobs API",
-    "description": "MinQuant 进程内 Jobs HTTP API。服务端监听 0.0.0.0:5050；Postman 同机访问使用 localhost，异机访问时把 baseUrl 改为服务器真实 IP。创建 Job 后会自动把返回的 job_id 保存到 Collection 变量 jobId。",
+    "description": "单文件导入，包含「测试环境 · 5050」和「训练环境 · 5051」两个文件夹，分别访问 http://192.168.50.227:5050 和 http://192.168.50.227:5051。每个文件夹覆盖全部 5 个 Flask 路由、9 个请求示例，共 18 个请求。无需额外导入 Postman Environment。运行前在 Collection Variables 填写训练区间、可选评价区间、模型及特征/标签组；信号账户评价和风控有效性评价均填写对应环境的模型绝对 ref，以及明确的策略、初始账户、市场与成交参数；风控有效性评价另填显式规则；训练 Job ID 只标识任务，不推导模型引用。模型发布结果见服务存储中的 schedule.json 和具体模型文件。按需单独发送请求；批量运行会创建全部示例 Job 并执行取消。服务端 ENV 和监听配置由服务启动配置决定。",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "item": [
     {
-      "name": "Health",
-      "request": {
-        "method": "GET",
-        "header": [],
-        "url": {
-          "raw": "{{baseUrl}}/health",
-          "host": [
-            "{{baseUrl}}"
-          ],
-          "path": [
-            "health"
-          ]
-        },
-        "description": "检查 API 进程及 release identity。"
-      },
-      "response": []
-    },
-    {
-      "name": "Create Jobs",
+      "name": "测试环境 · 5050",
+      "description": "访问 http://192.168.50.227:5050。本文件夹包含全部接口；地址与 Job ID 使用独立的 Collection 变量，无需选择 Postman Environment。",
       "item": [
         {
-          "name": "Create Data Standard Job",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "exec": [
-                  "const body = pm.response.json();",
-                  "if (body.jobs?.[0]?.job_id) {",
-                  "    pm.collectionVariables.set(\"jobId\", body.jobs[0].job_id);",
-                  "}"
-                ],
-                "type": "text/javascript"
-              }
-            }
-          ],
+          "name": "Health",
           "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"kind\": \"data-standard\",\n  \"start\": \"2026-08-20\",\n  \"end\": \"2026-08-20\"\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            },
+            "method": "GET",
+            "header": [],
             "url": {
-              "raw": "{{baseUrl}}/jobs",
+              "raw": "{{testBaseUrl}}/health",
               "host": [
-                "{{baseUrl}}"
+                "{{testBaseUrl}}"
               ],
               "path": [
-                "jobs"
+                "health"
               ]
-            }
+            },
+            "description": "检查 API 进程及 release identity。"
           },
           "response": []
         },
         {
-          "name": "Create Data Level-2 Job",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "exec": [
-                  "const body = pm.response.json();",
-                  "if (body.jobs?.[0]?.job_id) {",
-                  "    pm.collectionVariables.set(\"jobId\", body.jobs[0].job_id);",
-                  "}"
-                ],
-                "type": "text/javascript"
-              }
-            }
-          ],
+          "name": "Check Tushare",
           "request": {
             "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"kind\": \"data-level2\",\n  \"start\": \"2026-08-20\",\n  \"end\": \"2026-08-20\"\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            },
+            "header": [],
             "url": {
-              "raw": "{{baseUrl}}/jobs",
+              "raw": "{{testBaseUrl}}/checks/tushare",
               "host": [
-                "{{baseUrl}}"
+                "{{testBaseUrl}}"
               ],
               "path": [
-                "jobs"
+                "checks",
+                "tushare"
               ]
-            }
+            },
+            "description": "重新读取服务端 token 和 gateway，只查询一次北京时间当天的 daily。成功（含空数据）返回 200 和 {\"ok\": true}；失败返回 503 tushare_check_failed。上游明确报告「抱歉，数据暂不可用，请稍后重试」时，error.message 展示该提示；其他失败仍使用通用提示，不展示凭据或内部异常。"
           },
           "response": []
         },
         {
-          "name": "Create Training Job",
-          "event": [
+          "name": "Create Jobs",
+          "item": [
             {
-              "listen": "test",
-              "script": {
-                "exec": [
-                  "const body = pm.response.json();",
-                  "if (body.jobs?.[0]?.job_id) {",
-                  "    pm.collectionVariables.set(\"jobId\", body.jobs[0].job_id);",
-                  "}"
-                ],
-                "type": "text/javascript"
-              }
-            }
-          ],
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"kind\": \"train\",\n  \"start\": \"2026-07-01\",\n  \"end\": \"2026-08-20\"\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
+              "name": "Create Data Standard Job",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "pm.test(\"Job created\", function () {",
+                      "    pm.response.to.have.status(201);",
+                      "});",
+                      "if (pm.response.code === 201) {",
+                      "    const body = pm.response.json();",
+                      "    pm.collectionVariables.set(\"testJobId\", body.jobs[0].job_id);",
+                      "}"
+                    ],
+                    "type": "text/javascript"
+                  }
                 }
-              }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"kind\": \"data-standard\",\n  \"start\": \"{{dataStart}}\",\n  \"end\": \"{{dataEnd}}\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{testBaseUrl}}/jobs",
+                  "host": [
+                    "{{testBaseUrl}}"
+                  ],
+                  "path": [
+                    "jobs"
+                  ]
+                },
+                "description": "提交完整日期闭区间作为一个 Job；单日设置 dataStart = dataEnd。"
+              },
+              "response": []
             },
+            {
+              "name": "Create Data Level-2 Job",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "pm.test(\"Job created\", function () {",
+                      "    pm.response.to.have.status(201);",
+                      "});",
+                      "if (pm.response.code === 201) {",
+                      "    const body = pm.response.json();",
+                      "    pm.collectionVariables.set(\"testJobId\", body.jobs[0].job_id);",
+                      "}"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"kind\": \"data-level2\",\n  \"start\": \"{{dataStart}}\",\n  \"end\": \"{{dataEnd}}\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{testBaseUrl}}/jobs",
+                  "host": [
+                    "{{testBaseUrl}}"
+                  ],
+                  "path": [
+                    "jobs"
+                  ]
+                },
+                "description": "提交完整日期闭区间作为一个 Job；单日设置 dataStart = dataEnd。"
+              },
+              "response": []
+            },
+            {
+              "name": "Create Training Job",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "pm.test(\"Job created\", function () {",
+                      "    pm.response.to.have.status(201);",
+                      "});",
+                      "if (pm.response.code === 201) {",
+                      "    const body = pm.response.json();",
+                      "    pm.collectionVariables.set(\"testJobId\", body.jobs[0].job_id);",
+                      "}"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"kind\": \"train\",\n  \"train_range\": {\n    \"start\": \"{{trainingStart}}\",\n    \"end\": \"{{trainingEnd}}\"\n  },\n  \"eval_range\": {{trainingEvalRangeJson}},\n  \"model\": \"{{trainingModel}}\",\n  \"dataset\": {\n    \"feature_group\": \"{{trainingFeatureGroup}}\",\n    \"label_group\": \"{{trainingLabelGroup}}\"\n  }\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{testBaseUrl}}/jobs",
+                  "host": [
+                    "{{testBaseUrl}}"
+                  ],
+                  "path": [
+                    "jobs"
+                  ]
+                },
+                "description": "选择训练区间、可选评估区间、模型和特征/标签组。trainingEvalRangeJson 为 null 表示纯训练，起止相同表示单日评价；多日评价只训练一次并复用同一模型。日期必须匹配目标环境的数据。创建响应只保存 Job ID。模型成功发布后，从 schedule.json 取得具体绝对 ref，填入 testModelRef。已知名称和组合以训练契约为准；不接受 windows、cutoff 或逐日可用性声明。"
+              },
+              "response": []
+            },
+            {
+              "name": "Create Signal Evaluation Job",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "pm.test(\"Job created\", function () {",
+                      "    pm.response.to.have.status(201);",
+                      "});",
+                      "if (pm.response.code === 201) {",
+                      "    const body = pm.response.json();",
+                      "    pm.collectionVariables.set(\"testJobId\", body.jobs[0].job_id);",
+                      "}"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"kind\": \"backtest\",\n  \"mode\": \"signal_eval\",\n  \"start\": \"{{backtestStart}}\",\n  \"end\": \"{{backtestEnd}}\",\n  \"min_listing_calendar_days\": 120,\n  \"signal\": {\n    \"type\": \"model\",\n    \"model_ref\": \"{{testModelRef}}\"\n  },\n  \"strategy\": {{backtestStrategyJson}},\n  \"initial_account\": {{backtestInitialAccountJson}},\n  \"execution\": {{backtestExecutionJson}}\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{testBaseUrl}}/jobs",
+                  "host": [
+                    "{{testBaseUrl}}"
+                  ],
+                  "path": [
+                    "jobs"
+                  ]
+                },
+                "description": "评价指定模型的预测质量及账户收益；execution.fill 必须为 quoted，合法订单生效时按申报价全额成交。发送前填写模型绝对路径、backtestStrategyJson、backtestInitialAccountJson、backtestExecutionJson；市场路径、时间范围、证券规则和费用须与任务输入一致。示例参数不构成业务默认值。"
+              },
+              "response": []
+            },
+            {
+              "name": "Create Risk Evaluation Job",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "pm.test(\"Job created\", function () {",
+                      "    pm.response.to.have.status(201);",
+                      "});",
+                      "if (pm.response.code === 201) {",
+                      "    const body = pm.response.json();",
+                      "    pm.collectionVariables.set(\"testJobId\", body.jobs[0].job_id);",
+                      "}"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"kind\": \"backtest\",\n  \"mode\": \"risk_rule_eval\",\n  \"start\": \"{{backtestStart}}\",\n  \"end\": \"{{backtestEnd}}\",\n  \"min_listing_calendar_days\": 120,\n  \"signal\": {\n    \"type\": \"model\",\n    \"model_ref\": \"{{testModelRef}}\"\n  },\n  \"strategy\": {{backtestStrategyJson}},\n  \"initial_account\": {{backtestInitialAccountJson}},\n  \"execution\": {{backtestExecutionJson}},\n  \"risk\": {\n    \"rules\": {{riskRulesJson}}\n  }\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{testBaseUrl}}/jobs",
+                  "host": [
+                    "{{testBaseUrl}}"
+                  ],
+                  "path": [
+                    "jobs"
+                  ]
+                },
+                "description": "按声明的模型、策略、账户、风控和成交假设执行一次完整回放，报告控制动作、实际暴露及剩余风险。发送前填写模型绝对路径、backtestStrategyJson、backtestInitialAccountJson、backtestExecutionJson；市场路径、时间范围、证券规则和费用须与任务输入一致。示例参数不构成业务默认值。"
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "Get Job",
+          "request": {
+            "method": "GET",
+            "header": [],
             "url": {
-              "raw": "{{baseUrl}}/jobs",
+              "raw": "{{testBaseUrl}}/jobs/{{testJobId}}",
               "host": [
-                "{{baseUrl}}"
+                "{{testBaseUrl}}"
               ],
               "path": [
-                "jobs"
+                "jobs",
+                "{{testJobId}}"
               ]
-            }
+            },
+            "description": "查询测试环境文件夹 最近一次创建的 Job；也可手动填写该环境的 testJobId。服务重启后内存 Job 不保留。"
           },
           "response": []
         },
         {
-          "name": "Create Threshold Backtest Job",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "exec": [
-                  "const body = pm.response.json();",
-                  "if (body.jobs?.[0]?.job_id) {",
-                  "    pm.collectionVariables.set(\"jobId\", body.jobs[0].job_id);",
-                  "}"
-                ],
-                "type": "text/javascript"
-              }
-            }
-          ],
+          "name": "Cancel Job",
           "request": {
             "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"kind\": \"backtest\",\n  \"mode\": \"full_backtest\",\n  \"start\": \"2026-07-01\",\n  \"end\": \"2026-08-20\",\n  \"model_experiment\": \"training-1\",\n  \"strategy\": {\n    \"type\": \"threshold\",\n    \"params\": {\n      \"threshold\": 0.5,\n      \"target_quantity\": 100\n    }\n  }\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            },
+            "header": [],
             "url": {
-              "raw": "{{baseUrl}}/jobs",
+              "raw": "{{testBaseUrl}}/jobs/{{testJobId}}/cancel",
               "host": [
-                "{{baseUrl}}"
+                "{{testBaseUrl}}"
               ],
               "path": [
-                "jobs"
+                "jobs",
+                "{{testJobId}}",
+                "cancel"
               ]
-            }
-          },
-          "response": []
-        },
-        {
-          "name": "Create Top-K Hysteresis Backtest Job",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "exec": [
-                  "const body = pm.response.json();",
-                  "if (body.jobs?.[0]?.job_id) {",
-                  "    pm.collectionVariables.set(\"jobId\", body.jobs[0].job_id);",
-                  "}"
-                ],
-                "type": "text/javascript"
-              }
-            }
-          ],
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"kind\": \"backtest\",\n  \"mode\": \"full_backtest\",\n  \"start\": \"2026-07-01\",\n  \"end\": \"2026-08-20\",\n  \"model_experiment\": \"training-1\",\n  \"strategy\": {\n    \"type\": \"topk_hysteresis\",\n    \"params\": {\n      \"max_positions\": 10,\n      \"entry_threshold\": 0.5,\n      \"exit_threshold\": 0.2,\n      \"rebalance_interval_minutes\": 1,\n      \"keep_winners\": false,\n      \"target_quantity\": 100\n    }\n  }\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
             },
-            "url": {
-              "raw": "{{baseUrl}}/jobs",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "jobs"
-              ]
-            }
+            "description": "取消测试环境文件夹 的 testJobId 指定的 Job。PENDING/CANCELLED 返回 200，RUNNING/CANCELLING 返回 202，不可取消终态返回 409。"
           },
           "response": []
         }
       ]
     },
     {
-      "name": "Get Job",
-      "request": {
-        "method": "GET",
-        "header": [],
-        "url": {
-          "raw": "{{baseUrl}}/jobs/{{jobId}}",
-          "host": [
-            "{{baseUrl}}"
-          ],
-          "path": [
-            "jobs",
-            "{{jobId}}"
+      "name": "训练环境 · 5051",
+      "description": "访问 http://192.168.50.227:5051。本文件夹包含全部接口；地址与 Job ID 使用独立的 Collection 变量，无需选择 Postman Environment。",
+      "item": [
+        {
+          "name": "Health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{trainingBaseUrl}}/health",
+              "host": [
+                "{{trainingBaseUrl}}"
+              ],
+              "path": [
+                "health"
+              ]
+            },
+            "description": "检查 API 进程及 release identity。"
+          },
+          "response": []
+        },
+        {
+          "name": "Check Tushare",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{trainingBaseUrl}}/checks/tushare",
+              "host": [
+                "{{trainingBaseUrl}}"
+              ],
+              "path": [
+                "checks",
+                "tushare"
+              ]
+            },
+            "description": "重新读取服务端 token 和 gateway，只查询一次北京时间当天的 daily。成功（含空数据）返回 200 和 {\"ok\": true}；失败返回 503 tushare_check_failed。上游明确报告「抱歉，数据暂不可用，请稍后重试」时，error.message 展示该提示；其他失败仍使用通用提示，不展示凭据或内部异常。"
+          },
+          "response": []
+        },
+        {
+          "name": "Create Jobs",
+          "item": [
+            {
+              "name": "Create Data Standard Job",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "pm.test(\"Job created\", function () {",
+                      "    pm.response.to.have.status(201);",
+                      "});",
+                      "if (pm.response.code === 201) {",
+                      "    const body = pm.response.json();",
+                      "    pm.collectionVariables.set(\"trainingJobId\", body.jobs[0].job_id);",
+                      "}"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"kind\": \"data-standard\",\n  \"start\": \"{{dataStart}}\",\n  \"end\": \"{{dataEnd}}\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{trainingBaseUrl}}/jobs",
+                  "host": [
+                    "{{trainingBaseUrl}}"
+                  ],
+                  "path": [
+                    "jobs"
+                  ]
+                },
+                "description": "提交完整日期闭区间作为一个 Job；单日设置 dataStart = dataEnd。"
+              },
+              "response": []
+            },
+            {
+              "name": "Create Data Level-2 Job",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "pm.test(\"Job created\", function () {",
+                      "    pm.response.to.have.status(201);",
+                      "});",
+                      "if (pm.response.code === 201) {",
+                      "    const body = pm.response.json();",
+                      "    pm.collectionVariables.set(\"trainingJobId\", body.jobs[0].job_id);",
+                      "}"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"kind\": \"data-level2\",\n  \"start\": \"{{dataStart}}\",\n  \"end\": \"{{dataEnd}}\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{trainingBaseUrl}}/jobs",
+                  "host": [
+                    "{{trainingBaseUrl}}"
+                  ],
+                  "path": [
+                    "jobs"
+                  ]
+                },
+                "description": "提交完整日期闭区间作为一个 Job；单日设置 dataStart = dataEnd。"
+              },
+              "response": []
+            },
+            {
+              "name": "Create Training Job",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "pm.test(\"Job created\", function () {",
+                      "    pm.response.to.have.status(201);",
+                      "});",
+                      "if (pm.response.code === 201) {",
+                      "    const body = pm.response.json();",
+                      "    pm.collectionVariables.set(\"trainingJobId\", body.jobs[0].job_id);",
+                      "}"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"kind\": \"train\",\n  \"train_range\": {\n    \"start\": \"{{trainingStart}}\",\n    \"end\": \"{{trainingEnd}}\"\n  },\n  \"eval_range\": {{trainingEvalRangeJson}},\n  \"model\": \"{{trainingModel}}\",\n  \"dataset\": {\n    \"feature_group\": \"{{trainingFeatureGroup}}\",\n    \"label_group\": \"{{trainingLabelGroup}}\"\n  }\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{trainingBaseUrl}}/jobs",
+                  "host": [
+                    "{{trainingBaseUrl}}"
+                  ],
+                  "path": [
+                    "jobs"
+                  ]
+                },
+                "description": "选择训练区间、可选评估区间、模型和特征/标签组。trainingEvalRangeJson 为 null 表示纯训练，起止相同表示单日评价；多日评价只训练一次并复用同一模型。日期必须匹配目标环境的数据。创建响应只保存 Job ID。模型成功发布后，从 schedule.json 取得具体绝对 ref，填入 trainingModelRef。已知名称和组合以训练契约为准；不接受 windows、cutoff 或逐日可用性声明。"
+              },
+              "response": []
+            },
+            {
+              "name": "Create Signal Evaluation Job",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "pm.test(\"Job created\", function () {",
+                      "    pm.response.to.have.status(201);",
+                      "});",
+                      "if (pm.response.code === 201) {",
+                      "    const body = pm.response.json();",
+                      "    pm.collectionVariables.set(\"trainingJobId\", body.jobs[0].job_id);",
+                      "}"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"kind\": \"backtest\",\n  \"mode\": \"signal_eval\",\n  \"start\": \"{{backtestStart}}\",\n  \"end\": \"{{backtestEnd}}\",\n  \"min_listing_calendar_days\": 120,\n  \"signal\": {\n    \"type\": \"model\",\n    \"model_ref\": \"{{trainingModelRef}}\"\n  },\n  \"strategy\": {{backtestStrategyJson}},\n  \"initial_account\": {{backtestInitialAccountJson}},\n  \"execution\": {{backtestExecutionJson}}\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{trainingBaseUrl}}/jobs",
+                  "host": [
+                    "{{trainingBaseUrl}}"
+                  ],
+                  "path": [
+                    "jobs"
+                  ]
+                },
+                "description": "评价指定模型的预测质量及账户收益；execution.fill 必须为 quoted，合法订单生效时按申报价全额成交。发送前填写模型绝对路径、backtestStrategyJson、backtestInitialAccountJson、backtestExecutionJson；市场路径、时间范围、证券规则和费用须与任务输入一致。示例参数不构成业务默认值。"
+              },
+              "response": []
+            },
+            {
+              "name": "Create Risk Evaluation Job",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "pm.test(\"Job created\", function () {",
+                      "    pm.response.to.have.status(201);",
+                      "});",
+                      "if (pm.response.code === 201) {",
+                      "    const body = pm.response.json();",
+                      "    pm.collectionVariables.set(\"trainingJobId\", body.jobs[0].job_id);",
+                      "}"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"kind\": \"backtest\",\n  \"mode\": \"risk_rule_eval\",\n  \"start\": \"{{backtestStart}}\",\n  \"end\": \"{{backtestEnd}}\",\n  \"min_listing_calendar_days\": 120,\n  \"signal\": {\n    \"type\": \"model\",\n    \"model_ref\": \"{{trainingModelRef}}\"\n  },\n  \"strategy\": {{backtestStrategyJson}},\n  \"initial_account\": {{backtestInitialAccountJson}},\n  \"execution\": {{backtestExecutionJson}},\n  \"risk\": {\n    \"rules\": {{riskRulesJson}}\n  }\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{trainingBaseUrl}}/jobs",
+                  "host": [
+                    "{{trainingBaseUrl}}"
+                  ],
+                  "path": [
+                    "jobs"
+                  ]
+                },
+                "description": "按声明的模型、策略、账户、风控和成交假设执行一次完整回放，报告控制动作、实际暴露及剩余风险。发送前填写模型绝对路径、backtestStrategyJson、backtestInitialAccountJson、backtestExecutionJson；市场路径、时间范围、证券规则和费用须与任务输入一致。示例参数不构成业务默认值。"
+              },
+              "response": []
+            }
           ]
         },
-        "description": "查询最近一次由本 Collection 创建的 Job。"
-      },
-      "response": []
-    },
-    {
-      "name": "Cancel Job",
-      "request": {
-        "method": "POST",
-        "header": [],
-        "url": {
-          "raw": "{{baseUrl}}/jobs/{{jobId}}/cancel",
-          "host": [
-            "{{baseUrl}}"
-          ],
-          "path": [
-            "jobs",
-            "{{jobId}}",
-            "cancel"
-          ]
+        {
+          "name": "Get Job",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{trainingBaseUrl}}/jobs/{{trainingJobId}}",
+              "host": [
+                "{{trainingBaseUrl}}"
+              ],
+              "path": [
+                "jobs",
+                "{{trainingJobId}}"
+              ]
+            },
+            "description": "查询训练环境文件夹 最近一次创建的 Job；也可手动填写该环境的 trainingJobId。服务重启后内存 Job 不保留。"
+          },
+          "response": []
         },
-        "description": "取消最近一次由本 Collection 创建的 Job。"
-      },
-      "response": []
+        {
+          "name": "Cancel Job",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{trainingBaseUrl}}/jobs/{{trainingJobId}}/cancel",
+              "host": [
+                "{{trainingBaseUrl}}"
+              ],
+              "path": [
+                "jobs",
+                "{{trainingJobId}}",
+                "cancel"
+              ]
+            },
+            "description": "取消训练环境文件夹 的 trainingJobId 指定的 Job。PENDING/CANCELLED 返回 200，RUNNING/CANCELLING 返回 202，不可取消终态返回 409。"
+          },
+          "response": []
+        }
+      ]
     }
   ],
   "variable": [
     {
-      "key": "baseUrl",
-      "value": "http://localhost:5050",
+      "key": "dataStart",
+      "value": "2026-08-20",
       "type": "string"
     },
     {
-      "key": "jobId",
+      "key": "dataEnd",
+      "value": "2026-08-20",
+      "type": "string"
+    },
+    {
+      "key": "backtestStart",
+      "value": "2026-07-01",
+      "type": "string"
+    },
+    {
+      "key": "backtestEnd",
+      "value": "2026-08-20",
+      "type": "string"
+    },
+    {
+      "key": "testBaseUrl",
+      "value": "http://192.168.50.227:5050",
+      "type": "string"
+    },
+    {
+      "key": "testJobId",
       "value": "",
+      "type": "string"
+    },
+    {
+      "key": "testModelRef",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "trainingBaseUrl",
+      "value": "http://192.168.50.227:5051",
+      "type": "string"
+    },
+    {
+      "key": "trainingJobId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "trainingModelRef",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "trainingStart",
+      "value": "2026-07-01",
+      "type": "string"
+    },
+    {
+      "key": "trainingEnd",
+      "value": "2026-07-31",
+      "type": "string"
+    },
+    {
+      "key": "trainingEvalRangeJson",
+      "value": "{\"start\": \"2026-08-10\", \"end\": \"2026-08-31\"}",
+      "type": "string"
+    },
+    {
+      "key": "trainingModel",
+      "value": "sgd_regression",
+      "type": "string"
+    },
+    {
+      "key": "trainingFeatureGroup",
+      "value": "daily_basic_selected_v1",
+      "type": "string"
+    },
+    {
+      "key": "trainingLabelGroup",
+      "value": "daily_close_return_rank_d1/v1",
+      "type": "string"
+    },
+    {
+      "key": "riskRulesJson",
+      "value": "[{\"type\":\"max_single_name\",\"max_ratio\":0.2}]",
+      "type": "string"
+    },
+    {
+      "key": "backtestStrategyJson",
+      "value": "{\"type\": \"threshold\", \"params\": {\"threshold\": 0.5, \"target_quantity\": 1000}, \"order_window_minutes\": 2, \"quote\": {\"buy_offset_bp\": 0, \"sell_offset_bp\": 0}}",
+      "type": "string"
+    },
+    {
+      "key": "backtestInitialAccountJson",
+      "value": "{\"ts_us\": 1783060200000000, \"trade_date\": \"2026-07-03\", \"cash\": \"20000\", \"positions\": {}, \"sellable\": {}, \"average_cost\": {}, \"peak_equity\": 20000}",
+      "type": "string"
+    },
+    {
+      "key": "backtestExecutionJson",
+      "value": "{\"market_source\": {\"frequency\": \"minute\", \"start\": \"2026-07-02\", \"end\": \"2026-07-03\", \"symbols\": [\"600000\"]}, \"end_ts_us\": 1783062000000000, \"quantity_rules\": {\"default\": {\"buy_min_qty\": 100, \"buy_step_qty\": 100, \"sell_min_qty\": 1, \"sell_step_qty\": 1, \"fill_step_qty\": 1, \"price_tick\": \"0.01\", \"enforce_t1\": true}}, \"fees\": {\"commission_rate\": 0, \"stamp_tax_rate\": 0, \"transfer_rate\": 0, \"min_commission\": 0}, \"annual_factor\": 252, \"fill\": {\"type\": \"quoted\"}}",
       "type": "string"
     }
   ]

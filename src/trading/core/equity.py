@@ -15,9 +15,12 @@ class EquityPoint:
     Immutable valuation snapshot.
 
     Invariants:
-        equity = cash + market_value
+        equity = cash + market_value + dividend_receivable + shares_receivable_value
         peak_equity >= equity
         drawdown <= 0
+
+    Example:
+        point = EquityPoint(1, 0.0, 900.0, 1000.0, 1000.0, 0.0, 100.0)
     """
 
     ts_us: int
@@ -26,6 +29,8 @@ class EquityPoint:
     equity: float
     peak_equity: float
     drawdown: float
+    dividend_receivable: float = 0.0
+    shares_receivable_value: float = 0.0
 
 
 # ==========================================================
@@ -37,31 +42,50 @@ class EquityCurve:
     """Maintain a timestamp-ordered equity and drawdown history.
 
     Guarantees:
-        - equity = cash + market_value
+        - equity = cash + market_value + dividend_receivable + shares_receivable_value
         - monotonic time
         - same ts_us -> replace
         - O(1) peak tracking
         - O(1) drawdown tracking
+
+    Example:
+        curve = EquityCurve()
+        curve.append(ts_us=1, cash=20_000.0, market_value=0.0)
     """
 
     points: list[EquityPoint] = field(default_factory=list)
+    starting_peak_equity: float = 0.0
 
     # internal rolling state (NOT exposed)
     _peak_equity: float = 0.0
     _max_drawdown: float = 0.0
+    _drawdown_minima: list[float] = field(default_factory=list, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        self.points = list(self.points)
+        for point in self.points:
+            self._max_drawdown = min(self._max_drawdown, point.drawdown)
+            self._drawdown_minima.append(self._max_drawdown)
+            self._peak_equity = point.peak_equity
 
     # ---------------------------------------------------------
     # Write Interface
     # ---------------------------------------------------------
 
-    def append(self, *, ts_us: int, cash: float, market_value: float) -> None:
+    def append(self, *, ts_us: int, cash: float, market_value: float, dividend_receivable: float = 0.0,
+               shares_receivable_value: float = 0.0) -> None:
+        """Append or replace a valuation with constant-time rolling statistics.
+
+        Example:
+            curve.append(ts_us=1, cash=20_000.0, market_value=0.0)
+        """
         ts_us = int(ts_us)
         cash = float(cash)
         market_value = float(market_value)
-        if not math.isfinite(cash) or not math.isfinite(market_value):
-            raise ValueError("cash and market_value must be finite")
+        if not all(math.isfinite(value) for value in (cash, market_value, dividend_receivable, shares_receivable_value)):
+            raise ValueError("cash, market value and receivables must be finite")
 
-        equity = cash + market_value
+        equity = cash + market_value + dividend_receivable + shares_receivable_value
 
         if self.points:
             last_ts = int(self.points[-1].ts_us)
@@ -71,11 +95,13 @@ class EquityCurve:
                 )
 
         replacing = bool(self.points and self.points[-1].ts_us == ts_us)
-        historical_points = self.points[:-1] if replacing else self.points
-        if not historical_points:
-            peak = equity
+        previous_index = len(self.points) - (2 if replacing else 1)
+        if previous_index < 0:
+            peak = max(self.starting_peak_equity, equity)
+            historical_max_drawdown = 0.0
         else:
-            peak = max(historical_points[-1].peak_equity, equity)
+            peak = max(self.points[previous_index].peak_equity, equity)
+            historical_max_drawdown = self._drawdown_minima[previous_index]
 
         if peak == 0:
             drawdown = 0.0
@@ -95,18 +121,18 @@ class EquityCurve:
             equity=equity,
             peak_equity=peak,
             drawdown=drawdown,
+            dividend_receivable=dividend_receivable,
+            shares_receivable_value=shares_receivable_value,
         )
 
         if replacing:
             self.points[-1] = p
+            self._drawdown_minima[-1] = min(historical_max_drawdown, drawdown)
         else:
             self.points.append(p)
+            self._drawdown_minima.append(min(historical_max_drawdown, drawdown))
 
         self._peak_equity = peak
-        historical_max_drawdown = min(
-            (point.drawdown for point in historical_points),
-            default=0.0,
-        )
         self._max_drawdown = min(historical_max_drawdown, drawdown)
 
     # ---------------------------------------------------------

@@ -1,235 +1,159 @@
 # filepath: tests/training/test_artifact.py
-"""Public persistence and loading tests for training artifacts."""
-
-from __future__ import annotations
-
-import json
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Barrier
 
 import joblib
 import numpy as np
+import pandas as pd
 import pytest
 
-from src.training import artifact as artifact_module
-from src.training.artifact import (
-    TrainingParams,
-    load_inference_model,
-    load_training_report_inputs,
-    persist_training_artifacts,
-)
+from src.config.model_config import MissingConfig, PreprocessingConfig
+from src.training import artifact
 from src.training.engines.preprocessing import FittedPreprocessor
 from src.training.inference_model import InferenceModel
-from src.utils.path import PathManager
-
-_EXPERIMENT = "training_2026-07-01_2026-07-20_run-1"
+from src.training.models.sgd_regression import train_sgd_regression
 
 
-class _FirstColumnModel:
-    def predict(self, values: np.ndarray) -> np.ndarray:
-        return values[:, 0]
-
-
-def _inference_model() -> InferenceModel:
+def _train_model() -> InferenceModel:
+    raw = pd.DataFrame({"factor": [0.0, np.nan, 2.0, 3.0]})
+    fitted = FittedPreprocessor.fit(train_X=raw, config=PreprocessingConfig(missing=MissingConfig(method="drop")))
+    keep, values = fitted.transform(raw.to_numpy(dtype=np.float64))
+    predictor = train_sgd_regression(
+        X=pd.DataFrame(values, columns=fitted.feature_names),
+        y=pd.Series([0.0, 0.5, 1.0, 1.5]).iloc[np.flatnonzero(keep)],
+        model_params={"random_state": 7, "alpha": 0.001, "shuffle": False},
+    )
     return InferenceModel(
-        model=_FirstColumnModel(),
-        preprocess=FittedPreprocessor(
-            feature_names=("factor",),
-            missing_method="constant",
-            fill_values=(0.0,),
-        ),
-        feature_set="daily",
-        feature_version="v1",
+        model=predictor, preprocess=fitted, feature_set="tushare_daily_basic", feature_version="v1",
+        train_dates=("2026-07-01", "2026-07-02"), label_set="daily_close_return_rank_d1",
+        label_version="v1", label_column="y_rank_return",
     )
 
 
-def _params() -> TrainingParams:
-    return TrainingParams(
-        experiment_id="run-1",
-        model_group="sgd_regression",
-        asof_day="2026-07-19",
-        feature_set="daily",
-        feature_version="v1",
-        feature_names=("factor",),
-        label_set="rank",
-        label_version="v1",
-        label_column="target",
-        label_lookahead=1,
-    )
+def test_actual_sgd_single_file_roundtrip_is_exact(tmp_path: Path) -> None:
+    model = _train_model()
+    ref = tmp_path / "nested" / "model.joblib"
+    inputs = np.array([[0.0], [np.nan], [2.0], [4.0]], dtype=np.float64)
+    expected = model.predict(inputs)
+    assert artifact.save(ref, model) is None
+    restored = artifact.load(ref)
+    np.testing.assert_array_equal(restored.predict(inputs), expected, strict=True)
+    assert restored.train_dates == model.train_dates
+    assert restored.label_set == model.label_set
+    assert restored.label_version == model.label_version
+    assert restored.label_column == model.label_column
+    assert restored.preprocess == model.preprocess
+    assert set(ref.parent.iterdir()) == {ref}
 
 
-def test_persist_and_load_publish_one_ready_inference_asset(tmp_path: Path) -> None:
-    pm = PathManager(tmp_path)
-    inference_model = _inference_model()
-    raw_values = np.array([[np.nan], [2.0]])
-    expected_keep_rows, expected_predictions = inference_model.predict(raw_values)
-    persist_training_artifacts(
-        pm=pm,
-        experiment_name=_EXPERIMENT,
-        params=_params(),
-        metrics={"ic@2026-07-20": 0.1},
-        inference_model=inference_model,
-    )
-
-    training_dir = pm.experiment_training_dir(experiment_name=_EXPERIMENT)
-    assert {path.name for path in training_dir.iterdir()} == {
-        "params.json",
-        "metrics.json",
-        "inference.pkl",
-    }
-    loaded_model = load_inference_model(pm=pm, experiment_name=_EXPERIMENT)
-    keep_rows, predictions = loaded_model.predict(raw_values)
-    loaded_params, loaded_metrics = load_training_report_inputs(
-        pm=pm,
-        experiment_name=_EXPERIMENT,
-    )
-    assert keep_rows.tolist() == expected_keep_rows.tolist()
-    assert predictions.tolist() == expected_predictions.tolist()
-    assert loaded_params == _params()
-    assert loaded_metrics == {"ic@2026-07-20": 0.1}
-    params_payload = json.loads(
-        pm.experiment_training_params(experiment_name=_EXPERIMENT).read_text()
-    )
-    assert set(params_payload) == {
-        "experiment_id",
-        "model_group",
-        "asof_day",
-        "feature_set",
-        "feature_version",
-        "feature_names",
-        "label_set",
-        "label_version",
-        "label_column",
-        "label_lookahead",
-    }
+def test_existing_ref_is_never_replaced(tmp_path: Path) -> None:
+    ref = tmp_path / "model.joblib"
+    ref.write_bytes(b"already-published")
+    with pytest.raises(FileExistsError):
+        artifact.save(ref, _train_model())
+    assert ref.read_bytes() == b"already-published"
+    assert list(tmp_path.iterdir()) == [ref]
 
 
-def test_inference_is_published_after_report_inputs(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    pm = PathManager(tmp_path)
+def test_concurrent_publish_has_exactly_one_winner(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    barrier = Barrier(2)
+    original = artifact.joblib.dump
 
-    def fail_dump(value: object, path: Path) -> None:
-        raise RuntimeError("serialization failed")
+    def synchronized_dump(model: object, stream: object) -> object:
+        result = original(model, stream)
+        barrier.wait(timeout=10)
+        return result
 
-    monkeypatch.setattr(artifact_module.joblib, "dump", fail_dump)
-
-    with pytest.raises(RuntimeError, match="serialization failed"):
-        persist_training_artifacts(
-            pm=pm,
-            experiment_name=_EXPERIMENT,
-            params=_params(),
-            metrics={"ic@2026-07-20": 0.1},
-            inference_model=_inference_model(),
-        )
-
-    assert pm.experiment_training_params(experiment_name=_EXPERIMENT).is_file()
-    assert pm.experiment_training_metrics(experiment_name=_EXPERIMENT).is_file()
-    assert not pm.experiment_training_inference(experiment_name=_EXPERIMENT).exists()
+    monkeypatch.setattr(artifact.joblib, "dump", synchronized_dump)
+    ref = tmp_path / "model.joblib"
+    model = _train_model()
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(artifact.save, ref, model) for _ in range(2)]
+        errors = [future.exception(timeout=15) for future in futures]
+    assert sum(error is None for error in errors) == 1
+    assert sum(isinstance(error, FileExistsError) for error in errors) == 1
+    np.testing.assert_array_equal(artifact.load(ref).predict(np.array([[1.0]])), model.predict(np.array([[1.0]])), strict=True)
+    assert list(tmp_path.iterdir()) == [ref]
 
 
-def test_load_inference_distinguishes_missing_corrupt_and_wrong_type(
-    tmp_path: Path,
-) -> None:
-    pm = PathManager(tmp_path)
-    inference_path = pm.experiment_training_inference(experiment_name=_EXPERIMENT)
+@pytest.mark.parametrize("operation", ["serialization", "publication"])
+def test_failure_propagates_original_error_and_removes_temporary(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str) -> None:
+    error = OSError("injected failure")
 
-    with pytest.raises(FileNotFoundError):
-        load_inference_model(pm=pm, experiment_name=_EXPERIMENT)
+    def fail(*args: object, **kwargs: object) -> None:
+        raise error
 
-    inference_path.parent.mkdir(parents=True)
-    inference_path.write_bytes(b"not a joblib artifact")
-    with pytest.raises(ValueError, match="invalid training inference asset"):
-        load_inference_model(pm=pm, experiment_name=_EXPERIMENT)
+    if operation == "serialization":
+        monkeypatch.setattr(artifact.joblib, "dump", fail)
+    else:
+        monkeypatch.setattr(artifact.os, "link", fail)
+    with pytest.raises(OSError) as caught:
+        artifact.save(tmp_path / "model.joblib", _train_model())
+    assert caught.value is error
+    assert list(tmp_path.iterdir()) == []
 
-    joblib.dump({"model": "wrong"}, inference_path)
+
+def test_cleanup_failure_after_publication_keeps_complete_model(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    model = _train_model()
+    ref = tmp_path / "model.joblib"
+    error = PermissionError("injected cleanup failure")
+
+    def fail_unlink(path: Path, missing_ok: bool = False) -> None:
+        raise error
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "unlink", fail_unlink)
+        with pytest.raises(PermissionError) as caught:
+            artifact.save(ref, model)
+        assert caught.value is error
+    np.testing.assert_array_equal(artifact.load(ref).predict(np.array([[1.0]])), model.predict(np.array([[1.0]])), strict=True)
+    assert ref.is_file()
+    assert len(list(tmp_path.iterdir())) == 2
+
+
+def test_loader_rejects_wrong_type_without_revalidating_model_sources(tmp_path: Path) -> None:
+    ref = tmp_path / "wrong.joblib"
+    joblib.dump({"model": "wrong"}, ref)
     with pytest.raises(TypeError, match="InferenceModel"):
-        load_inference_model(pm=pm, experiment_name=_EXPERIMENT)
-
-
-def test_report_loader_rejects_params_fields_outside_the_exact_schema(
-    tmp_path: Path,
-) -> None:
-    pm = PathManager(tmp_path)
-    persist_training_artifacts(
-        pm=pm,
-        experiment_name=_EXPERIMENT,
-        params=_params(),
-        metrics={"ic@2026-07-20": 0.1},
-        inference_model=_inference_model(),
-    )
-    params_path = pm.experiment_training_params(experiment_name=_EXPERIMENT)
-    payload = json.loads(params_path.read_text())
-    payload["created_at"] = "2026-07-20T12:00:00"
-    params_path.write_text(json.dumps(payload))
-
-    with pytest.raises(ValueError, match="fields must match schema"):
-        load_training_report_inputs(pm=pm, experiment_name=_EXPERIMENT)
-
-
-@pytest.mark.parametrize(
-    ("field_name", "invalid_value"),
-    [("experiment_id", 1), ("label_lookahead", "1")],
-)
-def test_report_loader_rejects_invalid_param_field_types(
-    tmp_path: Path,
-    field_name: str,
-    invalid_value: object,
-) -> None:
-    pm = PathManager(tmp_path)
-    persist_training_artifacts(
-        pm=pm,
-        experiment_name=_EXPERIMENT,
-        params=_params(),
-        metrics={"ic@2026-07-20": 0.1},
-        inference_model=_inference_model(),
-    )
-    params_path = pm.experiment_training_params(experiment_name=_EXPERIMENT)
-    payload = json.loads(params_path.read_text())
-    payload[field_name] = invalid_value
-    params_path.write_text(json.dumps(payload))
-
-    with pytest.raises(TypeError, match=field_name):
-        load_training_report_inputs(pm=pm, experiment_name=_EXPERIMENT)
-
-
-def test_report_loader_distinguishes_missing_and_corrupt_json(tmp_path: Path) -> None:
-    pm = PathManager(tmp_path)
-    params_path = pm.experiment_training_params(experiment_name=_EXPERIMENT)
-
+        artifact.load(ref)
     with pytest.raises(FileNotFoundError):
-        load_training_report_inputs(pm=pm, experiment_name=_EXPERIMENT)
-
-    params_path.parent.mkdir(parents=True)
-    params_path.write_text("{", encoding="utf-8")
-    with pytest.raises(ValueError, match="invalid training params JSON"):
-        load_training_report_inputs(pm=pm, experiment_name=_EXPERIMENT)
-
-    params_path.write_text("[]", encoding="utf-8")
-    with pytest.raises(TypeError, match="JSON object"):
-        load_training_report_inputs(pm=pm, experiment_name=_EXPERIMENT)
+        artifact.load(tmp_path / "missing.joblib")
 
 
-@pytest.mark.parametrize(
-    "metrics",
-    [
-        {"loss": 0.1},
-        {"ic@2026/07/20": 0.1},
-        {"ic@2026-02-30": 0.1},
-        {"ic@2026-07-20": np.nan},
-    ],
-)
-def test_persist_rejects_metrics_outside_the_exact_schema(
-    tmp_path: Path,
-    metrics: dict[str, float],
+def test_loader_rejects_model_missing_prediction_method(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    pm = PathManager(tmp_path)
+    model = _train_model()
+    ref = tmp_path / "incomplete.joblib"
+    previous_state = model.__getstate__()[:-1]
+    with monkeypatch.context() as patch:
+        patch.setattr(InferenceModel, "__getstate__", lambda self: previous_state)
+        joblib.dump(model, ref)
+    original = ref.read_bytes()
 
-    with pytest.raises(ValueError):
-        persist_training_artifacts(
-            pm=pm,
-            experiment_name=_EXPERIMENT,
-            params=_params(),
-            metrics=metrics,
-            inference_model=_inference_model(),
-        )
+    with pytest.raises(TypeError, match="missing fields: prediction_method.*retrain") as caught:
+        artifact.load(ref)
+
+    assert str(ref) in str(caught.value)
+    assert ref.read_bytes() == original
+    assert list(tmp_path.iterdir()) == [ref]
+
+
+def test_loader_preserves_original_restoration_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    error = ImportError("missing model dependency")
+
+    def fail(ref: Path) -> None:
+        raise error
+
+    monkeypatch.setattr(artifact.joblib, "load", fail)
+    with pytest.raises(ImportError) as caught:
+        artifact.load(tmp_path / "model.joblib")
+    assert caught.value is error
+
+
+def test_relative_refs_are_rejected_before_io() -> None:
+    with pytest.raises(ValueError, match="absolute"):
+        artifact.save(Path("relative/model.joblib"), _train_model())
+    with pytest.raises(ValueError, match="absolute"):
+        artifact.load(Path("relative/model.joblib"))

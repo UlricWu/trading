@@ -71,12 +71,7 @@ class FittedPreprocessor:
         """
         table_ops.require_nonempty(train_X, who="preprocessing train_X")
         feature_names = tuple(train_X.columns)
-        if any(not isinstance(name, str) or not name for name in feature_names):
-            raise ValueError("preprocessing feature columns must be non-empty strings")
-        if len(feature_names) != len(set(feature_names)):
-            raise ValueError("preprocessing feature columns must be unique")
-
-        values = train_X.to_numpy(dtype=float, na_value=np.nan, copy=True)
+        values = train_X.to_numpy(dtype=float, na_value=np.nan, copy=False)
         if np.isinf(values).any():
             raise ValueError("preprocessing input must not contain infinity")
 
@@ -85,8 +80,6 @@ class FittedPreprocessor:
             return cls(feature_names=feature_names, missing_method=method)
         if method == "constant":
             fill_value = config.missing.fill_value
-            if fill_value is None:
-                raise ValueError("missing.fill_value is required for constant fill")
             fill_values = np.full(values.shape[1], fill_value, dtype=float)
         else:
             all_missing = np.isnan(values).all(axis=0)

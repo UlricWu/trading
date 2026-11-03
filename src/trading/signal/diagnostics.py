@@ -126,7 +126,7 @@ class BasicSignalDiagnostics:
         ]
         top_str = ", ".join(top) or "none"
 
-        logs.info(
+        logs.debug(
             f"✅ feature diagnostics; ts_us={ts_us} "
             f"n_sym={n_syms} "
             f"n_feat={n_feats} "
@@ -177,7 +177,7 @@ class BasicSignalDiagnostics:
             scores=finite,
             thresholds=self.score_thresholds,
         )
-        logs.info(
+        logs.debug(
             f"✅ score diagnostics; ts_us={ts_us} "
             f"requested={requested_count} "
             f"scored={len(scores)} "

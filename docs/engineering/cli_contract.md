@@ -7,26 +7,31 @@
 
 ## 通用边界
 
-CLI 只把不可信文本解析为 `src.jobs.requests` 已构造的 data、fact bootstrap、Feature
+CLI 把不可信文本解析为 `src.jobs.requests` 已构造的 data、Feature
 backfill、Level-2 minute backfill、H03 14:30 backfill、H04 fusion backfill、training 或 backtest submission，
 加载一次 `AppConfig`，
 创建 `PathManager` 并调用一次工作流。HTTP Job API
-也必须复用同一构造边界，不得各自实现日期、mode、model experiment 或 strategy 校验。
-CLI 在命令分派前按日志技术 owner 配置一次公共 logger 的 stderr sink；它不记录
-start/done 或原始 JSON，workflow 负责业务运行日志。Typer 负责参数错误并以 `2` 退出，
+也必须复用同一构造边界，不得各自实现日期、mode、model ref 或 strategy 校验。
+CLI 在命令分派前按日志技术 owner 配置一次公共 logger 的 stderr sink，不记录原始 JSON。
+Backtest 命令统一准备运行身份及参数快照并记录开始日志；其余业务运行日志由 workflow
+及其 Step 负责。Typer 负责参数错误并以 `2` 退出，
 未处理的配置或运行错误以 `1` 退出。
 
 日期必须是规范 `YYYY-MM-DD`。范围必须满足 `start <= end`。Training 和 backtest 的
-`EXPERIMENT_ID` 必须匹配 `[A-Za-z0-9][A-Za-z0-9._-]{0,63}`。
+`EXPERIMENT_ID` 必须匹配 `[A-Za-z0-9][A-Za-z0-9._-]{0,63}`。两个命令的
+`--experiment-id` 声明绑定同一个 Typer 参数校验回调，在进入命令函数前建立该契约；
+非法值以参数错误退出 `2`，不构造 submission、不加载配置或调用 workflow。
+命令函数与 workflow 使用已校验的 ID，不再手动检查；PathManager 不拥有 CLI ID 格式规则。
 
 Submission 的日期与范围保证由 `src.jobs.requests` 中相应的 `create_*_submission` 函数
-建立。直接调用 submission dataclass 构造函数不执行校验，只允许可信内部调用者提供
-已经满足契约的值；CLI 和 HTTP 不得通过直接构造绕过该边界。
+建立。TrainingSubmission 与五种 BacktestSubmission 使用验证模型；数据类 submission 的 dataclass 构造函数不执行
+校验，只允许可信内部调用者提供已经满足契约的值。CLI 和 HTTP 均使用共享构造函数，
+不另建业务校验。
 
 ## AppConfig
 
 `AppConfig.load()` 是完整应用配置的唯一加载入口。调用者一次获得 `environment`、
-`storage_root`、`secret`、`data`、`model` 和 `backtest`，无需分别识别或加载配置区段。
+`storage_root`、`secret`、`data`、`models` 和 `feature_groups`，无需分别识别或加载配置区段。
 进程变量 `ENV` 选择项目根目录的 `.env.dev`、`.env.test` 或 `.env.prod`，缺省为
 `dev`；加载过程不得把文件内容写入进程环境。`ZERO_STORAGE_ROOT` 仍由进程环境提供，
 路径可用性由 `PathManager` 校验。
@@ -36,7 +41,7 @@ Submission 的日期与范围保证由 `src.jobs.requests` 中相应的 `create_
 SDK 地址。FTP 配置不再读取或要求。Level-2 使用配置指定且已登录的百度网盘客户端，
 客户端凭证由客户端管理。
 
-`override` 只能包含 `data`、`model` 或 `backtest` 根键；因此不能改变
+`override` 只能包含 `data`、`models` 或 `feature_groups` 根键；因此不能改变
 `environment`、`storage_root` 或 `secret`。mapping 递归合并，标量、列表和显式
 `None` 直接替换，不定义字段级特殊合并规则。合并后必须校验完整 `AppConfig`。HTTP Job
 API 和所有 CLI 命令都不得用 request runtime 字段构造 config override。配置读取、
@@ -46,7 +51,6 @@ override 拒绝和最终 schema 校验错误均归 `AppConfig.load()`，不在�
 
 ```text
 python -m src.cli data-calendar
-python -m src.cli data-standard-bootstrap --start YYYY-MM-DD --end YYYY-MM-DD
 python -m src.cli data-standard --start YYYY-MM-DD --end YYYY-MM-DD
 python -m src.cli data-level2 --start YYYY-MM-DD --end YYYY-MM-DD
 python -m src.cli data-level2-minute-backfill \
@@ -67,12 +71,11 @@ composition root 通过 `DateTimeUtils.today()` 取得一次 Asia/Shanghai 当�
 对象；不执行 fact、feature 或 label。命令成功时退出 `0`，配置、Tushare、normalize、
 Meta 或其他运行错误以 `1` 退出。命令不接受日期、年份、refresh 或其他参数。
 
-`data-standard-bootstrap` 是 CLI-only 的 Standard facts 冷启动入口。它的闭区间只表示显式
-请求的 calendar 与 Standard facts 范围；workflow 不选择 Feature/Label operation，不构建
-derived 对象，也不根据 Feature lookback 隐式扩大范围。它构造
-`StandardFactBootstrapSubmission` 并只调用一次 `run_standard_fact_bootstrap`。范围内没有
-正式交易 session 时成功；任一正式交易日的 Standard fact 缺失或其他运行错误时退出 `1`。
-该命令不属于 HTTP Job API、cron 或日常 `data-standard`。
+`data-standard` 同时用于历史补齐和 cron 增量生产。显式闭区间内按交易日生产基础事实，
+按自然披露日（含周末）采集公告并物化结构化事实，随后更新相关公司行动和已配置派生集。
+历史补齐使用较长区间；不另设 Standard bootstrap 或公司行动准备、维护命令。早期公告
+缺比例或分母仍保存，事实缺口不是命令失败；网络、分页或持久化失败仍非零退出。
+冷启动的派生输入准备和配置边界见[workflow owner](../offline_workflow_contract.md#standard-历史补齐与日常生产)。
 
 `data-standard` 与 `data-level2` 构造不同 kind 的 `DataSubmission`，但都只调用一次固定的
 `run_offline_data` workflow，不接受 group、run ID 或实验身份。
@@ -93,6 +96,13 @@ Level-2 本地来源记录和压缩缓存。仍先按 AppConfig 要求提供 `EN
 `--apply --cleanup` 才按存储 owner 回收已匹配文件。日期限制同时约束转换和清理。
 未匹配分区保留并报告，不阻止其他已匹配分区；传输、无效 Meta 或写入错误非零退出。
 此命令不进入 Job API、cron 或日常 pipeline，不上传或修改网盘文件。
+
+公司行动 V1 一次性迁移入口为
+`python -m scripts.migrate_corporate_actions --source-root SOURCE --output-dir OUTPUT`。
+两个路径须为绝对路径，OUTPUT 必须尚不存在且与 SOURCE 互不包含；成功退出 0，参数
+错误退出 2，缺失输入、修正冲突或运行错误退出 1。命令不加载 AppConfig，不联网，不改动
+SOURCE，只生成隔离副本及报告。具体转换、保留证据和失败边界由
+[存储 owner](../data/storage_layout.md) 所有，不加入 Job API 或 cron。
 
 `data-level2-minute-backfill` 是 CLI-only 的两市股票一分钟事实历史回填入口。`start/end`
 闭区间只表示目标分钟分区；它构造 `Level2MinuteBackfillSubmission` 并只调用一次
@@ -132,54 +142,173 @@ calendar 与 Standard facts，不调用 broker，不写 raw、processed、label 
 不属于 HTTP Job、日常 data workflow 或 cron。融合领域契约由
 [`stock_1430_daily_l2_contract.md`](../data/stock_1430_daily_l2_contract.md) 拥有。
 
+`data-previous-day-backfill --start YYYY-MM-DD --end YYYY-MM-DD` 是 CLI-only 的盘前数据
+构建入口，闭区间由 TrainingDateRange 校验，调用 run_previous_day_backfill。读取本地已提交
+输入、生成资格/Feature/Label，具体身份及失败边界由
+[前日数据 owner](../data/previous_day_feature_label_contract.md) 拥有；不调用 broker。
+首次选择 previous_day 特征组前，须在训练服务实际使用的 ZERO_STORAGE_ROOT 中完成此
+初始化。另一个存储根中的验证产物不会自动进入当前服务；仅增加模型与组名配置不会
+生成对应数据。以本地开发服务的数据目录为例：
+
+```bash
+ZERO_STORAGE_ROOT=/home/wsw/app/data uv run --locked python -m src.cli \
+  data-previous-day-backfill --start 2026-02-03 --end 2026-09-17
+```
+
+完成后再提交同一训练请求。该命令建立数据分区，不创建训练 Job；后续 POST 仍只创建
+一个训练任务。训练本身不联网补取数据，也不会自动切换到研究证据目录。
+
 ## Training
 
 ```text
 python -m src.cli train \
-  --start YYYY-MM-DD \
-  --end YYYY-MM-DD \
+  --train-start YYYY-MM-DD --train-end YYYY-MM-DD \
+  --model MODEL --feature-group FEATURE_GROUP --label-group LABEL_GROUP \
+  [--eval-start YYYY-MM-DD --eval-end YYYY-MM-DD] \
+  [--validation-sessions INTEGER] [--eval-gap-sessions INTEGER] \
   --experiment-id EXPERIMENT_ID
 ```
 
-Training 只使用基础 `AppConfig.model`，不接受 group 或配置 JSON override。CLI 将已校验
-`TrainingSubmission`、experiment ID、`ModelConfig` 和 `PathManager` 直接交给 training
-workflow。
-通过 HTTP 创建 training Job 时，Job API 使用同一个 Job UUID 作为该必填
-`EXPERIMENT_ID`；HTTP 不接受客户端提供此字段。
+train 起止日期、模型名、特征组名与标签组名必填。eval 两端必须同时提供或同时省略；
+起止相同表示单日评价，省略表示纯训练，不另加模式参数。日期为规范闭区间，
+`start <= end`；不接受 windows JSON、逐日日期、cutoff、可用性声明或决策微秒数。
+可选名称、准确含义、组合限制和日历/成熟时序由
+[training workflow](../offline_workflow_contract.md#training-workflow)拥有。
+例如完整的多日固定模型评价调用为：
+
+```bash
+python -m src.cli train \
+  --train-start 2026-07-01 --train-end 2026-07-31 \
+  --eval-start 2026-08-10 --eval-end 2026-08-31 \
+  --model sgd_regression \
+  --feature-group daily_basic_selected_v1 \
+  --label-group daily_close_return_rank_d1/v1 \
+  --experiment-id example-run
+```
+
+模型超参数、随机种子和预处理由所选 AppConfig.models 条目拥有；特征组定义由
+AppConfig.feature_groups 拥有，不从请求构造配置 override。CLI 将共享构造边界校验后的
+TrainingSubmission、两个配置映射、experiment ID 和 PathManager 直接交给 workflow。
+参数格式、未知选项或不兼容的数据组合退出 2；配置、日历、数据、训练、保存或评价失败
+退出 1；成功退出 0。示例不保证目标环境已有相应数据。无交易日或数据缺失不缩短区间。
+
+任务仅拟合一次，模型 ref 位于 training/model.joblib，并记录在 schedule.json；
+多日预测分别写入 training/predictions/YYYY-MM-DD.parquet。评价与报告不参与模型构造或
+发布判定。未请求内部验证和最终评估时不读取评价输入，也不创建预测、评价或报告文件。
+
+`--validation-sessions` 与 `--eval-gap-sessions` 映射 Job API 的同名业务字段，复用同一
+TrainingSubmission 校验。内部验证取训练区间末尾交易日；最终评估间隔按中间跳过的交易日
+数计算，默认均为0。内部验证与最终评估共享已冻结模型，指标分别保存。
+
+通过 HTTP 创建 training Job 时，Job API 使用同一个 Job UUID 作为必填 EXPERIMENT_ID；
+HTTP 不接受客户端提供此字段。
 
 ## Backtest
 
 ```text
-python -m src.cli backtest \
-  --mode MODE \
-  --start YYYY-MM-DD \
-  --end YYYY-MM-DD \
-  --experiment-id EXPERIMENT_ID \
-  --model-experiment MODEL_EXPERIMENT \
-  --strategy-json JSON
+python -m src.cli backtest --mode MODE --experiment-id EXPERIMENT_ID --input-json JSON
 ```
 
-`MODE` 必须是 `signal_eval`、`tradable_alpha_eval`、`execution_eval`、`risk_eval` 或
-`full_backtest`。`MODEL_EXPERIMENT` 必须是安全单一 basename。`JSON` 必须完整匹配以下
-任一对象，额外字段禁止：
+三个参数都必填。JSON 必须是 object，只包含所选任务的字段，不包含 kind、mode 或
+experiment_id；mode 只由 `--mode` 传入。CLI 在加载 AppConfig、创建 PathManager 或进入
+workflow 前调用 `create_backtest_submission` 校验。额外字段、缺少必需参数、非法数值
+或相对引用路径均拒绝，不保留旧 `--model-ref`/`--strategy-json` 或隐式字段兼容。
+mode 只接受下表五个值；旧任务名称 `tradable_alpha_eval`、`risk_eval` 不作为别名接受。
+调用方为每次回测提供新的唯一 experiment_id，HTTP 沿用 Job UUID；CLI 保持上述 ID 格式
+校验，不检查实验目录重名。运行当天日期及目录命名由
+[Backtest workflow](../offline_workflow_contract.md#共同边界)定义。
+
+| MODE / Submission | JSON 字段 |
+| --- | --- |
+| signal_eval / SignalEvalSubmission | start、end、signal、min_listing_calendar_days、strategy、initial_account、execution |
+| risk_rule_eval / RiskRuleEvalSubmission | start、end、signal、min_listing_calendar_days、strategy、initial_account、risk、execution |
+| execution_eval / ExecutionEvalSubmission | start、end、order_refs、initial_account、execution |
+| strategy_eval / StrategyEvalSubmission | start、end、signal、min_listing_calendar_days、strategy、initial_account、execution |
+| full_backtest / FullBacktestSubmission | start、end、signal、min_listing_calendar_days、strategy、initial_account、risk、execution |
+
+五种请求都使用规范 `YYYY-MM-DD` 且 start<=end。信号来源是二选一的 object：
+`{"type":"model","model_ref":"/absolute/model.joblib"}` 或
+`{"type":"recorded","prediction_refs":["/absolute/prediction.parquet"]}`。
+四种含 signal 的 submission 顶层都必须显式提供 `min_listing_calendar_days`，无论信号来源
+是 model 还是 recorded；值为非负整数，不接受 bool、字符串或小数，没有默认值。
+execution 不接受该字段。其资格筛选作用由
+[Backtest workflow](../offline_workflow_contract.md#backtest-workflow) 定义。
+order_refs 和 prediction_refs 是有序绝对路径数组；空事实可报告无样本。
+order_refs 的内容是委托/撤单序列；quantity_rules 和 fees 仍在 execution 中一次性配置，
+不从订单文件读取或覆盖。其职责、独立配置的理由及固定指令比较的解释边界由
+[Offline owner](../offline_workflow_contract.md#orders-and-execution-parameters)拥有。
+模型同目录训练记录、预测身份和首次实际决策的成熟时间核验由
+[Backtest workflow](../offline_workflow_contract.md#backtest-workflow) 拥有，不要求调用者
+提供 model_use、生效时间、binding_refs 或训练记录路径。
+
+交易配置的稳定字段如下；未标可选的字段均必填：
+
+| 对象 | 字段及构造约束 |
+| --- | --- |
+| initial_account | ts_us 整数、trade_date、非负有限 Decimal cash、positions 非负整数映射、sellable 同键映射且不超过持仓、average_cost 同键非负有限 Decimal 映射、非负有限 peak_equity；ts_us 必须早于模拟终点；distribution_entitlements 默认空数组，携带分配与补偿权益阶段；registration_holdings 默认空映射，按历史日期保存持仓；corporate_action_issues 默认空数组，保存已有诊断。字段和阶段约束由[公司行动 owner](../offline_workflow_contract.md#公司行动与非交易账户事件)定义 |
+| execution | market_source；end_ts_us 整数、quantity_rules、fees、正数有限 annual_factor、fill；risk_check_ts_us 按模式约束如下 |
+| market_source | frequency 为 daily/minute；start、end 为规范日期且 start<=end；symbols 可省略，默认为 []；省略或空数组表示全市场，非空数组选择指定证券；代码须唯一且为六位沪深股票代码，范围沿用 Level-2 股票分类；不接受 null 或 universe 对象 |
+| quantity_rules | 必填 default 规则；可选 overrides 默认为 {}，以证券代码映射到完整替换规则；不接受旧的顶层逐证券映射 |
+| quantity_rules.default / overrides 每证券值 | buy_min_qty、buy_step_qty、sell_min_qty、sell_step_qty、fill_step_qty 都是正整数，price_tick 是正数有限 Decimal，enforce_t1 是显式 bool；不可用 bool 代替数量 |
+| fees | commission_rate、stamp_tax_rate、transfer_rate、min_commission，均为非负有限 Decimal；不使用隐含费率或最低佣金 |
+| risk | rules 非空数组，按声明顺序选具名规则；每项为 type=max_single_name 和非负有限 max_ratio，或 type=max_gross_exposure 和非负有限 max_gross_ratio，或 type=max_drawdown 和 [0,1] max_drawdown |
+| strategy | type、params、order_window_minutes、quote；两种成交假设均须完整 quote。窗口分钟为正整数 |
+| quote | buy_offset_bp、sell_offset_bp，均为 [0,10000) 的有限 Decimal；不接受额外字段 |
+
+quantity_rules.default 必须由调用方明确提供，不根据市场隐式选择规则；overrides 命中时
+完整替换 default，不逐字段合并。fees 仍须显式提供完整费用参数。全市场的历史成员解析、
+覆盖保留与规则展开由 [Offline owner](../offline_workflow_contract.md#真实行情到回放输入)定义。
+
+execution.market_source 必填且不能为 null，在同一次 backtest 的启动组内读取本地正式
+日频或分钟行情。source 的日期是行情覆盖范围，独立于请求的决策日期和
+execution.end_ts_us；初始持仓缺少可见价格时，启动 Step 按需读取更早的正式日线。
+确认停牌、局部日线缺口与上市状态未知按下述 owner 分别处理；两类待核实异常在 limit_price
+下继续并分别报告，quoted 在输入准备时拒绝模拟终点内的这些异常，不增加请求开关。
+行情在内存中交给后续 Steps，不读写中间行情 JSON；execution.market_ref
+和 market_source.output_ref 均作为额外字段拒绝，不保留兼容入口。时间、价格、单位及准备顺序由
+[真实行情到回放输入](../offline_workflow_contract.md#真实行情到回放输入)拥有。
+
+execution.fill 是必须显式提供的带 type 判别字段的对象，不根据 null 或缺失滑点推导成交行为：
+
+| execution.fill | 构造与适用范围 |
+| --- | --- |
+| `{"type":"quoted"}` | 生效时按申报价全额成交，不接受 slippage_bp；signal_eval 固定使用，strategy/risk 也可选择 |
+| `{"type":"limit_price","slippage_bp":0}` | 滑点为必填 [0,10000) 有限数；价量约束，适用于 strategy/risk，execution/full 固定使用 |
+
+所有 fill 对象拒绝额外字段，旧的 execution.slippage_bp 不再接受。信号驱动路径必须提供
+完整 strategy.quote，省略或 null 均拒绝。execution_eval 的报价取自冻结委托，不接受 strategy。
+成交配置仅包含表中两个选项；参考价研究的适用边界及原 reference 的移除理由由
+[Offline owner](../offline_workflow_contract.md#移除-reference-成交假设的原因) 定义。
+
+signal_eval/strategy_eval 不接受 risk；risk_rule_eval/full_backtest 必须提供非空 rules。
+只有 risk/full 可提供非空 risk_check_ts_us 整数数组，省略为空。risk 对一个场景执行一次
+带指定风控的完整账户回放，评价控制动作及实际剩余风险；不接收 case_refs 或隐式生成比较基线。缺少规则或成交模型是非法请求，
+不能解释为自动关闭能力。
+
+strategy.params 只允许与 type 对应的结构：
 
 ```text
-{"type":"threshold","params":{"threshold":finite-number,"target_quantity":positive-int=100}}
-
-{"type":"topk_hysteresis","params":{
-  "max_positions":positive-int,
-  "entry_threshold":finite-number,
-  "exit_threshold":finite-number <= entry_threshold,
-  "rebalance_interval_minutes":positive-int=1,
-  "keep_winners":bool=false,
-  "target_quantity":positive-int=100
-}}
+threshold: {threshold: finite-number, target_quantity: positive-int=100}
+topk_hysteresis: {max_positions: positive-int, entry_threshold: finite-number,
+  exit_threshold: finite-number <= entry_threshold, rebalance_interval_minutes: positive-int=1,
+  keep_winners: bool=false, target_quantity: positive-int=100}
+fixed_holding: {max_positions: positive-int, decision_time: local-time, exit_time: local-time,
+  initial_exit_dates: {symbol: YYYY-MM-DD}}
 ```
 
-CLI 不构造 config override。它加载一次只含静态执行设置的 `BacktestConfig`，并把该对象、
-完整 `BacktestSubmission`、`PathManager` 与 experiment ID 直接交给 workflow。Runtime
-mode、model experiment 和 strategy 的唯一 owner 是 submission；`BacktestConfig` 只拥有
-`init_cash` 与 `min_listing_calendar_days`。CLI 不接受 group、run ID、model name 或可选
-策略。
-通过 HTTP 创建 backtest Job 时，Job API 使用同一个 Job UUID 作为该必填
-`EXPERIMENT_ID`；HTTP 不接受客户端提供此字段。
+fixed_holding 的两个 time 不带 UTC offset，使用市场时区。三种策略的 order_window_minutes
+在交易请求必需；原两个构造器的股数默认值仍如上，新策略没有默认资金、名额或时点。
+完整选择/资金/退出和风险计算语义由 Offline owner 定义，本文件只拥有参数构造。
+signal_eval 和价量约束 strategy_eval 的完整请求见 [Job API 示例](job_api_contract.md#post-jobs)。
+用于 CLI 时移除 kind/mode，将其余字段编码为 --input-json，并用 --mode 指定对应任务；
+引用文件必须实际存在。signal_eval 保留预测指标，同时要求显式策略、初始账户、市场、
+费用与数量规则，不接受原先只有预测的请求。
+
+CLI 不构造 config override。加载一次 AppConfig 后，统一生成实验名称，将已解析 submission
+序列化为参数快照并初始化 `BacktestMetrics`，使用该快照记录开始日志，再把 `experiment_name`
+和 `metrics` 随 submission 传给 `run_backtest`。快照、日志及最终制品的内容由
+[Backtest 结果契约](../offline_workflow_contract.md#backtest-workflow)定义；CLI 此时只构造内存记录，
+不写参数或 metrics 文件。回测业务参数统一来自 submission，不再加载独立 BacktestConfig；
+示例中的 min_listing_calendar_days=120 是显式任务输入，不是应用默认设置。
+初始现金只来自 initial_account。HTTP 使用同一字段模型，build_cli_command 用一个
+`--input-json` 参数保留嵌套 JSON，Job UUID 作为 experiment ID。

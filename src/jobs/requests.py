@@ -8,11 +8,14 @@ import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, TypeAlias, cast
+from typing import Annotated, Literal, Self, TypeAlias, cast
 
-from pydantic import TypeAdapter, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, field_validator, model_validator
 
-from src.config.backtest_config import BacktestMode, StrategyConfig
+from src.config.backtest_config import (
+    BacktestMode, StrategyConfig, InitialAccount, FakeExecutionConfig, RiskConfig,
+)
+from src.config.model_config import FeatureGroupName, LabelGroupName, TrainingModelName
 from src.utils.datetime_utils import DateTimeUtils
 from src.utils.path import PathManager
 
@@ -30,10 +33,7 @@ JOB_EXIT_CODE_SKIPPED = 75
 _DATA_KINDS = frozenset({"data-standard", "data-level2"})
 _JOB_KINDS = _DATA_KINDS | {"train", "backtest"}
 _DATA_FIELDS = frozenset({"kind", "start", "end"})
-_TRAINING_FIELDS = frozenset({"kind", "start", "end"})
-_BACKTEST_FIELDS = frozenset(
-    {"kind", "mode", "start", "end", "model_experiment", "strategy"}
-)
+_TRAINING_FIELDS = frozenset({"kind", "train_range", "eval_range", "eval_gap_sessions", "validation_sessions", "model", "dataset"})
 
 
 class InvalidJobRequest(ValueError):
@@ -62,21 +62,6 @@ class DataSubmission:
     """
 
     kind: DataJobKind
-    start: str
-    end: str
-
-
-@dataclass(frozen=True, slots=True)
-class StandardFactBootstrapSubmission:
-    """Describe one validated CLI-only Standard fact cold-start range.
-
-    Example:
-        submission = StandardFactBootstrapSubmission(
-            start="2019-01-01",
-            end="2019-04-03",
-        )
-    """
-
     start: str
     end: str
 
@@ -144,40 +129,312 @@ class Stock1430FusionBackfillSubmission:
     end: str
 
 
-@dataclass(frozen=True, slots=True)
-class TrainingSubmission:
-    """Describe one validated full-range training workflow execution.
+class TrainingDateRange(BaseModel):
+    """Select a closed interval of sample dates using canonical market dates.
 
     Example:
-        submission = TrainingSubmission(start="2026-07-01", end="2026-07-20")
+        interval = TrainingDateRange(start="2026-07-01", end="2026-07-31")
     """
 
+    model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
     start: str
     end: str
-    kind: Literal["train"] = "train"
+
+    @field_validator("start", "end")
+    @classmethod
+    def _require_date(cls, value: str) -> str:
+        return DateTimeUtils.require_system_date(value, field_name="date")
+
+    @model_validator(mode="after")
+    def _require_range(self) -> Self:
+        if self.start > self.end:
+            raise ValueError("start must not follow end")
+        return self
 
 
-@dataclass(frozen=True, slots=True)
-class BacktestSubmission:
-    """Describe one validated full-range backtest workflow execution.
+class TrainingDatasetSelection(BaseModel):
+    """Choose compatible feature columns and an existing label identity.
 
     Example:
-        submission = create_backtest_submission(
-            mode="full_backtest",
-            start="2026-07-01",
-            end="2026-07-20",
-            model_experiment="training-1",
-            strategy={"type": "threshold", "params": {"threshold": 0.5}},
+        selection = TrainingDatasetSelection(
+            feature_group="daily_basic_selected_v1",
+            label_group="daily_close_return_rank_d1/v1",
         )
     """
 
-    mode: BacktestMode
+    model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
+    feature_group: FeatureGroupName
+    label_group: LabelGroupName
+
+    @model_validator(mode="after")
+    def _require_compatible_groups(self) -> Self:
+        preopen = self.feature_group.startswith("previous_day_")
+        if preopen or self.label_group.startswith("next_day_high_"):
+            if preopen != self.label_group.startswith("next_day_high_"):
+                raise ValueError("feature_group and label_group must use the same sample grid")
+            return self
+        if (self.feature_group == "l2_stock_1430_all_v1") != (
+            self.label_group == "l2_stock_1430_t1_vwap_rank/v1"
+        ):
+            raise ValueError("feature_group and label_group must use the same sample grid")
+        return self
+
+
+class TrainingSubmission(BaseModel):
+    """Request one model fit and optional evaluation over a closed date range.
+
+    Example:
+        submission = TrainingSubmission(
+            train_range=TrainingDateRange(start="2026-07-01", end="2026-07-31"),
+            model="sgd_regression", dataset=dataset_selection,
+        )
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
+
+    train_range: TrainingDateRange
+    model: TrainingModelName
+    dataset: TrainingDatasetSelection
+    eval_range: TrainingDateRange | None = None
+    eval_gap_sessions: int = Field(default=0, ge=0)
+    validation_sessions: int = Field(default=0, ge=0)
+    kind: Literal["train"] = "train"
+
+    @model_validator(mode="after")
+    def _require_training_choices(self) -> Self:
+        classifier = self.model in {"logistic_regression", "hist_gradient_boosting_classifier"}
+        if classifier != (self.dataset.label_group == "next_day_high_top_decile/v1"):
+            raise ValueError("classifier models require next_day_high_top_decile/v1; regressors require rank labels")
+        return self
+
+    @property
+    def start(self) -> str:
+        """Return the first selected training or evaluation date for the range label.
+
+        Example:
+            first_date = submission.start
+        """
+        return min(self.train_range.start, self.eval_range.start) if self.eval_range is not None else self.train_range.start
+
+    @property
+    def end(self) -> str:
+        """Return the last selected training or evaluation date for the range label.
+
+        Example:
+            last_date = submission.end
+        """
+        return max(self.train_range.end, self.eval_range.end) if self.eval_range is not None else self.train_range.end
+
+
+class ModelSignalInput(BaseModel):
+    """Load one delivered model; its adjacent training record owns its metadata.
+
+    Example:
+        signal = ModelSignalInput(type="model", model_ref="/data/model.joblib")
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    type: Literal["model"]
+    model_ref: Path
+
+    @field_validator("model_ref")
+    @classmethod
+    def _validate_ref(cls, value: Path) -> Path:
+        if not value.is_absolute():
+            raise ValueError("model_ref must be an absolute file path")
+        return value
+
+
+class RecordedSignalInput(BaseModel):
+    """Consume fixed prediction records with their recorded model identities.
+
+    Example:
+        signal = RecordedSignalInput(type="recorded", prediction_refs=("/data/prediction.parquet",))
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    type: Literal["recorded"]
+    prediction_refs: tuple[Path, ...]
+
+    @model_validator(mode="after")
+    def _validate_refs(self) -> Self:
+        if any(not ref.is_absolute() for ref in self.prediction_refs):
+            raise ValueError("prediction_refs must be absolute file paths")
+        return self
+
+
+SignalInput: TypeAlias = Annotated[ModelSignalInput | RecordedSignalInput, Field(discriminator="type")]
+
+
+class SignalEvalSubmission(BaseModel):
+    """Evaluate prediction quality and account returns with fills at submitted quotes.
+
+    Example:
+        submission = SignalEvalSubmission(mode="signal_eval", start="2026-07-03",
+            end="2026-07-03", signal=recorded_signal, min_listing_calendar_days=120,
+            strategy=strategy, initial_account=account, execution=execution)
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    mode: Literal[BacktestMode.SIGNAL_EVAL]
     start: str
     end: str
-    model_experiment: str
+    signal: SignalInput
+    min_listing_calendar_days: int = Field(ge=0, strict=True)
     strategy: StrategyConfig
+    initial_account: InitialAccount
+    execution: FakeExecutionConfig
     kind: Literal["backtest"] = "backtest"
 
+    @model_validator(mode="after")
+    def _validate_signal(self) -> Self:
+        _require_range(self.start, self.end)
+        _require_strategy_order_inputs(self.strategy)
+        if self.execution.fill.type != "quoted":
+            raise ValueError("signal_eval requires execution.fill.type=quoted")
+        if self.execution.risk_check_ts_us:
+            raise ValueError("signal_eval does not run risk checks")
+        if self.initial_account.ts_us >= self.execution.end_ts_us:
+            raise ValueError("initial account must precede simulation end")
+        return self
+
+
+class RiskRuleEvalSubmission(BaseModel):
+    """Evaluate declared risk controls on one strategy and account replay.
+
+    Example:
+        submission = RiskRuleEvalSubmission(mode="risk_rule_eval", start="2026-07-03",
+            end="2026-07-03", signal=signal, min_listing_calendar_days=120,
+            strategy=strategy, initial_account=account, execution=execution, risk=risk)
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    mode: Literal[BacktestMode.RISK_RULE_EVAL]
+    start: str
+    end: str
+    signal: SignalInput
+    min_listing_calendar_days: int = Field(ge=0, strict=True)
+    strategy: StrategyConfig
+    initial_account: InitialAccount
+    execution: FakeExecutionConfig
+    risk: RiskConfig
+    kind: Literal["backtest"] = "backtest"
+
+    @model_validator(mode="after")
+    def _validate_scenario(self) -> Self:
+        _require_range(self.start, self.end)
+        _require_strategy_order_inputs(self.strategy)
+        if self.initial_account.ts_us >= self.execution.end_ts_us:
+            raise ValueError("initial account must precede simulation end")
+        return self
+
+
+class ExecutionEvalSubmission(BaseModel):
+    """Replay frozen order and cancellation commands through the price model.
+
+    Example:
+        submission = ExecutionEvalSubmission(mode="execution_eval", start="2026-07-03",
+            end="2026-07-03", order_refs=("/data/commands.json",), initial_account=account, execution=execution)
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    mode: Literal[BacktestMode.EXECUTION_EVAL]
+    start: str
+    end: str
+    order_refs: tuple[Path, ...]
+    initial_account: InitialAccount
+    execution: FakeExecutionConfig
+    kind: Literal["backtest"] = "backtest"
+
+    @model_validator(mode="after")
+    def _validate_execution(self) -> Self:
+        _require_range(self.start, self.end)
+        if any(not ref.is_absolute() for ref in self.order_refs):
+            raise ValueError("order_refs must be absolute file paths")
+        if self.execution.fill.type != "limit_price":
+            raise ValueError("execution_eval requires execution.fill.type=limit_price")
+        if self.execution.risk_check_ts_us:
+            raise ValueError("execution_eval does not run risk checks")
+        if self.initial_account.ts_us >= self.execution.end_ts_us:
+            raise ValueError("initial account must precede simulation end")
+        return self
+
+
+class StrategyEvalSubmission(BaseModel):
+    """Run a strategy with explicitly selected fills and no business risk.
+
+    Example:
+        submission = StrategyEvalSubmission(mode="strategy_eval", start="2026-07-03",
+            end="2026-07-03", signal=signal, min_listing_calendar_days=120,
+            strategy=strategy, initial_account=account, execution=execution)
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    mode: Literal[BacktestMode.STRATEGY_EVAL]
+    start: str
+    end: str
+    signal: SignalInput
+    min_listing_calendar_days: int = Field(ge=0, strict=True)
+    strategy: StrategyConfig
+    initial_account: InitialAccount
+    execution: FakeExecutionConfig
+    kind: Literal["backtest"] = "backtest"
+
+    @model_validator(mode="after")
+    def _validate_strategy(self) -> Self:
+        _require_range(self.start, self.end)
+        _require_strategy_order_inputs(self.strategy)
+        if self.execution.risk_check_ts_us:
+            raise ValueError("strategy_eval does not run risk checks")
+        if self.initial_account.ts_us >= self.execution.end_ts_us:
+            raise ValueError("initial account must precede simulation end")
+        return self
+
+
+class FullBacktestSubmission(BaseModel):
+    """Run signal, strategy, explicit risk and price-model execution in one account.
+
+    Example:
+        submission = FullBacktestSubmission(mode="full_backtest", start="2026-07-03",
+            end="2026-07-03", signal=signal, min_listing_calendar_days=120, strategy=strategy, risk=risk,
+            initial_account=account, execution=execution)
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    mode: Literal[BacktestMode.FULL_BACKTEST]
+    start: str
+    end: str
+    signal: SignalInput
+    min_listing_calendar_days: int = Field(ge=0, strict=True)
+    strategy: StrategyConfig
+    initial_account: InitialAccount
+    risk: RiskConfig
+    execution: FakeExecutionConfig
+    kind: Literal["backtest"] = "backtest"
+
+    @model_validator(mode="after")
+    def _validate_full(self) -> Self:
+        _require_range(self.start, self.end)
+        if self.execution.fill.type != "limit_price":
+            raise ValueError("full_backtest requires execution.fill.type=limit_price")
+        _require_strategy_order_inputs(self.strategy)
+        if self.initial_account.ts_us >= self.execution.end_ts_us:
+            raise ValueError("initial account must precede simulation end")
+        return self
+
+
+def _require_strategy_order_inputs(strategy: StrategyConfig) -> None:
+    if strategy.order_window_minutes is None:
+        raise ValueError("strategy requires order_window_minutes")
+    if strategy.quote is None:
+        raise ValueError("quoted and limit_price fills require strategy.quote")
+
+
+BacktestSubmission: TypeAlias = Annotated[
+    SignalEvalSubmission | RiskRuleEvalSubmission | ExecutionEvalSubmission
+    | StrategyEvalSubmission | FullBacktestSubmission,
+    Field(discriminator="mode"),
+]
 
 JobSubmission: TypeAlias = DataSubmission | TrainingSubmission | BacktestSubmission
 
@@ -204,25 +461,6 @@ def create_data_submission(
     normalized_start, normalized_end = _require_range(start, end)
     return DataSubmission(
         kind=cast(DataJobKind, kind),
-        start=normalized_start,
-        end=normalized_end,
-    )
-
-
-def create_standard_fact_bootstrap_submission(
-    start: object,
-    end: object,
-) -> StandardFactBootstrapSubmission:
-    """Construct one usable CLI-only Standard fact cold-start submission.
-
-    Example:
-        submission = create_standard_fact_bootstrap_submission(
-            "2019-01-01",
-            "2019-04-03",
-        )
-    """
-    normalized_start, normalized_end = _require_range(start, end)
-    return StandardFactBootstrapSubmission(
         start=normalized_start,
         end=normalized_end,
     )
@@ -313,64 +551,55 @@ def create_stock_1430_fusion_backfill_submission(
 
 
 def create_training_submission(
-    start: object,
-    end: object,
+    *, train_range: object, model: object, dataset: object, eval_range: object = None,
+    eval_gap_sessions: object = 0, validation_sessions: object = 0,
 ) -> TrainingSubmission:
-    """Construct one usable full-range training submission.
+    """Validate the business choices shared by CLI and HTTP.
 
     Example:
-        submission = create_training_submission("2026-07-01", "2026-07-20")
-    """
-    normalized_start, normalized_end = _require_range(start, end)
-    return TrainingSubmission(start=normalized_start, end=normalized_end)
-
-
-def create_backtest_submission(
-    *,
-    mode: object,
-    start: object,
-    end: object,
-    model_experiment: object,
-    strategy: object,
-) -> BacktestSubmission:
-    """Construct one usable full-range backtest submission.
-
-    Example:
-        submission = create_backtest_submission(
-            mode="full_backtest",
-            start="2026-07-01",
-            end="2026-07-20",
-            model_experiment="training-1",
-            strategy={"type": "threshold", "params": {"threshold": 0.5}},
+        submission = create_training_submission(
+            train_range={"start": "2026-07-01", "end": "2026-07-31"},
+            model="sgd_regression", dataset={
+                "feature_group": "daily_basic_selected_v1",
+                "label_group": "daily_close_return_rank_d1/v1",
+            },
         )
     """
-    normalized_start, normalized_end = _require_range(start, end)
-
     try:
-        normalized_mode = BacktestMode(mode)
-    except (TypeError, ValueError) as exc:
-        raise InvalidJobRequest("is invalid", field="mode") from exc
-
-    normalized_model_experiment = _require_safe_basename(
-        model_experiment,
-        field="model_experiment",
-    )
-
-    try:
-        normalized_strategy = TypeAdapter(StrategyConfig).validate_python(strategy)
+        return TrainingSubmission.model_validate({
+            "train_range": train_range, "eval_range": eval_range,
+            "model": model, "dataset": dataset,
+            "eval_gap_sessions": eval_gap_sessions,
+            "validation_sessions": validation_sessions,
+        })
     except ValidationError as exc:
-        raise InvalidJobRequest(
-            "must match a supported strategy schema",
-            field="strategy",
-        ) from exc
+        error = exc.errors(include_url=False, include_input=False)[0]
+        field = ".".join(str(part) for part in error["loc"])
+        raise InvalidJobRequest(error["msg"], field=field) from exc
 
-    return BacktestSubmission(
-        mode=normalized_mode,
-        start=normalized_start,
-        end=normalized_end,
-        model_experiment=normalized_model_experiment,
-        strategy=normalized_strategy,
-    )
+
+def create_backtest_submission(*, mode: object, **fields: object) -> BacktestSubmission:
+    """Validate only the fields belonging to the explicitly selected task.
+
+    Example:
+        submission = create_backtest_submission(mode="signal_eval", start="2026-07-03",
+            end="2026-07-03", signal={"type": "recorded", "prediction_refs": []},
+            min_listing_calendar_days=120, strategy=strategy, initial_account=account, execution=execution)
+    """
+    try:
+        return TypeAdapter(BacktestSubmission).validate_python({"mode": mode, **fields})
+    except ValidationError as exc:
+        error = exc.errors(include_url=False, include_input=False)[0]
+        location = error["loc"]
+        # Discriminated-union tags are type names, not request keys.
+        parts = tuple(part for part in location if part not in {
+            *(mode.value for mode in BacktestMode), "model", "recorded",
+            "threshold", "topk_hysteresis", "fixed_holding",
+            "max_single_name", "max_gross_exposure", "max_drawdown",
+            "quoted", "limit_price",
+        })
+        field = ".".join(str(part) for part in parts) or ("mode" if not location else "request")
+        raise InvalidJobRequest(error["msg"], field=field) from exc
 
 
 def parse_job_request(payload: object) -> list[JobSubmission]:
@@ -408,23 +637,18 @@ def parse_job_request(payload: object) -> list[JobSubmission]:
         ]
     if kind == "train":
         _reject_unknown_fields(request_payload, _TRAINING_FIELDS)
-        return [
-            create_training_submission(
-                request_payload.get("start"),
-                request_payload.get("end"),
-            )
-        ]
+        return [create_training_submission(
+            train_range=request_payload.get("train_range"),
+            eval_range=request_payload.get("eval_range"),
+            eval_gap_sessions=request_payload.get("eval_gap_sessions", 0),
+            validation_sessions=request_payload.get("validation_sessions", 0),
+            model=request_payload.get("model"), dataset=request_payload.get("dataset"),
+        )]
 
-    _reject_unknown_fields(request_payload, _BACKTEST_FIELDS)
-    return [
-        create_backtest_submission(
-            mode=request_payload.get("mode"),
-            start=request_payload.get("start"),
-            end=request_payload.get("end"),
-            model_experiment=request_payload.get("model_experiment"),
-            strategy=request_payload.get("strategy"),
-        )
-    ]
+    return [create_backtest_submission(
+        mode=request_payload["mode"] if "mode" in request_payload else None,
+        **{key: value for key, value in request_payload.items() if key != "mode"},
+    )]
 
 
 def build_cli_command(
@@ -463,36 +687,32 @@ def build_cli_command(
     elif isinstance(submission, TrainingSubmission):
         command.extend(
             [
-                "--start",
-                submission.start,
-                "--end",
-                submission.end,
+                "--train-start", submission.train_range.start,
+                "--train-end", submission.train_range.end,
+                "--model", submission.model,
+                "--feature-group", submission.dataset.feature_group,
+                "--label-group", submission.dataset.label_group,
                 "--experiment-id",
                 job_id,
             ]
         )
+        if submission.eval_range is not None:
+            command.extend([
+                "--eval-start", submission.eval_range.start,
+                "--eval-end", submission.eval_range.end,
+            ])
+        if submission.eval_gap_sessions:
+            command.extend(["--eval-gap-sessions", str(submission.eval_gap_sessions)])
+        if submission.validation_sessions:
+            command.extend(["--validation-sessions", str(submission.validation_sessions)])
     else:
-        command.extend(
-            [
-                "--mode",
-                submission.mode.value,
-                "--start",
-                submission.start,
-                "--end",
-                submission.end,
-                "--experiment-id",
-                job_id,
-                "--model-experiment",
-                submission.model_experiment,
-                "--strategy-json",
-                json.dumps(
-                    submission.strategy.model_dump(mode="json"),
-                    ensure_ascii=False,
-                    sort_keys=True,
-                    separators=(",", ":"),
-                ),
-            ]
-        )
+        payload = submission.model_dump(mode="json", exclude_none=True)
+        payload.pop("kind")
+        payload.pop("mode")
+        command.extend([
+            "--mode", submission.mode.value, "--experiment-id", job_id,
+            "--input-json", json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+        ])
     return tuple(command)
 
 

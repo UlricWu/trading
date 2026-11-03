@@ -3,7 +3,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from datetime import datetime, timezone
 from functools import partial
+from pathlib import Path
 from typing import cast
 
 from src import logs
@@ -19,8 +22,13 @@ from src.data_system.normalize.tushare import normalize_tushare
 from src.data_system.pipeline import DataPipeline
 from src.data_system.steps.calendar_materialize import CalendarMaterializeStep
 from src.data_system.steps.fact_materialize import FactMaterializeStep
+from src.data_system.steps.collect_publications import CollectPublicationsStep
+from src.data_system.steps.materialize_announcement_facts import MaterializeAnnouncementFactsStep
+from src.data_system.steps.refresh_corporate_actions import RefreshCorporateActionsStep
+from src.data_system.steps.resolve_security_status import ResolveSecurityStatusStep
 from src.data_system.steps.feature_build import FeatureBuildStep
 from src.data_system.steps.label_build import LabelBuildStep
+from src.data_system.steps.previous_day_materialize import PreviousDayMaterializeStep
 from src.data_system.steps.level2_fact_materialize import Level2FactMaterializeStep
 from src.data_system.steps.level2_minute_build import Level2MinuteBuildStep
 from src.data_system.steps.stock_1430_daily_l2_materialize import (
@@ -34,9 +42,9 @@ from src.jobs.requests import (
     DataSubmission,
     FeatureBackfillSubmission,
     Level2MinuteBackfillSubmission,
-    StandardFactBootstrapSubmission,
     Stock1430BackfillSubmission,
     Stock1430FusionBackfillSubmission,
+    TrainingDateRange,
 )
 from src.observability.instrumentation import Instrumentation
 from src.pipeline import PipelineStep
@@ -46,6 +54,21 @@ from src.workflows import PROCESSED_VERSION, _get_broker
 OFFLINE_STANDARD = "offline_standard"
 OFFLINE_LEVEL2 = "offline_level2"
 _LEVEL2_MINUTE_SYMBOL_BATCH_SIZE = 16
+
+
+def run_previous_day_backfill(*, path_manager: PathManager, interval: TrainingDateRange) -> None:
+    """Prepare qualified preopen features and high labels without network access.
+
+    Example:
+        run_previous_day_backfill(path_manager=pm, interval=TrainingDateRange(start="2026-07-01", end="2026-07-31"))
+    """
+    access = Access(pm=path_manager, processed_version=PROCESSED_VERSION)
+    dates = tuple(access.trade_dates(start_date=interval.start, end_date=interval.end))
+    if not dates:
+        raise ValueError("preopen backfill interval contains no trading sessions")
+    DataPipeline(steps=(PreviousDayMaterializeStep(pm=path_manager, access=access),),
+        instrumentation=Instrumentation(f"data-previous-day-backfill_{interval.start}_{interval.end}"),
+    ).run(DataContext(start=interval.start, end=interval.end, trade_dates=dates))
 
 
 def _require_tushare_source_names() -> tuple[str, ...]:
@@ -77,8 +100,10 @@ def run_offline_data(
     app_config: AppConfig,
     path_manager: PathManager,
     submission: DataSubmission,
+    review_refs: Sequence[Path] = (),
+    identity_refs: Sequence[Path] = (),
 ) -> None:
-    """Materialize facts and their derived partitions over an arrival-date range.
+    """Materialize standard facts, public announcements and ready derivatives over one range.
 
     Example:
         run_offline_data(
@@ -158,6 +183,13 @@ def run_offline_data(
                 normalize_operation=normalize_tushare,
                 processed_version=PROCESSED_VERSION,
             ),
+            CollectPublicationsStep(pm=path_manager, clock=lambda: datetime.now(timezone.utc)),
+            MaterializeAnnouncementFactsStep(pm=path_manager, clock=lambda: datetime.now(timezone.utc)),
+            *((RefreshCorporateActionsStep(pm=path_manager, clock=lambda: datetime.now(timezone.utc),
+                review_refs=tuple(review_refs), identity_refs=tuple(identity_refs)),)
+              if "dividend" in fact_sources else ()),
+            *((ResolveSecurityStatusStep(pm=path_manager),)
+              if {"stock_basic", "suspend_d"} <= fact_sources.keys() else ()),
             FeatureBuildStep(
                 pm=path_manager,
                 access=access,
@@ -204,64 +236,6 @@ def run_offline_data(
     pipeline.run(DataContext(start=submission.start, end=submission.end))
     logs.info(
         f"✅ workflow; kind={submission.kind} start={submission.start} "
-        f"end={submission.end}"
-    )
-
-
-def run_standard_fact_bootstrap(
-    *,
-    app_config: AppConfig,
-    path_manager: PathManager,
-    submission: StandardFactBootstrapSubmission,
-) -> None:
-    """Materialize only the explicit Standard calendar and fact range.
-
-    Example:
-        run_standard_fact_bootstrap(
-            app_config=app_config,
-            path_manager=path_manager,
-            submission=StandardFactBootstrapSubmission(
-                start="2019-01-01",
-                end="2019-04-03",
-            ),
-        )
-    """
-    fact_sources = _standard_fact_sources()
-    access = Access(pm=path_manager, processed_version=PROCESSED_VERSION)
-    get_broker = partial(
-        _get_broker,
-        app_config=app_config,
-        broker_class=TushareBroker,
-        adapter_cache={},
-    )
-    steps: tuple[PipelineStep[DataContext], ...] = (
-        CalendarMaterializeStep(
-            path_manager=path_manager,
-            get_broker=get_broker,
-            access=access,
-            processed_version=PROCESSED_VERSION,
-        ),
-        FactMaterializeStep(
-            path_manager=path_manager,
-            sources=fact_sources,
-            get_broker=get_broker,
-            normalize_operation=normalize_tushare,
-            processed_version=PROCESSED_VERSION,
-        ),
-    )
-    pipeline = DataPipeline(
-        steps=steps,
-        instrumentation=Instrumentation(
-            f"data-standard-bootstrap_{submission.start}_{submission.end}"
-        ),
-    )
-    logs.info(
-        f"▶️ workflow; kind=data-standard-bootstrap start={submission.start} "
-        f"end={submission.end}"
-    )
-    pipeline.run(DataContext(start=submission.start, end=submission.end))
-    logs.info(
-        f"✅ workflow; kind=data-standard-bootstrap start={submission.start} "
         f"end={submission.end}"
     )
 

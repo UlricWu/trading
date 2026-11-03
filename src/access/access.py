@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+import json
 from pathlib import Path
 from typing import ClassVar, Literal
 
@@ -17,6 +18,10 @@ from src.data_system.builders.level2_stock_trade_1m import (
     STOCK_TRADE_1M_KEY,
     STOCK_TRADE_1M_SCHEMA,
 )
+from src.data_system.normalize.level2_security import SECURITY_TYPE_RANGES, SecurityType
+from src.data_system.corporate_actions import CorporateActionResolution
+from src.data_system.announcement_facts import AnnouncementFacts, assemble_announcement_events
+from src.data_system.security_status import SecurityStatus
 from src.utils import table_ops
 from src.utils.datetime_utils import DateTimeUtils
 from src.utils.path import PathManager
@@ -225,6 +230,31 @@ class Access:
             f"no later formal trade date is representable: trade_date={validated_date}"
         )
 
+    def historical_stock_listings(self, *, trade_date: str) -> dict[str, str | None]:
+        """Return historical SH/SZ members and their known listing dates.
+
+        None means unknown, not unlisted. Membership includes stocks without daily
+        bars and suspended or ST stocks; the snapshot does not prove pre-open availability.
+
+        Example:
+            listings = access.historical_stock_listings(trade_date="2026-09-01")
+            listed_on = listings["600000"]
+        """
+        validated_date = DateTimeUtils.require_system_date(trade_date, field_name="trade_date")
+        stock_basic = self._read_processed_frame(trade_date=validated_date, dataset_name="stock_basic")
+        _unique_data_symbols(stock_basic, dataset_name="stock_basic")
+        table_ops.require_columns(stock_basic, ("list_date",), who="stock_basic")
+        stock_ranges = tuple(rule for rule in SECURITY_TYPE_RANGES if rule.security_type == SecurityType.STOCK)
+        return {
+            symbol: None if pd.isna(list_date) else DateTimeUtils.require_system_date(
+                list_date, field_name=f"stock_basic[{symbol}].list_date",
+            )
+            for symbol, list_date in stock_basic.loc[:, ["symbol", "list_date"]].sort_values("symbol").itertuples(
+                index=False, name=None,
+            )
+            if any(f"{rule.start:06d}" <= symbol <= f"{rule.end:06d}" for rule in stock_ranges)
+        }
+
     def universe(
         self,
         *,
@@ -343,7 +373,7 @@ class Access:
         trade_date: str,
         symbols: Sequence[str] | None = None,
     ) -> pd.DataFrame:
-        """Return formal daily bars, optionally in requested symbol order.
+        """Return daily bars in yuan, shares and fractional rates, in requested order.
 
         Example:
             all_bars = access.daily_bars(trade_date="2026-05-06")
@@ -366,6 +396,32 @@ class Access:
             required_columns=("symbol", "trade_date"),
             symbols=requested_symbols,
         )
+
+    def suspensions(self, *, trade_date: str) -> pd.DataFrame:
+        """Return daily suspension/resumption events without collapsing their order or types.
+
+        An empty formal object is an empty event set; a missing object is an error.
+
+        Example:
+            events = access.suspensions(trade_date="2026-09-02")
+        """
+        day = DateTimeUtils.require_system_date(trade_date, field_name="trade_date")
+        frame = self._read_processed_frame(trade_date=day, dataset_name="suspend_d")
+        table_ops.require_columns(frame, ("symbol",), who="suspend_d")
+        columns = ("symbol", "trade_date", "suspend_type", "suspend_timing")
+        if frame.empty:
+            return pd.DataFrame({column: pd.Series(dtype="str") for column in columns})
+        table_ops.require_columns(frame, columns, who="suspend_d")
+        table_ops.require_nonempty_strings(frame, ("symbol", "trade_date", "suspend_type"), who="suspend_d")
+        _validated_symbols(frame["symbol"].unique().tolist())
+        if not frame["trade_date"].eq(day).all():
+            raise ValueError(f"suspend_d.trade_date must equal requested date: trade_date={day}")
+        if not frame["suspend_type"].isin(("S", "R")).all():
+            raise ValueError("suspend_d.suspend_type must be S or R")
+        timings = frame.loc[frame["suspend_timing"].notna(), "suspend_timing"]
+        if not timings.map(lambda value: isinstance(value, str) and bool(value)).all():
+            raise ValueError("suspend_d.suspend_timing must be a nonempty string or null")
+        return frame.loc[:, columns].copy()
 
     def adjustment_factors(
         self,
@@ -396,6 +452,184 @@ class Access:
             symbols=requested_symbols,
         )
         return frame.loc[:, list(columns)].copy()
+
+    def dividends(self, *, record_date: str) -> pd.DataFrame | None:
+        """Read distributions by registration date; None means uncollected coverage.
+
+        A committed empty table proves no returned records. Broken committed objects
+        still fail instead of being converted into missing coverage.
+
+        Example:
+            distributions = access.dividends(record_date="2026-09-02")
+        """
+        day = DateTimeUtils.require_system_date(record_date, field_name="record_date")
+        paths = self._pm.processed_object(dataset_name="dividend", version=self._processed_version, trade_date=day)
+        loaded = meta.find(pm=self._pm, meta_path=paths.meta_path, expected_payload_path=paths.payload_path)
+        if loaded is None:
+            return None
+        with pq.ParquetFile(loaded.payload_path) as parquet:
+            frame = parquet.read().to_pandas()
+        columns = ("ts_code", "symbol", "end_date", "ann_date", "div_proc", "imp_ann_date", "record_date", "ex_date",
+                   "pay_date", "div_listdate", "cash_div_tax", "stk_div", "base_date", "base_share")
+        table_ops.require_columns(frame, columns, who="dividend")
+        if not frame.empty:
+            _validated_symbols(frame["symbol"].unique().tolist())
+            if not frame["record_date"].eq(day).all():
+                raise ValueError(f"dividend.record_date must equal requested date: {day}")
+        return frame.loc[:, columns].copy()
+
+    def announcement_facts(
+        self, *, publication_date: str, as_of_ts_us: int, observed_by_ts_us: int | None = None,
+    ) -> tuple[AnnouncementFacts, ...] | None:
+        """Read only facts public by the decision instant; optionally constrain collection latency.
+
+        None means missing coverage, while an empty tuple is a committed partition
+        with no visible corporate-action observations.
+
+        Example:
+            facts = access.announcement_facts(publication_date="2021-12-10", as_of_ts_us=decision_us)
+        """
+        day = DateTimeUtils.require_system_date(publication_date, field_name="publication_date")
+        paths = self._pm.processed_object(dataset_name="announcement_facts", version="v1", trade_date=day)
+        loaded = meta.find(pm=self._pm, meta_path=paths.meta_path, expected_payload_path=paths.payload_path)
+        if loaded is None:
+            return None
+        with pq.ParquetFile(loaded.payload_path) as parquet:
+            table = parquet.read()
+        rows = tuple(AnnouncementFacts.model_validate_json(value) for value in table["facts"].to_pylist())
+        identities = set()
+        for stored, row in zip(table.to_pylist(), rows, strict=True):
+            identity = (row.publication.source, row.publication.announcement_id)
+            if identity in identities or row.publication.published_date.isoformat() != day or any((
+                stored["event_id"] != row.event_id, stored["symbol"] != row.publication.symbol,
+                stored["available_ts_us"] != row.available_ts_us, stored["observed_at"] != row.observed_at,
+            )):
+                raise ValueError(f"announcement identity does not match partition: {day}/{identity}")
+            identities.add(identity)
+        return tuple(row for row in rows if row.available_ts_us <= as_of_ts_us and
+            (observed_by_ts_us is None or row.observed_at.timestamp() * 1_000_000 <= observed_by_ts_us))
+
+    def announcement_history(
+        self, *, as_of_ts_us: int, symbols: Sequence[str] | None = None, observed_by_ts_us: int | None = None,
+    ) -> tuple[AnnouncementFacts, ...]:
+        """Read the public observation stream before event assembly or account projection.
+
+        This returns available observations, not a claim of complete historical source
+        coverage. Use announcement_facts for explicit per-day coverage checks.
+
+        Example:
+            facts = access.announcement_history(as_of_ts_us=decision_us, symbols=("600518",))
+        """
+        selected = None if symbols is None else set(_validated_symbols(symbols))
+        end = DateTimeUtils.to_local(DateTimeUtils.from_utc_epoch_us(as_of_ts_us)).date().isoformat()
+        rows = []
+        root = self._pm.processed_version_dir(dataset_name="announcement_facts", version="v1")
+        for path in sorted(root.glob("trade_date=*/meta.json")):
+            day = path.parent.name.removeprefix("trade_date=")
+            if day <= end:
+                facts = self.announcement_facts(publication_date=day, as_of_ts_us=as_of_ts_us,
+                    observed_by_ts_us=observed_by_ts_us)
+                rows.extend(row for row in facts if selected is None or row.publication.symbol in selected)
+        return tuple(rows)
+
+    def announcement_events(
+        self, *, as_of_ts_us: int, symbols: Sequence[str] | None = None, observed_by_ts_us: int | None = None,
+    ) -> tuple[AnnouncementFacts, ...]:
+        """Return cumulative event facts using only the observations visible at this instant.
+
+        Example:
+            events = access.announcement_events(as_of_ts_us=decision_us, symbols=("600518",))
+        """
+        return assemble_announcement_events(self.announcement_history(as_of_ts_us=as_of_ts_us,
+            symbols=symbols, observed_by_ts_us=observed_by_ts_us))
+
+    def corporate_actions(self, *, record_date: str) -> tuple[CorporateActionResolution, ...] | None:
+        """Read source-based or reviewed events and issues; None means unprepared coverage.
+
+        Example:
+            actions = access.corporate_actions(record_date="2024-07-23")
+        """
+        day = DateTimeUtils.require_system_date(record_date, field_name="record_date")
+        paths = self._pm.processed_object(dataset_name="corporate_actions", version="v1", trade_date=day)
+        loaded = meta.find(pm=self._pm, meta_path=paths.meta_path, expected_payload_path=paths.payload_path)
+        if loaded is None:
+            return None
+        with pq.ParquetFile(loaded.payload_path) as parquet:
+            frame = parquet.read().to_pandas()
+        table_ops.require_columns(frame, ("symbol", "record_date", "resolution"), who="corporate_actions")
+        resolutions = tuple(CorporateActionResolution.model_validate_json(value) for value in frame["resolution"])
+        for row, resolution in zip(frame.itertuples(index=False), resolutions, strict=True):
+            if row.symbol != resolution.symbol or row.record_date != day or resolution.record_date.isoformat() != day:
+                raise ValueError(f"corporate-action identity does not match partition: {day}")
+        ids = [item.candidate_id for item in resolutions]
+        if len(set(ids)) != len(ids):
+            raise ValueError(f"corporate-action identities must be unique: {day}")
+        by_candidate = {item.candidate_id: item for item in resolutions}
+        for item in resolutions:
+            if item.source_record is not None and any(
+                other.candidate_id != item.candidate_id and other.symbol == item.symbol for other in resolutions
+            ):
+                raise ValueError(f"corporate-action source event has unassociated registration candidates: {day}")
+            if item.review is None:
+                continue
+            review = item.review
+            for candidate in (review.candidate_id, *review.related_sources):
+                related = by_candidate.get(candidate)
+                if related is None or related.review != review or related.symbol != item.symbol:
+                    raise ValueError(f"corporate-action source association is incomplete or inconsistent: {day}")
+        actions = {item.action_id: (item.review, item.source_record) for item in resolutions if item.action_id is not None}
+        if any(item.action_id is not None and actions[item.action_id] != (item.review, item.source_record) for item in resolutions):
+            raise ValueError(f"corporate-action identities must be unique: {day}")
+        return resolutions
+
+    def security_status(self, *, trade_date: str) -> tuple[SecurityStatus, ...]:
+        """Read evidence-bound daily supplements; absent supplements leave source states unknown.
+
+        Example:
+            statuses = access.security_status(trade_date="2026-09-15")
+        """
+        day = DateTimeUtils.require_system_date(trade_date, field_name="trade_date")
+        paths = self._pm.processed_object(dataset_name="security_status", version="v1", trade_date=day)
+        loaded = meta.find(pm=self._pm, meta_path=paths.meta_path, expected_payload_path=paths.payload_path)
+        if loaded is None:
+            return ()
+        with pq.ParquetFile(loaded.payload_path) as parquet:
+            inputs = json.loads(parquet.schema_arrow.metadata[b"security_status_inputs"])
+            rows = parquet.read().to_pandas()
+        review_path = self._pm.raw_payload(broker="announcements", source_name="security_status_reviews",
+            trade_date=day, payload_file="reviews.json")
+        references = {"reviews": review_path, **{name: self._pm.processed_object(
+            dataset_name=name, version="v1", trade_date=day).payload_path for name in ("stock_basic", "suspend_d")}}
+        if inputs != {name: str(path.relative_to(self._pm.storage_root)) for name, path in references.items()}:
+            raise ValueError(f"security status input identities differ from their source or day: {day}")
+        for path in references.values():
+            meta.require(pm=self._pm, meta_path=path.parent / "meta.json", expected_payload_path=path)
+        table_ops.require_columns(rows, ("symbol", "trade_date", "resolution"), who="security_status")
+        statuses = tuple(SecurityStatus.model_validate_json(value) for value in rows["resolution"])
+        for row, status in zip(rows.itertuples(index=False), statuses, strict=True):
+            if row.symbol != status.symbol or row.trade_date != day or status.trade_date.isoformat() != day:
+                raise ValueError(f"security status identity differs from partition: {day}")
+        if len({status.symbol for status in statuses}) != len(statuses):
+            raise ValueError(f"security status identities must be unique: {day}")
+        return statuses
+
+    def corporate_action_notices(self, *, trade_date: str) -> pd.DataFrame | None:
+        """Read supplied non-distribution notices without claiming comprehensive coverage.
+
+        Example:
+            notices = access.corporate_action_notices(trade_date="2026-09-15")
+        """
+        day = DateTimeUtils.require_system_date(trade_date, field_name="trade_date")
+        paths = self._pm.processed_object(dataset_name="corporate_action_notices",
+                                          version=self._processed_version, trade_date=day)
+        loaded = meta.find(pm=self._pm, meta_path=paths.meta_path, expected_payload_path=paths.payload_path)
+        if loaded is None:
+            return None
+        with pq.ParquetFile(loaded.payload_path) as parquet:
+            frame = parquet.read().to_pandas()
+        columns = ("action_id", "symbol", "available_ts_us", "effective_ts_us", "kind", "source_ref")
+        table_ops.require_columns(frame, columns, who="corporate_action_notices")
+        return frame.loc[:, columns].copy()
 
     def turnover_rates(
         self,
@@ -677,7 +911,9 @@ class Access:
             dataset_name=dataset_name,
         )
         with pq.ParquetFile(loaded.payload_path) as parquet_file:
-            return parquet_file.read().to_pandas()
+            return parquet_file.read().to_pandas(
+                types_mapper={pa.int64(): pd.ArrowDtype(pa.int64())}.get if dataset_name == "daily_bar" else None,
+            )
 
     def _read_daily_object(
         self,

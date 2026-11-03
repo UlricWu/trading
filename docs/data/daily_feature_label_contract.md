@@ -41,7 +41,11 @@ Producer 不接收 `PathManager`、processed version 或预读 table，不公开
 该 feature set 是收盘后 feature。分区 `T` 的行集合精确等于 `daily_bar(T)` 的 symbol 集合，
 因此在 `T` 日正式 daily bar、adjustment factor 和所需历史对象提交后可用。跨日价格统一使用
 以 `T` 为 as-of 的 qfq 价格。下文 `O/H/L/C` 表示该 qfq 价格；`V`、`A` 和 `R` 分别表示
-source-native `vol`、`amount` 和 `turnover_rate` 数值，producer 不做单位换算。
+processed 的 `vol`（股）、`amount`（元）和 `turnover_rate`（小数比例，1表示100%）数值，
+单位映射由[来源 owner](source_contract.md#tushare-processed-单位)拥有，producer 不重复换算。
+log(1+V) 与 log(1+A) 分别以1股和1元为参考量；金额均值为元，换手率均值为小数比例。
+因此来源单位调整会改变对数特征、金额及换手率均值，既有来源单位下的特征与模型输入
+不能直接复用，须按相同原始观察重建和验证。此调整不改变价格复权、时间窗口或标签收益公式。
 
 V1 builder 唯一拥有 `lookback_sessions=61`。构建目标分区 `T` 时，调用方必须通过 Access
 取得截至且包含 `T` 的最近 `lookback_sessions + 1` 个正式 session，并把按日期升序的完整

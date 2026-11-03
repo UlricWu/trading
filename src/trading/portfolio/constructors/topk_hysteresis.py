@@ -5,6 +5,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 import math
 
+from src.trading.core.time import US_PER_MINUTE
 from src.trading.portfolio.constructors.base import PortfolioConstructor
 from src.trading.portfolio.state import PortfolioState
 
@@ -21,6 +22,12 @@ class TopKHysteresisConstructor(PortfolioConstructor):
     - optionally keep_winners within the max_positions cap
 
     No institutional constraints here (T+1/limits/cash).
+
+    Example:
+        constructor = TopKHysteresisConstructor(
+            max_positions=2, entry_threshold=0.7, exit_threshold=0.3,
+        )
+        targets = constructor.targets(ts_us=0, scores={"600000": 0.8}, state=account)
     """
     max_positions: int
     entry_threshold: float
@@ -43,8 +50,12 @@ class TopKHysteresisConstructor(PortfolioConstructor):
         scores: Mapping[str, float],
         state: PortfolioState,
     ) -> dict[str, int]:
-        """Return hysteresis-aware targets for one monotonic timestamp."""
-        minute = int(ts_us) // 60_000_000
+        """Return hysteresis targets, retaining the last successful rebalance on failure.
+
+        Example:
+            targets = constructor.targets(ts_us=0, scores={"600000": 0.8}, state=account)
+        """
+        minute = int(ts_us) // US_PER_MINUTE
         if self._last_rebalance_minute is not None:
             if minute < self._last_rebalance_minute:
                 raise ValueError("ts_us must be monotonic across target calls")
@@ -56,8 +67,6 @@ class TopKHysteresisConstructor(PortfolioConstructor):
                 for symbol in scores:
                     cached.setdefault(str(symbol), 0)
                 return cached
-
-        self._last_rebalance_minute = minute
 
         score_map = {
             str(symbol): float(score)
@@ -77,7 +86,7 @@ class TopKHysteresisConstructor(PortfolioConstructor):
             held_winners = sorted(
                 (
                     (str(symbol), score_map[str(symbol)], int(pos_qty))
-                    for symbol, pos_qty in (state.positions or {}).items()
+                    for symbol, pos_qty in state.positions.items()
                     if int(pos_qty) > 0
                     and str(symbol) in score_map
                     and score_map[str(symbol)] > self.exit_threshold
@@ -99,9 +108,10 @@ class TopKHysteresisConstructor(PortfolioConstructor):
         targets: dict[str, int] = dict(selected)
         for symbol in score_map:
             targets.setdefault(symbol, 0)
-        for symbol, pos_qty in (state.positions or {}).items():
+        for symbol, pos_qty in state.positions.items():
             if int(pos_qty) > 0:
                 targets.setdefault(str(symbol), 0)
 
         self._last_targets = dict(targets)
+        self._last_rebalance_minute = minute
         return targets

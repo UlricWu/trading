@@ -1,75 +1,68 @@
 # filepath: src/trading/backtest/pipeline.py
-"""Schedule workflow-supplied Steps over daily-alpha backtest timings."""
-
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
+from time import monotonic
 from typing import cast
 
+from src import logs
 from src.observability.instrumentation import Instrumentation
 from src.pipeline import PipelineStep, run_steps
-from src.trading.backtest.context import BacktestContext, BacktestState
-from src.trading.backtest.timing import BacktestTiming
+from src.trading.backtest.clock import ReplayClock
+from src.trading.backtest.context import BacktestContext, BacktestInputs, TickState
+from src.trading.backtest.reporting.metrics import BacktestMetrics
 
 
 class BacktestPipeline:
-    """Run ordered Step tuples over an already resolved timing schedule.
+    """Execute startup, per-tick and result Steps within one measured replay.
 
     Example:
-        pipeline = BacktestPipeline(
-            timings=timings,
-            per_timing_steps=(signal, evaluate, portfolio, execute),
-            final_steps=(persist, report),
-            instrumentation=Instrumentation("backtest_2026-07_run-1"),
-        )
-        pipeline.run(BacktestState.initial(initial_cash=200_000))
+        pipeline = BacktestPipeline(startup_steps=startup, tick_steps=ticks,
+            result_steps=results, instrumentation=instrumentation)
+        result = pipeline.run(metrics=metrics)
     """
 
     def __init__(
-        self,
-        *,
-        timings: Sequence[BacktestTiming],
-        per_timing_steps: Sequence[PipelineStep[BacktestContext]],
-        final_steps: Sequence[PipelineStep[BacktestContext]],
-        instrumentation: Instrumentation,
+        self, *, startup_steps: Sequence[PipelineStep[BacktestContext]],
+        tick_steps: Sequence[PipelineStep[BacktestContext]],
+        result_steps: Sequence[PipelineStep[BacktestContext]],
+        instrumentation: Instrumentation, progress_clock: Callable[[], float] = monotonic,
     ) -> None:
-        """Preserve the workflow-supplied schedule and Step order.
+        """Own each ordered group without selecting, discovering or reordering Steps.
 
         Example:
-            pipeline = BacktestPipeline(
-                timings=timings,
-                per_timing_steps=(signal, evaluate, portfolio, execute),
-                final_steps=(persist, report),
-                instrumentation=Instrumentation("backtest_2026-07_run-1"),
-            )
+            pipeline = BacktestPipeline(startup_steps=startup, tick_steps=ticks,
+                result_steps=results, instrumentation=instrumentation, progress_clock=lambda: 0)
         """
-        self._timings = tuple(timings)
-        self._per_timing_steps = tuple(per_timing_steps)
-        self._final_steps = tuple(final_steps)
+        self._startup_steps = tuple(startup_steps)
+        self._tick_steps = tuple(tick_steps)
+        self._result_steps = tuple(result_steps)
         self._instrumentation = instrumentation
+        self._progress_clock = progress_clock
 
-    def run(self, state: BacktestState) -> None:
-        """Execute every timing and then the final Steps in supplied order.
+    def run(self, *, metrics: BacktestMetrics) -> BacktestContext:
+        """Create fresh run and tick state, preserving every Step's returned Context.
 
         Example:
-            pipeline.run(BacktestState.initial(initial_cash=200_000))
+            result = pipeline.run(metrics=metrics)
+            portfolio = result.metrics.portfolio
         """
-        if not self._timings:
-            raise ValueError("[BacktestWorkflow] backtest timings are required")
-
-        last_context: BacktestContext | None = None
+        context = BacktestContext(metrics=metrics)
         with self._instrumentation:
-            for timing in self._timings:
-                last_context = run_steps(
-                    context=BacktestContext(timing=timing, state=state),
-                    steps=self._per_timing_steps,
-                    instrumentation=self._instrumentation,
-                )
-                state = last_context.state
-
-            final_context = cast(BacktestContext, last_context)
-            run_steps(
-                context=final_context,
-                steps=self._final_steps,
-                instrumentation=self._instrumentation,
-            )
+            context = run_steps(context=context, steps=self._startup_steps, instrumentation=self._instrumentation)
+            clock = cast(ReplayClock, context.clock)
+            last_progress = self._progress_clock()
+            for count, ts_us in enumerate(clock, 1):
+                session = cast(BacktestInputs, context.inputs).market.session_at(ts_us)
+                context.tick = TickState(ts_us=ts_us, session=session)
+                try:
+                    context = run_steps(context=context, steps=self._tick_steps, instrumentation=self._instrumentation)
+                except Exception as exc:
+                    exc.add_note(f"回测时点; trade_date={session.trade_date} ts_us={ts_us}")
+                    raise
+                now = self._progress_clock()
+                if now - last_progress >= 5 and len(clock):
+                    logs.info(f"⏳ 回测推进; trade_date={session.trade_date} ts_us={ts_us} processed={count}")
+                    last_progress = now
+            context.tick = None
+            return run_steps(context=context, steps=self._result_steps, instrumentation=self._instrumentation)

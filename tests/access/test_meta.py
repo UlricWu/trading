@@ -39,6 +39,28 @@ def test_missing_meta_is_the_only_optional_find_result(tmp_path: Path) -> None:
         )
 
 
+def test_producer_inspection_keeps_stale_input_distinct_from_corrupt_output(tmp_path: Path) -> None:
+    pm = PathManager(tmp_path)
+    upstream = _write_payload(tmp_path / 'raw/source/input.json', b'original')
+    meta.commit(pm=pm, payload_path=upstream)
+    output = _write_payload(tmp_path / 'processed/derived/data.parquet', b'owned-output')
+    path = output.parent / 'meta.json'
+    assert meta.inspect_output(pm=pm, meta_path=path, expected_payload_path=output) is None
+    meta.commit(pm=pm, payload_path=output, upstream_meta_path=upstream.parent / 'meta.json')
+    upstream.write_bytes(b'new-longer-source')
+    meta.commit(pm=pm, payload_path=upstream)
+    with pytest.raises(RuntimeError, match='upstream payload size changed'):
+        meta.require(pm=pm, meta_path=path)
+    inspected = meta.inspect_output(pm=pm, meta_path=path, expected_payload_path=output)
+    assert inspected.payload_path == output
+    assert inspected.upstream[1] == len(b'original')
+    with pytest.raises(RuntimeError, match='does not match expected payload'):
+        meta.inspect_output(pm=pm, meta_path=path, expected_payload_path=output.with_name('other.parquet'))
+    output.write_bytes(b'corrupted')
+    with pytest.raises(RuntimeError, match='payload size changed'):
+        meta.inspect_output(pm=pm, meta_path=path, expected_payload_path=output)
+
+
 def test_payload_identity_is_size_only(tmp_path: Path) -> None:
     pm = PathManager(tmp_path)
     payload_path = _write_payload(

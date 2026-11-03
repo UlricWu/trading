@@ -7,6 +7,7 @@ import signal
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import BinaryIO, cast
@@ -14,6 +15,7 @@ from typing import BinaryIO, cast
 import pytest
 
 import src.jobs.runtime as runtime_module
+from src.config.backtest_config import BacktestMode
 from src.jobs.requests import DataSubmission
 from src.jobs.runtime import JobRuntime, JobStatus
 
@@ -389,3 +391,21 @@ def test_cancellation_timer_start_failure_force_stops_job_and_closes_runtime(
     with pytest.raises(RuntimeError, match="job runtime is closed"):
         runtime.submit([_data_submission("2026-07-21")])
     runtime.close()
+
+
+def test_risk_job_exposes_strategy_replay_range(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    backtest_payload: Callable[[BacktestMode | str], dict[str, object]],
+) -> None:
+    from src.jobs.requests import parse_job_request
+    from src.jobs.runtime import RangeJobScope
+    factory = _ProcessFactory()
+    monkeypatch.setattr(runtime_module.subprocess, 'Popen', factory)
+    runtime = JobRuntime(tmp_path, clock=lambda: _FIXED_NOW)
+    try:
+        job = runtime.submit(parse_job_request(backtest_payload('risk_rule_eval')))[0]
+        assert job.scope == RangeJobScope("2026-07-01", "2026-07-20")
+        factory.processes[0].finish(0)
+        _wait_for_status(runtime, job.job_id, JobStatus.SUCCESS)
+    finally:
+        runtime.close()

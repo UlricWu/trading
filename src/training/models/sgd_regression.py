@@ -9,12 +9,15 @@ import numpy as np
 import pandas as pd
 from sklearn.linear_model import SGDRegressor
 
+from src import logs
+
 
 def train_sgd_regression(
     *,
     X: pd.DataFrame,
     y: pd.Series,
     model_params: Mapping[str, object],
+    sample_weight: pd.Series | None = None,
 ) -> SGDRegressor:
     """Fit and return one fresh SGD regressor.
 
@@ -22,7 +25,7 @@ def train_sgd_regression(
         model = train_sgd_regression(
             X=train_X,
             y=train_y,
-            model_params={"alpha": 0.001},
+            model_params={"alpha": 0.001, "random_state": 7},
         )
     """
     if len(X) != len(y):
@@ -31,7 +34,11 @@ def train_sgd_regression(
     y_values = np.asarray(y, dtype=float).reshape(-1)
     if not np.isfinite(X_values).all() or not np.isfinite(y_values).all():
         raise ValueError("training inputs must contain only finite values")
+    if type(model_params.get("random_state")) is not int:
+        raise ValueError("SGD training requires an explicit integer random_state")
 
     model = SGDRegressor(**dict(model_params))
-    model.partial_fit(X_values, y_values)
+    logs.info(f"▶️ 模型拟合; model=sgd_regression\n训练样本：{len(X):,} 行；特征：{X.shape[1]:,} 列；执行一次 partial_fit")
+    model.partial_fit(X_values, y_values, sample_weight=sample_weight)
+    logs.info(f"✅ 模型拟合; model=sgd_regression\n实际训练轮数：{model.n_iter_:,}；未记录逐轮损失，收敛尚未评估")
     return model

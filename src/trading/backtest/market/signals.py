@@ -1,0 +1,186 @@
+# filepath: src/trading/backtest/market/signals.py
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import date, time
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+
+from src.access import Access
+from src.access.feature_label import read_features
+from src.jobs.requests import ModelSignalInput, RecordedSignalInput, SignalInput
+from src.trading.core.events import SignalEvent
+from src.training.artifact import load
+from src.training.inference_model import InferenceModel
+from src.training.prediction import read_prediction_record, save_prediction_record
+from src.training.record import TrainingRunRecord
+from src.utils.datetime_utils import DateTimeUtils
+from src.utils.path import PathManager
+
+
+@dataclass(frozen=True, slots=True)
+class RecordedSignalBatch:
+    """Fixed scores with original missing-row coverage and prediction identity.
+
+    Example:
+        batch = RecordedSignalBatch("2026-07-03", event, ("600000",), prediction_ref)
+    """
+
+    trade_date: str
+    event: SignalEvent
+    symbols: tuple[str, ...]
+    prediction_ref: Path
+
+
+@dataclass(frozen=True, slots=True)
+class ModelSignalBatch:
+    """Own a feature snapshot for one decision, ready for direct inference.
+
+    Example:
+        batch = ModelSignalBatch("2026-07-03", decision_us, features, model_ref, model)
+    """
+
+    trade_date: str
+    ts_us: int
+    features: pd.DataFrame
+    model_ref: Path
+    model: InferenceModel
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "features", self.features.copy())
+
+
+SignalBatch = RecordedSignalBatch | ModelSignalBatch
+
+
+@dataclass(frozen=True, slots=True)
+class _LoadedPrediction:
+    batch: RecordedSignalBatch
+    model_ref: Path
+    model: InferenceModel
+
+
+def validate_model_use(*, model_ref: Path, model: InferenceModel, first_decision_ts_us: int) -> None:
+    """Check the delivered training record and its theoretical maturity lower bound.
+
+    This is a conditional backtest check, not proof the model existed historically.
+
+    Example:
+        validate_model_use(model_ref=ref, model=model, first_decision_ts_us=decision_us)
+    """
+    record = TrainingRunRecord.model_validate_json(model_ref.with_name("schedule.json").read_bytes())
+    if record.model_ref != model_ref or record.train_dates != model.train_dates:
+        raise ValueError("model disagrees with its referenced training record")
+    dataset = record.configuration.dataset
+    if (model.feature_set, model.feature_version, model.feature_names, model.label_set,
+        model.label_version, model.label_column) != (
+        dataset.feature_set, dataset.feature_version, tuple(dataset.feature_columns),
+        dataset.label_set, dataset.label_version, dataset.label_column,
+    ):
+        raise ValueError("model dataset disagrees with its referenced training record")
+    if record.label_maturity_ts_us > first_decision_ts_us:
+        raise ValueError("model use requires training label maturity <= first backtest decision")
+
+
+def prepare_signals(
+    signal: SignalInput, *, start: str, end: str, access: Access,
+    pm: PathManager, min_listing_calendar_days: int, start_ts_us: int, end_ts_us: int,
+) -> dict[int, SignalBatch]:
+    """Prepare trading signals with model-use and simulation-interval checks complete.
+
+    Decisions must fall in [start_ts_us, end_ts_us). Evaluation labels are not read.
+
+    Example:
+        signal_inputs_by_ts_us = prepare_signals(signal, start="2026-07-03", end="2026-07-03",
+            access=access, pm=pm, min_listing_calendar_days=120,
+            start_ts_us=initial_account.ts_us, end_ts_us=execution.end_ts_us)
+    """
+    signal_inputs_by_ts_us: dict[int, SignalBatch] = {}
+    if isinstance(signal, RecordedSignalInput):
+        first_uses: set[Path] = set()
+        for ts_us, prediction in _prepare_recorded_signals(signal, start=start, end=end).items():
+            if prediction.model_ref not in first_uses:
+                validate_model_use(model_ref=prediction.model_ref, model=prediction.model,
+                                   first_decision_ts_us=ts_us)
+                first_uses.add(prediction.model_ref)
+            signal_inputs_by_ts_us[ts_us] = prediction.batch
+    else:
+        signal_inputs_by_ts_us = _prepare_model_signals(signal, start=start, end=end, access=access, pm=pm,
+            min_listing_calendar_days=min_listing_calendar_days)
+    if any(not start_ts_us <= ts_us < end_ts_us for ts_us in signal_inputs_by_ts_us):
+        raise ValueError("selected signal decisions must be within the simulation interval and precede its end")
+    return signal_inputs_by_ts_us
+
+
+def _prepare_recorded_signals(
+    signal: RecordedSignalInput, *, start: str, end: str,
+) -> dict[int, _LoadedPrediction]:
+    predictions: dict[int, _LoadedPrediction] = {}
+    models: dict[Path, InferenceModel] = {}
+    for ref in signal.prediction_refs:
+        inputs, frame = read_prediction_record(ref)
+        if not start <= inputs.trade_date <= end:
+            continue
+        if inputs.model_ref not in models:
+            models[inputs.model_ref] = load(inputs.model_ref)
+        if frame["symbol"].duplicated().any():
+            raise ValueError("one signal batch requires unique symbols")
+        values = frame["prediction"].to_numpy(dtype=float)
+        if np.isinf(values).any():
+            raise ValueError("predictions must be finite or missing")
+        event = SignalEvent(inputs.decision_ts_us, {
+            str(symbol): float(value) for symbol, value in zip(frame["symbol"], values, strict=True)
+            if not np.isnan(value)
+        })
+        if event.ts_us in predictions:
+            raise ValueError("signal decisions must have unique timestamps")
+        batch = RecordedSignalBatch(inputs.trade_date, event, tuple(frame["symbol"]), ref)
+        predictions[event.ts_us] = _LoadedPrediction(batch, inputs.model_ref, models[inputs.model_ref])
+    return dict(sorted(predictions.items()))
+
+
+def _prepare_model_signals(
+    signal: ModelSignalInput, *, start: str, end: str, access: Access,
+    pm: PathManager, min_listing_calendar_days: int,
+) -> dict[int, SignalBatch]:
+    signal_inputs_by_ts_us: dict[int, SignalBatch] = {}
+    model = load(signal.model_ref)
+    for day in access.trade_dates(start_date=start, end_date=end):
+        features = read_features(pm=pm, feature_set=model.feature_set, version=model.feature_version,
+                                 trade_date=day, feature_names=model.feature_names)
+        eligible = access.universe(trade_date=day, min_listing_calendar_days=min_listing_calendar_days)
+        features = features.loc[features["symbol"].isin(eligible)]
+        if "decision_ts_utc" in features:
+            groups = tuple(features.groupby("decision_ts_utc", sort=True))
+        else:
+            ts_us = DateTimeUtils.local_time_to_utc_epoch_us(time(15), date.fromisoformat(day))
+            groups = ((ts_us, features),)
+        for ts_us, frame in groups:
+            timestamp = int(ts_us)
+            if frame["symbol"].duplicated().any() or timestamp in signal_inputs_by_ts_us:
+                raise ValueError("signal decisions require unique timestamps and symbols")
+            signal_inputs_by_ts_us[timestamp] = ModelSignalBatch(day, timestamp, frame, signal.model_ref, model)
+    if signal_inputs_by_ts_us:
+        validate_model_use(model_ref=signal.model_ref, model=model, first_decision_ts_us=min(signal_inputs_by_ts_us))
+    return dict(sorted(signal_inputs_by_ts_us.items()))
+
+
+def produce_signal(batch: SignalBatch, *, prediction_dir: Path) -> RecordedSignalBatch:
+    """Run inference at its decision and persist exactly those original rows once.
+
+    Example:
+        produced = produce_signal(batch, prediction_dir=run_dir / "predictions")
+    """
+    if isinstance(batch, RecordedSignalBatch):
+        return batch
+    symbols = tuple(str(symbol) for symbol in batch.features["symbol"])
+    predictions = batch.model.predict(batch.features.loc[:, list(batch.model.feature_names)].to_numpy(dtype=np.float64))
+    ref = prediction_dir / batch.trade_date / f"{batch.ts_us}.parquet"
+    save_prediction_record(ref, model_ref=batch.model_ref, trade_date=batch.trade_date,
+        decision_ts_us=batch.ts_us, features=batch.features, feature_names=batch.model.feature_names,
+        predictions=predictions)
+    event = SignalEvent(batch.ts_us, {symbol: float(value)
+        for symbol, value in zip(symbols, predictions, strict=True) if not np.isnan(value)})
+    return RecordedSignalBatch(batch.trade_date, event, symbols, ref)
