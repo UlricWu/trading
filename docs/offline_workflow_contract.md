@@ -81,7 +81,7 @@ Pipeline/Workflow 基类、DAG、step registry、依赖声明、priority 或 bef
 
 `src/data_system/steps` 是 offline data 业务行为的唯一实现目录；日期循环和 operation
 调度由具体 Step 拥有。`steps` 包内部的 private `_publish_parquet_object` 统一承担
-Calendar、Fact、Feature/Label 与 Level-2 minute 的表制品发布：接收已构建的
+Calendar、Fact、公告事实、公司行动、证券状态、Feature/Label 与 Level-2 minute 的表制品发布：接收已构建的
 `pyarrow.Table`、`ObjectPaths`、可选的 `upstream_meta_path` 和 `symbol_slices`，先通过
 `write_parquet_atomic` 发布完整 payload，再调用 `meta.commit` 提交 Meta。该顺序遵循
 [存储契约](data/storage_layout.md#object-side-meta)，不构成多文件事务；错误原样传播。
@@ -138,8 +138,9 @@ schedule。因此不得新增 `BasePipeline`、`StepExecutor`、`PipelineRunner`
 
 Data、Training 与 Backtest 各自使用最小领域 Context，只保存相邻 step 必须传递的值；
 config、registry、Access、PathManager、Instrumentation 和 experiment identity 绑定到具体
-step 或 Pipeline，不进入 Context。Data Context 保存请求的 `start`、`end`，并由 calendar
-step 写入后续 step 所需的 `trade_dates`。Training 与 Backtest Context 每次 `run()` 新建。
+step 或 Pipeline，不进入 Context。Data Context 保存请求的 `start`、`end`；Calendar Step
+写入 `trade_dates`，公告采集 Step 写入本次完成查询的 `publication_dates`，后者包含需要
+重试的较早自然日，供事实物化识别本次应更新的披露分区。Training 与 Backtest Context 每次 `run()` 新建。
 Training 的训练值和逐日评价观察只在这次 Step 链内传递。`BacktestContext` 保存 metrics、
 行情启动 Steps 传递的 sessions 与 market_input、PrepareInputsStep 产出的 `BacktestInputs`、
 PrepareCorporateActionsStep 产出的公司行动日程及来源问题、
@@ -213,7 +214,8 @@ Backtest 输入准备和账户初始化位于启动组内，失败必须输出�
 现有 step label 固定为：
 
 ```text
-CalendarMaterializeStep, FactMaterializeStep, ResolveCorporateActionsStep, FeatureBuildStep, LabelBuildStep,
+CalendarMaterializeStep, FactMaterializeStep, CollectPublicationsStep, MaterializeAnnouncementFactsStep,
+RefreshCorporateActionsStep, ResolveSecurityStatusStep, FeatureBuildStep, LabelBuildStep,
 Level2FactMaterializeStep, Level2MinuteBuildStep, Stock1430MaterializeStep, Stock1430DailyMaterializeStep,
 Stock1430DailyL2MaterializeStep,
 DatasetBuildStep, PreprocessStep, ModelTrainStep, PredictionStep, ICEvaluateStep,
@@ -283,9 +285,10 @@ source 在 workflow 准备阶段转换为完整 `SourceConfig`，Standard 绑定
 时通过 `RefreshCorporateActionsStep` 从 dividend 解析普通事件、优先应用已确认修正，刷新
 公告涉及的原登记日。采集成功不表示每份 PDF 都具备完整账户事实，缺项保持明确状态。
 没有某一事件的公告不阻止可信 dividend 记账；已提交修正的来源绑定仍须有效，不能因它
-是补充来源而忽略损坏。回放只读本地数据，不发起网络请求。具体来源语义归
-[数据源 owner](data/source_contract.md#dividend)。
-Standard 同时选择 stock_basic、suspend_d 时，还在 Fact 之后组装
+是补充来源而忽略损坏。回放只读本地数据，不发起网络请求。分红及公司行动处置归
+[分红送转 owner](data/dividend_contract.md)，披露事实与原文核验归
+[公告 owner](data/announcement_contract.md)。
+Standard 同时选择 stock_basic、suspend_d 时，还在公司行动刷新之后、Feature 之前组装
 `ResolveSecurityStatusStep`，发布已提供的本地证券状态核验；没有核验输入的日期不补造状态。
 历史补齐与日常范围使用相同事实生产顺序。
 
@@ -305,7 +308,8 @@ workflow 使用 `functools.partial` 绑定具体 class、AppConfig 和本次运�
 把零参数 callable 交给 Step。Calendar 与 Standard Fact 只在 raw Meta miss 后调用该能力，不再自行
 构造或管理实例。同一 workflow 中每个 broker 名称绑定同一 class 与配置，Standard 的
 Calendar 与 Fact 因而复用同一 Tushare 实例。构造异常原样传播且不写入缓存；不同 workflow
-运行不共享实例。全 Meta hit 不调用供给能力、不构造 adapter。一次 fetch 仍可拥有自己的
+运行不共享实例。Calendar 与 Standard Fact 全 Meta hit 不调用其供给能力、不构造 Tushare
+adapter；这不跳过独立的公告索引查询。一次 fetch 仍可拥有自己的
 网络 session。Normalize operation 在 workflow 准备阶段绑定；日期循环只调用已绑定的
 callable。
 
@@ -315,7 +319,7 @@ callable。
 
 - Standard 的 `FactMaterializeStep` 在自己的一次 `run` 中对每个正式交易日执行所选 fact source 的
   ingest 与 normalize；
-- 休市日不执行 fact；只包含休市日的范围成功。
+- 休市日不执行 Tushare fact，公告仍按自然日处理；没有交易日不单独构成失败。
 
 Standard 单个日期 ingest 必须尝试全部 selected fact source。已有 raw Meta 与本次成功提交的 raw
 对象都表示可用。Ingest 保留命中时取得的 `MetaRecord`；新下载直接使用 Broker 返回的 raw
@@ -326,7 +330,7 @@ Meta miss 才选择物理输入，同一 source 的多个 output 复用本次选
 仍按存储契约校验并记录直接 upstream。Standard 的任一正式交易日全部 fact source 缺失
 都必须失败；
 `FactMaterializeStep` 必须完成范围内所有正式交易日的尝试后，一次报告全部缺失日期。不得
-返回 workflow 级 skipped 或跳过缺失日期。只包含休市日、因而没有正式交易日的范围成功。
+返回 workflow 级 skipped 或跳过缺失日期。
 
 Level-2 按日期、source 逐个处理有输出的来源：先校验 processed Meta 与 symbol slices；
 全部命中时不构造网盘客户端、不要求本地 cache。仅对 miss 准备 raw：复用已登记网盘
@@ -384,10 +388,24 @@ Feature/label builder、Access 和 private 发布函数不记录运行日志。�
 Calendar 的 `_materialize_year` 无返回值；各 Step 的 `run` 返回原 `DataContext`。
 调度、计算或发布错误原样传播，失败分区不输出结果日志，也不追加重复错误日志。
 
-Standard 的显式 step 顺序固定为 calendar materialize → fact materialize → 公告自然日索引采集
-→ 公告事实表物化 → 原登记日公司行动刷新（选中 dividend 时）→ security status resolve（同时选中 stock_basic、suspend_d 时）→ feature build →
-label build，derived operation 来自 enabled 配置。Level-2 固定为 calendar materialize →
-`Level2FactMaterializeStep` → `Level2MinuteBuildStep` → `Stock1430DailyMaterializeStep`。每个 Step
+Standard 的显式 step 顺序与
+[offline_daily_data.py](../src/workflows/offline_daily_data.py) 一致：
+
+| 顺序 | Step | 装配条件与职责 |
+| --- | --- | --- |
+| 1 | `CalendarMaterializeStep` | 总是执行；年度日历与正式交易日 |
+| 2 | `FactMaterializeStep` | 总是执行；manifest 中除日历外的 Tushare facts |
+| 3 | `CollectPublicationsStep` | 总是执行；两渠道的自然披露日索引 |
+| 4 | `MaterializeAnnouncementFactsStep` | 总是执行；原文与 `announcement_facts/v1` |
+| 5 | `RefreshCorporateActionsStep` | 选中 dividend 时；刷新受影响原登记日并生成公司行动处置 |
+| 6 | `ResolveSecurityStatusStep` | 同时选中 stock_basic、suspend_d 时；消费已有证券状态核验 |
+| 7 | `FeatureBuildStep` | 总是装配；只执行 enabled Feature，集合可空 |
+| 8 | `LabelBuildStep` | 总是装配；只执行 enabled Label，集合可空 |
+
+`review_refs`、`identity_refs` 只交给公司行动刷新步骤；公开索引与披露事实生产不要求提供它们。
+公告步骤使用 workflow 注入的 UTC 时钟记录采集和观察时间，不以运行时间替代公开时间。
+Level-2 固定为 `CalendarMaterializeStep` → `Level2FactMaterializeStep` →
+`Level2MinuteBuildStep` → `Stock1430DailyMaterializeStep`，不装配上述公告与公司行动步骤。每个 Step
 完成整个请求范围后才进入下一 Step，Pipeline 只执行 workflow 传入的单一 tuple，不知道
 也不校验这些领域顺序。
 
@@ -435,9 +453,13 @@ PDF 是源格式，不决定数据应在哪个入口生产：它提供的已公�
 | 日常 cron | 上游已就绪的自然日或补跑区间 | 同一链路，休市日仍更新公告；交易日事实继续按日历筛选 |
 | 已确认修正或历史定向重跑 | 显式日期范围，可提供 `review_refs/identity_refs` | 保留确认材料，刷新受影响原登记日，不创建第二个业务入口 |
 
-公告索引不以已有 dividend 候选或当时股票池过滤。`MaterializeAnnouncementFactsStep` 将早期
-不完整披露写入 `announcement_facts/v1`；`RefreshCorporateActionsStep` 是链内步骤，负责已有
-登记分区的证据关联与重建，不是可独立调度的 workflow。自然日索引查询失败保留重试标记；
+公告索引覆盖、部分事实物化与重试日期规则由[公告 owner](data/announcement_contract.md#自然披露日索引与事实物化)定义。
+`RefreshCorporateActionsStep` 是链内步骤，负责已有登记分区的证据关联与重建，不是可独立
+调度的 workflow。它读取截至请求结束日的本地披露索引，通过 `prepare_announcement_updates`
+定位原登记日，再按渠道调用 `CollectAnnouncementsStep` 或 `CollectBseAnnouncementsStep`；
+对原请求交易日与受影响登记日的并集，依次执行 `ExtractDistributionTermsStep`、
+`ResolveCorporateActionsStep`。该内部临时 Context 不替换原请求的日期或 Feature/Label 日程。
+自然日索引查询失败保留重试标记；
 网络、分页、持久化失败使任务失败，已完成分区保留。事实尚未披露与 PDF 解析错误分别保存，
 不能以“所有事件已可记账”作为标准数据生产成功条件。
 
@@ -1361,8 +1383,9 @@ execution 中提供以下字段；其他账户、决策和执行参数照常提�
 本轮直接采用以下分红送转回放语义；红利税不混入交易佣金，也不宣称真实税后收益。
 输入使用本地 `corporate_actions/v1` 以及按公开时间过滤的 `announcement_facts/v1` 事件流；
 普通 dividend 和已确认修正继续优先，公告流补充尚未进入登记日处置的事件；
-原始来源、公告核验、事件归并和数据版本归
-[数据源 owner](data/source_contract.md#dividend)，已提交对象读取归
+原始分红、候选处置和登记日事件归并归
+[分红送转 owner](data/dividend_contract.md)，披露事实及其累计视图归
+[公告 owner](data/announcement_contract.md#事件进入事实补齐与账户投影)，已提交对象读取归
 [Access owner](engineering/access.md#corporate-actions)。
 
 特征、标签中的价格复权与本节的账户权益记账承担不同职责。复权收益类特征、标签按各自
@@ -1388,7 +1411,7 @@ equity = cash + Σ(positions[symbol] × raw_mark[symbol]) + dividend_receivable 
 
 准备、条款更新、权益登记、权益确认、股份到账、现金到账分别由独立 Step 承担，日频和分钟复用同一账户计算。
 以下除权日确认及非整数拒绝规则适用于普通分红送转；补偿使用本节后述独立阶段，不套用除权门槛。
-账户适用范围遵循[数据源 owner 的合资格普通流通股持仓定义](data/source_contract.md#从来源记录到业务事件)；
+账户适用范围遵循[数据源 owner 的合资格普通流通股持仓定义](data/dividend_contract.md#从来源记录到业务事件)；
 按登记日收盘持仓计算各事件的实际净权益，买入日期本身不构成资格或数量证明：
 
 - `PrepareCorporateActionsStep` 读取已解析事件、未解决 disposition 与当期可见的公告事实版本，编译登记、生效、支付、
@@ -1577,7 +1600,7 @@ distribution.reference_basis 保存：
 受益对象，仍不能猜金额；真实行情已反映除息而应收缺项时，上例账面可能只剩 900 元。
 这不能解释成真实亏损 100 元。涉及账户暴露的未解决事项继续进入诊断，不能以零入账金额
 证明真实没有分红，也不能将 PDF 解析失败一律当成来源金额不可用；
-来源事实、公告生产与剩余覆盖见[公告流程](data/source_contract.md#announcement-verification-todo)。
+来源事实、公告生产与剩余覆盖见[公告流程](data/announcement_contract.md#announcement-verification-todo)。
 
 初始账户需要包含已登记、尚未完成的分配权益；补偿同时保留已完成记录，防止后续公告
 触发重复入账。默认空集合明确表示没有这类历史权益，
@@ -1823,7 +1846,7 @@ POST → Job → CLI 子进程验证另见[完整链路证据](/tmp/trading-full
 
 公告解析替代源行直接记账后的验证，使用本地公告案例覆盖木林森、宝丰、顺丰、正邦及
 中岩大地；每例分别运行日频、分钟回归，行情为固定可核算输入，公告条款来自
-[数据源核验](data/source_contract.md#从来源记录到业务事件)。另外使用正式库真实日线
+[数据源核验](data/dividend_contract.md#从来源记录到业务事件)。另外使用正式库真实日线
 回放木林森 2018-04-10 至 04-11：登记 100 股只取得一次 24.7 元与 100 股转增；
 中岩大地 2025-07-04 至 07-07：登记 10,000,000 股，按后续公开修订取得 2,814,904 元与
 3,992,772 股，登记数量未重算、权益未重复到账。该大股数用于得到可独立核算的整数
@@ -1848,7 +1871,7 @@ POST → Job → CLI 子进程验证另见[完整链路证据](/tmp/trading-full
 
 2026-10-17 先比较源行直接记账的历史试算与公告核验门槛下未派发权益的整月回放，随后
 联网核对本次全部 454 个分红、送转候选，再按公告确认的权益独立重建账户账本。公告
-覆盖、字段与更正依据见[数据源核验及补齐方案](data/source_contract.md#announcement-verification-todo)。
+覆盖、字段与更正依据见[数据源核验及补齐方案](data/announcement_contract.md#announcement-verification-todo)。
 比较范围固定为 2026-09-01 至 09-30、沪深全市场、原 10,412 条冻结委托、1 万亿元初始
 现金、税前分红、零费用与滑点；沿用各自原始行情和成交。两组保存的回放早于 V1 统一
 修正，精确实现以各自保留的代码快照为准。初次公告复算仅独立重建账本，没有执行

@@ -135,7 +135,7 @@ labels/<label_set>/<version>/trade_date=<date>/meta.json
 仍由同日 dividend 上游定位；不覆盖来源行或另建去重后的 dividend 数据集。普通纯送转
 按数据源 owner 解释零现金时，原始响应、dividend/v1 和 source_record 的现金字段仍为 null；
 账户可执行条款的 cash_per_share 为 0，派息日为空，不增加字段或另设版本。
-公司行动来源可信边界由[数据源 owner](source_contract.md#从来源记录到业务事件)
+公司行动来源可信边界由[数据源 owner](dividend_contract.md#从来源记录到业务事件)
 定义，当前对象不依赖文件内容摘要或历史快照失效检查。公告和修正使用以下 V1 raw 对象，
 均按股权登记日分区，查询的自然日范围单独保存在集合中：
 
@@ -230,6 +230,8 @@ review 必须在新解析中逐字段保留；缺少 raw、遗漏候选、修正
 这项验证覆盖所列本地测试，不代表全仓测试或重新执行历史数据补齐。
 这些证据证明明确输入范围的迁移、归并和整合，不表示所有历史公告已核验或未知遗漏已消除。
 
+### 公告披露日对象
+
 按披露日发现公告使用 `raw/{cninfo,bse}/corporate_action_publications/trade_date=<自然披露日>/`，
 与登记日证据分开。index.json 及 Meta 保存该来源当日的完整索引，coverage.json 保存条数、
 观察时间和原始分页请求/响应文件名；完整空索引表示已查询且无披露，缺文件不能代表空结果。
@@ -247,12 +249,16 @@ record_date、ex_date、pay_date、shares_credit_date、shares_available_date、
 shares_per_share、shares_numerator、shares_denominator、facts。日期使用 date32，时间使用 UTC
 微秒；金额/比例和整数公式参数以十进制字符串保留精度，null 仍为未知。facts 是完整 V1
 `AnnouncementFacts` JSON，包含原生来源、字段冲突、解析问题及证据引用。Parquet metadata
-的 announcement_inputs 保存输入索引相对路径。身份、时间语义归数据源 owner，读取校验归
-Access owner。逐日增量和同序历史区间必须产生相同事实，重复发布内容不变时复用文件。
+的 announcement_inputs 保存输入索引相对路径。身份、时间及事实语义归
+[公告 owner](announcement_contract.md#事件进入事实补齐与账户投影)，读取校验归
+[Access owner](../engineering/access.md#公司行动对象读取)。逐日增量和同序历史区间必须产生相同事实，重复发布内容不变时复用文件。
 该表不按登记日分区，因为早期事件可以没有登记日，也不要求 dividend 已有对应候选。
 
-核验内容、来源引用与多输入 lineage 由[数据源 owner](source_contract.md#dividend)定义。它们继续使用上述单对象路径与原子发布；重建不改写已入库 Tushare raw。
+登记日核验及多输入 lineage 由[分红送转 owner](dividend_contract.md#处置结果与重跑)与
+[公告 owner](announcement_contract.md#发布与重跑)按各自边界定义。它们继续使用上述单对象路径与原子发布；重建不改写已入库 Tushare raw。
 需要留存被替换的派生对象时，将其与精确输入、源码一同归档为验证证据，不作为另一正式版本供运行时读取。
+
+### 证券状态与交易日历对象
 
 证券状态补充使用 `raw/announcements/security_status_reviews/trade_date=<date>/reviews.json`
 及同目录 Meta、`<announcement_id>.pdf`，分区日期是状态适用的账户日。输出为
@@ -265,6 +271,8 @@ Access owner。逐日增量和同序历史区间必须产生相同事实，重�
 processed/trade_calendar/v1/year=<YYYY>/data.parquet
 processed/trade_calendar/v1/year=<YYYY>/meta.json
 ```
+
+### 对象路径与消费边界
 
 PathManager 只返回完整路径，不读取 Parquet、不检查列、不判断数据质量，也不创建业务
 分区。正式对象由 payload 和同目录有效 `meta.json` 共同构成；正式消费者必须先通过

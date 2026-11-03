@@ -3,7 +3,8 @@
 - **状态**：正式 owner
 - **适用范围**：`src/access/access.py::Access` 的正式 processed 市场数据读取、
   可用交易日及下一正式交易日、历史沪深股票成员、日频行情/复权因子/换手率、停复牌事件、日频 universe、Level-2
-  universe、Level-2 symbol/trade 市场范围读取和两市股票分钟事实读取；以及 `src/access/feature_label.py` 的已提交 Feature/Label 日分区读取。
+  universe、Level-2 symbol/trade 市场范围读取、两市股票分钟事实、分红、公司行动处置、公告事实及事件视图读取；
+  以及 `src/access/feature_label.py` 的已提交 Feature/Label 日分区读取。
 
 ## 身份与职责
 
@@ -79,6 +80,21 @@ class Access:
     def dividends(self, *, record_date: str) -> pd.DataFrame | None: ...
 
     def corporate_actions(self, *, record_date: str) -> tuple[CorporateActionResolution, ...] | None: ...
+
+    def announcement_facts(
+        self, *, publication_date: str, as_of_ts_us: int,
+        observed_by_ts_us: int | None = None,
+    ) -> tuple[AnnouncementFacts, ...] | None: ...
+
+    def announcement_history(
+        self, *, as_of_ts_us: int, symbols: Sequence[str] | None = None,
+        observed_by_ts_us: int | None = None,
+    ) -> tuple[AnnouncementFacts, ...]: ...
+
+    def announcement_events(
+        self, *, as_of_ts_us: int, symbols: Sequence[str] | None = None,
+        observed_by_ts_us: int | None = None,
+    ) -> tuple[AnnouncementFacts, ...]: ...
 
     def corporate_action_notices(self, *, trade_date: str) -> pd.DataFrame | None: ...
 
@@ -167,7 +183,7 @@ Access 不将事件集合变成盘前可知的可交易名单；如何解释日�
 ## 公司行动对象读取
 
 `dividends(record_date=...)` 读取 `processed/dividend/v1/trade_date=<record_date>`，与 composition root 提供的 processed version 一致。
-字段含义归[数据源 owner](../data/source_contract.md#dividend)；本边界检查完整列、证券代码和
+字段含义归[数据源 owner](../data/dividend_contract.md#dividend)；本边界检查完整列、证券代码和
 记录所属登记日，返回独立 DataFrame，不筛选实施状态或改变金额；base_date/base_share
 随来源行返回，base_share 已为股，不再乘10000。
 
@@ -180,6 +196,7 @@ source_record 不能与同证券、同登记日的其他未关联候选同时作
 也不在读取时核验公告或选择版本；账户消费方按事件身份执行一次。普通来源、已核实事件
 与未解决 disposition 一同返回，review 为空不等于不可执行。
 
+公告字段、公开时间与事件累计由[公告 owner](../data/announcement_contract.md#事件进入事实补齐与账户投影)定义。
 `announcement_facts(publication_date, as_of_ts_us, observed_by_ts_us=None)` 返回该自然披露日
 可见的 `AnnouncementFacts` tuple，缺 Meta 返回 None，已提交但没有可见行返回空 tuple。
 读取校验原生公告唯一性、分区日期、外列与 facts 的事件身份、证券及两种时间一致性。
