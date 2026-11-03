@@ -4,7 +4,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 
-from src.trading.market.data_view import MarketDataView
+import numpy as np
 
 
 class SignalProvider(ABC):
@@ -15,6 +15,10 @@ class SignalProvider(ABC):
     - produces scores only (symbol -> float)
     - must NOT output targets
     - must NOT be aware of execution constraints (T+1/limits/cash)
+
+    Example:
+        provider: SignalProvider = ModelSignalProvider(model=inference_model)
+        scores = provider.scores(ts_us=1, features=features, symbols=("600000",))
     """
 
     @abstractmethod
@@ -25,7 +29,12 @@ class SignalProvider(ABC):
         self,
         *,
         ts_us: int,
-        data_view: MarketDataView,
+        features: np.ndarray,
         symbols: Sequence[str],
     ) -> dict[str, float]:
+        """Score prepared feature rows in the supplied symbol order.
+
+        Example:
+            scores = provider.scores(ts_us=1, features=features, symbols=("600000",))
+        """
         ...

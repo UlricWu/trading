@@ -109,6 +109,7 @@ def test_raw_and_staging_paths_preserve_source_native_identity(
         / "trade_date=2026-05-01"
     )
 
+    assert pm.raw_source_dir(broker="level2_ftp", source_name="sh_stock_ordertrade") == raw_partition.parent
     assert (
         pm.raw_payload(
             broker="level2_ftp",
@@ -187,10 +188,10 @@ def test_formal_dataset_paths_use_canonical_partition_files(tmp_path: Path) -> N
     processed_version_dir = storage_root / "processed" / "sh_order" / "v1"
     processed_partition = processed_version_dir / trade_date_partition
     feature_partition = (
-        storage_root / "features" / "l2_microstructure" / "v2" / trade_date_partition
+        storage_root / "features" / "l2_microstructure" / "v1" / trade_date_partition
     )
     label_partition = (
-        storage_root / "labels" / "return_5d" / "v3" / trade_date_partition
+        storage_root / "labels" / "return_5d" / "v1" / trade_date_partition
     )
 
     assert (
@@ -207,7 +208,7 @@ def test_formal_dataset_paths_use_canonical_partition_files(tmp_path: Path) -> N
     )
     assert pm.feature_object(
         feature_set="l2_microstructure",
-        version="v2",
+        version="v1",
         trade_date="2026-05-01",
     ) == ObjectPaths(
         payload_path=feature_partition / "data.parquet",
@@ -215,7 +216,7 @@ def test_formal_dataset_paths_use_canonical_partition_files(tmp_path: Path) -> N
     )
     assert pm.label_object(
         label_set="return_5d",
-        version="v3",
+        version="v1",
         trade_date="2026-05-01",
     ) == ObjectPaths(
         payload_path=label_partition / "data.parquet",
@@ -226,64 +227,47 @@ def test_formal_dataset_paths_use_canonical_partition_files(tmp_path: Path) -> N
     assert not label_partition.exists()
 
 
-def test_experiment_paths_are_exact_and_experiment_scoped(tmp_path: Path) -> None:
+def test_training_paths_are_exact_and_experiment_scoped(tmp_path: Path) -> None:
     storage_root = tmp_path / "storage"
     storage_root.mkdir()
     pm = PathManager(storage_root)
     experiment_name = "training_2026-05-01_2026-05-31_run-1"
     experiment_dir = storage_root / "experiments" / experiment_name
     training_dir = experiment_dir / "training"
-    backtest_dir = experiment_dir / "backtest"
     report_dir = experiment_dir / "report"
 
     assert pm.experiment_dir(experiment_name=experiment_name) == experiment_dir
     assert pm.experiment_training_dir(experiment_name=experiment_name) == training_dir
-    assert pm.experiment_backtest_dir(experiment_name=experiment_name) == backtest_dir
     assert pm.experiment_report_dir(experiment_name=experiment_name) == report_dir
     assert (
-        pm.experiment_training_inference(experiment_name=experiment_name)
-        == training_dir / "inference.pkl"
+        pm.experiment_training_model(experiment_name=experiment_name)
+        == training_dir / "model.joblib"
     )
     assert (
-        pm.experiment_training_params(experiment_name=experiment_name)
-        == training_dir / "params.json"
+        pm.experiment_training_schedule(experiment_name=experiment_name)
+        == training_dir / "schedule.json"
     )
     assert (
         pm.experiment_training_metrics(experiment_name=experiment_name)
         == training_dir / "metrics.json"
     )
     assert (
-        pm.experiment_backtest_metrics(experiment_name=experiment_name)
-        == backtest_dir / "metrics.json"
-    )
-    assert (
         pm.experiment_training_report(experiment_name=experiment_name)
         == report_dir / "training_report.html"
-    )
-    assert (
-        pm.experiment_backtest_report(experiment_name=experiment_name)
-        == report_dir / "backtest_report.html"
     )
     assert not experiment_dir.exists()
 
 
-@pytest.mark.parametrize(
-    "experiment_id",
-    ["run-1", "A", "model.v2_3", "a" * 64],
-)
-def test_experiment_id_accepts_the_public_contract(experiment_id: str) -> None:
-    assert PathManager.require_experiment_id(experiment_id) == experiment_id
-
-
-@pytest.mark.parametrize(
-    "experiment_id",
-    ["", "-run", " run", "run/1", "a" * 65],
-)
-def test_experiment_id_rejects_values_outside_the_public_contract(
-    experiment_id: str,
-) -> None:
-    with pytest.raises(ValueError, match="experiment_id must match"):
-        PathManager.require_experiment_id(experiment_id)
+def test_backtest_artifacts_share_the_experiment_root(tmp_path: Path) -> None:
+    pm = PathManager(tmp_path)
+    name = "backtest_2026-10-11_9c5a9280-922e-4d1a-af01-ce896eb9668c"
+    run_dir = tmp_path / "experiments" / name
+    assert pm.experiment_backtest_predictions_dir(experiment_name=name) == run_dir / "predictions"
+    assert pm.experiment_backtest_metrics(experiment_name=name) == run_dir / "metrics.json"
+    assert pm.experiment_backtest_report(experiment_name=name) == run_dir / "report.html"
+    assert pm.experiment_backtest_execution(experiment_name=name) == run_dir / "execution.parquet"
+    assert pm.experiment_backtest_equity(experiment_name=name) == run_dir / "equity.parquet"
+    assert not run_dir.exists()
 
 
 def test_path_segments_allow_unicode_internal_spaces_and_asterisks(
@@ -335,6 +319,8 @@ def test_each_path_identity_is_validated_at_the_public_boundary(
     storage_root.mkdir()
     pm = PathManager(storage_root)
 
+    with pytest.raises(ValueError, match="broker must be a safe basename"):
+        pm.raw_source_dir(broker="../tushare", source_name="stock_daily")
     with pytest.raises(ValueError, match="source_name must be a safe basename"):
         pm.raw_meta(
             broker="tushare",

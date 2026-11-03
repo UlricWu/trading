@@ -22,8 +22,8 @@
 3. 存在未发布文件变化时，workflow 通过 CI 后把该 commit 镜像到
    `release/auto-release`，并创建或更新指向 `master` 的 release PR。
 4. GitHub 对 `release/auto-release` 的 push 触发测试环境部署。
-5. release PR 经人工确认后合入 `master`；release workflow 通过 CI 后执行
-   semantic-release。正式环境部署尚未实施。
+5. release PR 按下文标准流程取得人工批准且必需 CI 检查通过后合入 `master`；release
+   workflow 通过 CI 后执行 semantic-release。正式环境部署尚未实施。
 6. release workflow 成功后，sync workflow 把 `master` 合入 `dev`。
 7. 回同步后的 `dev` 与 `master` 文件树相同时，auto-release workflow 必须跳过；如果同步
    期间已有新功能进入 `dev`，继续生成下一轮待发布内容是预期行为。
@@ -42,6 +42,56 @@ semantic-release 必须能够分析 `dev` 中的原始 Conventional Commit 类�
 - `docs:`、`test:`、`refactor:`、`chore:`、`build:`、`ci:`、`style:`：不发布。
 - `type!:` header 不作为 breaking release 依据，并由 CI 拒绝。
 
+#### GitHub 保护规则
+
+在仓库 `Settings → Rules → Rulesets` 中配置 `protect-master-release`，保存后生效：
+
+| 配置项 | 标准值 |
+|---|---|
+| Enforcement status | `Active` |
+| Target branches | `master`（`refs/heads/master`） |
+| Require a pull request before merging | 启用 |
+| Required approvals | `1`；由具有 write 或更高权限、且非 PR 作者的审查者批准 |
+| Require status checks to pass | 启用 |
+| Required status check | `run-ci / build-and-test` |
+| 检查来源 | `GitHub Actions` |
+
+该检查由 `.github/workflows/auto_release_pr.yml` 的 `run-ci` job 调用
+`.github/workflows/ci.yaml` 的 `build-and-test` job 产生。auto-release 在当前 `dev`
+commit 上通过 CI 后，将同一 commit 镜像到 `release/auto-release`，因此合并前应核对
+release PR 当前 head SHA 上的检查结果。
+
+必需检查名称必须与实际产生的名称完全一致；修改上述 job 名称时，必须同步更新规则集。
+可复用 workflow 的检查名称格式为 `调用 job / 被调用 job`，见
+[GitHub 必需检查名称说明](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/troubleshooting-rules)。
+
+#### 标准审批与合并操作
+
+1. 打开 auto-release workflow 创建或更新的 release PR，确认来源为
+   `release/auto-release`、目标为 `master`，检查本次发布的变更。
+2. 使用有 write 或更高权限的审查账号，进入 `Files changed`，点击
+   `Review changes → Approve → Submit review`。
+3. 返回 `Conversation`，确认至少一条有效批准，以及当前 head SHA 的
+   `run-ci / build-and-test` 检查成功；所有合并条件满足后继续。
+4. 标准操作选择 `Create a merge commit`，再点击 `Confirm merge`，保留原始提交供
+   semantic-release 分析。
+5. 合并后查看 `Release` workflow 和随后的 `Sync master to dev` workflow；版本发布、
+   分支同步与服务器部署分别按各自结果确认。
+
+普通评论不计入批准记录。PR 作者不能批准自己的 PR；自动 release PR 由
+`github-actions[bot]` 创建，仓库所有者可以使用自己的账号提交批准。操作说明见
+[GitHub PR 审批指南](https://docs.github.com/en/pull-requests/how-tos/review-pull-requests/approving-a-pull-request-with-required-reviews)。
+
+#### 合并阻塞排查
+
+- `Review required`：核对是否通过 `Approve → Submit review` 提交了有效批准，以及
+  审查账号是否有 write 或更高权限；在 `Conversation` 留言不会解除此阻塞。
+- `Expected — Waiting for status to be reported`：规则要求的检查尚未上报结果。先核对
+  PR 当前 head SHA 的检查列表，再核对规则中的检查名称、来源及 workflow 触发条件。
+  当前工作流不产生 `authorize-release-candidate`；若规则仍要求该名称，应在
+  `protect-master-release` 中将其替换为 `run-ci / build-and-test`，来源选择
+  `GitHub Actions`，保存后刷新 PR。重复审批或等待不会产生一个不存在的检查。
+
 ### 自动版本发布
 
 release workflow 在 `master` 的 CI 成功后执行 semantic-release，以已合入的提交生成
@@ -54,17 +104,18 @@ release workflow 在 `master` 的 CI 成功后执行 semantic-release，以已�
 
 ### Research 记录与正式化
 
-`research/` 中的 open 假设、Notebook 和结论可以通过普通 feature PR 进入 `dev`，但它们不得
-成为运行时依赖或改变正式行为。同一研究目标的纯记录更新可以位于一个 feature branch；不要求
-一个假设对应一个 branch。
+`research/` 中的研究记录、采用候选、Notebook 和结论可以通过普通 feature PR 进入 `dev`，
+但它们不得成为运行时依赖或改变正式行为。同一研究目标的纯记录更新可以位于一个 feature
+branch；不要求一个假设对应一个 branch。
 
 候选需要修改共享代码、配置或入口时，能够独立采用的实现差异必须使用独立 feature branch 或
-worktree 隔离，且在 adoption 前不得进入 `dev` 的正式实现、默认入口或 registry。采用某项研究
-假设的 PR 必须同步修改最终 owner docs、实现、测试和卷宗中的 `Status`。该 PR 合入 `dev` 前，
-研究状态仍为 `open`；merge、release 和 deploy 继续分别判断。
+worktree 隔离，且在 adoption 前不得进入 `dev` 的正式实现、默认入口或 registry。采用具体候选
+方案的 PR 必须同步修改最终 owner docs、实现、测试和卷宗中该候选的 `Status`。该 PR 合入
+`dev` 前，候选状态仍为 `open`；普通研究记录不使用采用状态。merge、release 和 deploy
+继续分别判断。
 
-研究状态、Evidence 和 adoption 条件由 `research_workflow.md` 拥有。本文件只拥有 branch、PR、
-merge 和目标分支机制，Git 可达性本身不能证明假设已经 adopted。
+研究记录、候选状态、Evidence 和 adoption 条件由 `research_workflow.md` 拥有。本文件只拥有
+branch、PR、merge 和目标分支机制，Git 可达性本身不能证明候选已经 adopted。
 
 ## 测试部署边界
 
@@ -214,7 +265,7 @@ dispatcher 只读取持久化记录并以参数数组执行固定安装路径
   就绪时间或 cron daemon 时区，因而不提供默认时刻。
 - cron 在上游前一日文件齐备后运行，不得固化业务日期。运行器默认通过
   `DateTimeUtils.days_before(DateTimeUtils.today(), 1)` 取得 Asia/Shanghai 的前一自然日，
-  workflow 再按正式交易日历筛选；休市日自然成功。只有人工单次补跑可以用
+  workflow 中行情按正式交易日历筛选，公告按自然披露日采集；休市日仍须完成公告生产。只有人工单次补跑可以用
   `MINQUANT_OFFLINE_DATA_DATE=YYYY-MM-DD` 覆盖。运行时刻必须考虑上游在次日供数，
   不得用系统 UTC 日期或“上一个交易日”替代前一自然日而在休市期间重复生产。
 - 一次运行先提交并等待单日 `data-standard` Job，再提交并等待 `data-level2` Job。Standard

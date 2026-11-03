@@ -10,12 +10,11 @@ import yaml
 from dotenv import dotenv_values
 from pydantic import BaseModel, ConfigDict
 
-from .backtest_config import BacktestConfig
 from .data_config import DataConfig
-from .model_config import ModelConfig
+from .model_config import FeatureGroupConfig, FeatureGroupName, ModelPreset, TrainingModelName
 from .secret_config import SecretConfig
 
-_CONFIG_SECTIONS = ("data", "model", "backtest")
+_CONFIG_SECTIONS = ("data", "models", "feature_groups")
 _ENVIRONMENTS = ("dev", "test", "prod")
 
 
@@ -24,7 +23,7 @@ class AppConfig(BaseModel):
 
     Example:
         config = AppConfig.load()
-        model_config = config.model
+        model_config = config.models["sgd_regression"]
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -33,8 +32,8 @@ class AppConfig(BaseModel):
     storage_root: Path
     secret: SecretConfig
     data: DataConfig
-    model: ModelConfig
-    backtest: BacktestConfig
+    models: dict[TrainingModelName, ModelPreset]
+    feature_groups: dict[FeatureGroupName, FeatureGroupConfig]
 
     @classmethod
     def load(
@@ -46,9 +45,9 @@ class AppConfig(BaseModel):
 
         Example:
             config = AppConfig.load(
-                override={"model": {"train_window_days": 60}}
+                override={"models": {"sgd_regression": {"model_params": {"alpha": 0.001}}}}
             )
-            model_config = config.model
+            model_config = config.models["sgd_regression"]
         """
         environment = os.getenv("ENV", "dev").lower()
         if environment not in _ENVIRONMENTS:
@@ -74,7 +73,7 @@ class AppConfig(BaseModel):
             invalid_roots = [name for name in override if name not in _CONFIG_SECTIONS]
             if invalid_roots:
                 raise ValueError(
-                    "override may only contain data, model, or backtest; "
+                    "override may only contain data, models, or feature_groups; "
                     f"got={invalid_roots!r}"
                 )
             sections = _deep_merge(sections, override)

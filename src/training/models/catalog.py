@@ -4,13 +4,17 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from functools import partial
 from types import MappingProxyType
 from typing import Protocol
 
 import pandas as pd
+from sklearn.ensemble import HistGradientBoostingClassifier, HistGradientBoostingRegressor
+from sklearn.linear_model import LogisticRegression, Ridge
 
 from src.training.inference_model import PredictionModel
 from src.training.models.sgd_regression import train_sgd_regression
+from src.training.models.tabular import train_tabular
 
 
 class ModelTrainer(Protocol):
@@ -31,6 +35,7 @@ class ModelTrainer(Protocol):
         X: pd.DataFrame,
         y: pd.Series,
         model_params: Mapping[str, object],
+        sample_weight: pd.Series | None = None,
     ) -> PredictionModel:
         """Train and return one fresh prediction model.
 
@@ -47,6 +52,10 @@ class ModelTrainer(Protocol):
 _MODEL_TRAINERS: Mapping[str, ModelTrainer] = MappingProxyType(
     {
         "sgd_regression": train_sgd_regression,
+        "ridge_regression": partial(train_tabular, estimator_type=Ridge),
+        "logistic_regression": partial(train_tabular, estimator_type=LogisticRegression),
+        "hist_gradient_boosting_regressor": partial(train_tabular, estimator_type=HistGradientBoostingRegressor),
+        "hist_gradient_boosting_classifier": partial(train_tabular, estimator_type=HistGradientBoostingClassifier),
     }
 )
 

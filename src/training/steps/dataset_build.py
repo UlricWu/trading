@@ -1,141 +1,107 @@
 # filepath: src/training/steps/dataset_build.py
-"""Load formal feature and label partitions for one training window."""
+"""Load only the explicitly selected training partitions."""
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
+from typing import Literal
 
 import pandas as pd
-import pyarrow.parquet as pq
 
 from src import logs
-from src.access import meta
+from src.access.feature_label import read_features, read_labels
 from src.config.model_config import FeatureLabelConfig
+from src.training import PROGRESS_INTERVAL_SECONDS
 from src.training.context import TrainingContext
 from src.training.engines.dataset import build_daily_training_dataset
 from src.utils.path import PathManager
 
 
 class DatasetBuildStep:
-    """Load selected formal inputs without querying the calendar again.
+    """Build training inputs without reading evaluation data or labels.
 
     Example:
-        loader = DatasetBuildStep(
-            pm=path_manager,
-            dataset_cfg=model_config.dataset,
-        )
-        train, evaluation = loader.load(
-            train_dates=("2026-07-17", "2026-07-20"),
-            eval_date="2026-07-21",
-        )
+        step = DatasetBuildStep(pm=path_manager, dataset_cfg=model_config.dataset, clock=monotonic)
+        context = step.run(TrainingContext(window=training_window))
     """
 
-    def __init__(
-        self,
-        *,
-        pm: PathManager,
-        dataset_cfg: FeatureLabelConfig,
-    ) -> None:
-        """Bind formal storage and dataset identities.
+    def __init__(self, *, pm: PathManager, dataset_cfg: FeatureLabelConfig, clock: Callable[[], float],
+                 sample_weight: Literal["uniform", "date_equal"] = "uniform") -> None:
+        """Bind committed input storage and the selected dataset.
 
         Example:
-            loader = DatasetBuildStep(
-                pm=path_manager,
-                dataset_cfg=model_config.dataset,
-            )
+            step = DatasetBuildStep(pm=path_manager, dataset_cfg=model_config.dataset, clock=monotonic)
         """
         self._pm = pm
         self._dataset_cfg = dataset_cfg
+        self._clock = clock
+        self._sample_weight = sample_weight
+        self._weights: pd.Series | None = None
 
-    def load(
-        self,
-        *,
-        train_dates: Sequence[str],
-        eval_date: str,
-    ) -> tuple[
-        tuple[pd.DataFrame, pd.Series],
-        tuple[pd.DataFrame, pd.Series],
-    ]:
-        """Return training and evaluation feature/label pairs.
+    def load(self, *, train_dates: Sequence[str]) -> tuple[pd.DataFrame, pd.Series]:
+        """Read exactly the given dates; filter unknown labels only for fitting.
 
         Example:
-            train, evaluation = loader.load(
-                train_dates=("2026-07-17", "2026-07-20"),
-                eval_date="2026-07-21",
-            )
+            X, y = step.load(train_dates=("2026-07-17", "2026-07-20"))
         """
-        train_X_parts: list[pd.DataFrame] = []
-        train_y_parts: list[pd.Series] = []
-        for trade_date in train_dates:
-            daily_X, daily_y = self._load_one_day(trade_date)
-            if daily_X.empty:
-                continue
-            train_X_parts.append(daily_X)
-            train_y_parts.append(daily_y)
-
-        if train_X_parts:
-            train_X = pd.concat(train_X_parts, axis=0, ignore_index=True)
-            train_y = pd.concat(train_y_parts, axis=0, ignore_index=True)
-        else:
-            train_X = pd.DataFrame(columns=self._dataset_cfg.feature_columns)
-            train_y = pd.Series(dtype=float)
-        eval_X, eval_y = self._load_one_day(eval_date)
+        cfg = self._dataset_cfg
+        X_parts: list[pd.DataFrame] = []
+        y_parts: list[pd.Series] = []
+        raw_rows = 0
+        weights: list[pd.Series] = []
         logs.info(
-            f"✅ dataset build; train_start_date={train_dates[0]} "
-            f"train_end_date={train_dates[-1]} train_shape={train_X.shape} "
-            f"eval_date={eval_date} eval_shape={eval_X.shape}"
+            f"▶️ 数据准备; feature_set={cfg.feature_set}/{cfg.feature_version}\n"
+            f"训练日期：{train_dates[0]} ~ {train_dates[-1]}（{len(train_dates):,} 个交易日）"
         )
-        return (train_X, train_y), (eval_X, eval_y)
+        last_progress = self._clock()
+        for completed, trade_date in enumerate(train_dates, start=1):
+            try:
+                features = read_features(
+                    pm=self._pm, feature_set=cfg.feature_set, version=cfg.feature_version,
+                    trade_date=trade_date, feature_names=cfg.feature_columns,
+                )
+                labels = read_labels(
+                    pm=self._pm, label_set=cfg.label_set, version=cfg.label_version,
+                    trade_date=trade_date, label_column=cfg.label_column,
+                )
+                keys = tuple(column for column in features if column not in cfg.feature_columns)
+                if tuple(labels.columns[:-1]) != keys:
+                    raise RuntimeError("training dataset feature / label key schema mismatch")
+                X, y = build_daily_training_dataset(
+                    feature_frame=features, label_frame=labels,
+                    feature_columns=cfg.feature_columns, label_column=cfg.label_column,
+                    key_columns=keys,
+                )
+            except Exception as exc:
+                exc.add_note(f"训练数据读取; trade_date={trade_date}")
+                raise
+            raw_rows += len(features)
+            X_parts.append(X)
+            y_parts.append(y)
+            if self._sample_weight == "date_equal" and len(y):
+                weights.append(pd.Series(1.0 / len(y), index=range(len(y))))
+            now = self._clock()
+            if completed < len(train_dates) and now - last_progress >= PROGRESS_INTERVAL_SECONDS:
+                logs.info(f"⏳ 数据准备; trade_date={trade_date}\n已读取 {completed:,} / {len(train_dates):,} 个交易日")
+                last_progress = now
+        train_X = pd.concat(X_parts, ignore_index=True)
+        train_y = pd.concat(y_parts, ignore_index=True)
+        if self._sample_weight == "date_equal":
+            self._weights = pd.concat(weights, ignore_index=True)
+            self._weights /= self._weights.mean()
+        logs.info(
+            f"✅ 数据准备; feature_set={cfg.feature_set}/{cfg.feature_version}\n"
+            f"原始样本：{raw_rows:,} 行；缺标签移除：{raw_rows - len(train_X):,} 行；"
+            f"标签筛选后：{len(train_X):,} 行；特征：{train_X.shape[1]:,} 列"
+        )
+        return train_X, train_y
 
     def run(self, context: TrainingContext) -> TrainingContext:
-        """Load the Context window and attach its train/evaluation partitions.
+        """Attach the window's training rows, leaving evaluation for later Steps.
 
         Example:
-            next_context = loader.run(
-                TrainingContext(window=training_window)
-            )
+            context = step.run(TrainingContext(window=training_window))
         """
-        (
-            (context.train_X, context.train_y),
-            (
-                context.eval_X,
-                context.eval_y,
-            ),
-        ) = self.load(
-            train_dates=context.window.train_dates,
-            eval_date=context.window.eval_date,
-        )
+        context.train_X, context.train_y = self.load(train_dates=context.window.train_dates)
+        context.sample_weight = self._weights
         return context
-
-    def _load_one_day(self, trade_date: str) -> tuple[pd.DataFrame, pd.Series]:
-        dataset_cfg = self._dataset_cfg
-        feature_paths = self._pm.feature_object(
-            feature_set=dataset_cfg.feature_set,
-            version=dataset_cfg.feature_version,
-            trade_date=trade_date,
-        )
-        loaded_feature = meta.require(
-            pm=self._pm,
-            meta_path=feature_paths.meta_path,
-            expected_payload_path=feature_paths.payload_path,
-        )
-        feature_frame = pq.ParquetFile(loaded_feature.payload_path).read().to_pandas()
-
-        label_paths = self._pm.label_object(
-            label_set=dataset_cfg.label_set,
-            version=dataset_cfg.label_version,
-            trade_date=trade_date,
-        )
-        loaded_label = meta.require(
-            pm=self._pm,
-            meta_path=label_paths.meta_path,
-            expected_payload_path=label_paths.payload_path,
-        )
-        label_frame = pq.ParquetFile(loaded_label.payload_path).read().to_pandas()
-
-        return build_daily_training_dataset(
-            feature_frame=feature_frame,
-            label_frame=label_frame,
-            feature_columns=dataset_cfg.feature_columns,
-            label_column=dataset_cfg.label_column,
-        )

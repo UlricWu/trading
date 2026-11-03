@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
@@ -52,9 +51,6 @@ class PathManager:
         "labels",
         "experiments",
     )
-    _EXPERIMENT_ID: Final[re.Pattern[str]] = re.compile(
-        r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}"
-    )
 
     def __init__(self, storage_root: Path) -> None:
         """Bind one existing absolute storage root and ensure its namespaces."""
@@ -77,6 +73,20 @@ class PathManager:
     def storage_root(self) -> Path:
         """Return the resolved formal storage root."""
         return self._root
+
+    def raw_source_dir(self, *, broker: str, source_name: str) -> Path:
+        """Return one raw source directory for its owner's partition scans.
+
+        Example:
+            root = pm.raw_source_dir(broker="cninfo", source_name="corporate_action_publications")
+            partitions = tuple(root.glob("trade_date=*"))
+        """
+        return (
+            self._root
+            / "raw"
+            / self.require_safe_basename(broker, "broker")
+            / self.require_safe_basename(source_name, "source_name")
+        )
 
     def raw_payload(
         self,
@@ -322,32 +332,23 @@ class PathManager:
         """Return the training artifact directory for one experiment."""
         return self.experiment_dir(experiment_name=experiment_name) / "training"
 
-    def experiment_backtest_dir(self, *, experiment_name: str) -> Path:
-        """Return the backtest artifact directory for one experiment."""
-        return self.experiment_dir(experiment_name=experiment_name) / "backtest"
-
     def experiment_report_dir(self, *, experiment_name: str) -> Path:
         """Return the report artifact directory for one experiment."""
         return self.experiment_dir(experiment_name=experiment_name) / "report"
 
-    def experiment_training_inference(self, *, experiment_name: str) -> Path:
-        """Return one training experiment's ready inference asset path.
+    def experiment_training_model(
+        self, *, experiment_name: str,
+    ) -> Path:
+        """Return the single immutable model ref for one training run.
 
         Example:
-            path = pm.experiment_training_inference(
-                experiment_name="training_2026-07-01_2026-07-20_run-1"
+            path = pm.experiment_training_model(
+                experiment_name="training_2026-07-01_2026-07-20_run-1",
             )
         """
         return (
             self.experiment_training_dir(experiment_name=experiment_name)
-            / "inference.pkl"
-        )
-
-    def experiment_training_params(self, *, experiment_name: str) -> Path:
-        """Return one training experiment's parameter artifact path."""
-        return (
-            self.experiment_training_dir(experiment_name=experiment_name)
-            / "params.json"
+            / "model.joblib"
         )
 
     def experiment_training_metrics(self, *, experiment_name: str) -> Path:
@@ -357,12 +358,53 @@ class PathManager:
             / "metrics.json"
         )
 
+    def experiment_training_schedule(self, *, experiment_name: str) -> Path:
+        """Return the request, resolved configuration, and sample-date record.
+
+        Example:
+            path = pm.experiment_training_schedule(experiment_name="training_run")
+        """
+        return self.experiment_training_dir(experiment_name=experiment_name) / "schedule.json"
+
+    def experiment_backtest_predictions_dir(self, *, experiment_name: str) -> Path:
+        """Return the backtest prediction directory without creating it.
+
+        Example:
+            path = pm.experiment_backtest_predictions_dir(
+                experiment_name="backtest_2026-10-11_signal-1",
+            )
+        """
+        return self.experiment_dir(experiment_name=experiment_name) / "predictions"
+
     def experiment_backtest_metrics(self, *, experiment_name: str) -> Path:
-        """Return one backtest experiment's metrics artifact path."""
-        return (
-            self.experiment_backtest_dir(experiment_name=experiment_name)
-            / "metrics.json"
-        )
+        """Return the parameters and metrics file in the backtest experiment root.
+
+        Example:
+            path = pm.experiment_backtest_metrics(
+                experiment_name="backtest_2026-10-11_9c5a9280-922e-4d1a-af01-ce896eb9668c",
+            )
+        """
+        return self.experiment_dir(experiment_name=experiment_name) / "metrics.json"
+
+    def experiment_backtest_execution(self, *, experiment_name: str) -> Path:
+        """Return the backtest execution facts file.
+
+        Example:
+            path = pm.experiment_backtest_execution(
+                experiment_name="backtest_2026-10-11_9c5a9280-922e-4d1a-af01-ce896eb9668c",
+            )
+        """
+        return self.experiment_dir(experiment_name=experiment_name) / "execution.parquet"
+
+    def experiment_backtest_equity(self, *, experiment_name: str) -> Path:
+        """Return the backtest valuation history file.
+
+        Example:
+            path = pm.experiment_backtest_equity(
+                experiment_name="backtest_2026-10-11_9c5a9280-922e-4d1a-af01-ce896eb9668c",
+            )
+        """
+        return self.experiment_dir(experiment_name=experiment_name) / "equity.parquet"
 
     def experiment_training_report(self, *, experiment_name: str) -> Path:
         """Return one training experiment's HTML report path."""
@@ -372,11 +414,14 @@ class PathManager:
         )
 
     def experiment_backtest_report(self, *, experiment_name: str) -> Path:
-        """Return one backtest experiment's HTML report path."""
-        return (
-            self.experiment_report_dir(experiment_name=experiment_name)
-            / "backtest_report.html"
-        )
+        """Return the HTML view in the backtest experiment root.
+
+        Example:
+            path = pm.experiment_backtest_report(
+                experiment_name="backtest_2026-10-11_9c5a9280-922e-4d1a-af01-ce896eb9668c",
+            )
+        """
+        return self.experiment_dir(experiment_name=experiment_name) / "report.html"
 
     def _raw_partition(
         self,
@@ -385,13 +430,7 @@ class PathManager:
         source_name: str,
         trade_date: str,
     ) -> Path:
-        return (
-            self._root
-            / "raw"
-            / self.require_safe_basename(broker, "broker")
-            / self.require_safe_basename(source_name, "source_name")
-            / self._trade_date_partition(trade_date)
-        )
+        return self.raw_source_dir(broker=broker, source_name=source_name) / self._trade_date_partition(trade_date)
 
     def _processed_partition(
         self,
@@ -412,13 +451,7 @@ class PathManager:
         source_name: str,
         calendar_year: int,
     ) -> Path:
-        return (
-            self._root
-            / "raw"
-            / self.require_safe_basename(broker, "broker")
-            / self.require_safe_basename(source_name, "source_name")
-            / self._year_partition(calendar_year)
-        )
+        return self.raw_source_dir(broker=broker, source_name=source_name) / self._year_partition(calendar_year)
 
     def _processed_year_partition(
         self,
@@ -471,17 +504,6 @@ class PathManager:
             raise ValueError(f"{field_name} must be a non-empty unpadded basename")
         if value in {".", ".."} or "/" in value or "\\" in value or "\x00" in value:
             raise ValueError(f"{field_name} must be a safe basename")
-        return value
-
-    @classmethod
-    def require_experiment_id(cls, value: str) -> str:
-        """Return an experiment identifier matching the public CLI contract."""
-        if not isinstance(value, str):
-            raise TypeError("experiment_id must be a str")
-        if cls._EXPERIMENT_ID.fullmatch(value) is None:
-            raise ValueError(
-                "experiment_id must match [A-Za-z0-9][A-Za-z0-9._-]{0,63}"
-            )
         return value
 
     @staticmethod

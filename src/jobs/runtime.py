@@ -605,10 +605,7 @@ class JobRuntime:
         return JobSnapshot(
             job_id=job.job_id,
             kind=submission.kind,
-            scope=RangeJobScope(
-                start=submission.start,
-                end=submission.end,
-            ),
+            scope=RangeJobScope(start=submission.start, end=submission.end),
             status=job.status,
             submitted_at=job.submitted_at,
             started_at=job.started_at,

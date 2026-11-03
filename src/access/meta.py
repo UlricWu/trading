@@ -15,7 +15,7 @@ from src.utils.path import PathManager
 
 __all__ = (
     "MetaRecord", "RemoteRawRecord", "commit", "commit_remote_raw", "find",
-    "find_level2_raw", "require",
+    "find_level2_raw", "inspect_output", "require",
 )
 
 _REQUIRED_FIELDS = frozenset({"payload", "size_bytes"})
@@ -137,6 +137,32 @@ def find(
             f"meta_path={meta_path}, payload={record.payload_path}, "
             f"expected={expected_path}"
         )
+    return record
+
+
+def inspect_output(
+    *, pm: PathManager, meta_path: Path, expected_payload_path: Path,
+) -> MetaRecord | None:
+    """Inspect a producer-owned output before rebuilding against changed inputs.
+
+    Validate the local object and declared relationship schema, without requiring
+    the old upstream payload to remain current. This is not a consumer read or
+    permission to reuse the result; the producer must compare its input identities.
+
+    Example:
+        previous = inspect_output(pm=pm, meta_path=paths.meta_path,
+                                  expected_payload_path=paths.payload_path)
+    """
+    root = pm.storage_root
+    resolved = _resolve_meta_path(meta_path, storage_root=root, require_file=False)
+    expected = _resolve_storage_path(expected_payload_path, storage_root=root,
+                                     field_name="expected_payload_path", require_file=False)
+    record = _read_record(meta_path=resolved, storage_root=root)
+    if isinstance(record, RemoteRawRecord):
+        raise RuntimeError(f"remote raw has no producer-owned local payload: {resolved}")
+    if record is not None and record.payload_path != expected:
+        raise RuntimeError(f"Meta payload does not match expected payload: meta_path={resolved}, "
+                           f"payload={record.payload_path}, expected={expected}")
     return record
 
 

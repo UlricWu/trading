@@ -1,0 +1,3615 @@
+[
+  {
+    "records": [
+      {
+        "ts_code": "600733.SH",
+        "symbol": "600733",
+        "end_date": "2018-09-18",
+        "ann_date": "2018-02-13",
+        "div_proc": "实施",
+        "imp_ann_date": "2018-09-13",
+        "record_date": "2018-09-18",
+        "ex_date": "2018-09-19",
+        "pay_date": null,
+        "div_listdate": "2018-09-20",
+        "cash_div_tax": null,
+        "stk_div": "2.5"
+      },
+      {
+        "ts_code": "600733.SH",
+        "symbol": "600733",
+        "end_date": "2018-08-23",
+        "ann_date": "2018-02-01",
+        "div_proc": "实施",
+        "imp_ann_date": "2018-09-13",
+        "record_date": "2018-09-18",
+        "ex_date": "2018-09-19",
+        "pay_date": null,
+        "div_listdate": "2018-09-20",
+        "cash_div_tax": "0.0",
+        "stk_div": "2.5"
+      },
+      {
+        "ts_code": "600733.SH",
+        "symbol": "600733",
+        "end_date": "2018-02-01",
+        "ann_date": "2018-02-01",
+        "div_proc": "实施",
+        "imp_ann_date": "2018-09-13",
+        "record_date": "2018-09-18",
+        "ex_date": "2018-09-19",
+        "pay_date": null,
+        "div_listdate": "2018-09-20",
+        "cash_div_tax": "0.0",
+        "stk_div": "2.5"
+      }
+    ],
+    "review": {
+      "candidate_id": "600733.SH/2018-02-01/2018-09-18",
+      "announcement_source": null,
+      "related_sources": [
+        "600733.SH/2018-08-23/2018-09-18",
+        "600733.SH/2018-09-18/2018-09-18"
+      ],
+      "action_id": "cninfo:1205432898:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2018-09-18",
+      "ex_date": "2018-09-19",
+      "pay_date": null,
+      "div_listdate": "2018-09-20",
+      "terms": [
+        {
+          "published_date": "2018-09-13",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "2.5",
+          "reference_cash_per_share": "0",
+          "reference_shares_per_share": "2.5",
+          "reference_price": null
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2018-09-13/1205432898.PDF"
+      ],
+      "reason": "confirmed_ordinary_net_rights_and_dated_reference: 原文明确合资格普通股东每股净获配 2.5 股，按登记日持仓计算。参考价或不调整结论按所引原文的公开日期采用；原有权益事实保留，不回填后续结果。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "600423.SH",
+        "symbol": "600423",
+        "end_date": "2018-11-06",
+        "ann_date": "2018-11-24",
+        "div_proc": "实施",
+        "imp_ann_date": "2018-12-12",
+        "record_date": "2018-12-17",
+        "ex_date": "2018-12-18",
+        "pay_date": null,
+        "div_listdate": "2018-12-19",
+        "cash_div_tax": null,
+        "stk_div": "1.0"
+      }
+    ],
+    "review": {
+      "candidate_id": "600423.SH/2018-11-06/2018-12-17",
+      "announcement_source": null,
+      "related_sources": [],
+      "action_id": "cninfo:1205664828:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2018-12-17",
+      "ex_date": "2018-12-18",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2018-12-12",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": "4.45"
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2018-12-12/1205664828.PDF"
+      ],
+      "reason": "confirmed_ordinary_net_rights_and_dated_reference: 原文明确普通股东不获分配；公司总转增比例不记入账户。参考价或不调整结论按所引原文的公开日期采用；原有权益事实保留，不回填后续结果。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "600399.SH",
+        "symbol": "600399",
+        "end_date": "2018-11-06",
+        "ann_date": "2018-11-22",
+        "div_proc": "实施",
+        "imp_ann_date": "2018-12-21",
+        "record_date": "2018-12-26",
+        "ex_date": "2018-12-27",
+        "pay_date": null,
+        "div_listdate": "2018-12-28",
+        "cash_div_tax": null,
+        "stk_div": "0.517"
+      }
+    ],
+    "review": {
+      "candidate_id": "600399.SH/2018-11-06/2018-12-26",
+      "announcement_source": null,
+      "related_sources": [],
+      "action_id": "cninfo:1205682049:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2018-12-26",
+      "ex_date": "2018-12-27",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2018-12-21",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": "2.38"
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2018-12-21/1205682049.PDF"
+      ],
+      "reason": "confirmed_ordinary_net_rights_and_dated_reference: 原文明确普通股东不获分配；公司总转增比例不记入账户。参考价或不调整结论按所引原文的公开日期采用；原有权益事实保留，不回填后续结果。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "002326.SZ",
+        "symbol": "002326",
+        "end_date": "2019-07-20",
+        "ann_date": "2019-08-06",
+        "div_proc": "实施",
+        "imp_ann_date": "2019-09-24",
+        "record_date": "2019-09-27",
+        "ex_date": "2019-09-30",
+        "pay_date": null,
+        "div_listdate": "2019-09-30",
+        "cash_div_tax": null,
+        "stk_div": "0.1206188"
+      }
+    ],
+    "review": {
+      "candidate_id": "002326.SZ/2019-07-20/2019-09-27",
+      "announcement_source": null,
+      "related_sources": [],
+      "action_id": "cninfo:1206944067:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2019-09-27",
+      "ex_date": "2019-09-30",
+      "pay_date": null,
+      "div_listdate": "2019-09-30",
+      "terms": [
+        {
+          "published_date": "2019-09-24",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0.1206188",
+          "reference_cash_per_share": "0",
+          "reference_shares_per_share": "0.075274",
+          "reference_price": null
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2019-09-24/1206944067.PDF"
+      ],
+      "reason": "confirmed_ordinary_net_rights_and_dated_reference: 原文明确合资格普通股东每股净获配 0.1206188 股，按登记日持仓计算。参考价或不调整结论按所引原文的公开日期采用；原有权益事实保留，不回填后续结果。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "000410.SZ",
+        "symbol": "000410",
+        "end_date": "2019-10-30",
+        "ann_date": "2019-11-15",
+        "div_proc": "实施",
+        "imp_ann_date": "2019-12-17",
+        "record_date": "2019-12-20",
+        "ex_date": "2019-12-23",
+        "pay_date": null,
+        "div_listdate": "2019-12-23",
+        "cash_div_tax": null,
+        "stk_div": "1.2"
+      }
+    ],
+    "review": {
+      "candidate_id": "000410.SZ/2019-10-30/2019-12-20",
+      "announcement_source": null,
+      "related_sources": [],
+      "action_id": "cninfo:1207169746:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2019-12-20",
+      "ex_date": "2019-12-23",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2019-12-17",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": "0",
+          "reference_shares_per_share": "0",
+          "reference_price": null
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2019-12-17/1207169746.PDF"
+      ],
+      "reason": "confirmed_ordinary_net_rights_and_dated_reference: 原文明确普通股东不获分配；公司总转增比例不记入账户。参考价或不调整结论按所引原文的公开日期采用；原有权益事实保留，不回填后续结果。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "600815.SH",
+        "symbol": "600815",
+        "end_date": "2019-10-16",
+        "ann_date": "2019-11-02",
+        "div_proc": "实施",
+        "imp_ann_date": "2019-12-17",
+        "record_date": "2019-12-20",
+        "ex_date": "2019-12-23",
+        "pay_date": null,
+        "div_listdate": "2019-12-24",
+        "cash_div_tax": null,
+        "stk_div": "0.85"
+      }
+    ],
+    "review": {
+      "candidate_id": "600815.SH/2019-10-16/2019-12-20",
+      "announcement_source": null,
+      "related_sources": [],
+      "action_id": "cninfo:1207169325:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2019-12-20",
+      "ex_date": "2019-12-23",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2019-12-17",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": null
+        },
+        {
+          "published_date": "2019-12-20",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": "2.84"
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2019-12-17/1207169325.PDF",
+        "https://static.cninfo.com.cn/finalpage/2019-12-20/1207180289.PDF"
+      ],
+      "reason": "confirmed_ordinary_net_rights_and_dated_reference: 原文明确普通股东不获分配；公司总转增比例不记入账户。参考价或不调整结论按所引原文的公开日期采用；原有权益事实保留，不回填后续结果。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "000982.SZ",
+        "symbol": "000982",
+        "end_date": "2019-10-29",
+        "ann_date": "2019-11-14",
+        "div_proc": "实施",
+        "imp_ann_date": "2019-12-19",
+        "record_date": "2019-12-24",
+        "ex_date": "2019-12-25",
+        "pay_date": null,
+        "div_listdate": "2019-12-25",
+        "cash_div_tax": null,
+        "stk_div": "1.361"
+      }
+    ],
+    "review": {
+      "candidate_id": "000982.SZ/2019-10-29/2019-12-24",
+      "announcement_source": null,
+      "related_sources": [],
+      "action_id": "cninfo:1207176341:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2019-12-24",
+      "ex_date": "2019-12-25",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2019-12-19",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": "0",
+          "reference_shares_per_share": "0",
+          "reference_price": null
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2019-12-19/1207176341.PDF"
+      ],
+      "reason": "confirmed_ordinary_net_rights_and_dated_reference: 原文明确普通股东不获分配；公司总转增比例不记入账户。参考价或不调整结论按所引原文的公开日期采用；原有权益事实保留，不回填后续结果。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "601258.SH",
+        "symbol": "601258",
+        "end_date": "2019-11-23",
+        "ann_date": "2019-12-10",
+        "div_proc": "实施",
+        "imp_ann_date": "2019-12-24",
+        "record_date": "2019-12-27",
+        "ex_date": "2019-12-30",
+        "pay_date": null,
+        "div_listdate": "2019-12-31",
+        "cash_div_tax": null,
+        "stk_div": "0.5641598"
+      }
+    ],
+    "review": {
+      "candidate_id": "601258.SH/2019-11-23/2019-12-27",
+      "announcement_source": null,
+      "related_sources": [],
+      "action_id": "cninfo:1207188365:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2019-12-27",
+      "ex_date": "2019-12-30",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2019-12-24",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": null
+        },
+        {
+          "published_date": "2019-12-27",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": "1.42"
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2019-12-24/1207188365.PDF",
+        "https://static.cninfo.com.cn/finalpage/2019-12-27/1207199460.PDF"
+      ],
+      "reason": "confirmed_ordinary_net_rights_and_dated_reference: 原文明确普通股东不获分配；公司总转增比例不记入账户。参考价或不调整结论按所引原文的公开日期采用；原有权益事实保留，不回填后续结果。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "600186.SH",
+        "symbol": "600186",
+        "end_date": "2019-11-29",
+        "ann_date": "2019-12-17",
+        "div_proc": "实施",
+        "imp_ann_date": "2020-01-15",
+        "record_date": "2020-01-20",
+        "ex_date": "2020-01-21",
+        "pay_date": null,
+        "div_listdate": "2020-01-22",
+        "cash_div_tax": null,
+        "stk_div": "0.29933368"
+      }
+    ],
+    "review": {
+      "candidate_id": "600186.SH/2019-11-29/2020-01-20",
+      "announcement_source": null,
+      "related_sources": [],
+      "action_id": "cninfo:1207249757:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2020-01-20",
+      "ex_date": "2020-01-21",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2020-01-15",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": null
+        },
+        {
+          "published_date": "2020-01-18",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": "2.38"
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2020-01-15/1207249757.PDF",
+        "https://static.cninfo.com.cn/finalpage/2020-01-18/1207264231.PDF"
+      ],
+      "reason": "confirmed_ordinary_net_rights_and_dated_reference: 原文明确普通股东不获分配；公司总转增比例不记入账户。参考价或不调整结论按所引原文的公开日期采用；原有权益事实保留，不回填后续结果。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "000792.SZ",
+        "symbol": "000792",
+        "end_date": "2020-01-03",
+        "ann_date": "2020-01-18",
+        "div_proc": "实施",
+        "imp_ann_date": "2020-03-25",
+        "record_date": "2020-03-30",
+        "ex_date": "2020-03-31",
+        "pay_date": null,
+        "div_listdate": "2020-03-31",
+        "cash_div_tax": null,
+        "stk_div": "0.95"
+      }
+    ],
+    "review": {
+      "candidate_id": "000792.SZ/2020-01-03/2020-03-30",
+      "announcement_source": null,
+      "related_sources": [],
+      "action_id": "cninfo:1207399015:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2020-03-30",
+      "ex_date": "2020-03-31",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2020-03-25",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": "0",
+          "reference_shares_per_share": "0",
+          "reference_price": null
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2020-03-25/1207399015.PDF"
+      ],
+      "reason": "confirmed_ordinary_net_rights_and_dated_reference: 原文明确普通股东不获分配；公司总转增比例不记入账户。参考价或不调整结论按所引原文的公开日期采用；原有权益事实保留，不回填后续结果。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "002260.SZ",
+        "symbol": "002260",
+        "end_date": "2020-04-08",
+        "ann_date": "2020-04-24",
+        "div_proc": "实施",
+        "imp_ann_date": "2020-09-19",
+        "record_date": "2020-09-24",
+        "ex_date": "2020-09-25",
+        "pay_date": null,
+        "div_listdate": null,
+        "cash_div_tax": null,
+        "stk_div": "1.1"
+      }
+    ],
+    "review": {
+      "candidate_id": "002260.SZ/2020-04-08/2020-09-24",
+      "announcement_source": null,
+      "related_sources": [],
+      "action_id": "cninfo:1208461752:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2020-09-24",
+      "ex_date": "2020-09-25",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2020-09-19",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": "0",
+          "reference_shares_per_share": "0",
+          "reference_price": null
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2020-09-19/1208461752.PDF"
+      ],
+      "reason": "confirmed_ordinary_net_rights_and_dated_reference: 原文明确普通股东不获分配；公司总转增比例不记入账户。参考价或不调整结论按所引原文的公开日期采用；原有权益事实保留，不回填后续结果。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "000595.SZ",
+        "symbol": "000595",
+        "end_date": "2020-10-28",
+        "ann_date": "2020-11-14",
+        "div_proc": "实施",
+        "imp_ann_date": "2020-11-25",
+        "record_date": "2020-11-27",
+        "ex_date": "2020-11-30",
+        "pay_date": null,
+        "div_listdate": "2020-11-30",
+        "cash_div_tax": null,
+        "stk_div": "0.503"
+      }
+    ],
+    "review": {
+      "candidate_id": "000595.SZ/2020-10-28/2020-11-27",
+      "announcement_source": null,
+      "related_sources": [],
+      "action_id": "cninfo:1208793565:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2020-11-27",
+      "ex_date": "2020-11-30",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2020-11-25",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": "0",
+          "reference_shares_per_share": "0",
+          "reference_price": null
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2020-11-25/1208793565.PDF"
+      ],
+      "reason": "confirmed_ordinary_net_rights_and_dated_reference: 原文明确普通股东不获分配；公司总转增比例不记入账户。参考价或不调整结论按所引原文的公开日期采用；原有权益事实保留，不回填后续结果。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "002354.SZ",
+        "symbol": "002354",
+        "end_date": "2020-10-21",
+        "ann_date": "2020-11-05",
+        "div_proc": "实施",
+        "imp_ann_date": "2020-12-02",
+        "record_date": "2020-12-07",
+        "ex_date": "2020-12-08",
+        "pay_date": null,
+        "div_listdate": "2020-12-08",
+        "cash_div_tax": null,
+        "stk_div": "0.784"
+      }
+    ],
+    "review": {
+      "candidate_id": "002354.SZ/2020-10-21/2020-12-07",
+      "announcement_source": null,
+      "related_sources": [],
+      "action_id": "cninfo:1208829627:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2020-12-07",
+      "ex_date": "2020-12-08",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2020-12-02",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": "0",
+          "reference_shares_per_share": "0",
+          "reference_price": null
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2020-12-02/1208829627.PDF"
+      ],
+      "reason": "confirmed_ordinary_net_rights_and_dated_reference: 原文明确普通股东不获分配；公司总转增比例不记入账户。参考价或不调整结论按所引原文的公开日期采用；原有权益事实保留，不回填后续结果。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "300008.SZ",
+        "symbol": "300008",
+        "end_date": "2020-08-19",
+        "ann_date": "2020-09-05",
+        "div_proc": "实施",
+        "imp_ann_date": "2020-12-18",
+        "record_date": "2020-12-22",
+        "ex_date": "2020-12-23",
+        "pay_date": null,
+        "div_listdate": "2020-12-23",
+        "cash_div_tax": null,
+        "stk_div": "0.8"
+      }
+    ],
+    "review": {
+      "candidate_id": "300008.SZ/2020-08-19/2020-12-22",
+      "announcement_source": null,
+      "related_sources": [],
+      "action_id": "cninfo:1208928813:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2020-12-22",
+      "ex_date": "2020-12-23",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2020-12-18",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": "0",
+          "reference_shares_per_share": "0",
+          "reference_price": null
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2020-12-18/1208928813.PDF"
+      ],
+      "reason": "confirmed_ordinary_net_rights_and_dated_reference: 原文明确普通股东不获分配；公司总转增比例不记入账户。参考价或不调整结论按所引原文的公开日期采用；原有权益事实保留，不回填后续结果。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "601777.SH",
+        "symbol": "601777",
+        "end_date": "2020-11-10",
+        "ann_date": "2020-11-26",
+        "div_proc": "实施",
+        "imp_ann_date": "2020-12-16",
+        "record_date": "2020-12-22",
+        "ex_date": "2020-12-23",
+        "pay_date": null,
+        "div_listdate": "2020-12-24",
+        "cash_div_tax": null,
+        "stk_div": "2.49969516"
+      }
+    ],
+    "review": {
+      "candidate_id": "601777.SH/2020-11-10/2020-12-22",
+      "announcement_source": null,
+      "related_sources": [],
+      "action_id": "cninfo:1208911473:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2020-12-22",
+      "ex_date": "2020-12-23",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2020-12-16",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": null
+        },
+        {
+          "published_date": "2020-12-22",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": "4.97"
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2020-12-16/1208911473.PDF",
+        "https://static.cninfo.com.cn/finalpage/2020-12-22/1208955899.PDF"
+      ],
+      "reason": "confirmed_ordinary_net_rights_and_dated_reference: 原文明确普通股东不获分配；公司总转增比例不记入账户。参考价或不调整结论按所引原文的公开日期采用；原有权益事实保留，不回填后续结果。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "002716.SZ",
+        "symbol": "002716",
+        "end_date": "2020-12-01",
+        "ann_date": "2020-12-17",
+        "div_proc": "实施",
+        "imp_ann_date": "2020-12-24",
+        "record_date": "2020-12-28",
+        "ex_date": "2020-12-29",
+        "pay_date": null,
+        "div_listdate": "2020-12-29",
+        "cash_div_tax": null,
+        "stk_div": "1.301436"
+      }
+    ],
+    "review": {
+      "candidate_id": "002716.SZ/2020-12-01/2020-12-28",
+      "announcement_source": null,
+      "related_sources": [],
+      "action_id": "cninfo:1208971926:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2020-12-28",
+      "ex_date": "2020-12-29",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2020-12-24",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": "0",
+          "reference_shares_per_share": "0",
+          "reference_price": null
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2020-12-24/1208971926.PDF"
+      ],
+      "reason": "confirmed_ordinary_net_rights_and_dated_reference: 原文明确普通股东不获分配；公司总转增比例不记入账户。参考价或不调整结论按所引原文的公开日期采用；原有权益事实保留，不回填后续结果。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "600157.SH",
+        "symbol": "600157",
+        "end_date": "2020-12-01",
+        "ann_date": "2020-12-17",
+        "div_proc": "实施",
+        "imp_ann_date": "2020-12-23",
+        "record_date": "2020-12-28",
+        "ex_date": "2020-12-29",
+        "pay_date": null,
+        "div_listdate": "2020-12-30",
+        "cash_div_tax": null,
+        "stk_div": "0.78803558"
+      }
+    ],
+    "review": {
+      "candidate_id": "600157.SH/2020-12-01/2020-12-28",
+      "announcement_source": null,
+      "related_sources": [],
+      "action_id": "cninfo:1208965019:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2020-12-28",
+      "ex_date": "2020-12-29",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2020-12-23",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": null
+        },
+        {
+          "published_date": "2020-12-28",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": "0",
+          "reference_shares_per_share": "0",
+          "reference_price": null
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2020-12-23/1208965019.PDF",
+        "https://static.cninfo.com.cn/finalpage/2020-12-28/1209001402.PDF"
+      ],
+      "reason": "confirmed_ordinary_net_rights_and_dated_reference: 原文明确普通股东不获分配；公司总转增比例不记入账户。参考价或不调整结论按所引原文的公开日期采用；原有权益事实保留，不回填后续结果。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "002210.SZ",
+        "symbol": "002210",
+        "end_date": "2020-11-06",
+        "ann_date": "2020-12-16",
+        "div_proc": "实施",
+        "imp_ann_date": "2020-12-24",
+        "record_date": "2020-12-29",
+        "ex_date": "2020-12-30",
+        "pay_date": null,
+        "div_listdate": "2020-12-30",
+        "cash_div_tax": null,
+        "stk_div": "0.61"
+      }
+    ],
+    "review": {
+      "candidate_id": "002210.SZ/2020-11-06/2020-12-29",
+      "announcement_source": null,
+      "related_sources": [],
+      "action_id": "cninfo:1208971425:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2020-12-29",
+      "ex_date": "2020-12-30",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2020-12-24",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": "0",
+          "reference_shares_per_share": "0",
+          "reference_price": null
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2020-12-24/1208971425.PDF"
+      ],
+      "reason": "confirmed_ordinary_net_rights_and_dated_reference: 原文明确普通股东不获分配；公司总转增比例不记入账户。参考价或不调整结论按所引原文的公开日期采用；原有权益事实保留，不回填后续结果。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "002445.SZ",
+        "symbol": "002445",
+        "end_date": "2020-09-17",
+        "ann_date": "2020-09-17",
+        "div_proc": "实施",
+        "imp_ann_date": "2020-12-26",
+        "record_date": "2020-12-30",
+        "ex_date": null,
+        "pay_date": null,
+        "div_listdate": "2020-12-31",
+        "cash_div_tax": "0.0",
+        "stk_div": "0.7292334"
+      },
+      {
+        "ts_code": "002445.SZ",
+        "symbol": "002445",
+        "end_date": "2020-08-27",
+        "ann_date": "2020-09-12",
+        "div_proc": "实施",
+        "imp_ann_date": "2020-12-26",
+        "record_date": "2020-12-30",
+        "ex_date": "2020-12-31",
+        "pay_date": null,
+        "div_listdate": "2020-12-31",
+        "cash_div_tax": null,
+        "stk_div": "0.7292334"
+      }
+    ],
+    "review": {
+      "candidate_id": "002445.SZ/2020-08-27/2020-12-30",
+      "announcement_source": null,
+      "related_sources": [
+        "002445.SZ/2020-09-17/2020-12-30"
+      ],
+      "action_id": "cninfo:1208994482:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2020-12-30",
+      "ex_date": "2020-12-31",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2020-12-26",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": "0",
+          "reference_shares_per_share": "0",
+          "reference_price": null
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2020-12-26/1208994482.PDF"
+      ],
+      "reason": "confirmed_ordinary_net_rights_and_dated_reference: 原文明确普通股东不获分配；公司总转增比例不记入账户。参考价或不调整结论按所引原文的公开日期采用；原有权益事实保留，不回填后续结果。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "002501.SZ",
+        "symbol": "002501",
+        "end_date": "2020-11-26",
+        "ann_date": "2020-12-12",
+        "div_proc": "实施",
+        "imp_ann_date": "2020-12-29",
+        "record_date": "2020-12-30",
+        "ex_date": "2020-12-31",
+        "pay_date": null,
+        "div_listdate": "2020-12-31",
+        "cash_div_tax": null,
+        "stk_div": "1.9222061"
+      }
+    ],
+    "review": {
+      "candidate_id": "002501.SZ/2020-11-26/2020-12-30",
+      "announcement_source": null,
+      "related_sources": [],
+      "action_id": "cninfo:1209008336:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2020-12-30",
+      "ex_date": "2020-12-31",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2020-12-29",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": "0",
+          "reference_shares_per_share": "0",
+          "reference_price": null
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2020-12-29/1209008336.PDF"
+      ],
+      "reason": "confirmed_ordinary_net_rights_and_dated_reference: 原文明确普通股东不获分配；公司总转增比例不记入账户。参考价或不调整结论按所引原文的公开日期采用；原有权益事实保留，不回填后续结果。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "300362.SZ",
+        "symbol": "300362",
+        "end_date": "2021-03-06",
+        "ann_date": "2021-03-22",
+        "div_proc": "实施",
+        "imp_ann_date": "2021-06-07",
+        "record_date": "2021-06-11",
+        "ex_date": "2021-06-15",
+        "pay_date": null,
+        "div_listdate": null,
+        "cash_div_tax": null,
+        "stk_div": "2.5502742"
+      }
+    ],
+    "review": {
+      "candidate_id": "300362.SZ/2021-03-06/2021-06-11",
+      "announcement_source": null,
+      "related_sources": [],
+      "action_id": "cninfo:1210183340:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2021-06-11",
+      "ex_date": "2021-06-15",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2021-06-07",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": "0",
+          "reference_shares_per_share": "0",
+          "reference_price": null
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2021-06-07/1210183340.PDF"
+      ],
+      "reason": "confirmed_ordinary_net_rights_and_dated_reference: 原文明确普通股东不获分配；公司总转增比例不记入账户。参考价或不调整结论按所引原文的公开日期采用；原有权益事实保留，不回填后续结果。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "600595.SH",
+        "symbol": "600595",
+        "end_date": "2021-06-24",
+        "ann_date": "2021-07-10",
+        "div_proc": "实施",
+        "imp_ann_date": "2021-09-27",
+        "record_date": "2021-09-30",
+        "ex_date": "2021-10-08",
+        "pay_date": null,
+        "div_listdate": "2021-10-11",
+        "cash_div_tax": null,
+        "stk_div": "1.0"
+      }
+    ],
+    "review": {
+      "candidate_id": "600595.SH/2021-06-24/2021-09-30",
+      "announcement_source": null,
+      "related_sources": [],
+      "action_id": "cninfo:1211157537:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2021-09-30",
+      "ex_date": "2021-10-08",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2021-09-27",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": null
+        },
+        {
+          "published_date": "2021-09-30",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": "0",
+          "reference_shares_per_share": "0",
+          "reference_price": null
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2021-09-27/1211157537.PDF",
+        "https://static.cninfo.com.cn/finalpage/2021-09-30/1211180493.PDF"
+      ],
+      "reason": "confirmed_ordinary_net_rights_and_dated_reference: 原文明确普通股东不获分配；公司总转增比例不记入账户。参考价或不调整结论按所引原文的公开日期采用；原有权益事实保留，不回填后续结果。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "600221.SH",
+        "symbol": "600221",
+        "end_date": "2021-09-13",
+        "ann_date": "2021-09-28",
+        "div_proc": "实施",
+        "imp_ann_date": "2021-11-30",
+        "record_date": "2021-12-03",
+        "ex_date": "2021-12-06",
+        "pay_date": null,
+        "div_listdate": "2021-12-07",
+        "cash_div_tax": null,
+        "stk_div": "1.0"
+      }
+    ],
+    "review": {
+      "candidate_id": "600221.SH/2021-09-13/2021-12-03",
+      "announcement_source": null,
+      "related_sources": [],
+      "action_id": "cninfo:1211723695:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2021-12-03",
+      "ex_date": "2021-12-06",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2021-11-30",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": null
+        },
+        {
+          "published_date": "2021-12-03",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": "0",
+          "reference_shares_per_share": "0",
+          "reference_price": null
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2021-11-30/1211723695.PDF",
+        "https://static.cninfo.com.cn/finalpage/2021-12-03/1211780022.PDF"
+      ],
+      "reason": "confirmed_ordinary_net_rights_and_dated_reference: 原文明确普通股东不获分配；公司总转增比例不记入账户。参考价或不调整结论按所引原文的公开日期采用；原有权益事实保留，不回填后续结果。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "000523.SZ",
+        "symbol": "000523",
+        "end_date": "2021-10-23",
+        "ann_date": "2021-11-10",
+        "div_proc": "实施",
+        "imp_ann_date": "2021-12-03",
+        "record_date": "2021-12-08",
+        "ex_date": "2021-12-09",
+        "pay_date": null,
+        "div_listdate": "2021-12-09",
+        "cash_div_tax": null,
+        "stk_div": "1.569"
+      }
+    ],
+    "review": {
+      "candidate_id": "000523.SZ/2021-10-23/2021-12-08",
+      "announcement_source": null,
+      "related_sources": [],
+      "action_id": "cninfo:1211779449:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2021-12-08",
+      "ex_date": "2021-12-09",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2021-12-03",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": "0",
+          "reference_shares_per_share": "0",
+          "reference_price": null
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2021-12-03/1211779449.PDF"
+      ],
+      "reason": "confirmed_ordinary_net_rights_and_dated_reference: 原文明确普通股东不获分配；公司总转增比例不记入账户。参考价或不调整结论按所引原文的公开日期采用；原有权益事实保留，不回填后续结果。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "000980.SZ",
+        "symbol": "000980",
+        "end_date": "2021-10-23",
+        "ann_date": "2021-11-10",
+        "div_proc": "实施",
+        "imp_ann_date": "2021-12-09",
+        "record_date": "2021-12-14",
+        "ex_date": "2021-12-15",
+        "pay_date": null,
+        "div_listdate": "2021-12-15",
+        "cash_div_tax": null,
+        "stk_div": "1.5"
+      }
+    ],
+    "review": {
+      "candidate_id": "000980.SZ/2021-10-23/2021-12-14",
+      "announcement_source": null,
+      "related_sources": [],
+      "action_id": "cninfo:1211847799:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2021-12-14",
+      "ex_date": "2021-12-15",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2021-12-09",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": "0",
+          "reference_shares_per_share": "0",
+          "reference_price": null
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2021-12-09/1211847799.PDF"
+      ],
+      "reason": "confirmed_ordinary_net_rights_and_dated_reference: 原文明确普通股东不获分配；公司总转增比例不记入账户。参考价或不调整结论按所引原文的公开日期采用；原有权益事实保留，不回填后续结果。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "002072.SZ",
+        "symbol": "002072",
+        "end_date": "2021-11-19",
+        "ann_date": "2021-12-07",
+        "div_proc": "实施",
+        "imp_ann_date": "2021-12-18",
+        "record_date": "2021-12-23",
+        "ex_date": "2021-12-24",
+        "pay_date": null,
+        "div_listdate": "2021-12-24",
+        "cash_div_tax": null,
+        "stk_div": "1.08909"
+      }
+    ],
+    "review": {
+      "candidate_id": "002072.SZ/2021-11-19/2021-12-23",
+      "announcement_source": null,
+      "related_sources": [],
+      "action_id": "cninfo:1211946446:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2021-12-23",
+      "ex_date": "2021-12-24",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2021-12-18",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": "0",
+          "reference_shares_per_share": "0",
+          "reference_price": null
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2021-12-18/1211946446.PDF"
+      ],
+      "reason": "confirmed_ordinary_net_rights_and_dated_reference: 原文明确普通股东不获分配；公司总转增比例不记入账户。参考价或不调整结论按所引原文的公开日期采用；原有权益事实保留，不回填后续结果。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "002175.SZ",
+        "symbol": "002175",
+        "end_date": "2021-10-12",
+        "ann_date": "2021-10-12",
+        "div_proc": "实施",
+        "imp_ann_date": "2021-12-21",
+        "record_date": "2021-12-24",
+        "ex_date": null,
+        "pay_date": null,
+        "div_listdate": "2021-12-27",
+        "cash_div_tax": "0.0",
+        "stk_div": "0.69384138"
+      },
+      {
+        "ts_code": "002175.SZ",
+        "symbol": "002175",
+        "end_date": "2021-09-23",
+        "ann_date": "2021-10-09",
+        "div_proc": "实施",
+        "imp_ann_date": "2021-12-21",
+        "record_date": "2021-12-24",
+        "ex_date": "2021-12-27",
+        "pay_date": null,
+        "div_listdate": "2021-12-27",
+        "cash_div_tax": null,
+        "stk_div": "0.69384138"
+      }
+    ],
+    "review": {
+      "candidate_id": "002175.SZ/2021-09-23/2021-12-24",
+      "announcement_source": null,
+      "related_sources": [
+        "002175.SZ/2021-10-12/2021-12-24"
+      ],
+      "action_id": "cninfo:1211970924:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2021-12-24",
+      "ex_date": "2021-12-27",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2021-12-21",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": "0",
+          "reference_shares_per_share": "0",
+          "reference_price": null
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2021-12-21/1211970924.PDF"
+      ],
+      "reason": "confirmed_ordinary_net_rights_and_dated_reference: 原文明确普通股东不获分配；公司总转增比例不记入账户。参考价或不调整结论按所引原文的公开日期采用；原有权益事实保留，不回填后续结果。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "300071.SZ",
+        "symbol": "300071",
+        "end_date": "2021-11-16",
+        "ann_date": "2021-12-01",
+        "div_proc": "实施",
+        "imp_ann_date": "2021-12-27",
+        "record_date": "2021-12-29",
+        "ex_date": "2021-12-30",
+        "pay_date": null,
+        "div_listdate": "2021-12-30",
+        "cash_div_tax": null,
+        "stk_div": "0.38"
+      }
+    ],
+    "review": {
+      "candidate_id": "300071.SZ/2021-11-16/2021-12-29",
+      "announcement_source": null,
+      "related_sources": [],
+      "action_id": "cninfo:1212031481:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2021-12-29",
+      "ex_date": "2021-12-30",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2021-12-27",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": null
+        },
+        {
+          "published_date": "2021-12-29",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": "0",
+          "reference_shares_per_share": "0",
+          "reference_price": null
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2021-12-27/1212031481.PDF",
+        "https://static.cninfo.com.cn/finalpage/2021-12-29/1212046513.PDF"
+      ],
+      "reason": "confirmed_ordinary_net_rights_and_dated_reference: 原文明确普通股东不获分配；公司总转增比例不记入账户。参考价或不调整结论按所引原文的公开日期采用；原有权益事实保留，不回填后续结果。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "300278.SZ",
+        "symbol": "300278",
+        "end_date": "2021-12-03",
+        "ann_date": "2021-12-20",
+        "div_proc": "实施",
+        "imp_ann_date": "2021-12-27",
+        "record_date": "2021-12-30",
+        "ex_date": "2021-12-31",
+        "pay_date": null,
+        "div_listdate": "2021-12-31",
+        "cash_div_tax": null,
+        "stk_div": "1.500423"
+      }
+    ],
+    "review": {
+      "candidate_id": "300278.SZ/2021-12-03/2021-12-30",
+      "announcement_source": null,
+      "related_sources": [],
+      "action_id": "cninfo:1212033350:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2021-12-30",
+      "ex_date": "2021-12-31",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2021-12-27",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": null
+        },
+        {
+          "published_date": "2021-12-30",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": "3.63"
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2021-12-27/1212033350.PDF",
+        "https://static.cninfo.com.cn/finalpage/2021-12-30/1212056687.PDF"
+      ],
+      "reason": "confirmed_ordinary_net_rights_and_dated_reference: 原文明确普通股东不获分配；公司总转增比例不记入账户。参考价或不调整结论按所引原文的公开日期采用；原有权益事实保留，不回填后续结果。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "002321.SZ",
+        "symbol": "002321",
+        "end_date": "2021-12-07",
+        "ann_date": "2021-12-23",
+        "div_proc": "实施",
+        "imp_ann_date": "2021-12-28",
+        "record_date": "2021-12-31",
+        "ex_date": "2022-01-04",
+        "pay_date": null,
+        "div_listdate": "2022-01-04",
+        "cash_div_tax": null,
+        "stk_div": "2.992"
+      }
+    ],
+    "review": {
+      "candidate_id": "002321.SZ/2021-12-07/2021-12-31",
+      "announcement_source": null,
+      "related_sources": [],
+      "action_id": "cninfo:1212034861:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2021-12-31",
+      "ex_date": "2022-01-04",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2021-12-28",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": null
+        },
+        {
+          "published_date": "2021-12-31",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": "2.97"
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2021-12-28/1212034861.PDF",
+        "https://static.cninfo.com.cn/finalpage/2021-12-31/1212064092.PDF"
+      ],
+      "reason": "confirmed_ordinary_net_rights_and_dated_reference: 原文明确普通股东不获分配；公司总转增比例不记入账户。参考价或不调整结论按所引原文的公开日期采用；原有权益事实保留，不回填后续结果。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "002356.SZ",
+        "symbol": "002356",
+        "end_date": "2021-12-04",
+        "ann_date": "2021-12-21",
+        "div_proc": "实施",
+        "imp_ann_date": "2021-12-29",
+        "record_date": "2021-12-31",
+        "ex_date": "2022-01-04",
+        "pay_date": null,
+        "div_listdate": "2022-01-04",
+        "cash_div_tax": null,
+        "stk_div": "1.484"
+      }
+    ],
+    "review": {
+      "candidate_id": "002356.SZ/2021-12-04/2021-12-31",
+      "announcement_source": null,
+      "related_sources": [],
+      "action_id": "cninfo:1212056982:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2021-12-31",
+      "ex_date": "2022-01-04",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2021-12-29",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": null
+        },
+        {
+          "published_date": "2021-12-31",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": "0",
+          "reference_shares_per_share": "0",
+          "reference_price": null
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2021-12-29/1212056982.PDF",
+        "https://static.cninfo.com.cn/finalpage/2021-12-31/1212063377.PDF"
+      ],
+      "reason": "confirmed_ordinary_net_rights_and_dated_reference: 原文明确普通股东不获分配；公司总转增比例不记入账户。参考价或不调整结论按所引原文的公开日期采用；原有权益事实保留，不回填后续结果。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "002766.SZ",
+        "symbol": "002766",
+        "end_date": "2021-12-10",
+        "ann_date": "2021-12-28",
+        "div_proc": "实施",
+        "imp_ann_date": "2021-12-29",
+        "record_date": "2021-12-31",
+        "ex_date": "2022-01-04",
+        "pay_date": null,
+        "div_listdate": "2022-01-04",
+        "cash_div_tax": null,
+        "stk_div": "1.0"
+      }
+    ],
+    "review": {
+      "candidate_id": "002766.SZ/2021-12-10/2021-12-31",
+      "announcement_source": null,
+      "related_sources": [],
+      "action_id": "cninfo:1212047463:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2021-12-31",
+      "ex_date": "2022-01-04",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2021-12-29",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": null
+        },
+        {
+          "published_date": "2021-12-31",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": "0",
+          "reference_shares_per_share": "0",
+          "reference_price": null
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2021-12-29/1212047463.PDF",
+        "https://static.cninfo.com.cn/finalpage/2021-12-31/1212062335.PDF"
+      ],
+      "reason": "confirmed_ordinary_net_rights_and_dated_reference: 原文明确普通股东不获分配；公司总转增比例不记入账户。参考价或不调整结论按所引原文的公开日期采用；原有权益事实保留，不回填后续结果。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "600734.SH",
+        "symbol": "600734",
+        "end_date": "2021-12-08",
+        "ann_date": "2021-12-28",
+        "div_proc": "实施",
+        "imp_ann_date": "2022-02-08",
+        "record_date": "2022-02-14",
+        "ex_date": "2022-02-15",
+        "pay_date": null,
+        "div_listdate": "2022-02-16",
+        "cash_div_tax": null,
+        "stk_div": "2.5"
+      }
+    ],
+    "review": {
+      "candidate_id": "600734.SH/2021-12-08/2022-02-14",
+      "announcement_source": null,
+      "related_sources": [],
+      "action_id": "cninfo:1212318294:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2022-02-14",
+      "ex_date": "2022-02-15",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2022-02-08",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": null
+        },
+        {
+          "published_date": "2022-02-12",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": "1.23"
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2022-02-08/1212318294.PDF",
+        "https://static.cninfo.com.cn/finalpage/2022-02-12/1212351153.PDF"
+      ],
+      "reason": "confirmed_ordinary_net_rights_and_dated_reference: 原文明确普通股东不获分配；公司总转增比例不记入账户。参考价或不调整结论按所引原文的公开日期采用；原有权益事实保留，不回填后续结果。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "002219.SZ",
+        "symbol": "002219",
+        "end_date": "2021-12-30",
+        "ann_date": "2022-04-08",
+        "div_proc": "实施",
+        "imp_ann_date": "2022-06-17",
+        "record_date": "2022-06-22",
+        "ex_date": "2022-06-23",
+        "pay_date": null,
+        "div_listdate": null,
+        "cash_div_tax": null,
+        "stk_div": "0.75"
+      }
+    ],
+    "review": {
+      "candidate_id": "002219.SZ/2021-12-30/2022-06-22",
+      "announcement_source": null,
+      "related_sources": [],
+      "action_id": "cninfo:1213733449:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2022-06-22",
+      "ex_date": "2022-06-23",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2022-06-17",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": null
+        },
+        {
+          "published_date": "2022-06-22",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": "2.49"
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2022-06-17/1213733449.PDF",
+        "https://static.cninfo.com.cn/finalpage/2022-06-22/1213776414.PDF"
+      ],
+      "reason": "confirmed_ordinary_net_rights_and_dated_reference: 原文明确普通股东不获分配；公司总转增比例不记入账户。参考价或不调整结论按所引原文的公开日期采用；原有权益事实保留，不回填后续结果。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "002427.SZ",
+        "symbol": "002427",
+        "end_date": "2022-10-01",
+        "ann_date": "2022-11-29",
+        "div_proc": "实施",
+        "imp_ann_date": "2022-12-06",
+        "record_date": "2022-12-09",
+        "ex_date": "2022-12-12",
+        "pay_date": null,
+        "div_listdate": "2022-12-12",
+        "cash_div_tax": null,
+        "stk_div": "1.25"
+      }
+    ],
+    "review": {
+      "candidate_id": "002427.SZ/2022-10-01/2022-12-09",
+      "announcement_source": null,
+      "related_sources": [],
+      "action_id": "cninfo:1215282461:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2022-12-09",
+      "ex_date": "2022-12-12",
+      "pay_date": null,
+      "div_listdate": "2022-12-12",
+      "terms": [
+        {
+          "published_date": "2022-12-06",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0.25",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": null
+        },
+        {
+          "published_date": "2022-12-10",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0.25",
+          "reference_cash_per_share": "0",
+          "reference_shares_per_share": "0",
+          "reference_price": null
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2022-12-06/1215282461.PDF",
+        "https://static.cninfo.com.cn/finalpage/2022-12-10/1215317246.PDF"
+      ],
+      "reason": "confirmed_ordinary_net_rights_and_dated_reference: 原文明确合资格普通股东每股净获配 0.25 股，按登记日持仓计算。参考价或不调整结论按所引原文的公开日期采用；原有权益事实保留，不回填后续结果。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "002076.SZ",
+        "symbol": "002076",
+        "end_date": "2022-11-17",
+        "ann_date": "2022-12-03",
+        "div_proc": "实施",
+        "imp_ann_date": "2022-12-15",
+        "record_date": "2022-12-20",
+        "ex_date": "2022-12-21",
+        "pay_date": null,
+        "div_listdate": "2022-12-21",
+        "cash_div_tax": null,
+        "stk_div": "0.45879593"
+      }
+    ],
+    "review": {
+      "candidate_id": "002076.SZ/2022-11-17/2022-12-20",
+      "announcement_source": null,
+      "related_sources": [],
+      "action_id": "cninfo:1215358606:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2022-12-20",
+      "ex_date": "2022-12-21",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2022-12-15",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": null
+        },
+        {
+          "published_date": "2022-12-20",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": "2.23"
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2022-12-15/1215358606.PDF",
+        "https://static.cninfo.com.cn/finalpage/2022-12-20/1215397977.PDF"
+      ],
+      "reason": "confirmed_ordinary_net_rights_and_dated_reference: 原文明确普通股东不获分配；公司总转增比例不记入账户。参考价或不调整结论按所引原文的公开日期采用；原有权益事实保留，不回填后续结果。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "600601.SH",
+        "symbol": "600601",
+        "end_date": "2022-10-31",
+        "ann_date": "2022-11-16",
+        "div_proc": "实施",
+        "imp_ann_date": "2022-12-17",
+        "record_date": "2022-12-22",
+        "ex_date": "2022-12-23",
+        "pay_date": null,
+        "div_listdate": "2022-12-26",
+        "cash_div_tax": null,
+        "stk_div": "0.9"
+      }
+    ],
+    "review": {
+      "candidate_id": "600601.SH/2022-10-31/2022-12-22",
+      "announcement_source": null,
+      "related_sources": [],
+      "action_id": "cninfo:1215376052:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2022-12-22",
+      "ex_date": "2022-12-23",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2022-12-17",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": null
+        },
+        {
+          "published_date": "2022-12-22",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": "2.58"
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2022-12-17/1215376052.PDF",
+        "https://static.cninfo.com.cn/finalpage/2022-12-22/1215418469.PDF"
+      ],
+      "reason": "confirmed_ordinary_net_rights_and_dated_reference: 原文明确普通股东不获分配；公司总转增比例不记入账户。参考价或不调整结论按所引原文的公开日期采用；原有权益事实保留，不回填后续结果。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "600654.SH",
+        "symbol": "600654",
+        "end_date": "2022-09-22",
+        "ann_date": "2022-12-07",
+        "div_proc": "实施",
+        "imp_ann_date": "2022-12-17",
+        "record_date": "2022-12-22",
+        "ex_date": "2022-12-23",
+        "pay_date": null,
+        "div_listdate": "2022-12-26",
+        "cash_div_tax": null,
+        "stk_div": "1.19014343"
+      }
+    ],
+    "review": {
+      "candidate_id": "600654.SH/2022-09-22/2022-12-22",
+      "announcement_source": null,
+      "related_sources": [],
+      "action_id": "cninfo:1215378138:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2022-12-22",
+      "ex_date": "2022-12-23",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2022-12-17",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": null
+        },
+        {
+          "published_date": "2022-12-22",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": "2.85"
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2022-12-17/1215378138.PDF",
+        "https://static.cninfo.com.cn/finalpage/2022-12-22/1215418293.PDF"
+      ],
+      "reason": "confirmed_ordinary_net_rights_and_dated_reference: 原文明确普通股东不获分配；公司总转增比例不记入账户。参考价或不调整结论按所引原文的公开日期采用；原有权益事实保留，不回填后续结果。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "603603.SH",
+        "symbol": "603603",
+        "end_date": "2022-11-23",
+        "ann_date": "2022-12-09",
+        "div_proc": "实施",
+        "imp_ann_date": "2022-12-19",
+        "record_date": "2022-12-22",
+        "ex_date": "2022-12-23",
+        "pay_date": null,
+        "div_listdate": "2022-12-26",
+        "cash_div_tax": null,
+        "stk_div": "1.326764"
+      }
+    ],
+    "review": {
+      "candidate_id": "603603.SH/2022-11-23/2022-12-22",
+      "announcement_source": null,
+      "related_sources": [],
+      "action_id": "cninfo:1215389746:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2022-12-22",
+      "ex_date": "2022-12-23",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2022-12-19",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": null
+        },
+        {
+          "published_date": "2022-12-22",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": "0",
+          "reference_shares_per_share": "0",
+          "reference_price": null
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2022-12-19/1215389746.PDF",
+        "https://static.cninfo.com.cn/finalpage/2022-12-22/1215417229.PDF"
+      ],
+      "reason": "confirmed_ordinary_net_rights_and_dated_reference: 原文明确普通股东不获分配；公司总转增比例不记入账户。参考价或不调整结论按所引原文的公开日期采用；原有权益事实保留，不回填后续结果。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "600666.SH",
+        "symbol": "600666",
+        "end_date": "2022-12-13",
+        "ann_date": "2022-12-31",
+        "div_proc": "实施",
+        "imp_ann_date": "2023-02-14",
+        "record_date": "2023-02-17",
+        "ex_date": "2023-02-20",
+        "pay_date": null,
+        "div_listdate": "2023-02-20",
+        "cash_div_tax": null,
+        "stk_div": "1.5"
+      }
+    ],
+    "review": {
+      "candidate_id": "600666.SH/2022-12-13/2023-02-17",
+      "announcement_source": null,
+      "related_sources": [],
+      "action_id": "cninfo:1215857339:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2023-02-17",
+      "ex_date": "2023-02-20",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2023-02-14",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": null
+        },
+        {
+          "published_date": "2023-02-17",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": "1.79"
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2023-02-14/1215857339.PDF",
+        "https://static.cninfo.com.cn/finalpage/2023-02-17/1215880467.PDF"
+      ],
+      "reason": "confirmed_ordinary_net_rights_and_dated_reference: 原文明确普通股东不获分配；公司总转增比例不记入账户。参考价或不调整结论按所引原文的公开日期采用；原有权益事实保留，不回填后续结果。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "002721.SZ",
+        "symbol": "002721",
+        "end_date": "2023-08-24",
+        "ann_date": "2023-09-09",
+        "div_proc": "实施",
+        "imp_ann_date": "2023-11-13",
+        "record_date": "2023-11-16",
+        "ex_date": "2023-11-17",
+        "pay_date": null,
+        "div_listdate": "2023-11-17",
+        "cash_div_tax": null,
+        "stk_div": "1.8"
+      }
+    ],
+    "review": {
+      "candidate_id": "002721.SZ/2023-08-24/2023-11-16",
+      "announcement_source": null,
+      "related_sources": [],
+      "action_id": "cninfo:1218307814:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2023-11-16",
+      "ex_date": "2023-11-17",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2023-11-13",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": null
+        },
+        {
+          "published_date": "2023-11-16",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": "4.11"
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2023-11-13/1218307814.PDF",
+        "https://static.cninfo.com.cn/finalpage/2023-11-16/1218352058.PDF"
+      ],
+      "reason": "confirmed_ordinary_net_rights_and_dated_reference: 原文明确普通股东不获分配；公司总转增比例不记入账户。参考价或不调整结论按所引原文的公开日期采用；原有权益事实保留，不回填后续结果。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "600117.SH",
+        "symbol": "600117",
+        "end_date": "2023-10-18",
+        "ann_date": "2023-11-03",
+        "div_proc": "实施",
+        "imp_ann_date": "2023-11-27",
+        "record_date": "2023-11-30",
+        "ex_date": "2023-12-01",
+        "pay_date": null,
+        "div_listdate": "2023-12-01",
+        "cash_div_tax": null,
+        "stk_div": "2.11459"
+      }
+    ],
+    "review": {
+      "candidate_id": "600117.SH/2023-10-18/2023-11-30",
+      "announcement_source": null,
+      "related_sources": [],
+      "action_id": "cninfo:1218448462:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2023-11-30",
+      "ex_date": "2023-12-01",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2023-11-27",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": null
+        },
+        {
+          "published_date": "2023-11-30",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": "0",
+          "reference_shares_per_share": "0",
+          "reference_price": null
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2023-11-27/1218448462.PDF",
+        "https://static.cninfo.com.cn/finalpage/2023-11-30/1218479110.PDF"
+      ],
+      "reason": "confirmed_ordinary_net_rights_and_dated_reference: 原文明确普通股东不获分配；公司总转增比例不记入账户。参考价或不调整结论按所引原文的公开日期采用；原有权益事实保留，不回填后续结果。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "000711.SZ",
+        "symbol": "000711",
+        "end_date": "2023-11-11",
+        "ann_date": "2023-11-28",
+        "div_proc": "实施",
+        "imp_ann_date": "2023-12-12",
+        "record_date": "2023-12-15",
+        "ex_date": "2023-12-18",
+        "pay_date": null,
+        "div_listdate": "2023-12-18",
+        "cash_div_tax": null,
+        "stk_div": "1.790921"
+      }
+    ],
+    "review": {
+      "candidate_id": "000711.SZ/2023-11-11/2023-12-15",
+      "announcement_source": null,
+      "related_sources": [],
+      "action_id": "cninfo:1218581599:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2023-12-15",
+      "ex_date": "2023-12-18",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2023-12-12",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": null
+        },
+        {
+          "published_date": "2023-12-15",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": "0",
+          "reference_shares_per_share": "0",
+          "reference_price": null
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2023-12-12/1218581599.PDF",
+        "https://static.cninfo.com.cn/finalpage/2023-12-15/1218620998.PDF"
+      ],
+      "reason": "confirmed_ordinary_net_rights_and_dated_reference: 原文明确普通股东不获分配；公司总转增比例不记入账户。参考价或不调整结论按所引原文的公开日期采用；原有权益事实保留，不回填后续结果。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "000796.SZ",
+        "symbol": "000796",
+        "end_date": "2023-11-04",
+        "ann_date": "2023-12-02",
+        "div_proc": "实施",
+        "imp_ann_date": "2023-12-14",
+        "record_date": "2023-12-19",
+        "ex_date": "2023-12-20",
+        "pay_date": null,
+        "div_listdate": "2023-12-20",
+        "cash_div_tax": null,
+        "stk_div": "1.0"
+      }
+    ],
+    "review": {
+      "candidate_id": "000796.SZ/2023-11-04/2023-12-19",
+      "announcement_source": null,
+      "related_sources": [],
+      "action_id": "cninfo:1218610387:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2023-12-19",
+      "ex_date": "2023-12-20",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2023-12-14",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": null
+        },
+        {
+          "published_date": "2023-12-19",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": "3.93"
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2023-12-14/1218610387.PDF",
+        "https://static.cninfo.com.cn/finalpage/2023-12-19/1218657700.PDF"
+      ],
+      "reason": "confirmed_ordinary_net_rights_and_dated_reference: 原文明确普通股东不获分配；公司总转增比例不记入账户。参考价或不调整结论按所引原文的公开日期采用；原有权益事实保留，不回填后续结果。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "002482.SZ",
+        "symbol": "002482",
+        "end_date": "2023-11-11",
+        "ann_date": "2023-11-28",
+        "div_proc": "实施",
+        "imp_ann_date": "2023-12-14",
+        "record_date": "2023-12-19",
+        "ex_date": "2023-12-20",
+        "pay_date": null,
+        "div_listdate": "2023-12-20",
+        "cash_div_tax": null,
+        "stk_div": "1.44"
+      }
+    ],
+    "review": {
+      "candidate_id": "002482.SZ/2023-11-11/2023-12-19",
+      "announcement_source": null,
+      "related_sources": [],
+      "action_id": "cninfo:1218609774:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2023-12-19",
+      "ex_date": "2023-12-20",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2023-12-14",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": null
+        },
+        {
+          "published_date": "2023-12-19",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": "0",
+          "reference_shares_per_share": "0",
+          "reference_price": null
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2023-12-14/1218609774.PDF",
+        "https://static.cninfo.com.cn/finalpage/2023-12-19/1218655319.PDF"
+      ],
+      "reason": "confirmed_ordinary_net_rights_and_dated_reference: 原文明确普通股东不获分配；公司总转增比例不记入账户。参考价或不调整结论按所引原文的公开日期采用；原有权益事实保留，不回填后续结果。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "600136.SH",
+        "symbol": "600136",
+        "end_date": "2023-10-14",
+        "ann_date": "2023-11-03",
+        "div_proc": "实施",
+        "imp_ann_date": "2023-12-15",
+        "record_date": "2023-12-20",
+        "ex_date": "2023-12-21",
+        "pay_date": null,
+        "div_listdate": "2023-12-21",
+        "cash_div_tax": null,
+        "stk_div": "2.5"
+      }
+    ],
+    "review": {
+      "candidate_id": "600136.SH/2023-10-14/2023-12-20",
+      "announcement_source": null,
+      "related_sources": [],
+      "action_id": "cninfo:1218619538:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2023-12-20",
+      "ex_date": "2023-12-21",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2023-12-15",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": null
+        },
+        {
+          "published_date": "2023-12-20",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": "0",
+          "reference_shares_per_share": "0",
+          "reference_price": null
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2023-12-15/1218619538.PDF",
+        "https://static.cninfo.com.cn/finalpage/2023-12-20/1218665806.PDF"
+      ],
+      "reason": "confirmed_ordinary_net_rights_and_dated_reference: 原文明确普通股东不获分配；公司总转增比例不记入账户。参考价或不调整结论按所引原文的公开日期采用；原有权益事实保留，不回填后续结果。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "600759.SH",
+        "symbol": "600759",
+        "end_date": "2023-10-19",
+        "ann_date": "2023-11-03",
+        "div_proc": "实施",
+        "imp_ann_date": "2023-12-19",
+        "record_date": "2023-12-22",
+        "ex_date": "2023-12-25",
+        "pay_date": null,
+        "div_listdate": "2023-12-25",
+        "cash_div_tax": null,
+        "stk_div": "0.833"
+      }
+    ],
+    "review": {
+      "candidate_id": "600759.SH/2023-10-19/2023-12-22",
+      "announcement_source": null,
+      "related_sources": [],
+      "action_id": "cninfo:1218655204:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2023-12-22",
+      "ex_date": "2023-12-25",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2023-12-19",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": null
+        },
+        {
+          "published_date": "2023-12-22",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": "0",
+          "reference_shares_per_share": "0",
+          "reference_price": null
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2023-12-19/1218655204.PDF",
+        "https://static.cninfo.com.cn/finalpage/2023-12-22/1218685289.PDF"
+      ],
+      "reason": "confirmed_ordinary_net_rights_and_dated_reference: 原文明确普通股东不获分配；公司总转增比例不记入账户。参考价或不调整结论按所引原文的公开日期采用；原有权益事实保留，不回填后续结果。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "000620.SZ",
+        "symbol": "000620",
+        "end_date": "2023-11-29",
+        "ann_date": "2023-12-16",
+        "div_proc": "实施",
+        "imp_ann_date": "2023-12-20",
+        "record_date": "2023-12-25",
+        "ex_date": "2023-12-26",
+        "pay_date": null,
+        "div_listdate": "2023-12-26",
+        "cash_div_tax": null,
+        "stk_div": "2.09582"
+      }
+    ],
+    "review": {
+      "candidate_id": "000620.SZ/2023-11-29/2023-12-25",
+      "announcement_source": null,
+      "related_sources": [],
+      "action_id": "cninfo:1218666665:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2023-12-25",
+      "ex_date": "2023-12-26",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2023-12-20",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": null
+        },
+        {
+          "published_date": "2023-12-23",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": "0",
+          "reference_shares_per_share": "0",
+          "reference_price": null
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2023-12-20/1218666665.PDF",
+        "https://static.cninfo.com.cn/finalpage/2023-12-23/1218704661.PDF"
+      ],
+      "reason": "confirmed_ordinary_net_rights_and_dated_reference: 原文明确普通股东不获分配；公司总转增比例不记入账户。参考价或不调整结论按所引原文的公开日期采用；原有权益事实保留，不回填后续结果。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "600306.SH",
+        "symbol": "600306",
+        "end_date": "2023-11-25",
+        "ann_date": "2023-12-13",
+        "div_proc": "实施",
+        "imp_ann_date": "2023-12-20",
+        "record_date": "2023-12-25",
+        "ex_date": "2023-12-26",
+        "pay_date": null,
+        "div_listdate": "2023-12-26",
+        "cash_div_tax": null,
+        "stk_div": "0.85"
+      }
+    ],
+    "review": {
+      "candidate_id": "600306.SH/2023-11-25/2023-12-25",
+      "announcement_source": null,
+      "related_sources": [],
+      "action_id": "cninfo:1218665810:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2023-12-25",
+      "ex_date": "2023-12-26",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2023-12-20",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": null
+        },
+        {
+          "published_date": "2023-12-23",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": "8.14"
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2023-12-20/1218665810.PDF",
+        "https://static.cninfo.com.cn/finalpage/2023-12-23/1218706144.PDF"
+      ],
+      "reason": "confirmed_ordinary_net_rights_and_dated_reference: 原文明确普通股东不获分配；公司总转增比例不记入账户。参考价或不调整结论按所引原文的公开日期采用；原有权益事实保留，不回填后续结果。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "603030.SH",
+        "symbol": "603030",
+        "end_date": "2023-11-29",
+        "ann_date": "2023-11-29",
+        "div_proc": "实施",
+        "imp_ann_date": "2023-12-20",
+        "record_date": "2023-12-25",
+        "ex_date": "2023-12-26",
+        "pay_date": null,
+        "div_listdate": "2023-12-26",
+        "cash_div_tax": "0.0",
+        "stk_div": "0.971919"
+      },
+      {
+        "ts_code": "603030.SH",
+        "symbol": "603030",
+        "end_date": "2023-11-29",
+        "ann_date": "2023-12-16",
+        "div_proc": "实施",
+        "imp_ann_date": "2023-12-20",
+        "record_date": "2023-12-25",
+        "ex_date": "2023-12-26",
+        "pay_date": null,
+        "div_listdate": "2023-12-26",
+        "cash_div_tax": null,
+        "stk_div": "0.971919"
+      }
+    ],
+    "review": {
+      "candidate_id": "603030.SH/2023-11-29/2023-12-25",
+      "announcement_source": null,
+      "related_sources": [],
+      "action_id": "cninfo:1218665842:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2023-12-25",
+      "ex_date": "2023-12-26",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2023-12-20",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": null
+        },
+        {
+          "published_date": "2023-12-23",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": "2.31"
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2023-12-20/1218665842.PDF",
+        "https://static.cninfo.com.cn/finalpage/2023-12-23/1218705503.PDF"
+      ],
+      "reason": "confirmed_ordinary_net_rights_and_dated_reference: 原文明确普通股东不获分配；公司总转增比例不记入账户。参考价或不调整结论按所引原文的公开日期采用；原有权益事实保留，不回填后续结果。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "002021.SZ",
+        "symbol": "002021",
+        "end_date": "2023-12-07",
+        "ann_date": "2023-12-07",
+        "div_proc": "实施",
+        "imp_ann_date": "2023-12-25",
+        "record_date": "2023-12-28",
+        "ex_date": "2023-12-29",
+        "pay_date": null,
+        "div_listdate": "2023-12-29",
+        "cash_div_tax": "0.0",
+        "stk_div": "0.7525232"
+      },
+      {
+        "ts_code": "002021.SZ",
+        "symbol": "002021",
+        "end_date": "2023-12-07",
+        "ann_date": "2023-12-25",
+        "div_proc": "实施",
+        "imp_ann_date": "2023-12-25",
+        "record_date": "2023-12-28",
+        "ex_date": "2023-12-29",
+        "pay_date": null,
+        "div_listdate": "2023-12-29",
+        "cash_div_tax": null,
+        "stk_div": "0.7525232"
+      }
+    ],
+    "review": {
+      "candidate_id": "002021.SZ/2023-12-07/2023-12-28",
+      "announcement_source": null,
+      "related_sources": [],
+      "action_id": "cninfo:1218709560:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2023-12-28",
+      "ex_date": "2023-12-29",
+      "pay_date": null,
+      "div_listdate": "2023-12-29",
+      "terms": [
+        {
+          "published_date": "2023-12-25",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0.7525232",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": null
+        },
+        {
+          "published_date": "2023-12-28",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0.7525232",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": "2.80"
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2023-12-25/1218709560.PDF",
+        "https://static.cninfo.com.cn/finalpage/2023-12-28/1218747409.PDF"
+      ],
+      "reason": "confirmed_ordinary_net_rights_and_dated_reference: 原文明确合资格普通股东每股净获配 0.7525232 股，按登记日持仓计算。参考价或不调整结论按所引原文的公开日期采用；原有权益事实保留，不回填后续结果。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "002086.SZ",
+        "symbol": "002086",
+        "end_date": "2023-03-16",
+        "ann_date": "2023-03-16",
+        "div_proc": "实施",
+        "imp_ann_date": "2023-12-23",
+        "record_date": "2023-12-28",
+        "ex_date": "2023-12-29",
+        "pay_date": null,
+        "div_listdate": "2023-12-29",
+        "cash_div_tax": "0.0",
+        "stk_div": "1.59"
+      },
+      {
+        "ts_code": "002086.SZ",
+        "symbol": "002086",
+        "end_date": "2023-03-16",
+        "ann_date": "2023-12-19",
+        "div_proc": "实施",
+        "imp_ann_date": "2023-12-23",
+        "record_date": "2023-12-28",
+        "ex_date": "2023-12-29",
+        "pay_date": null,
+        "div_listdate": "2023-12-29",
+        "cash_div_tax": null,
+        "stk_div": "1.59"
+      }
+    ],
+    "review": {
+      "candidate_id": "002086.SZ/2023-03-16/2023-12-28",
+      "announcement_source": null,
+      "related_sources": [],
+      "action_id": "cninfo:1218707072:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2023-12-28",
+      "ex_date": "2023-12-29",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2023-12-23",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": null
+        },
+        {
+          "published_date": "2023-12-28",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": "0",
+          "reference_shares_per_share": "0",
+          "reference_price": null
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2023-12-23/1218707072.PDF",
+        "https://static.cninfo.com.cn/finalpage/2023-12-28/1218746634.PDF"
+      ],
+      "reason": "confirmed_ordinary_net_rights_and_dated_reference: 原文明确普通股东不获分配；公司总转增比例不记入账户。参考价或不调整结论按所引原文的公开日期采用；原有权益事实保留，不回填后续结果。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "600589.SH",
+        "symbol": "600589",
+        "end_date": "2023-12-06",
+        "ann_date": "2023-12-26",
+        "div_proc": "实施",
+        "imp_ann_date": "2023-12-27",
+        "record_date": "2023-12-28",
+        "ex_date": "2023-12-29",
+        "pay_date": null,
+        "div_listdate": "2023-12-29",
+        "cash_div_tax": null,
+        "stk_div": "1.1"
+      }
+    ],
+    "review": {
+      "candidate_id": "600589.SH/2023-12-06/2023-12-28",
+      "announcement_source": null,
+      "related_sources": [],
+      "action_id": "cninfo:1218734245:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2023-12-28",
+      "ex_date": "2023-12-29",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2023-12-27",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": null
+        },
+        {
+          "published_date": "2023-12-28",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": "3.04"
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2023-12-27/1218734245.PDF",
+        "https://static.cninfo.com.cn/finalpage/2023-12-28/1218747262.PDF"
+      ],
+      "reason": "confirmed_ordinary_net_rights_and_dated_reference: 原文明确普通股东不获分配；公司总转增比例不记入账户。参考价或不调整结论按所引原文的公开日期采用；原有权益事实保留，不回填后续结果。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "000525.SZ",
+        "symbol": "000525",
+        "end_date": "2023-12-02",
+        "ann_date": "2024-10-30",
+        "div_proc": "实施",
+        "imp_ann_date": "2024-11-12",
+        "record_date": "2024-11-15",
+        "ex_date": "2024-11-18",
+        "pay_date": null,
+        "div_listdate": "2024-12-13",
+        "cash_div_tax": null,
+        "stk_div": "1.235"
+      }
+    ],
+    "review": {
+      "candidate_id": "000525.SZ/2023-12-02/2024-11-15",
+      "announcement_source": null,
+      "related_sources": [],
+      "action_id": "cninfo:1221686271:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2024-11-15",
+      "ex_date": "2024-11-18",
+      "pay_date": null,
+      "div_listdate": "2024-12-13",
+      "terms": [
+        {
+          "published_date": "2024-11-12",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0.494143",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": null
+        },
+        {
+          "published_date": "2024-11-16",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0.494143",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": "9.07"
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2024-11-12/1221686271.PDF",
+        "https://static.cninfo.com.cn/finalpage/2024-11-16/1221743100.PDF"
+      ],
+      "reason": "confirmed_ordinary_net_rights_and_dated_reference: 原文明确合资格普通股东每股净获配 0.494143 股，按登记日持仓计算。参考价或不调整结论按所引原文的公开日期采用；原有权益事实保留，不回填后续结果。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "600715.SH",
+        "symbol": "600715",
+        "end_date": "2024-11-07",
+        "ann_date": "2024-11-23",
+        "div_proc": "实施",
+        "imp_ann_date": "2024-12-10",
+        "record_date": "2024-12-13",
+        "ex_date": "2024-12-16",
+        "pay_date": null,
+        "div_listdate": "2024-12-16",
+        "cash_div_tax": null,
+        "stk_div": "1.188773"
+      }
+    ],
+    "review": {
+      "candidate_id": "600715.SH/2024-11-07/2024-12-13",
+      "announcement_source": null,
+      "related_sources": [],
+      "action_id": "cninfo:1221965891:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2024-12-13",
+      "ex_date": "2024-12-16",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2024-12-10",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": null
+        },
+        {
+          "published_date": "2024-12-13",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": "2.12"
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2024-12-10/1221965891.PDF",
+        "https://static.cninfo.com.cn/finalpage/2024-12-13/1222007131.PDF"
+      ],
+      "reason": "confirmed_ordinary_net_rights_and_dated_reference: 原文明确普通股东不获分配；公司总转增比例不记入账户。参考价或不调整结论按所引原文的公开日期采用；原有权益事实保留，不回填后续结果。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "002309.SZ",
+        "symbol": "002309",
+        "end_date": "2024-11-19",
+        "ann_date": "2024-12-12",
+        "div_proc": "实施",
+        "imp_ann_date": "2024-12-18",
+        "record_date": "2024-12-23",
+        "ex_date": "2024-12-24",
+        "pay_date": null,
+        "div_listdate": null,
+        "cash_div_tax": null,
+        "stk_div": "2.45"
+      }
+    ],
+    "review": {
+      "candidate_id": "002309.SZ/2024-11-19/2024-12-23",
+      "announcement_source": null,
+      "related_sources": [],
+      "action_id": "cninfo:1222048859:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2024-12-23",
+      "ex_date": "2024-12-24",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2024-12-18",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": null
+        },
+        {
+          "published_date": "2024-12-21",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": "0",
+          "reference_shares_per_share": "0",
+          "reference_price": null
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2024-12-18/1222048859.PDF",
+        "https://static.cninfo.com.cn/finalpage/2024-12-21/1222090543.PDF"
+      ],
+      "reason": "confirmed_ordinary_net_rights_and_dated_reference: 原文明确普通股东不获分配；公司总转增比例不记入账户。参考价或不调整结论按所引原文的公开日期采用；原有权益事实保留，不回填后续结果。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "603007.SH",
+        "symbol": "603007",
+        "end_date": "2024-10-15",
+        "ann_date": "2024-11-16",
+        "div_proc": "实施",
+        "imp_ann_date": "2024-12-20",
+        "record_date": "2024-12-25",
+        "ex_date": "2024-12-26",
+        "pay_date": null,
+        "div_listdate": "2024-12-26",
+        "cash_div_tax": null,
+        "stk_div": "1.155346"
+      }
+    ],
+    "review": {
+      "candidate_id": "603007.SH/2024-10-15/2024-12-25",
+      "announcement_source": null,
+      "related_sources": [],
+      "action_id": "cninfo:1222076651:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2024-12-25",
+      "ex_date": "2024-12-26",
+      "pay_date": null,
+      "div_listdate": "2024-12-26",
+      "terms": [
+        {
+          "published_date": "2024-12-20",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0.155346",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": null
+        },
+        {
+          "published_date": "2024-12-25",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0.155346",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": "8.28"
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2024-12-20/1222076651.PDF",
+        "https://static.cninfo.com.cn/finalpage/2024-12-25/1222129931.PDF"
+      ],
+      "reason": "confirmed_ordinary_net_rights_and_dated_reference: 原文明确合资格普通股东每股净获配 0.155346 股，按登记日持仓计算。参考价或不调整结论按所引原文的公开日期采用；原有权益事实保留，不回填后续结果。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "603363.SH",
+        "symbol": "603363",
+        "end_date": "2024-11-23",
+        "ann_date": "2024-12-10",
+        "div_proc": "实施",
+        "imp_ann_date": "2024-12-20",
+        "record_date": "2024-12-25",
+        "ex_date": "2024-12-26",
+        "pay_date": null,
+        "div_listdate": "2024-12-26",
+        "cash_div_tax": null,
+        "stk_div": "2.0"
+      }
+    ],
+    "review": {
+      "candidate_id": "603363.SH/2024-11-23/2024-12-25",
+      "announcement_source": null,
+      "related_sources": [],
+      "action_id": "cninfo:1222077056:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2024-12-25",
+      "ex_date": "2024-12-26",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2024-12-20",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": null
+        },
+        {
+          "published_date": "2024-12-25",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": "0",
+          "reference_shares_per_share": "0",
+          "reference_price": null
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2024-12-20/1222077056.PDF",
+        "https://static.cninfo.com.cn/finalpage/2024-12-25/1222129335.PDF"
+      ],
+      "reason": "confirmed_ordinary_net_rights_and_dated_reference: 原文明确普通股东不获分配；公司总转增比例不记入账户。参考价或不调整结论按所引原文的公开日期采用；原有权益事实保留，不回填后续结果。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "603559.SH",
+        "symbol": "603559",
+        "end_date": "2024-11-21",
+        "ann_date": "2024-12-07",
+        "div_proc": "实施",
+        "imp_ann_date": "2024-12-20",
+        "record_date": "2024-12-25",
+        "ex_date": "2024-12-26",
+        "pay_date": null,
+        "div_listdate": "2024-12-26",
+        "cash_div_tax": null,
+        "stk_div": "1.8"
+      }
+    ],
+    "review": {
+      "candidate_id": "603559.SH/2024-11-21/2024-12-25",
+      "announcement_source": null,
+      "related_sources": [],
+      "action_id": "cninfo:1222076659:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2024-12-25",
+      "ex_date": "2024-12-26",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2024-12-20",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": null
+        },
+        {
+          "published_date": "2024-12-25",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": "7.48"
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2024-12-20/1222076659.PDF",
+        "https://static.cninfo.com.cn/finalpage/2024-12-25/1222129664.PDF"
+      ],
+      "reason": "confirmed_ordinary_net_rights_and_dated_reference: 原文明确普通股东不获分配；公司总转增比例不记入账户。参考价或不调整结论按所引原文的公开日期采用；原有权益事实保留，不回填后续结果。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "002310.SZ",
+        "symbol": "002310",
+        "end_date": "2024-12-05",
+        "ann_date": "2024-12-24",
+        "div_proc": "实施",
+        "imp_ann_date": "2024-12-24",
+        "record_date": "2024-12-27",
+        "ex_date": "2024-12-30",
+        "pay_date": null,
+        "div_listdate": "2024-12-30",
+        "cash_div_tax": null,
+        "stk_div": "1.234"
+      }
+    ],
+    "review": {
+      "candidate_id": "002310.SZ/2024-12-05/2024-12-27",
+      "announcement_source": null,
+      "related_sources": [],
+      "action_id": "cninfo:1222115435:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2024-12-27",
+      "ex_date": "2024-12-30",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2024-12-24",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": null
+        },
+        {
+          "published_date": "2024-12-27",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": "0",
+          "reference_shares_per_share": "0",
+          "reference_price": null
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2024-12-24/1222115435.PDF",
+        "https://static.cninfo.com.cn/finalpage/2024-12-27/1222155413.PDF"
+      ],
+      "reason": "confirmed_ordinary_net_rights_and_dated_reference: 原文明确普通股东不获分配；公司总转增比例不记入账户。参考价或不调整结论按所引原文的公开日期采用；原有权益事实保留，不回填后续结果。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "002217.SZ",
+        "symbol": "002217",
+        "end_date": "2024-12-07",
+        "ann_date": "2024-12-24",
+        "div_proc": "实施",
+        "imp_ann_date": "2024-12-25",
+        "record_date": "2024-12-30",
+        "ex_date": "2024-12-31",
+        "pay_date": null,
+        "div_listdate": "2024-12-31",
+        "cash_div_tax": null,
+        "stk_div": "1.4"
+      }
+    ],
+    "review": {
+      "candidate_id": "002217.SZ/2024-12-07/2024-12-30",
+      "announcement_source": null,
+      "related_sources": [],
+      "action_id": "cninfo:1222130353:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2024-12-30",
+      "ex_date": "2024-12-31",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2024-12-25",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": null
+        },
+        {
+          "published_date": "2024-12-28",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": "0",
+          "reference_shares_per_share": "0",
+          "reference_price": null
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2024-12-25/1222130353.PDF",
+        "https://static.cninfo.com.cn/finalpage/2024-12-28/1222166633.PDF"
+      ],
+      "reason": "confirmed_ordinary_net_rights_and_dated_reference: 原文明确普通股东不获分配；公司总转增比例不记入账户。参考价或不调整结论按所引原文的公开日期采用；原有权益事实保留，不回填后续结果。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "300093.SZ",
+        "symbol": "300093",
+        "end_date": "2025-10-01",
+        "ann_date": "2025-10-23",
+        "div_proc": "实施",
+        "imp_ann_date": "2025-11-13",
+        "record_date": "2025-11-19",
+        "ex_date": "2025-11-20",
+        "pay_date": null,
+        "div_listdate": "2025-11-20",
+        "cash_div_tax": null,
+        "stk_div": "1.5"
+      }
+    ],
+    "review": {
+      "candidate_id": "300093.SZ/2025-10-01/2025-11-19",
+      "announcement_source": null,
+      "related_sources": [],
+      "action_id": "cninfo:1224804619:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2025-11-19",
+      "ex_date": "2025-11-20",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2025-11-13",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": null
+        },
+        {
+          "published_date": "2025-11-19",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": "13.06"
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2025-11-13/1224804619.PDF",
+        "https://static.cninfo.com.cn/finalpage/2025-11-19/1224815212.PDF"
+      ],
+      "reason": "confirmed_ordinary_net_rights_and_dated_reference: 原文明确普通股东不获分配；公司总转增比例不记入账户。参考价或不调整结论按所引原文的公开日期采用；原有权益事实保留，不回填后续结果。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "600165.SH",
+        "symbol": "600165",
+        "end_date": "2025-10-23",
+        "ann_date": "2025-11-08",
+        "div_proc": "实施",
+        "imp_ann_date": "2025-12-05",
+        "record_date": "2025-12-10",
+        "ex_date": "2025-12-11",
+        "pay_date": null,
+        "div_listdate": "2025-12-11",
+        "cash_div_tax": null,
+        "stk_div": "1.3593"
+      }
+    ],
+    "review": {
+      "candidate_id": "600165.SH/2025-10-23/2025-12-10",
+      "announcement_source": null,
+      "related_sources": [],
+      "action_id": "cninfo:1224851296:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2025-12-10",
+      "ex_date": "2025-12-11",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2025-12-05",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": null
+        },
+        {
+          "published_date": "2025-12-10",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": "2.84"
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2025-12-05/1224851296.PDF",
+        "https://static.cninfo.com.cn/finalpage/2025-12-10/1224862404.PDF"
+      ],
+      "reason": "confirmed_ordinary_net_rights_and_dated_reference: 原文明确普通股东不获分配；公司总转增比例不记入账户。参考价或不调整结论按所引原文的公开日期采用；原有权益事实保留，不回填后续结果。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "300159.SZ",
+        "symbol": "300159",
+        "end_date": "2025-08-28",
+        "ann_date": "2025-12-16",
+        "div_proc": "实施",
+        "imp_ann_date": "2025-12-18",
+        "record_date": "2025-12-23",
+        "ex_date": "2025-12-24",
+        "pay_date": null,
+        "div_listdate": "2025-12-24",
+        "cash_div_tax": null,
+        "stk_div": "1.2"
+      }
+    ],
+    "review": {
+      "candidate_id": "300159.SZ/2025-08-28/2025-12-23",
+      "announcement_source": null,
+      "related_sources": [],
+      "action_id": "cninfo:1224885894:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2025-12-23",
+      "ex_date": "2025-12-24",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2025-12-18",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": null
+        },
+        {
+          "published_date": "2025-12-23",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": "2.88"
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2025-12-18/1224885894.PDF",
+        "https://static.cninfo.com.cn/finalpage/2025-12-23/1224893286.PDF"
+      ],
+      "reason": "confirmed_ordinary_net_rights_and_dated_reference: 原文明确普通股东不获分配；公司总转增比例不记入账户。参考价或不调整结论按所引原文的公开日期采用；原有权益事实保留，不回填后续结果。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "000430.SZ",
+        "symbol": "000430",
+        "end_date": "2025-11-29",
+        "ann_date": "2025-12-17",
+        "div_proc": "实施",
+        "imp_ann_date": "2025-12-25",
+        "record_date": "2025-12-26",
+        "ex_date": "2025-12-29",
+        "pay_date": null,
+        "div_listdate": "2025-12-29",
+        "cash_div_tax": null,
+        "stk_div": "1.0"
+      }
+    ],
+    "review": {
+      "candidate_id": "000430.SZ/2025-11-29/2025-12-26",
+      "announcement_source": null,
+      "related_sources": [],
+      "action_id": "cninfo:1224896863:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2025-12-26",
+      "ex_date": "2025-12-29",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2025-12-25",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": null
+        },
+        {
+          "published_date": "2025-12-27",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": "6.87"
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2025-12-25/1224896863.PDF",
+        "https://static.cninfo.com.cn/finalpage/2025-12-27/1224901402.PDF"
+      ],
+      "reason": "confirmed_ordinary_net_rights_and_dated_reference: 原文明确普通股东不获分配；公司总转增比例不记入账户。参考价或不调整结论按所引原文的公开日期采用；原有权益事实保留，不回填后续结果。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "000691.SZ",
+        "symbol": "000691",
+        "end_date": "2025-12-09",
+        "ann_date": "2025-12-27",
+        "div_proc": "实施",
+        "imp_ann_date": "2025-12-27",
+        "record_date": "2025-12-31",
+        "ex_date": "2026-01-05",
+        "pay_date": null,
+        "div_listdate": "2026-01-05",
+        "cash_div_tax": null,
+        "stk_div": "0.5"
+      }
+    ],
+    "review": {
+      "candidate_id": "000691.SZ/2025-12-09/2025-12-31",
+      "announcement_source": null,
+      "related_sources": [],
+      "action_id": "cninfo:1224902023:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2025-12-31",
+      "ex_date": "2026-01-05",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2025-12-27",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": null
+        },
+        {
+          "published_date": "2025-12-31",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": "7.05"
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2025-12-27/1224902023.PDF",
+        "https://static.cninfo.com.cn/finalpage/2025-12-31/1224910175.PDF"
+      ],
+      "reason": "confirmed_ordinary_net_rights_and_dated_reference: 原文明确普通股东不获分配；公司总转增比例不记入账户。参考价或不调整结论按所引原文的公开日期采用；原有权益事实保留，不回填后续结果。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "000793.SZ",
+        "symbol": "000793",
+        "end_date": "2026-04-10",
+        "ann_date": "2026-04-28",
+        "div_proc": "实施",
+        "imp_ann_date": "2026-06-12",
+        "record_date": "2026-06-18",
+        "ex_date": "2026-06-22",
+        "pay_date": null,
+        "div_listdate": "2026-06-22",
+        "cash_div_tax": null,
+        "stk_div": "1.2"
+      }
+    ],
+    "review": {
+      "candidate_id": "000793.SZ/2026-04-10/2026-06-18",
+      "announcement_source": null,
+      "related_sources": [],
+      "action_id": "cninfo:1225365705:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2026-06-18",
+      "ex_date": "2026-06-22",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2026-06-12",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": null
+        },
+        {
+          "published_date": "2026-06-18",
+          "published_ts_us": null,
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": null,
+          "reference_shares_per_share": null,
+          "reference_price": "2.51"
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2026-06-12/1225365705.PDF",
+        "https://static.cninfo.com.cn/finalpage/2026-06-18/1225376732.PDF"
+      ],
+      "reason": "confirmed_ordinary_net_rights_and_dated_reference: 原文明确普通股东不获分配；公司总转增比例不记入账户。参考价或不调整结论按所引原文的公开日期采用；原有权益事实保留，不回填后续结果。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "605299.SH",
+        "symbol": "605299",
+        "end_date": "2023-12-31",
+        "ann_date": "2024-04-09",
+        "div_proc": "实施",
+        "imp_ann_date": "2024-04-26",
+        "record_date": "2024-05-08",
+        "ex_date": "2024-05-09",
+        "pay_date": "2024-05-09",
+        "div_listdate": null,
+        "cash_div_tax": "0.3",
+        "stk_div": "0.0"
+      }
+    ],
+    "review": {
+      "candidate_id": "605299.SH/2023-12-31/2024-05-08",
+      "announcement_source": null,
+      "related_sources": [],
+      "action_id": "cninfo:1219837422:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2024-05-08",
+      "ex_date": "2024-05-09",
+      "pay_date": "2024-05-09",
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2024-04-26",
+          "published_ts_us": null,
+          "cash_per_share": "0.30",
+          "shares_per_share": "0",
+          "reference_cash_per_share": "0.2974",
+          "reference_shares_per_share": "0",
+          "reference_price": null
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2024-04-26/1219837422.PDF",
+        "https://static.cninfo.com.cn/finalpage/2024-04-26/1219837425.PDF"
+      ],
+      "reason": "confirmed_ordinary_cash: 实施公告第2页0.25与首页及正文0.30矛盾；同日公开的法律意见书第3-4页明确普通股东每股税前0.30，与408169000股及122450700元分配总额一致。参考扣减0.2974仅用于估值，不能作账户现金。公开日采用2024-04-26，不使用后来报告。"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "002026.SZ",
+        "symbol": "002026",
+        "end_date": "2024-09-30",
+        "ann_date": "2024-11-20",
+        "div_proc": "实施",
+        "imp_ann_date": "2024-12-06",
+        "record_date": "2024-12-13",
+        "ex_date": "2024-12-16",
+        "pay_date": "2024-12-16",
+        "div_listdate": null,
+        "cash_div_tax": "0.06",
+        "stk_div": "0.0"
+      }
+    ],
+    "review": {
+      "candidate_id": "002026.SZ/2024-09-30/2024-12-13",
+      "announcement_source": null,
+      "related_sources": [],
+      "action_id": "cninfo:1221938989:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2024-12-13",
+      "ex_date": "2024-12-16",
+      "pay_date": "2024-12-16",
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2024-12-06",
+          "published_ts_us": null,
+          "cash_per_share": "0.06",
+          "shares_per_share": "0",
+          "reference_cash_per_share": "0.06",
+          "reference_shares_per_share": "0",
+          "reference_price": null
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2024-12-06/1221938989.PDF",
+        "https://static.cninfo.com.cn/finalpage/2024-12-07/1221955301.PDF"
+      ],
+      "reason": "confirmed_unchanged_ordinary_rights: 2024-12-07补充仅将总股本445567668股改为445657639股；普通股东每十股0.60元及阶段日均未变化。采用12-06已公开的原始权益与总股本统一分配参考，补充文件不构成新的账户版本。"
+    }
+  }
+]

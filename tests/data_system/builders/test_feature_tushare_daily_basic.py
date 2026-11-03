@@ -71,11 +71,11 @@ class _Access:
                     "high": scale * (101.0 + index),
                     "low": scale * (98.0 + index),
                     "close": close,
-                    "vol": 0.0 if symbol == "000001" else 100.0,
-                    "amount": 1000.0,
+                    "vol": 0 if symbol == "000001" else 1301,
+                    "amount": 123456.0,
                 }
             )
-        return pd.DataFrame(rows)
+        return pd.DataFrame(rows).astype({"vol": pd.ArrowDtype(pa.int64())})
 
     def adjustment_factors(self, *, trade_date: str) -> pd.DataFrame:
         bars = self.daily_bars(trade_date=trade_date)
@@ -87,7 +87,7 @@ class _Access:
             {
                 "symbol": ["000001", "000002"],
                 "trade_date": [trade_date, trade_date],
-                "turnover_rate": [0.0, 2.0],
+                "turnover_rate": [0.0, 0.025],
             }
         )
 
@@ -109,6 +109,11 @@ def test_feature_builder_exposes_exact_post_close_schema_and_windows() -> None:
         160.0 / 155.0 - 1
     )
     assert frame.loc[0, "f_d_turnover_rate_mean_20d_asof_tminus1"] == 0.0
+    assert frame.loc[1, "f_d_turnover_rate_mean_20d_asof_tminus1"] == pytest.approx(0.025)
+    assert frame.loc[1, "f_d_log_volume"] == pytest.approx(np.log1p(1301))
+    assert frame.loc[1, "f_d_log_amount"] == pytest.approx(np.log1p(123456))
+    assert frame.loc[1, "f_d_amount_mean_5d_asof_tminus1"] == 123456
+    assert frame.loc[1, "f_d_amount_mean_20d_asof_tminus1"] == 123456
     assert pd.notna(frame.loc[0, "f_d_close_volatility_60d_asof_tminus1"])
     assert access.turnover_dates == list(access.dates[-21:-1])
     assert all(

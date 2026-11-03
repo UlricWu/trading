@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from types import TracebackType
 from typing import Literal, ParamSpec, Self, TypeVar
 
@@ -20,13 +20,14 @@ class Instrumentation:
             result = instrumentation.measure("DatasetBuildStep", load, window)
     """
 
-    def __init__(self, scope_name: str) -> None:
+    def __init__(self, scope_name: str, *, descriptions: Mapping[str, str] | None = None) -> None:
         """Create an empty timeline for one workflow execution.
 
         Example:
-            instrumentation = Instrumentation("2026-07-20")
+            instrumentation = Instrumentation("2026-07-20", descriptions={"DatasetBuildStep": "数据准备"})
         """
         self._scope_name = scope_name
+        self._descriptions = dict(descriptions) if descriptions is not None else {}
         self._total_seconds_by_step: dict[str, float] = {}
         self._runs_by_step: dict[str, int] = {}
 
@@ -63,19 +64,20 @@ class Instrumentation:
                     f"{name:<35} {elapsed_seconds:>8.3f}s "
                     f"avg={average_seconds:.3f}s runs={runs}"
                 )
+            if name in self._descriptions:
+                timeline_rows[-1] += f"  {self._descriptions[name]}"
             total_seconds += elapsed_seconds
 
-        timeline_rows.append(f"{'Total':<35} {total_seconds:>8.3f}s")
-        timeline_rows.append("=" * 43)
+        timeline_rows.append(f"步骤耗时合计：{total_seconds:.3f}s（各步骤累计，不代表任务总耗时）")
         timeline = "\n".join(timeline_rows)
         if exc_type is None:
             logs.info(
-                f"✅ ===== Pipeline timeline for {self._scope_name} =====\n"
+                f"✅ 步骤耗时; scope={self._scope_name}\n"
                 f"{timeline}"
             )
         else:
             logs.error(
-                f"❌ ===== Pipeline timeline for {self._scope_name} =====\n"
+                f"❌ 步骤耗时; scope={self._scope_name}\n"
                 f"{timeline}"
             )
         return False
@@ -99,6 +101,9 @@ class Instrumentation:
         started_at = time.perf_counter()
         try:
             return operation(*args, **kwargs)
+        except Exception as exc:
+            exc.add_note(f"Pipeline 执行; scope={self._scope_name} step={operation_name}")
+            raise
         finally:
             elapsed_seconds = time.perf_counter() - started_at
             self._total_seconds_by_step[operation_name] = (

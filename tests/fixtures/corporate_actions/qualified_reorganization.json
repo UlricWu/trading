@@ -1,0 +1,65 @@
+{
+  "records": [
+    {
+      "ts_code": "000564.SZ",
+      "symbol": "000564",
+      "end_date": "2021-09-16",
+      "ann_date": "2021-09-16",
+      "div_proc": "实施",
+      "imp_ann_date": "2021-12-27",
+      "record_date": "2021-12-30",
+      "ex_date": "2021-12-31",
+      "pay_date": null,
+      "div_listdate": "2021-12-31",
+      "cash_div_tax": "0.0",
+      "stk_div": "2.2035714"
+    },
+    {
+      "ts_code": "000564.SZ",
+      "symbol": "000564",
+      "end_date": "2021-09-16",
+      "ann_date": "2021-09-16",
+      "div_proc": "实施",
+      "imp_ann_date": "2021-12-27",
+      "record_date": "2021-12-30",
+      "ex_date": "2021-12-31",
+      "pay_date": null,
+      "div_listdate": "2021-12-31",
+      "cash_div_tax": "0.0",
+      "stk_div": "2.2035714"
+    }
+  ],
+  "review": {
+    "candidate_id": "000564.SZ/2021-09-16/2021-12-30",
+    "related_sources": [],
+    "action_id": "cninfo:1212018431:ordinary_shareholder",
+    "shareholder_scope": "ordinary_shareholder",
+    "record_date": "2021-12-30",
+    "ex_date": "2021-12-31",
+    "pay_date": null,
+    "div_listdate": "2021-12-31",
+    "terms": [
+      {
+        "published_date": "2021-12-27",
+        "cash_per_share": "0",
+        "shares_per_share": "2.1898786",
+        "reference_cash_per_share": null,
+        "reference_shares_per_share": null,
+        "reference_price": null
+      },
+      {
+        "published_date": "2021-12-30",
+        "cash_per_share": "0",
+        "shares_per_share": "2.1898786",
+        "reference_cash_per_share": null,
+        "reference_shares_per_share": null,
+        "reference_price": "1.80"
+      }
+    ],
+    "evidence_refs": [
+      "https://static.cninfo.com.cn/finalpage/2021-12-27/1212018431.PDF",
+      "https://static.cninfo.com.cn/finalpage/2021-12-30/1212055485.PDF"
+    ],
+    "reason": "仅模拟符合本次分配资格的普通流通股持仓：每10股净获配21.898786股，非公司总转增22.035714股；27名排除股东、管理人及受来源排除条款影响的股份不在账户范围内。实施公告第4—5、8页确认分配与日期；12月30日提示公告确认统一参考价1.80元，不能提前写入12月27日版本。"
+  }
+}

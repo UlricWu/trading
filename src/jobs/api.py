@@ -5,10 +5,13 @@ import os
 import time
 from pathlib import Path
 
+import requests
+import tushare as ts
 from flask import Flask, Response, g, jsonify, request
 from werkzeug.exceptions import BadRequest, HTTPException, UnsupportedMediaType
 
 from src import logs
+from src.config.app_config import AppConfig
 from src.jobs.requests import InvalidJobRequest, parse_job_request
 from src.jobs.runtime import (
     JobNotCancellableError,
@@ -25,7 +28,7 @@ HttpResponse = Response | tuple[Response, int]
 
 
 def create_app(job_runtime: JobRuntime) -> Flask:
-    """Create the four-endpoint HTTP adapter for one explicit job runtime.
+    """Create the Job HTTP adapter with health and on-demand Tushare checks.
 
     API inputs:
 
@@ -36,23 +39,25 @@ def create_app(job_runtime: JobRuntime) -> Flask:
         "end": "YYYY-MM-DD"}``, or the same object with ``kind`` set to
         ``"data-level2"``.
       - Training:
-        ``{"kind": "train", "start": "YYYY-MM-DD",
-        "end": "YYYY-MM-DD"}``.
-      - Backtest:
-        ``{"kind": "backtest", "mode": MODE, "start": "YYYY-MM-DD",
-        "end": "YYYY-MM-DD", "model_experiment": BASENAME,
-        "strategy": STRATEGY}``.
+        ``{"kind": "train", "train_range": DATE_RANGE, "model": MODEL_NAME,
+        "dataset": {"feature_group": FEATURE_GROUP, "label_group": LABEL_GROUP},
+        "eval_range": DATE_RANGE_OR_NULL}``.
+        Each date range has inclusive start/end dates. Optional evaluation uses
+        the same fitted model for every selected trading day.
+      - Backtest uses one of five typed requests, each with start/end,
+        initial_account and execution.fill. Signal, strategy, risk and full tasks
+        provide signal and strategy; risk and full also require nonempty risk rules.
+        Risk evaluation compares independent account paths with and without those
+        rules. Execution evaluation provides order_refs instead of signal/strategy.
 
-      ``MODE`` is ``signal_eval``, ``tradable_alpha_eval``,
-      ``execution_eval``, ``risk_eval``, or ``full_backtest``. ``STRATEGY``
-      must match the configured threshold or top-k hysteresis strategy
-      schema. Dates are canonical, ranges require ``start <= end``, and extra
-      fields are rejected. Every request creates one full-range Job; a data
-      single day uses the same value for ``start`` and ``end``.
+      Dates are canonical, ranges require start <= end, and extra fields are
+      rejected. Each request creates one Job covering its complete input scope.
 
     - ``GET /jobs/<job_id>`` accepts the Job ID as a path value.
     - ``POST /jobs/<job_id>/cancel`` accepts the Job ID as a path value.
     - ``GET /health`` accepts no input and reports the process release identity.
+    - ``POST /checks/tushare`` accepts no input and checks today's ``daily``
+      query once with the current server configuration. Empty data is valid.
 
     Example:
         with JobRuntime(Path("logs/jobs")) as job_runtime:
@@ -164,6 +169,59 @@ def create_app(job_runtime: JobRuntime) -> Flask:
             }
         )
 
+    @flask_app.post("/checks/tushare")
+    def check_tushare() -> HttpResponse:
+        """Check one current-day query without exposing or persisting credentials.
+
+        Example:
+            response = flask_app.test_client().post("/checks/tushare")
+        """
+        try:
+            secret = AppConfig.load().secret
+            gateway = secret.tushare_gateway
+            if gateway is None:
+                gateway = ts.pro_api(secret.tushare_token)._DataApi__http_url
+            trade_date = DateTimeUtils.to_compact_date(DateTimeUtils.today())
+            # The SDK converts HTTP errors to empty frames; inspect its wire
+            # response so legitimate empty data and transport failures differ.
+            with requests.post(
+                f"{gateway}/daily",
+                json={
+                    "api_name": "daily",
+                    "token": secret.tushare_token,
+                    "params": {"trade_date": trade_date},
+                    "fields": "",
+                },
+                timeout=30,
+                allow_redirects=False,
+            ) as response:
+                if not 200 <= response.status_code < 300:
+                    raise ValueError("Tushare daily HTTP request did not succeed")
+                payload: object = response.json()
+            if (
+                not isinstance(payload, dict)
+                or type(payload.get("code")) is not int
+            ):
+                raise ValueError("Tushare daily response must contain integer code")
+            if payload["code"] != 0:
+                public_message = "抱歉，数据暂不可用，请稍后重试"
+                return _error_response(
+                    code="tushare_check_failed",
+                    message=(
+                        public_message
+                        if payload.get("msg") == public_message
+                        else "Tushare check failed"
+                    ),
+                    status_code=503,
+                )
+        except Exception:
+            return _error_response(
+                code="tushare_check_failed",
+                message="Tushare check failed",
+                status_code=503,
+            )
+        return jsonify({"ok": True})
+
     return flask_app
 
 
@@ -171,10 +229,7 @@ def _job_to_json(job: JobSnapshot) -> dict[str, object]:
     return {
         "job_id": job.job_id,
         "kind": job.kind,
-        "scope": {
-            "start": job.scope.start,
-            "end": job.scope.end,
-        },
+        "scope": {"start": job.scope.start, "end": job.scope.end},
         "status": job.status.value,
         "submitted_at": job.submitted_at,
         "started_at": job.started_at,

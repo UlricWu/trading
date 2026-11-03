@@ -103,6 +103,7 @@ target/
 ############################
 # Jupyter Notebook
 ############################
+/kernel-ipc-*
 .ipynb_checkpoints/
 *.nbconvert/
 notebooks/exploratory/**

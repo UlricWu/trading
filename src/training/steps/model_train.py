@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
+from src.config.model_config import FeatureLabelConfig
 from src.training.context import TrainingContext
 from src.training.inference_model import InferenceModel
 from src.training.models.catalog import ModelTrainer
@@ -17,8 +18,7 @@ class ModelTrainStep:
         step = ModelTrainStep(
             trainer=get_model_trainer("sgd_regression"),
             model_params={"random_state": 7},
-            feature_set="daily",
-            feature_version="v1",
+            dataset_cfg=model_config.dataset,
         )
         trained_context = step.run(preprocessed_context)
     """
@@ -28,8 +28,7 @@ class ModelTrainStep:
         *,
         trainer: ModelTrainer,
         model_params: Mapping[str, object],
-        feature_set: str,
-        feature_version: str,
+        dataset_cfg: FeatureLabelConfig,
     ) -> None:
         """Bind one catalog-selected trainer and its parameters.
 
@@ -37,14 +36,12 @@ class ModelTrainStep:
             step = ModelTrainStep(
                 trainer=get_model_trainer("sgd_regression"),
                 model_params={"random_state": 7},
-                feature_set="daily",
-                feature_version="v1",
+                dataset_cfg=model_config.dataset,
             )
         """
         self._trainer = trainer
         self._model_params = dict(model_params)
-        self._feature_set = feature_set
-        self._feature_version = feature_version
+        self._dataset_cfg = dataset_cfg
 
     def run(self, context: TrainingContext) -> TrainingContext:
         """Train from the prepared Context partition and attach the model.
@@ -64,11 +61,17 @@ class ModelTrainStep:
             X=context.train_X,
             y=context.train_y,
             model_params=self._model_params,
+            **({"sample_weight": context.sample_weight} if context.sample_weight is not None else {}),
         )
         context.model = InferenceModel(
             model=raw_model,
             preprocess=context.preprocess,
-            feature_set=self._feature_set,
-            feature_version=self._feature_version,
+            feature_set=self._dataset_cfg.feature_set,
+            feature_version=self._dataset_cfg.feature_version,
+            train_dates=context.window.train_dates,
+            label_set=self._dataset_cfg.label_set,
+            label_version=self._dataset_cfg.label_version,
+            label_column=self._dataset_cfg.label_column,
+            prediction_method="positive_probability" if self._dataset_cfg.label_column == "y_event" else "value",
         )
         return context

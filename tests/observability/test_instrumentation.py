@@ -23,7 +23,9 @@ def test_measure_returns_the_operation_result_and_forwards_arguments(
     )
     operation = Mock(return_value={"status": "complete"})
 
-    with Instrumentation("scope") as instrumentation:
+    descriptions = {"Load": "数据准备"}
+    with Instrumentation("scope", descriptions=descriptions) as instrumentation:
+        descriptions["Load"] = "changed after composition"
         result = instrumentation.measure(
             "Load",
             operation,
@@ -36,10 +38,9 @@ def test_measure_returns_the_operation_result_and_forwards_arguments(
     logger.info.assert_called_once_with(
         "\n".join(
             (
-                "✅ ===== Pipeline timeline for scope =====",
-                f"{'Load':<35} {0.25:>8.3f}s",
-                f"{'Total':<35} {0.25:>8.3f}s",
-                "=" * 43,
+                "✅ 步骤耗时; scope=scope",
+                f"{'Load':<35} {0.25:>8.3f}s  数据准备",
+                "步骤耗时合计：0.250s（各步骤累计，不代表任务总耗时）",
             )
         )
     )
@@ -67,13 +68,13 @@ def test_measure_reports_failed_timeline_and_preserves_the_exception(
         instrumentation.measure("Build", operation)
 
     assert raised.value is error
+    assert raised.value.__notes__ == ["Pipeline 执行; scope=scope step=Build"]
     logger.error.assert_called_once_with(
         "\n".join(
             (
-                "❌ ===== Pipeline timeline for scope =====",
+                "❌ 步骤耗时; scope=scope",
                 f"{'Build':<35} {0.5:>8.3f}s avg=0.250s runs=2",
-                f"{'Total':<35} {0.5:>8.3f}s",
-                "=" * 43,
+                "步骤耗时合计：0.500s（各步骤累计，不代表任务总耗时）",
             )
         )
     )
