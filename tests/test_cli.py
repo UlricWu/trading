@@ -13,6 +13,7 @@ from unittest.mock import Mock
 
 import pandas as pd
 import pytest
+from click import unstyle
 from typer.testing import CliRunner
 
 from src import cli, logs
@@ -99,8 +100,9 @@ def test_experiment_id_option_rejects_invalid_values_before_command_execution(
     result = CliRunner().invoke(cli.app, [command, *arguments, f"--experiment-id={experiment_id}"])
 
     assert result.exit_code == 2, result.output
-    assert "--experiment-id" in result.output
-    assert "must match" in result.output
+    output = unstyle(result.output)
+    assert "--experiment-id" in output
+    assert "must match" in output
     create_submission.assert_not_called()
     load_config.assert_not_called()
     workflow.assert_not_called()
