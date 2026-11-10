@@ -3,18 +3,25 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from collections.abc import Sequence
 from contextlib import nullcontext
+from datetime import UTC, datetime
 from typing import cast
-from unittest.mock import Mock
+from unittest.mock import MagicMock, Mock, call
 
 import pytest
+import requests
+import tushare as ts
 
 import src.jobs.api as api_module
+from src.config.app_config import AppConfig
+from src.config.backtest_config import BacktestMode
+from src.config.secret_config import SecretConfig
 from src.jobs.api import create_app
 from src.jobs.requests import (
-    BacktestSubmission,
-    DataSubmission,
+    parse_job_request,
     JobSubmission,
     TrainingSubmission,
 )
@@ -26,6 +33,190 @@ from src.jobs.runtime import (
     RangeJobScope,
 )
 
+def _training_request() -> dict[str, object]:
+    return {
+        "kind": "train",
+        "train_range": {"start": "2026-07-01", "end": "2026-07-20"},
+        "model": "sgd_regression",
+        "dataset": {
+            "feature_group": "daily_basic_selected_v1",
+            "label_group": "daily_close_return_rank_d1/v1",
+        },
+    }
+
+
+def test_train_post_creates_exactly_one_job() -> None:
+    runtime = _StubRuntime()
+    client = create_app(cast(JobRuntime, runtime)).test_client()
+    response = client.post("/jobs", json={**_training_request(),
+        "eval_range": {"start": "2026-08-03", "end": "2026-09-17"},
+        "eval_gap_sessions": 1})
+    assert response.status_code == 201
+    assert len(response.get_json()["jobs"]) == len(runtime.submitted) == 1
+
+
+@pytest.mark.parametrize("mode", list(BacktestMode))
+@pytest.mark.parametrize("frequency", ["daily", "minute"])
+def test_backtest_post_accepts_each_modes_actual_inputs(
+    mode: BacktestMode, frequency: str, backtest_payload: Callable[[BacktestMode], dict[str, object]],
+) -> None:
+    runtime = _StubRuntime()
+    payload = backtest_payload(mode)
+    payload["execution"]["market_source"]["frequency"] = frequency
+    response = create_app(cast(JobRuntime, runtime)).test_client().post("/jobs", json=payload)
+    assert response.status_code == 201
+    assert len(response.get_json()["jobs"]) == len(runtime.submitted) == 1
+    assert runtime.submitted == parse_job_request(payload)
+    assert runtime.submitted[0].mode is mode
+
+
+@pytest.mark.parametrize("selection", [{}, {"symbols": []}])
+def test_backtest_post_accepts_compact_full_market_selection(
+    backtest_payload: Callable[[str], dict[str, object]], selection: dict[str, object],
+) -> None:
+    runtime = _StubRuntime()
+    payload = backtest_payload("execution_eval")
+    payload["execution"]["market_source"].pop("symbols")
+    payload["execution"]["market_source"].update(selection)
+
+    response = create_app(cast(JobRuntime, runtime)).test_client().post("/jobs", json=payload)
+
+    assert response.status_code == 201
+    assert len(runtime.submitted) == 1
+    assert runtime.submitted[0].execution.market_source.symbols == ()
+    assert runtime.submitted[0].execution.quantity_rules.default.buy_min_qty == 100
+    assert runtime.submitted[0].execution.quantity_rules.overrides == {}
+
+
+@pytest.mark.parametrize("input_kind,field", [
+    ("missing", "execution.market_source"), ("null", "execution.market_source"),
+    ("market_ref", "execution.market_ref"), ("output_ref", "execution.market_source.output_ref"),
+])
+def test_backtest_post_rejects_market_json_and_missing_source_without_creating_a_job(
+    input_kind: str, field: str, backtest_payload: Callable[[str], dict[str, object]],
+) -> None:
+    runtime = _StubRuntime()
+    payload = backtest_payload("execution_eval")
+    if input_kind == "missing":
+        payload["execution"].pop("market_source")
+    elif input_kind == "null":
+        payload["execution"]["market_source"] = None
+    elif input_kind == "market_ref":
+        payload["execution"]["market_ref"] = "/data/market.json"
+    else:
+        payload["execution"]["market_source"]["output_ref"] = "/tmp/market.json"
+
+    response = create_app(cast(JobRuntime, runtime)).test_client().post("/jobs", json=payload)
+
+    assert response.status_code == 400
+    assert response.get_json()["error"]["field"] == field
+    assert runtime.jobs == {} and runtime.submitted == []
+
+
+@pytest.mark.parametrize(("fill", "quote", "status"), [
+    ({"type": "quoted"}, True, 201),
+    ({"type": "limit_price", "slippage_bp": 0}, True, 201),
+    ({"type": "limit_price", "slippage_bp": 10}, True, 201),
+    ({"type": "quoted"}, False, 400),
+    ({"type": "limit_price", "slippage_bp": 0}, False, 400),
+])
+def test_strategy_post_validates_execution_selection_before_creating_a_job(
+    fill: dict[str, object], quote: bool, status: int,
+    backtest_payload: Callable[[str], dict[str, object]],
+) -> None:
+    runtime = _StubRuntime()
+    payload = backtest_payload("strategy_eval")
+    payload["execution"]["fill"] = fill
+    if not quote:
+        payload["strategy"].pop("quote")
+
+    response = create_app(cast(JobRuntime, runtime)).test_client().post("/jobs", json=payload)
+
+    assert response.status_code == status
+    if status == 201:
+        assert len(runtime.submitted) == len(runtime.jobs) == 1
+        assert runtime.submitted == parse_job_request(payload)
+    else:
+        assert "strategy.quote" in response.get_json()["error"]["message"]
+        assert runtime.jobs == {} and runtime.submitted == []
+
+
+@pytest.mark.parametrize(("field", "value"), [
+    ("model_use", {}),
+    ("effective_ts_us", 1782860400000000),
+    ("training_schedule_ref", "/data/training/schedule.json"),
+    ("availability_evidence_ref", "caller-provided-evidence"),
+])
+def test_backtest_post_rejects_internal_fields_without_creating_a_job(
+    field: str, value: object, backtest_payload: Callable[[str], dict[str, object]],
+) -> None:
+    runtime = _StubRuntime()
+    response = create_app(cast(JobRuntime, runtime)).test_client().post(
+        "/jobs", json={**backtest_payload("signal_eval"), field: value},
+    )
+
+    assert response.status_code == 400
+    assert response.get_json()["error"]["field"] == field
+    assert runtime.jobs == {} and runtime.submitted == []
+
+
+@pytest.mark.parametrize("mode_fields", [
+    {}, {"mode": None}, {"mode": "unknown"},
+    {"mode": "tradable_alpha_eval"}, {"mode": "risk_eval"},
+])
+def test_backtest_post_requires_an_explicit_supported_mode(
+    mode_fields: dict[str, object],
+) -> None:
+    runtime = _StubRuntime()
+    response = create_app(cast(JobRuntime, runtime)).test_client().post(
+        "/jobs", json={
+            "kind": "backtest", "start": "2026-07-01", "end": "2026-07-20",
+            "signal": {"type": "model", "model_ref": "/data/training/model.joblib"},
+            **mode_fields,
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.get_json()["error"]["field"] == "mode"
+    assert runtime.jobs == {} and runtime.submitted == []
+
+
+@pytest.mark.parametrize("field", ["start", "end"])
+def test_backtest_post_requires_both_dates(field: str) -> None:
+    runtime = _StubRuntime()
+    payload = {
+        "kind": "backtest", "mode": "signal_eval",
+        "start": "2026-07-01", "end": "2026-07-20",
+        "signal": {"type": "model", "model_ref": "/data/training/model.joblib"},
+        "min_listing_calendar_days": 120,
+    }
+    del payload[field]
+    response = create_app(cast(JobRuntime, runtime)).test_client().post(
+        "/jobs", json=payload,
+    )
+
+    assert response.status_code == 400
+    assert response.get_json()["error"]["field"] == field
+    assert runtime.jobs == {} and runtime.submitted == []
+
+
+@pytest.mark.parametrize("mode", ["signal_eval", "strategy_eval", "risk_rule_eval", "full_backtest"])
+@pytest.mark.parametrize("listing_fields", [{}, {"min_listing_calendar_days": -1}])
+def test_backtest_post_rejects_missing_or_invalid_listing_age_before_creating_a_job(
+    mode: str, listing_fields: dict[str, object],
+    backtest_payload: Callable[[str], dict[str, object]],
+) -> None:
+    runtime = _StubRuntime()
+    payload = backtest_payload(mode)
+    del payload["min_listing_calendar_days"]
+    payload.update(listing_fields)
+
+    response = create_app(cast(JobRuntime, runtime)).test_client().post("/jobs", json=payload)
+
+    assert response.status_code == 400
+    assert response.get_json()["error"]["field"] == "min_listing_calendar_days"
+    assert runtime.jobs == {} and runtime.submitted == []
+
 
 class _StubRuntime:
     def __init__(self) -> None:
@@ -36,16 +227,7 @@ class _StubRuntime:
         snapshots: list[JobSnapshot] = []
         for submission in submissions:
             job_id = f"00000000-0000-4000-8000-{len(self.jobs) + 1:012d}"
-            if isinstance(
-                submission,
-                (DataSubmission, TrainingSubmission, BacktestSubmission),
-            ):
-                scope = RangeJobScope(
-                    start=submission.start,
-                    end=submission.end,
-                )
-            else:
-                raise TypeError("unknown submission")
+            scope = RangeJobScope(submission.start, submission.end)
             snapshot = JobSnapshot(
                 job_id=job_id,
                 kind=submission.kind,
@@ -96,7 +278,249 @@ def test_route_map_contains_only_the_confirmed_endpoints() -> None:
         ("/jobs/<job_id>", ("GET",)),
         ("/jobs/<job_id>/cancel", ("POST",)),
         ("/health", ("GET",)),
+        ("/checks/tushare", ("POST",)),
     }
+
+
+@pytest.fixture
+def tushare_config(monkeypatch: pytest.MonkeyPatch) -> Mock:
+    secret = SecretConfig(
+        tushare_token="private-tushare-token",
+        tushare_gateway="https://private-gateway.example/dataapi",
+    )
+    load_config = Mock(return_value=Mock(spec=AppConfig, secret=secret))
+    monkeypatch.setattr(AppConfig, "load", load_config)
+    monkeypatch.setattr(
+        api_module.DateTimeUtils,
+        "now_utc",
+        lambda: datetime(2026, 9, 19, 16, 15, tzinfo=UTC),
+    )
+    monkeypatch.setattr(
+        ts,
+        "set_token",
+        Mock(side_effect=AssertionError("check must not persist a token")),
+    )
+    return load_config
+
+
+@pytest.mark.parametrize(
+    ("http_status", "payload", "expected_status"),
+    [
+        (200, {"code": 0, "data": {"fields": ["close"], "items": [[10.0]]}}, 200),
+        (200, {"code": 0, "data": {"fields": ["close"], "items": []}}, 200),
+        (200, {"code": -1, "msg": "private-tushare-token"}, 503),
+        (200, {"code": 2002, "msg": "no permission"}, 503),
+        (401, {"code": 0}, 503),
+        (503, {"code": 0}, 503),
+        (302, {"code": 0}, 503),
+        (200, {}, 503),
+        (200, [], 503),
+        (200, {"code": "0"}, 503),
+        (200, {"code": False}, 503),
+    ],
+)
+def test_tushare_check_uses_one_current_day_request(
+    monkeypatch: pytest.MonkeyPatch,
+    tushare_config: Mock,
+    http_status: int,
+    payload: object,
+    expected_status: int,
+) -> None:
+    upstream = MagicMock(spec=requests.Response)
+    upstream.__enter__.return_value = upstream
+    upstream.status_code = http_status
+    upstream.json.return_value = payload
+    post = Mock(return_value=upstream)
+    monkeypatch.setattr(requests, "post", post)
+    runtime = _StubRuntime()
+    client = create_app(cast(JobRuntime, runtime)).test_client()
+
+    response = client.post("/checks/tushare")
+
+    assert response.status_code == expected_status
+    assert response.get_json() == (
+        {"ok": True}
+        if expected_status == 200
+        else {
+            "error": {
+                "code": "tushare_check_failed",
+                "message": "Tushare check failed",
+            }
+        }
+    )
+    post.assert_called_once_with(
+        "https://private-gateway.example/dataapi/daily",
+        json={
+            "api_name": "daily",
+            "token": "private-tushare-token",
+            "params": {"trade_date": "20260920"},
+            "fields": "",
+        },
+        timeout=30,
+        allow_redirects=False,
+    )
+    upstream.__exit__.assert_called_once()
+    tushare_config.assert_called_once_with()
+    assert runtime.jobs == {}
+    assert runtime.submitted == []
+
+
+@pytest.mark.parametrize(
+    ("failure_phase", "error"),
+    [
+        ("configuration", ValueError("private-tushare-token")),
+        ("request", requests.Timeout("private-tushare-token")),
+        ("request", requests.ConnectionError("private-tushare-token")),
+        ("response", requests.JSONDecodeError("private-tushare-token", "", 0)),
+    ],
+)
+def test_tushare_check_failure_is_private_and_does_not_affect_health(
+    monkeypatch: pytest.MonkeyPatch,
+    tushare_config: Mock,
+    failure_phase: str,
+    error: Exception,
+) -> None:
+    upstream = MagicMock(spec=requests.Response)
+    upstream.__enter__.return_value = upstream
+    upstream.status_code = 200
+    post = Mock(return_value=upstream)
+    monkeypatch.setattr(requests, "post", post)
+    if failure_phase == "configuration":
+        tushare_config.side_effect = error
+    elif failure_phase == "request":
+        post.side_effect = error
+    else:
+        upstream.json.side_effect = error
+    client = create_app(cast(JobRuntime, _StubRuntime())).test_client()
+    messages: list[str] = []
+    sink_id = api_module.logs.add(messages.append, format="{message}")
+    try:
+        response = client.post("/checks/tushare")
+        health = client.get("/health")
+    finally:
+        api_module.logs.remove(sink_id)
+
+    assert response.status_code == 503
+    assert response.get_json() == {
+        "error": {
+            "code": "tushare_check_failed",
+            "message": "Tushare check failed",
+        }
+    }
+    assert "private-tushare-token" not in "".join(messages)
+    assert "private-gateway" not in "".join(messages)
+    assert "Traceback" not in "".join(messages)
+    assert health.status_code == 200
+    assert health.get_json()["ok"] is True
+    tushare_config.assert_called_once_with()
+    assert post.call_count == (0 if failure_phase == "configuration" else 1)
+
+
+@pytest.mark.parametrize(
+    ("http_status", "code", "message", "expected_message"),
+    [
+        (200, 10004, "抱歉，数据暂不可用，请稍后重试", "抱歉，数据暂不可用，请稍后重试"),
+        (200, 10004, "private-tushare-token", "Tushare check failed"),
+        (200, 10004, "https://private-gateway.example/dataapi", "Tushare check failed"),
+        (200, 10004, "Traceback: internal details", "Tushare check failed"),
+        (200, 10004, "抱歉，数据暂不可用，请稍后重试 private-tushare-token", "Tushare check failed"),
+        (200, 10004, None, "Tushare check failed"),
+        (200, 10004, {"detail": "private-tushare-token"}, "Tushare check failed"),
+        (200, "10004", "抱歉，数据暂不可用，请稍后重试", "Tushare check failed"),
+        (503, 10004, "抱歉，数据暂不可用，请稍后重试", "Tushare check failed"),
+    ],
+)
+def test_tushare_check_exposes_only_the_approved_business_message(
+    monkeypatch: pytest.MonkeyPatch,
+    tushare_config: Mock,
+    http_status: int,
+    code: object,
+    message: object,
+    expected_message: str,
+) -> None:
+    upstream = MagicMock(spec=requests.Response)
+    upstream.__enter__.return_value = upstream
+    upstream.status_code = http_status
+    upstream.json.return_value = {
+        "code": code,
+        "msg": message,
+        "data": {"private": "private-tushare-token"},
+        "detail": "https://private-gateway.example/dataapi",
+    }
+    post = Mock(return_value=upstream)
+    monkeypatch.setattr(requests, "post", post)
+    runtime = _StubRuntime()
+    client = create_app(cast(JobRuntime, runtime)).test_client()
+    messages: list[str] = []
+    sink_id = api_module.logs.add(messages.append, format="{message}")
+    try:
+        response = client.post("/checks/tushare")
+    finally:
+        api_module.logs.remove(sink_id)
+
+    assert response.status_code == 503
+    assert response.get_json() == {
+        "error": {"code": "tushare_check_failed", "message": expected_message}
+    }
+    assert "private-tushare-token" not in response.get_data(as_text=True)
+    assert "private-gateway" not in response.get_data(as_text=True)
+    assert "Traceback" not in response.get_data(as_text=True)
+    assert "private-tushare-token" not in "".join(messages)
+    assert "private-gateway" not in "".join(messages)
+    assert "Traceback" not in "".join(messages)
+    assert "抱歉，数据暂不可用，请稍后重试" not in "".join(messages)
+    post.assert_called_once()
+    tushare_config.assert_called_once_with()
+    assert runtime.jobs == {}
+    assert runtime.submitted == []
+
+
+def test_tushare_check_reloads_token_and_gateway(
+    monkeypatch: pytest.MonkeyPatch,
+    tushare_config: Mock,
+) -> None:
+    first_secret = tushare_config.return_value.secret.model_copy(
+        update={"tushare_gateway": None}
+    )
+    second_secret = first_secret.model_copy(
+        update={
+            "tushare_token": "rotated-tushare-token",
+            "tushare_gateway": "https://rotated-gateway.example",
+        }
+    )
+    tushare_config.side_effect = [
+        Mock(spec=AppConfig, secret=first_secret),
+        Mock(spec=AppConfig, secret=second_secret),
+    ]
+    upstream = MagicMock(spec=requests.Response)
+    upstream.__enter__.return_value = upstream
+    upstream.status_code = 200
+    upstream.json.return_value = {"code": 0}
+    post = Mock(return_value=upstream)
+    monkeypatch.setattr(requests, "post", post)
+    client = create_app(cast(JobRuntime, _StubRuntime())).test_client()
+
+    assert client.post("/checks/tushare").status_code == 200
+    assert client.post("/checks/tushare").status_code == 200
+
+    assert tushare_config.call_count == 2
+    assert post.call_args_list == [
+        call(
+            f"{gateway}/daily",
+            json={
+                "api_name": "daily",
+                "token": token,
+                "params": {"trade_date": "20260920"},
+                "fields": "",
+            },
+            timeout=30,
+            allow_redirects=False,
+        )
+        for gateway, token in (
+            ("http://api.waditu.com/dataapi", "private-tushare-token"),
+            ("https://rotated-gateway.example", "rotated-tushare-token"),
+        )
+    ]
 
 
 def test_data_range_returns_one_job_and_only_public_fields() -> None:
@@ -130,7 +554,8 @@ def test_data_range_returns_one_job_and_only_public_fields() -> None:
     }
 
 
-def test_training_request_creates_one_full_range_job() -> None:
+@pytest.mark.parametrize("eval_end", [None, "2026-08-10", "2026-08-31"])
+def test_training_request_creates_one_full_range_job(eval_end: str | None) -> None:
     runtime = _StubRuntime()
     app = create_app(cast(JobRuntime, runtime))
     app.config["TESTING"] = True
@@ -138,19 +563,39 @@ def test_training_request_creates_one_full_range_job() -> None:
     response = app.test_client().post(
         "/jobs",
         json={
-            "kind": "train",
-            "start": "2026-07-01",
-            "end": "2026-07-20",
+            **_training_request(),
+            "eval_range": {"start": "2026-08-10", "end": eval_end} if eval_end else None,
         },
     )
 
     assert response.status_code == 201
     assert response.get_json()["jobs"][0]["scope"] == {
         "start": "2026-07-01",
-        "end": "2026-07-20",
+        "end": eval_end or "2026-07-20",
     }
     assert len(runtime.submitted) == 1
     assert isinstance(runtime.submitted[0], TrainingSubmission)
+
+
+@pytest.mark.parametrize(("changes", "field"), [
+    ({"model": "do-not-echo"}, "model"),
+    ({"dataset": {"feature_group": "stock_1430_daily_l2/v1", "label_group": "daily_close_return_rank_d1/v1"}}, "dataset.feature_group"),
+    ({"dataset": {"feature_group": "daily_basic_selected_v1", "label_group": "do-not-echo"}}, "dataset.label_group"),
+    ({"dataset": {"feature_group": "l2_stock_1430_all_v1", "label_group": "daily_close_return_rank_d1/v1"}}, "dataset"),
+    ({"train_range": {"start": "2026-07-31", "end": "2026-07-01"}}, "train_range"),
+    ({"eval_range": {"start": "2026-08-10", "end": "2026-08-31", "cutoff": "do-not-echo"}}, "eval_range.cutoff"),
+])
+def test_invalid_training_choice_has_no_job_identity(
+    changes: dict[str, object], field: str,
+) -> None:
+    runtime = _StubRuntime()
+    response = create_app(cast(JobRuntime, runtime)).test_client().post(
+        "/jobs", json={**_training_request(), **changes},
+    )
+    assert response.status_code == 400
+    assert response.get_json()["error"]["field"] == field
+    assert "do-not-echo" not in response.get_data(as_text=True)
+    assert runtime.jobs == {} and runtime.submitted == []
 
 
 @pytest.mark.parametrize(
@@ -177,7 +622,7 @@ def test_training_request_creates_one_full_range_job() -> None:
             "mode": "full_backtest",
             "start": "2026-07-01",
             "end": "2026-07-20",
-            "model_experiment": "training-1",
+            "model_ref": "/data/models/training-1.joblib",
             "strategy": {
                 "type": "threshold",
                 "params": {"threshold": 0.5, "secret": "do-not-echo"},

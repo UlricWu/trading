@@ -50,13 +50,14 @@ def test_apply_asof_price_adjustment_hfq_uses_factor_directly() -> None:
     assert out["close"].tolist() == pytest.approx([20.0, 20.0])
 
 
-def test_apply_asof_price_adjustment_invalid_factor_outputs_null() -> None:
+@pytest.mark.parametrize('factor', [0.0, -1.0, np.nan, np.inf, None])
+def test_apply_asof_price_adjustment_invalid_factor_outputs_null(factor: float | None) -> None:
     df = pd.DataFrame(
         {
             "symbol": ["000001", "000001"],
             "trade_date": ["2026-01-01", "2026-01-02"],
             "close": [20.0, 10.0],
-            "adj_factor": [0.0, 2.0],
+            "adj_factor": [factor, 2.0],
         }
     )
 

@@ -1,0 +1,356 @@
+[
+  {
+    "records": [
+      {
+        "ts_code": "002745.SZ",
+        "symbol": "002745",
+        "end_date": "2017-12-31",
+        "ann_date": "2018-03-05",
+        "div_proc": "实施",
+        "imp_ann_date": "2018-03-30",
+        "record_date": "2018-04-10",
+        "ex_date": "2018-04-11",
+        "pay_date": "2018-04-11",
+        "div_listdate": "2018-04-11",
+        "cash_div_tax": "0.247",
+        "stk_div": "1.0",
+        "source_row_id": "26ff19d0038b4e68995ff029104fc72d6ca4b047ef1ade56307bbb17cdbc50cd"
+      },
+      {
+        "ts_code": "002745.SZ",
+        "symbol": "002745",
+        "end_date": "2017-12-31",
+        "ann_date": "2018-03-27",
+        "div_proc": "实施",
+        "imp_ann_date": "2018-03-30",
+        "record_date": "2018-04-10",
+        "ex_date": "2018-04-11",
+        "pay_date": "2018-04-11",
+        "div_listdate": "2018-04-11",
+        "cash_div_tax": "0.247",
+        "stk_div": "1.0",
+        "source_row_id": "f8dd8b798ab9682295e5a0164390325e52b0e0fe653f8a6dde5b6b9246b91b5b"
+      }
+    ],
+    "review": {
+      "candidate_id": "002745.SZ/2017-12-31/2018-04-10",
+      "source_digest": "e8df098e54eea3dc2d37ad7cd46e3ed670de560ecb157b154814fb933af087c3",
+      "action_id": "dividend/002745/2017-12-31/2018-04-10",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2018-04-10",
+      "ex_date": "2018-04-11",
+      "pay_date": "2018-04-11",
+      "div_listdate": "2018-04-11",
+      "terms": [
+        {
+          "published_date": "2018-03-30",
+          "cash_per_share": "0.247",
+          "shares_per_share": "1",
+          "reference_cash_per_share": "0.247",
+          "reference_shares_per_share": "1"
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2018-03-30/1204547578.PDF"
+      ],
+      "reason": "same_implemented_plan"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "600989.SH",
+        "symbol": "600989",
+        "end_date": "2023-12-31",
+        "ann_date": "2024-03-22",
+        "div_proc": "实施",
+        "imp_ann_date": "2024-07-18",
+        "record_date": "2024-07-23",
+        "ex_date": "2024-07-24",
+        "pay_date": "2024-07-24",
+        "div_listdate": null,
+        "cash_div_tax": "0.265",
+        "stk_div": "0.0",
+        "source_row_id": "4d17b9476c1bc3c1c138e81ae11c6e930ace8b1b33a83385c13f7cd95b8f2a67"
+      },
+      {
+        "ts_code": "600989.SH",
+        "symbol": "600989",
+        "end_date": "2023-12-31",
+        "ann_date": "2024-06-22",
+        "div_proc": "实施",
+        "imp_ann_date": "2024-07-18",
+        "record_date": "2024-07-23",
+        "ex_date": "2024-07-24",
+        "pay_date": "2024-07-24",
+        "div_listdate": null,
+        "cash_div_tax": "0.3158",
+        "stk_div": "0.0",
+        "source_row_id": "cbd0a41a50b86951db95c5cdaafeee02d8978e2678679dcb524d8775aad0cbca"
+      }
+    ],
+    "review": {
+      "candidate_id": "600989.SH/2023-12-31/2024-07-23",
+      "source_digest": "87c3164bacfafb5004b2ba2e8b0287ae6909632995df4c61198dd20445208ef1",
+      "action_id": "dividend/600989/2023-12-31/2024-07-23",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2024-07-23",
+      "ex_date": "2024-07-24",
+      "pay_date": "2024-07-24",
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2024-07-18",
+          "cash_per_share": "0.3158",
+          "shares_per_share": "0",
+          "reference_cash_per_share": "0.28",
+          "reference_shares_per_share": "0"
+        }
+      ],
+      "evidence_refs": [
+        "https://file.finance.sina.com.cn/211.154.219.97:9494/MRGG/CNSESH_STOCK/2024/2024-7/2024-07-18/10334213.PDF"
+      ],
+      "reason": "ordinary_shareholder_differential_dividend"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "002352.SZ",
+        "symbol": "002352",
+        "end_date": "2024-06-30",
+        "ann_date": "2024-08-29",
+        "div_proc": "实施",
+        "imp_ann_date": "2024-10-31",
+        "record_date": "2024-11-06",
+        "ex_date": "2024-11-07",
+        "pay_date": "2024-11-07",
+        "div_listdate": null,
+        "cash_div_tax": "0.4",
+        "stk_div": "0.0",
+        "source_row_id": "f80d394f52c9a88f6b9c36bb8ed5277e6251d0305d0ad3c36b563865ca49efa8"
+      },
+      {
+        "ts_code": "002352.SZ",
+        "symbol": "002352",
+        "end_date": "2024-06-30",
+        "ann_date": "2024-10-30",
+        "div_proc": "实施",
+        "imp_ann_date": "2024-10-31",
+        "record_date": "2024-11-06",
+        "ex_date": "2024-11-07",
+        "pay_date": "2024-11-07",
+        "div_listdate": null,
+        "cash_div_tax": "1.4",
+        "stk_div": "0.0",
+        "source_row_id": "b4f4469aebc587e520509d95b04dfdb04fef81d942fac87dfdf3d6e552d37552"
+      }
+    ],
+    "review": {
+      "candidate_id": "002352.SZ/2024-06-30/2024-11-06",
+      "source_digest": "2d5ba31d8af03c65c6269b5f71828877c19bafd8044fd108db80f7153d73272c",
+      "action_id": "dividend/002352/2024-06-30/2024-11-06",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2024-11-06",
+      "ex_date": "2024-11-07",
+      "pay_date": "2024-11-07",
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2024-10-31",
+          "cash_per_share": "1.4",
+          "shares_per_share": "0",
+          "reference_cash_per_share": "1.3939620",
+          "reference_shares_per_share": "0"
+        }
+      ],
+      "evidence_refs": [
+        "https://file.finance.sina.com.cn/211.154.219.97:9494/MRGG/CNSESZ_STOCK/2024/2024-10/2024-10-31/10567932.PDF"
+      ],
+      "reason": "interim_and_special_combined_not_additive_rows"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "002157.SZ",
+        "symbol": "002157",
+        "end_date": "2023-08-05",
+        "ann_date": "2023-08-05",
+        "div_proc": "实施",
+        "imp_ann_date": "2023-12-02",
+        "record_date": "2023-12-07",
+        "ex_date": "2023-12-08",
+        "pay_date": null,
+        "div_listdate": "2023-12-08",
+        "cash_div_tax": "0.0",
+        "stk_div": "1.623",
+        "source_row_id": "4756dd111c6d1f4e43b95a147d2b081ab65d27c026550ccd713b90f33a612018"
+      },
+      {
+        "ts_code": "002157.SZ",
+        "symbol": "002157",
+        "end_date": "2023-08-05",
+        "ann_date": "2023-09-26",
+        "div_proc": "实施",
+        "imp_ann_date": "2023-12-02",
+        "record_date": "2023-12-07",
+        "ex_date": "2023-12-08",
+        "pay_date": null,
+        "div_listdate": "2023-12-08",
+        "cash_div_tax": null,
+        "stk_div": "1.623",
+        "source_row_id": "7aa9761baece759c0004792211efd7e1df15686fdcbebf302ccfd298025f7b6b"
+      }
+    ],
+    "review": {
+      "candidate_id": "002157.SZ/2023-08-05/2023-12-07",
+      "source_digest": "d44a1e87d7d40579c4a1d9bdc4852e510a3b96db0c83d86f62d872613b195ddd",
+      "action_id": "dividend/002157/2023-08-05/2023-12-07",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2023-12-07",
+      "ex_date": "2023-12-08",
+      "pay_date": null,
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2023-12-07",
+          "cash_per_share": "0",
+          "shares_per_share": "0",
+          "reference_cash_per_share": "0",
+          "reference_shares_per_share": "0"
+        }
+      ],
+      "evidence_refs": [
+        "https://paper.cnstock.com/html/2023-12/02/content_1849219.htm",
+        "https://epaper.stcn.com/att/202312/07/4c557ab7-8595-492e-a006-2041fff5000a.pdf"
+      ],
+      "reason": "reorganization_shares_not_granted_to_existing_shareholders"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "003001.SZ",
+        "symbol": "003001",
+        "end_date": "2024-12-31",
+        "ann_date": "2025-04-18",
+        "div_proc": "实施",
+        "imp_ann_date": "2025-07-05",
+        "record_date": "2025-07-04",
+        "ex_date": "2025-07-07",
+        "pay_date": "2025-07-07",
+        "div_listdate": "2025-07-07",
+        "cash_div_tax": "0.2814904",
+        "stk_div": "0.3992772",
+        "source_row_id": "27806f24c5d6f68edffe3bc672dd8da77b27c190aaec73d698cf8569acf564c1"
+      },
+      {
+        "ts_code": "003001.SZ",
+        "symbol": "003001",
+        "end_date": "2024-12-31",
+        "ann_date": "2025-05-10",
+        "div_proc": "实施",
+        "imp_ann_date": "2025-06-30",
+        "record_date": "2025-07-04",
+        "ex_date": "2025-07-07",
+        "pay_date": "2025-07-07",
+        "div_listdate": "2025-07-07",
+        "cash_div_tax": "0.2814904",
+        "stk_div": "0.3992772",
+        "source_row_id": "31bda1526cdaeecec303913ab4ee89932f90952f70da95d35476ee5ff4881f95"
+      }
+    ],
+    "review": {
+      "candidate_id": "003001.SZ/2024-12-31/2025-07-04",
+      "source_digest": "740b5a5b49f4f1f3835504aa8141bb4691a184a7d6fbff10885f6b042dff7b83",
+      "action_id": "dividend/003001/2024-12-31/2025-07-04",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2025-07-04",
+      "ex_date": "2025-07-07",
+      "pay_date": "2025-07-07",
+      "div_listdate": "2025-07-07",
+      "terms": [
+        {
+          "published_date": "2025-06-30",
+          "cash_per_share": "0.2816137",
+          "shares_per_share": "0.3994521",
+          "reference_cash_per_share": "0.2764547",
+          "reference_shares_per_share": "0.3921344"
+        },
+        {
+          "published_date": "2025-07-05",
+          "cash_per_share": "0.2814904",
+          "shares_per_share": "0.3992772",
+          "reference_cash_per_share": "0.2763360",
+          "reference_shares_per_share": "0.3919658"
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2025-06-30/1224017153.PDF#sha256=972fa64793d6feb1486d0f88f7d93e4bb2fc93bf335c69ea63fe650bdf66c66a",
+        "https://static.cninfo.com.cn/finalpage/2025-07-05/1224085489.PDF#sha256=af3c4f592fa7573eeb279a2f8aa32d554d4f04731f729c9b7b703e77b295cea3"
+      ],
+      "reason": "post_registration_terms_revision"
+    }
+  },
+  {
+    "records": [
+      {
+        "ts_code": "000550.SZ",
+        "symbol": "000550",
+        "end_date": "2017-09-30",
+        "ann_date": "2018-01-16",
+        "div_proc": "实施",
+        "imp_ann_date": "2018-03-20",
+        "record_date": "2018-03-26",
+        "ex_date": "2018-03-27",
+        "pay_date": "2018-03-27",
+        "div_listdate": null,
+        "cash_div_tax": "2.317",
+        "stk_div": "0.0",
+        "source_row_id": "c9612454b7e540bd049ebe828a8b8b76db4a0eac2fe783afff45bbe2af12e61f"
+      },
+      {
+        "ts_code": "000550.SZ",
+        "symbol": "000550",
+        "end_date": "2018-01-16",
+        "ann_date": "2018-02-07",
+        "div_proc": "实施",
+        "imp_ann_date": "2018-03-20",
+        "record_date": "2018-03-26",
+        "ex_date": "2018-03-27",
+        "pay_date": "2018-03-27",
+        "div_listdate": null,
+        "cash_div_tax": "2.317",
+        "stk_div": "0.0",
+        "source_row_id": "6b20c8feb901873fcc1121d7f1fb0f90bc10746943339fa021be01cfe97b77c9"
+      }
+    ],
+    "review": {
+      "candidate_id": "000550.SZ/2017-09-30/2018-03-26",
+      "source_digest": "35cd14221306ac78683221ea918d0d097010e3ec751536a872988aefdef7eaa8",
+      "related_sources": {
+        "000550.SZ/2018-01-16/2018-03-26": "4c98b3af7a45ff044b77806274517d27132f7bb4763b89761529cb6d57d4c7de"
+      },
+      "action_id": "cninfo:1204488117:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2018-03-26",
+      "ex_date": "2018-03-27",
+      "pay_date": "2018-03-27",
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2018-03-20",
+          "cash_per_share": "2.317",
+          "shares_per_share": "0",
+          "reference_cash_per_share": "2.317",
+          "reference_shares_per_share": "0"
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2018-03-20/1204488117.PDF#sha256=5900a39998a95c39d34f549bb62adca2f0b37af7ec60911b7faae8dd55944d5a"
+      ],
+      "reason": "p1 one special dividend RMB 23.17 per 10 shares on all capital; p2 A-share registration/payment dates and unchanged capital; both source reporting periods identify this one plan"
+    }
+  }
+]

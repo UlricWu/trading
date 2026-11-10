@@ -27,24 +27,19 @@ data:
   sources: {}
   feature_sets: {}
   label_sets: {}
-model:
-  group: sgd_regression
-  model_params: {}
-  train_window_days: 30
-  preprocessing:
-    missing:
-      method: constant
-      fill_value: 0.0
-  dataset:
+models:
+  sgd_regression:
+    group: sgd_regression
+    model_params: {}
+    preprocessing:
+      missing:
+        method: constant
+        fill_value: 0.0
+feature_groups:
+  daily_basic_selected_v1:
     feature_set: features
     feature_version: v1
-    label_set: labels
-    label_version: v1
     feature_columns: [factor]
-    label_column: target
-backtest:
-  init_cash: 200000
-  min_listing_calendar_days: 120
 """.lstrip(),
         encoding="utf-8",
     )
@@ -73,26 +68,29 @@ def test_override_recursively_merges_any_formal_config_field(
 
     config = AppConfig.load(
         override={
-            "model": {"train_window_days": 0},
-            "backtest": {"init_cash": 123_456},
+            "models": {"sgd_regression": {"model_params": {"alpha": 0.001}}},
         }
     )
 
-    assert config.model.train_window_days == 0
-    assert config.model.group == "sgd_regression"
-    assert config.model.dataset.feature_columns == ["factor"]
-    assert config.backtest.init_cash == 123_456
-    assert config.backtest.min_listing_calendar_days == 120
+    assert config.models["sgd_regression"].model_params == {"alpha": 0.001}
+    assert config.models["sgd_regression"].group == "sgd_regression"
+    assert config.feature_groups["daily_basic_selected_v1"].feature_columns == ["factor"]
+    assert "backtest" not in config.model_dump()
 
 
+@pytest.mark.parametrize("override", [
+    {"storage_root": Path("/other")},
+    {"backtest": {"min_listing_calendar_days": 90}},
+])
 def test_override_rejects_non_config_root_fields(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    override: dict[str, object],
 ) -> None:
     _install_environment(tmp_path=tmp_path, monkeypatch=monkeypatch)
 
-    with pytest.raises(ValueError, match="data, model, or backtest"):
-        AppConfig.load(override={"storage_root": Path("/other")})
+    with pytest.raises(ValueError, match="data, models, or feature_groups"):
+        AppConfig.load(override=override)
 
 
 def test_formal_base_config_declares_only_level2_file_sources(
@@ -127,5 +125,12 @@ def test_formal_base_config_declares_only_level2_file_sources(
         "daily_close_return_rank_d5",
     )
     assert all(label.enabled for label in config.data.label_sets.values())
-    assert config.model.dataset.label_set == "daily_close_return_rank_d1"
-    assert config.model.dataset.label_column == "y_rank_return"
+    assert set(config.models) == {"sgd_regression", "ridge_regression", "logistic_regression",
+                                 "hist_gradient_boosting_regressor", "hist_gradient_boosting_classifier"}
+    assert {name: len(group.feature_columns) for name, group in config.feature_groups.items()} == {
+        "daily_basic_selected_v1": 7, "daily_basic_all_v1": 16, "l2_stock_1430_all_v1": 32,
+        "previous_day_daily_v1": 7, "previous_day_daily_l2_price_v1": 15,
+        "previous_day_daily_l2_activity_v1": 23, "previous_day_daily_l2_direction_v1": 15,
+        "previous_day_daily_l2_v1": 39,
+    }
+    assert not hasattr(config.models["sgd_regression"], "dataset")

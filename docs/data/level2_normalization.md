@@ -110,15 +110,40 @@ SH 的 `ExchangeID`、`TradeMoney`、`TradeBSFlag`、`MDSecurityStat`、
 [broker 字段字典](https://int4.tech/#fields)和
 [L2 接入文档](https://docs.qq.com/doc/DQ3FaQ3ZYSmRQdEVi)中的整数接口 `price`
 使用 ×10000 尺度；本系统接收的 CSV `Price/TradePrice` 已为十进制价格，继续只做
-数值转换，不再次除以 10000。数量沿用 CSV source 值，未定义证券类型单位换算；
+数值转换，不再次除以 10000。数量沿用 CSV source 值，不在 normalize 做单位换算；
 `TradeMoney` 不替代 `price * volume`。深圳撤单即使已由 broker 还原为正价格，也按
 `ExecType=4` 排除，不得凭正价格将其当作成交。
+
+对当前沪深 `security_type=stock`，broker 的成交 `volume` 单位为股，CSV
+`Volume/TradeVolume` 及 processed `volume` 保留该数量，`notional` 因而为元。
+[股票分钟事实](level2_minute_contract.md)的 `volume_sum` 直接为股、`notional_sum` 为元，
+消费方不得再将股票分钟量乘以 100。该解释只覆盖股票，不将债券、基金等其他证券的
+source-native 数量一概声明为股，也不改变既有 processed 数值或聚合公式。
+
+<a id="trade-cancel-filter"></a>
 
 ## Trade batch 与日对象
 
 `parse_level2_trade_batch(...)` 接收显式 `trade_date`，一次完成字段校验、交易所时间转换、
 source value mapping、统一 schema 转换和正成交过滤。输出只保留
 `event == "TRADE"`、`price > 0` 且 `volume > 0` 的行。
+
+`SZ_Trade` 的文件名不保证每行都是成交。
+[深交所 Binary 行情接口规范](https://www.szse.cn/marketServices/technicalservice/interface/P020250328368568358456.pdf)
+表 4-15 的逐笔成交消息以 `ExecType` 区分 `F` 成交与 `4` 撤销；本项目 CSV 的具体映射
+仍以上文源端导出编码表为准，包括百度导出的 `P` 和原 FTP 导出的 `1/2`，不将不同编码混用。
+
+正成交指满足上述条件的实际成交，不表示价格上涨或主动买入。撤单减少尚未成交的委托，
+不增加成交量，也不冲减已完成的成交；即使撤单价格由 broker 还原为原委托的正价格，
+事件仍是 `CANCEL`。例如，一笔 10 元、1,000 股的委托成交 300 股后撤销剩余 700 股，
+实际成交仍为 300 股、3,000 元；把撤单计入成交会误记为 1,000 股、10,000 元。
+该示例用于解释口径，不是源文件中的实测订单链。
+
+因此，撤单在 batch 阶段排除，先于日对象的 `notional/trade_side` 和
+[成交分钟聚合](level2_minute_contract.md)。放宽过滤会改变成交量、金额、笔数、VWAP、
+价格区间及 tick-rule 方向，并影响复用这些成交事实的特征和标签。
+过滤只限定 processed trade 的内容，不删除原始文件中的撤单；当前 processed trade
+及成交分钟表不能恢复被排除的事件，利用撤单需重新读取 raw。
 
 日对象固定按以下关系构造：
 

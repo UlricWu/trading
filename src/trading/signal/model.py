@@ -4,7 +4,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from src.trading.market.data_view import MarketDataView
+import numpy as np
+
 from src.trading.signal.base import SignalProvider
 from src.trading.signal.diagnostics import SignalDiagnostics
 from src.training.inference_model import InferenceModel
@@ -12,13 +13,13 @@ from src.training.inference_model import InferenceModel
 
 @dataclass(frozen=True, slots=True)
 class ModelSignalProvider(SignalProvider):
-    """Map retained inference rows back to their requested symbol identities.
+    """Map aligned predictions to symbols, skipping ordinary missing predictions.
 
     Example:
         provider = ModelSignalProvider(model=inference_model)
         scores = provider.scores(
             ts_us=1,
-            data_view=data_view,
+            features=features,
             symbols=("600000",),
         )
     """
@@ -38,7 +39,7 @@ class ModelSignalProvider(SignalProvider):
         self,
         *,
         ts_us: int,
-        data_view: MarketDataView,
+        features: np.ndarray,
         symbols: Sequence[str],
     ) -> dict[str, float]:
         """Return scores only for rows retained by fitted preprocessing.
@@ -46,12 +47,10 @@ class ModelSignalProvider(SignalProvider):
         Example:
             scores = provider.scores(
                 ts_us=1,
-                data_view=data_view,
+                features=features,
                 symbols=("600000", "000001"),
             )
         """
-        features = data_view.get_feature_matrix(symbols)
-
         if self.diagnostics:
             self.diagnostics.on_before_predict(
                 ts_us=ts_us,
@@ -59,16 +58,11 @@ class ModelSignalProvider(SignalProvider):
                 model=self.model,
             )
 
-        keep_rows, predictions = self.model.predict(features)
-        retained_symbols = (
-            str(symbol)
-            for symbol, keep in zip(symbols, keep_rows, strict=True)
-            if bool(keep)
-        )
-
+        predictions = self.model.predict(features)
         scores = {
-            symbol: float(score)
-            for symbol, score in zip(retained_symbols, predictions, strict=True)
+            str(symbol): float(score)
+            for symbol, score in zip(symbols, predictions, strict=True)
+            if not np.isnan(score)
         }
 
         if self.diagnostics:

@@ -1,87 +1,141 @@
 # filepath: src/trading/backtest/context.py
-"""Persistent state and per-timing Context for the daily-alpha backtest."""
-
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from decimal import Decimal
+from pathlib import Path
+from types import MappingProxyType
+from typing import Literal
 
-from src.trading.core.equity import EquityCurve
+from src.data_system.security_status import SecurityStatus
+from src.trading.backtest.commands import OrderCommandSchedule
+from src.trading.backtest.clock import ReplayClock
+from src.trading.backtest.corporate_actions import CorporateActionIssue, CorporateActionSchedule
+from src.trading.backtest.execution.simulator import AccountExecutionSimulator
+from src.trading.backtest.market.replay import MarkObservation, ReplayMarket, ReplayMarketInput, ReplaySession
+from src.trading.backtest.market.signals import RecordedSignalBatch, SignalBatch
+from src.trading.backtest.reporting.metrics import BacktestMetrics
+from src.trading.core.equity import EquityCurve, EquityPoint
+from src.trading.core.events import PendingOrder, TargetEvent
 from src.trading.core.ledger import ExecutionLedger
 from src.trading.core.tape import SignalTape, TargetTape
-from src.trading.engines.backtest_eval import (
-    ExecutionQualityFrame,
-    FullBacktestFrame,
-    RiskEffectFrame,
-    SignalEvalFrame,
-    TradableAlphaFrame,
-)
 from src.trading.portfolio.state import PortfolioState
+from src.trading.portfolio.corporate_actions import CorporateActionRecord, Distribution
+from src.trading.portfolio.constructors.base import PortfolioConstructor
+from src.trading.portfolio.constructors.fixed_holding import FixedHoldingConstructor
+from src.trading.risk import RiskManager
+from src.trading.risk.evaluation import RiskObservation
 
-if TYPE_CHECKING:
-    from src.trading.backtest.steps.backtest_layers import (
-        PortfolioResult,
-        RiskResult,
-        SignalEvaluationResult,
-        SignalResult,
-    )
-    from src.trading.backtest.timing import BacktestTiming
+
+@dataclass(frozen=True, slots=True)
+class PositionValuation:
+    """Record one held position's initial or closing valuation basis.
+
+    Example:
+        mark = PositionValuation(close_us, "2026-07-20", "600000", 100,
+            Decimal("10"), prior_close_us, "2026-07-17", "daily_close", "suspension")
+    """
+
+    ts_us: int
+    trade_date: str
+    symbol: str
+    qty: int
+    price: Decimal
+    price_ts_us: int
+    price_trade_date: str
+    price_kind: Literal["mark", "daily_close", "execution", "corporate_action"]
+    reason: Literal["initial", "daily_close", "suspension", "missing_daily_close"]
 
 
 @dataclass(slots=True)
 class BacktestState:
-    """Carry only values that persist across backtest timings.
+    """Run-owned trading facts; no future labels or accumulated evaluation frames.
 
     Example:
-        state = BacktestState.initial(initial_cash=200_000)
-        cash = state.portfolio_state.cash
+        state = BacktestState(portfolio_state=account)
     """
 
     portfolio_state: PortfolioState
     execution_ledger: ExecutionLedger = field(default_factory=ExecutionLedger)
+    pending_orders: dict[int, PendingOrder] = field(default_factory=dict)
     equity_curve: EquityCurve = field(default_factory=EquityCurve)
+    initial_equity: float | None = None
+    daily_equity: dict[str, EquityPoint] = field(default_factory=dict)
     signal_tape: SignalTape = field(default_factory=SignalTape)
     target_tape: TargetTape = field(default_factory=TargetTape)
-    signal_eval_frames: list[SignalEvalFrame] = field(default_factory=list)
-    tradable_alpha_frames: list[TradableAlphaFrame] = field(default_factory=list)
-    risk_decision_frames: list[RiskEffectFrame] = field(default_factory=list)
-    execution_eval_frames: list[ExecutionQualityFrame] = field(default_factory=list)
-    full_backtest_frames: list[FullBacktestFrame] = field(default_factory=list)
-    bar_count: int = 0
-    signal_count: int = 0
+    risk_observations: list[RiskObservation] = field(default_factory=list)
+    prediction_refs: list[Path] = field(default_factory=list)
+    decision_dates: dict[int, str] = field(default_factory=dict)
     last_mark_prices: dict[str, float] = field(default_factory=dict)
-    trade_dates: list[str] = field(default_factory=list)
+    valuation_marks: dict[tuple[int, str], tuple[PositionValuation, ...]] = field(default_factory=dict)
+    corporate_action_records: list[CorporateActionRecord] = field(default_factory=list)
+    distribution_terms: dict[str, Distribution] = field(default_factory=dict)
+    corporate_action_issues: dict[tuple[str, str | None, str], CorporateActionIssue] = field(default_factory=dict)
 
-    @classmethod
-    def initial(cls, *, initial_cash: int) -> BacktestState:
-        """Create a fully initialized state for one backtest.
 
-        Example:
-            state = BacktestState.initial(initial_cash=200_000)
-        """
-        cash = float(initial_cash)
-        return cls(
-            portfolio_state=PortfolioState(
-                initial_cash=cash,
-                cash=cash,
-            )
-        )
+@dataclass(frozen=True, slots=True)
+class BacktestInputs:
+    """Validated market facts and signal batches or frozen commands, without labels.
+
+    Example:
+        inputs = BacktestInputs(market=market_source, decisions=signal_inputs_by_ts_us)
+    """
+
+    market: ReplayMarketInput
+    decisions: Mapping[int, SignalBatch] | OrderCommandSchedule
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.decisions, OrderCommandSchedule):
+            object.__setattr__(self, "decisions", MappingProxyType(dict(self.decisions)))
+
+
+@dataclass(slots=True)
+class TickState:
+    """Carry only the current tick's decisions between independently assembled Steps.
+
+    None targets mean no submission; explicit zero quantities mean liquidation.
+    A new instance on every tick prevents old targets or cancellations from recurring.
+
+    Example:
+        tick = TickState(ts_us=decision_us, session=market_input.session_at(decision_us))
+    """
+
+    ts_us: int
+    session: ReplaySession
+    signal: RecordedSignalBatch | None = None
+    original_target: TargetEvent | None = None
+    execution_target: TargetEvent | None = None
+    cancel_order_ids: tuple[int, ...] = ()
+    risk_observation: RiskObservation | None = None
 
 
 @dataclass(slots=True)
 class BacktestContext:
-    """Carry one timing's transient values and shared persistent state.
+    """Own prepared inputs, account runtime, current decisions and accumulated facts.
+
+    Sessions and market_input carry startup results into PrepareInputsStep, which
+    combines the market with decision inputs. Runtime is absent until initialization. State accumulates
+    during replay; result Steps consume it only after the clock finishes. Tick is
+    present only during replay. Configuration and external services stay bound to Steps.
 
     Example:
-        context = BacktestContext(
-            timing=timing,
-            state=BacktestState.initial(initial_cash=200_000),
-        )
+        context = BacktestContext(metrics=metrics)
     """
 
-    timing: BacktestTiming
-    state: BacktestState
-    signal: SignalResult | None = None
-    signal_evaluation: SignalEvaluationResult | None = None
-    portfolio: PortfolioResult | None = None
-    risk: RiskResult | None = None
+    metrics: BacktestMetrics
+    sessions: tuple[ReplaySession, ...] = ()
+    symbols_by_date: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    unknown_listing_symbols_by_date: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    security_status_by_date: dict[str, tuple[SecurityStatus, ...]] = field(default_factory=dict)
+    market_input: ReplayMarketInput | None = None
+    inputs: BacktestInputs | None = None
+    initial_marks: tuple[MarkObservation, ...] = ()
+    corporate_actions: CorporateActionSchedule = field(default_factory=CorporateActionSchedule)
+    state: BacktestState | None = None
+    market: ReplayMarket | None = None
+    executor: AccountExecutionSimulator | None = None
+    constructor: PortfolioConstructor | FixedHoldingConstructor | None = None
+    risk: RiskManager | None = None
+    clock: ReplayClock | None = None
+    tick: TickState | None = None

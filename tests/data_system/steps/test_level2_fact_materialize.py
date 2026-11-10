@@ -212,3 +212,4 @@ def test_level2_step_normalizes_cached_baidu_archives_and_keeps_orders_cloud_onl
     assert step.run(context) is context
     get_broker.assert_not_called()
     assert {path: path.stat().st_mtime_ns for path in saved_files} == saved_files
+

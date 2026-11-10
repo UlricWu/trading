@@ -18,7 +18,7 @@ from src.data_system.steps._partition import _publish_parquet_object
 from src.utils import table_ops
 from src.utils.path import PathManager
 
-_EMPTY_PROCESSED_OUTPUTS = frozenset({"stock_basic", "stock_st", "suspend_d"})
+_EMPTY_PROCESSED_OUTPUTS = frozenset({"stock_basic", "stock_st", "suspend_d", "dividend"})
 
 
 @dataclass(slots=True)

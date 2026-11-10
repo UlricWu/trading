@@ -540,7 +540,7 @@ def test_fact_step_times_each_real_ingest_and_normalize_run(
 
 @pytest.mark.parametrize(
     "empty_source",
-    ("stock_basic", "stock_st", "suspend_d"),
+    ("stock_basic", "stock_st", "suspend_d", "dividend"),
 )
 def test_fact_step_publishes_allowed_empty_outputs(
     tmp_path: Path,
@@ -593,6 +593,7 @@ def test_fact_step_publishes_allowed_empty_outputs(
     assert context == _context(trade_date)
     assert loaded.payload_path == processed_paths.payload_path
     assert pq.ParquetFile(processed_paths.payload_path).read().num_rows == 0
+    assert {path.name for path in processed_paths.payload_path.parents[2].iterdir()} == {"v1"}
 
 
 def test_fact_step_rejects_an_empty_non_event_output(tmp_path: Path) -> None:

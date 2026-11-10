@@ -1,15 +1,15 @@
 # filepath: tests/trading/backtest/test_context.py
-"""Persistent-state tests for the daily-alpha backtest."""
+from pathlib import Path
 
-from __future__ import annotations
+from src.trading.backtest.context import BacktestInputs
+from src.trading.backtest.market.replay import ReplayMarketInput
+from src.trading.backtest.market.signals import RecordedSignalBatch
+from src.trading.core.events import SignalEvent
 
-from src.trading.backtest.context import BacktestState
 
-
-def test_initial_state_is_complete_and_excludes_timing_scratch_values() -> None:
-    state = BacktestState.initial(initial_cash=200_000)
-
-    assert state.portfolio_state.cash == 200_000.0
-    assert state.trade_dates == []
-    assert not hasattr(state, "backtest_timing")
-    assert not hasattr(state, "current_scores")
+def test_prepared_inputs_own_signal_index(order_market_input: ReplayMarketInput) -> None:
+    batch = RecordedSignalBatch('2026-07-03', SignalEvent(1, {'A': .8}), ('A',), Path('/prediction'))
+    decisions = {1: batch}
+    inputs = BacktestInputs(market=order_market_input, decisions=decisions)
+    decisions.clear()
+    assert inputs.decisions == {1: batch}

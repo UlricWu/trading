@@ -55,6 +55,7 @@ class TushareBroker:
             "stock_st": "stock_st",
             "stk_limit": "stk_limit",
             "suspend_d": "suspend_d",
+            "dividend": "dividend",
             "cyq_perf": "cyq_perf",
             "margin": "margin",
             "margin_detail": "margin_detail",
@@ -120,10 +121,16 @@ class TushareBroker:
             source_name=source_name,
             payload_file="data.parquet",
         )
+        params = {"record_date" if raw_object == "dividend" else "trade_date": compact_date}
+        if raw_object == "daily_bar":
+            params["fields"] = "ts_code,trade_date,open,high,low,close,pre_close,change,pct_chg,vol,amount,ah_vol,ah_amount"
+        elif raw_object == "dividend":
+            params["fields"] = ("ts_code,end_date,ann_date,div_proc,stk_div,stk_bo_rate,stk_co_rate,cash_div,cash_div_tax,"
+                                "record_date,ex_date,pay_date,div_listdate,imp_ann_date,base_date,base_share")
         if not self._materialize_query(
             source_name=source_name,
             api_name=api_name,
-            params={"trade_date": compact_date},
+            params=params,
             raw_payload=raw_payload,
         ):
             return None
@@ -190,6 +197,9 @@ class TushareBroker:
                 f"api_name={api_name} params={params}"
             )
             return False
+
+        if source_name == "dividend" and len(response) >= 2000:
+            raise ValueError("dividend response reached the source's 2000-row limit; completeness is unconfirmed")
 
         payload = response.to_parquet()
         if not isinstance(payload, bytes):

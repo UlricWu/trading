@@ -53,7 +53,7 @@ System log 不得记录请求 payload、strategy、子进程 argv 或子进程 t
 | --- | --- | --- |
 | `▶️` | 开始 | `INFO` |
 | `⏳` | 仍在运行 | `INFO` |
-| `✅` | 成功完成或成功发布 | `INFO` |
+| `✅` | 成功完成或成功发布 | `INFO`；仅供排查的明细用 `DEBUG` |
 | `♻️` | 复用已有制品 | `INFO` |
 | `⚠️` | 需要关注但尚未失败 | `WARNING` |
 | `❌` | 失败 | `ERROR` 或 `EXCEPTION` |
@@ -63,6 +63,10 @@ System log 不得记录请求 payload、strategy、子进程 argv 或子进程 t
 动作时保留；`reused=<count>`、`published=<count>` 等聚合字段不属于重复状态。失败原因、
 HTTP status、Job 状态转换及其他领域结果仍必须通过稳定字段明确表达。多行消息只视为
 一个日志事件，其首行必须遵守上述前缀规则。
+
+级别区分读者需要的摘要与排查明细，不改变状态符号含义。仅供排查的成功明细允许使用
+`DEBUG`；业务进度和结果摘要使用 `INFO`，警告与失败不得为了减少输出而降级。具体
+workflow 的事件内容和摘要范围由其 owner 定义。
 
 CLI composition root 必须在命令分派前把公共 `src.logs` 配置为单一 stderr sink，格式
 固定为：
@@ -86,7 +90,7 @@ Loguru stderr 输出，由 `JobRuntime` 捕获到 job 文件；不得再让 LOG 
 `job_id` 的生命周期摘要；runtime 自身的文件、进程或线程启动失败属于 system log。
 尚未启动即取消的 Job 不得创建 job log。历史 job log 不自动清理或回写。
 
-CLI 不拥有 start/done 日志；offline workflow 拥有业务运行日志。API 不提供
+CLI 与 workflow 的业务日志分工由 [CLI 契约](cli_contract.md#通用边界)定义。API 不提供
 job log endpoint，不得扫描日志目录，也不得把内部文件路径、异常 repr 或 traceback
 写入 Job JSON。
 

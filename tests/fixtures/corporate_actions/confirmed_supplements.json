@@ -1,0 +1,423 @@
+[
+  {
+    "candidate_id": "003001.SZ/2024-12-31/2025-07-04",
+    "record_date": "2025-07-04",
+    "sources": [
+      {
+        "source": "/home/wsw/app/maintenance-evidence/backtest-coverage-20261018-xncht91n/prior-manual-rebinding-result.json",
+        "pointer": "/reviews/3/review"
+      }
+    ],
+    "records": [
+      {
+        "ts_code": "003001.SZ",
+        "symbol": "003001",
+        "end_date": "2024-12-31",
+        "ann_date": "2025-04-18",
+        "div_proc": "实施",
+        "imp_ann_date": "2025-07-05",
+        "record_date": "2025-07-04",
+        "ex_date": "2025-07-07",
+        "pay_date": "2025-07-07",
+        "div_listdate": "2025-07-07",
+        "cash_div_tax": "0.2814904",
+        "stk_div": "0.3992772"
+      },
+      {
+        "ts_code": "003001.SZ",
+        "symbol": "003001",
+        "end_date": "2024-12-31",
+        "ann_date": "2025-05-10",
+        "div_proc": "实施",
+        "imp_ann_date": "2025-06-30",
+        "record_date": "2025-07-04",
+        "ex_date": "2025-07-07",
+        "pay_date": "2025-07-07",
+        "div_listdate": "2025-07-07",
+        "cash_div_tax": "0.2814904",
+        "stk_div": "0.3992772"
+      }
+    ],
+    "review": {
+      "candidate_id": "003001.SZ/2024-12-31/2025-07-04",
+      "announcement_source": null,
+      "related_sources": [],
+      "action_id": "dividend/003001/2024-12-31/2025-07-04",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2025-07-04",
+      "ex_date": "2025-07-07",
+      "pay_date": "2025-07-07",
+      "div_listdate": "2025-07-07",
+      "terms": [
+        {
+          "published_date": "2025-06-30",
+          "published_ts_us": null,
+          "cash_per_share": "0.2816137",
+          "shares_per_share": "0.3994521",
+          "reference_cash_per_share": "0.2764547",
+          "reference_shares_per_share": "0.3921344"
+        },
+        {
+          "published_date": "2025-07-05",
+          "published_ts_us": null,
+          "cash_per_share": "0.2814904",
+          "shares_per_share": "0.3992772",
+          "reference_cash_per_share": "0.2763360",
+          "reference_shares_per_share": "0.3919658"
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2025-06-30/1224017153.PDF",
+        "https://static.cninfo.com.cn/finalpage/2025-07-05/1224085489.PDF"
+      ],
+      "reason": "post_registration_terms_revision: 6月30日原实施公告参考转增比例为0.3921344，修正旧人工记录截断为0.392134的问题；7月5日公开修订后现金0.2814904、转增0.3992772、参考现金0.2763360、参考转增0.3919658保持原值。两版登记日均7月4日，除权派现及股份上市均7月7日；不把7月5日条款提前使用。"
+    },
+    "issue": null,
+    "status": "resolved"
+  },
+  {
+    "candidate_id": "002352.SZ/2024-06-30/2024-11-06",
+    "record_date": "2024-11-06",
+    "sources": [
+      {
+        "source": "/home/wsw/app/maintenance-evidence/backtest-coverage-20261018-xncht91n/nonstandard-cash-pipeline-result.json",
+        "pointer": "/results/2/after/002352.SZ/2024-06-30/2024-11-06/review"
+      },
+      {
+        "source": "/home/wsw/app/maintenance-evidence/backtest-coverage-20261018-xncht91n/nonstandard-cash-pipeline-result.json",
+        "pointer": "/results/2/after/002352.SZ/2024-10-11/2024-11-06/review"
+      }
+    ],
+    "records": [
+      {
+        "ts_code": "002352.SZ",
+        "symbol": "002352",
+        "end_date": "2024-10-11",
+        "ann_date": "2024-10-11",
+        "div_proc": "实施",
+        "imp_ann_date": "2024-10-31",
+        "record_date": "2024-11-06",
+        "ex_date": "2024-11-07",
+        "pay_date": "2024-11-07",
+        "div_listdate": null,
+        "cash_div_tax": "1.0",
+        "stk_div": "0.0"
+      },
+      {
+        "ts_code": "002352.SZ",
+        "symbol": "002352",
+        "end_date": "2024-06-30",
+        "ann_date": "2024-08-29",
+        "div_proc": "实施",
+        "imp_ann_date": "2024-10-31",
+        "record_date": "2024-11-06",
+        "ex_date": "2024-11-07",
+        "pay_date": "2024-11-07",
+        "div_listdate": null,
+        "cash_div_tax": "0.4",
+        "stk_div": "0.0"
+      },
+      {
+        "ts_code": "002352.SZ",
+        "symbol": "002352",
+        "end_date": "2024-06-30",
+        "ann_date": "2024-10-30",
+        "div_proc": "实施",
+        "imp_ann_date": "2024-10-31",
+        "record_date": "2024-11-06",
+        "ex_date": "2024-11-07",
+        "pay_date": "2024-11-07",
+        "div_listdate": null,
+        "cash_div_tax": "1.4",
+        "stk_div": "0.0"
+      }
+    ],
+    "review": {
+      "candidate_id": "002352.SZ/2024-06-30/2024-11-06",
+      "announcement_source": null,
+      "related_sources": [
+        "002352.SZ/2024-10-11/2024-11-06"
+      ],
+      "action_id": "dividend/002352/2024-06-30/2024-11-06",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2024-11-06",
+      "ex_date": "2024-11-07",
+      "pay_date": "2024-11-07",
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2024-10-31",
+          "published_ts_us": null,
+          "cash_per_share": "1.4",
+          "shares_per_share": "0",
+          "reference_cash_per_share": "1.3939620",
+          "reference_shares_per_share": "0"
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2024-10-31/1221573964.PDF"
+      ],
+      "reason": "reviewed_single_cash_distribution_and_related_source_identities: 原文将中期每股 0.4 元与特别分红每股 1 元合并为一次 1.4 元支付；三个源行位于两个候选组。回购专户不参与，公告参考扣减 1.3939620 元；不得将源行或候选再次累加。"
+    },
+    "issue": null,
+    "status": "resolved"
+  },
+  {
+    "candidate_id": "002349.SZ/2020-12-31/2021-06-29",
+    "record_date": "2021-06-29",
+    "sources": [
+      {
+        "source": "/home/wsw/app/maintenance-evidence/backtest-coverage-20261018-xncht91n/independent-precise-case-result.json",
+        "pointer": "/results/1/review/review"
+      }
+    ],
+    "records": [
+      {
+        "ts_code": "002349.SZ",
+        "symbol": "002349",
+        "end_date": "2020-12-31",
+        "ann_date": "2021-05-19",
+        "div_proc": "实施",
+        "imp_ann_date": "2021-06-22",
+        "record_date": "2021-06-29",
+        "ex_date": "2021-06-30",
+        "pay_date": "2021-06-30",
+        "div_listdate": null,
+        "cash_div_tax": "0.041",
+        "stk_div": "0.0"
+      }
+    ],
+    "review": {
+      "candidate_id": "002349.SZ/2020-12-31/2021-06-29",
+      "announcement_source": null,
+      "related_sources": [],
+      "action_id": "cninfo:1210300955:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2021-06-29",
+      "ex_date": "2021-06-30",
+      "pay_date": "2021-06-30",
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2021-06-22",
+          "published_ts_us": null,
+          "cash_per_share": "0.041",
+          "shares_per_share": "0",
+          "reference_cash_per_share": "0.399430",
+          "reference_shares_per_share": "0"
+        },
+        {
+          "published_date": "2021-06-30",
+          "published_ts_us": 1625010070000000,
+          "cash_per_share": "0.041",
+          "shares_per_share": "0",
+          "reference_cash_per_share": "0.039943",
+          "reference_shares_per_share": "0"
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2021-06-22/1210300955.PDF",
+        "https://static.cninfo.com.cn/finalpage/2021-06-30/1210368064.PDF"
+      ],
+      "reason": "reviewed_precise_reference_correction: 06-22完整实施方案规定普通股每股税前现金0.041元且无送转、06-29登记及06-30除息支付；06-30 07:41:10原始公开索引确认更正仅将参考扣减0.399430改为0.039943，其余条款不变。保留两次公开版本，只在更正可见时修正尚未被真实行情替代的临时参考价，权益和现金只确认一次。"
+    },
+    "issue": null,
+    "status": "resolved"
+  },
+  {
+    "candidate_id": "cninfo:1223733350",
+    "record_date": "2025-06-06",
+    "sources": [
+      {
+        "source": "/home/wsw/app/maintenance-evidence/backtest-coverage-20261018-xncht91n/independent-precise-case-result.json",
+        "pointer": "/results/0/review/review"
+      }
+    ],
+    "records": [],
+    "review": {
+      "candidate_id": "cninfo:1223733350",
+      "announcement_source": {
+        "source": "cninfo",
+        "announcement_id": "1223733350",
+        "symbol": "001323",
+        "title": "2024年年度权益分派实施公告",
+        "published_date": "2025-06-03",
+        "published_ts_us": null,
+        "url": "https://static.cninfo.com.cn/finalpage/2025-06-03/1223733350.PDF"
+      },
+      "related_sources": [],
+      "action_id": "cninfo:1223733350:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2025-06-06",
+      "ex_date": "2025-06-09",
+      "pay_date": "2025-06-09",
+      "div_listdate": null,
+      "terms": [
+        {
+          "published_date": "2025-06-03",
+          "published_ts_us": null,
+          "cash_per_share": "1",
+          "shares_per_share": "0",
+          "reference_cash_per_share": "0.9833939",
+          "reference_shares_per_share": "0"
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2025-06-03/1223733350.PDF"
+      ],
+      "reason": "reviewed_independent_implementation: 全文明确普通流通股每股税前派现1元、无送转，2025-06-06登记、06-09除息及代派；回购股不参与，除息参考扣减0.9833939元。原文06-03公开；06-10实施完毕公告只作完整性审计，未倒填可见时间。所有当前Tushare查询均无该候选，因此保留原生公告身份，不制造来源行。"
+    },
+    "issue": null,
+    "status": "resolved"
+  },
+  {
+    "candidate_id": "600276.SH/2018-12-31/2019-03-27",
+    "record_date": "2019-03-27",
+    "sources": [
+      {
+        "source": "/home/wsw/app/maintenance-evidence/backtest-coverage-20261018-xncht91n/new-source-candidates-verification.json",
+        "pointer": "/resolutions/0/review"
+      },
+      {
+        "source": "/home/wsw/app/maintenance-evidence/backtest-coverage-20261018-xncht91n/omitted-distributions-verified.json",
+        "pointer": "/resolutions/0/review"
+      }
+    ],
+    "records": [
+      {
+        "ts_code": "600276.SH",
+        "symbol": "600276",
+        "end_date": "2018-12-31",
+        "ann_date": "2019-03-09",
+        "div_proc": "实施",
+        "imp_ann_date": "2019-03-21",
+        "record_date": "2019-03-27",
+        "ex_date": "2019-03-28",
+        "pay_date": "2019-03-28",
+        "div_listdate": "2019-03-29",
+        "cash_div_tax": "0.22",
+        "stk_div": "0.2"
+      }
+    ],
+    "review": {
+      "candidate_id": "600276.SH/2018-12-31/2019-03-27",
+      "announcement_source": null,
+      "related_sources": [],
+      "action_id": "cninfo:1205921524:ordinary_shareholder",
+      "shareholder_scope": "ordinary_shareholder",
+      "record_date": "2019-03-27",
+      "ex_date": "2019-03-28",
+      "pay_date": "2019-03-28",
+      "div_listdate": "2019-03-29",
+      "terms": [
+        {
+          "published_date": "2019-03-21",
+          "published_ts_us": null,
+          "cash_per_share": "0.22",
+          "shares_per_share": "0.2",
+          "reference_cash_per_share": "0.22",
+          "reference_shares_per_share": "0.2"
+        }
+      ],
+      "evidence_refs": [
+        "https://static.cninfo.com.cn/finalpage/2019-03-21/1205921524.PDF"
+      ],
+      "reason": "implementation_pdf_terms_and_reference_confirmed"
+    },
+    "issue": null,
+    "status": "resolved"
+  },
+  {
+    "candidate_id": "605299.SH/2023-12-31/2024-05-08",
+    "record_date": "2024-05-08",
+    "sources": [
+      {
+        "candidate_id": "605299.SH/2023-12-31/2024-05-08",
+        "reason": "distribution_amount_ambiguous:1219837422",
+        "source": "/home/wsw/app/maintenance-evidence/backtest-coverage-20261018-xncht91n/cash-consistency-original-regression.json",
+        "pointer": "/after_reason"
+      }
+    ],
+    "records": [
+      {
+        "ts_code": "605299.SH",
+        "symbol": "605299",
+        "end_date": "2023-12-31",
+        "ann_date": "2024-04-09",
+        "div_proc": "实施",
+        "imp_ann_date": "2024-04-26",
+        "record_date": "2024-05-08",
+        "ex_date": "2024-05-09",
+        "pay_date": "2024-05-09",
+        "div_listdate": null,
+        "cash_div_tax": "0.3",
+        "stk_div": "0.0"
+      }
+    ],
+    "review": null,
+    "issue": "distribution_amount_ambiguous",
+    "status": "unresolved"
+  },
+  {
+    "candidate_id": "002541.SZ/2022-12-31/2023-06-13",
+    "record_date": "2023-06-13",
+    "sources": [
+      {
+        "candidate_id": "002541.SZ/2022-12-31/2023-06-13",
+        "reason": "distribution_amount_ambiguous:1217001730",
+        "source": "/home/wsw/app/maintenance-evidence/backtest-coverage-20261018-xncht91n/cash-summary-originals-result.json",
+        "pointer": "/results/2"
+      }
+    ],
+    "records": [
+      {
+        "ts_code": "002541.SZ",
+        "symbol": "002541",
+        "end_date": "2022-12-31",
+        "ann_date": "2023-04-22",
+        "div_proc": "实施",
+        "imp_ann_date": "2023-06-07",
+        "record_date": "2023-06-13",
+        "ex_date": "2023-06-14",
+        "pay_date": "2023-06-14",
+        "div_listdate": null,
+        "cash_div_tax": "0.259999",
+        "stk_div": "0.0"
+      }
+    ],
+    "review": null,
+    "issue": "distribution_amount_ambiguous",
+    "status": "unresolved"
+  },
+  {
+    "candidate_id": "300016.SZ/2018-12-31/2019-04-02",
+    "record_date": "2019-04-02",
+    "sources": [
+      {
+        "candidate_id": "300016.SZ/2018-12-31/2019-04-02",
+        "reason": "unsupported_announcement_timeline:[{'type': 'value_error', 'loc': (), 'msg': 'Value error, review pay_date must follow ex date and match its benefit', 'input': {'candidate_id': '300016.SZ/2018-12-31/2019-04-02', 'source_digest': 'e65e285e1f658311cd18355a663e22660c153c0e464f0e86ee92f9ef6edda2ee', 'action_id': 'cninfo:1205941522:ordinary_shareholder', 'shareholder_scope': 'ordinary_shareholder', 'record_date': datetime.date(2019, 4, 2), 'ex_date': datetime.date(2019, 4, 3), 'pay_date': datetime.date(2018, 4, 3), 'div_listdate': None, 'terms': (DistributionTerms(published_date=datetime.date(2019, 3, 26), cash_per_share=Decimal('0.1'), shares_per_share=Decimal('0'), reference_cash_per_share=Decimal('0.1'), reference_shares_per_share=Decimal('0')),), 'evidence_refs': ('https://static.cninfo.com.cn/finalpage/2019-03-26/1205941522.PDF#sha256=062fc53f4a49209bdc5d38ac906fb622701c65d48f33ee6dff2f1bcd41558fc0',), 'reason': 'implementation_pdf_terms_and_reference_confirmed'}, 'ctx': {'error': ValueError('review pay_date must follow ex date and match its benefit')}}]",
+        "source": "/home/wsw/app/maintenance-evidence/backtest-coverage-20261018-xncht91n/new-source-candidates-verification.json",
+        "pointer": "/resolutions/10"
+      }
+    ],
+    "records": [
+      {
+        "ts_code": "300016.SZ",
+        "symbol": "300016",
+        "end_date": "2018-12-31",
+        "ann_date": "2019-03-21",
+        "div_proc": "实施",
+        "imp_ann_date": "2019-03-26",
+        "record_date": "2019-04-02",
+        "ex_date": "2019-04-03",
+        "pay_date": "2019-04-03",
+        "div_listdate": null,
+        "cash_div_tax": "0.1",
+        "stk_div": "0.0"
+      }
+    ],
+    "review": null,
+    "issue": "unsupported_announcement_timeline",
+    "status": "unresolved"
+  }
+]
