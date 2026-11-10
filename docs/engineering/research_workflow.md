@@ -209,11 +209,14 @@ Change 有可复用失败认识时保留最小 Conclusion 和必要 Evidence；�
 
 ## 9. Branch、实现与外部状态
 
-Research 知识模型不要求一个 H 或 Change 对应一个 branch。所有仓库写入仍遵循
-`release_workflow.md`：
+Research 知识模型不要求一个 H 或 Change 对应一个 branch；新增假设、补证、复跑和记录整理
+不自动触发新建或切换分支。分支与 worktree 选择、改动迁移及交付内容核对由
+[发布工作流](release_workflow.md#开发分支与工作目录选择)定义，操作授权与告知由根
+[AGENTS.md 的安全边界](../../AGENTS.md#安全边界)定义。
 
 - 纯 topic README、Notebook 和自包含研究代码可以在一个可审查 feature PR 中更新同一卷宗；
-- 候选需要修改共享代码、配置或入口时，按可独立采用边界使用 feature branch/worktree 隔离；
+- 候选需要修改共享代码、配置或入口时，按可独立采用边界触发隔离，依发布工作流选择独立
+  feature branch 及必要的 worktree；研究需要隔离不代表已获准创建或切换工作位置；
 - 能够独立采用的共享实现不得混入同一 PR；
 - adoption 前候选共享实现不得进入目标分支、默认入口、正式 API、registry、cron、模型选择或
   生产可发现制品；默认关闭的 feature flag 不构成隔离；
